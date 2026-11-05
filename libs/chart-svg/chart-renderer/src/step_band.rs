@@ -31,7 +31,7 @@ fn python_float(token: &str) -> Option<f64> {
 /// entry (it prints `--3.0`, a decrement).
 pub(crate) fn parse(family: &str, raw: &str, fit: bool) -> Result<Vec<f64>, String> {
     let unreadable = || {
-        crate::refuse!(
+        diagnostic::refuse!(
             "{family}: line_mark.stroke.dasharray {raw:?}, not a list of non-negative \
              finite lengths, is not supported"
         )

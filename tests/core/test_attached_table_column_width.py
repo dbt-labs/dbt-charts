@@ -21,6 +21,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.render.chart.vega_lite import render_chart
 
+from .._results import rows_result
+
 
 def test_column_width_reserves_real_theme_cell_padding():
     """Each column width must accommodate its widest measured string plus
@@ -86,7 +88,7 @@ def test_rendered_attached_table_does_not_wrap_atomic_labels(make_chart):
         {"series": "UEFA", "value": 59},
     ]
     rs, ctx = resolve_style_and_context(get_theme_style())
-    svg = render_chart(chart, rs, ctx, data, format="svg", width=300.0)
+    svg = render_chart(chart, rs, ctx, rows_result(data), format="svg", width=300.0)
 
     table_region = svg[svg.index('rx="3"') :]
     assert "CONMEBOL" in table_region, (

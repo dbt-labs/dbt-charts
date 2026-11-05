@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::temporal::{floor_day, instant_iso, next_bucket, TimePart, TimeUnit};
 use d3rs::calendar::{civil_from_days, days_from_civil, days_in_month};
 
@@ -119,14 +119,14 @@ impl Unreadable {
     pub(crate) fn diagnostic(&self, chart_id: &str, x_field: &str, family: &str) -> Diagnostic {
         match self {
             Self::NotADate(value) => Diagnostic::new(
-                &crate::codes::ERR_X_VALUE_NOT_A_DATE,
+                &diagnostic::codes::ERR_X_VALUE_NOT_A_DATE,
                 [
                     ("chart_id", serde_json::json!(chart_id)),
                     ("value", serde_json::json!(value)),
                     ("x_field", serde_json::json!(x_field)),
                 ],
             ),
-            Self::OutsideYears(_) => crate::refuse!(
+            Self::OutsideYears(_) => diagnostic::refuse!(
                 "{family}: a timestamp whose UTC instant falls outside years 0001 to 9999 on a time x axis is not supported"
             )
             .into(),

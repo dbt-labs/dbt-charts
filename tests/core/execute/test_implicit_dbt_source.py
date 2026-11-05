@@ -311,3 +311,25 @@ def test_a_source_that_names_its_target_keeps_it(
 
     assert result.error is None, result.error
     assert result.data == [{"n": 42}]
+
+
+def test_package_board_renders_from_its_integration_tests_dbt_project(
+    tmp_path: Path,
+) -> None:
+    from dbt_charts.agent_api._paths import resolve_board_or_error
+    from dbt_charts.core.diagnostics import Diagnostic
+
+    package = tmp_path / "package"
+    package.mkdir()
+    (package / "dbt_project.yml").write_text("name: shop_package\n")
+    (package / "charts").mkdir()
+    (package / "charts" / "board.yml").write_text(_SOURCELESS_BOARD)
+    linked = _dbt_project(package / "integration_tests")
+
+    project = FilesystemProject(package, dbt_root=linked)
+    with ProjectSession.from_project(project) as session:
+        board = resolve_board_or_error(Path("board.yml"), session.project)
+        assert not isinstance(board, Diagnostic), board
+        rendered = session.render_board(board=board)
+
+    assert rendered.status == "ok", (rendered.validation_errors, rendered.chart_errors)

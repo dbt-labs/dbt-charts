@@ -22,6 +22,8 @@ from dbt_charts.core.render.chart.series_label_truncation import (
 )
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
+from ...._results import rows_result
+
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
 
@@ -60,7 +62,7 @@ def test_truncating_labels_records_the_full_series_names(make_resolved_chart):
     resolved, data = make_resolved_chart([long_name, "B"])
 
     with collect_series_label_truncations() as truncations:
-        render_resolved_chart(resolved, data, _BOARD_STYLE, width=600)
+        render_resolved_chart(resolved, rows_result(data), _BOARD_STYLE, width=600)
 
     assert truncations[resolved.id] == [
         # An unbreakable name is cut even without its value, so the values stay.
@@ -75,6 +77,6 @@ def test_labels_within_the_cap_record_nothing(make_resolved_chart):
     resolved, data = make_resolved_chart(["Revenue", "Costs"])
 
     with collect_series_label_truncations() as truncations:
-        render_resolved_chart(resolved, data, _BOARD_STYLE, width=600)
+        render_resolved_chart(resolved, rows_result(data), _BOARD_STYLE, width=600)
 
     assert truncations == {}

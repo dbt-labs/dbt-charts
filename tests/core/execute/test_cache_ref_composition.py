@@ -20,6 +20,7 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.cache import CachePolicy
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.template._helpers import _QueryNamespace
+from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -290,6 +291,34 @@ class TestCacheRefComposition:
         assert "upstream" in executor.lookup(["upstream"]).hits
         assert rows == [{"n": 99}]
 
+    def test_wave_run_reads_upstream_from_the_ledger_without_rerunning(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Both queries miss in one run: the upstream settles first and the
+        consumer reads it from the ledger instead of executing it again."""
+        cache = TrivialDuckDBCache()
+        board = _build_board(
+            {
+                "upstream": "SELECT 99 AS n",
+                "reader": "SELECT n FROM {{ queries.upstream.cache }}",
+            },
+            chart_query="upstream",
+        )
+        executor = _executor_with_cache(board, cache, local_project)
+        executed: list[str] = []
+        real_execute = executor.adapter_registry.execute
+
+        def counting_execute(query: Any, *args: Any, **kwargs: Any) -> Any:
+            executed.append(kwargs["query_name"])
+            return real_execute(query, *args, **kwargs)
+
+        executor.adapter_registry.execute = counting_execute
+
+        outcomes = executor.run_misses(executor.lookup(["reader", "upstream"]), 2)
+
+        assert outcomes["reader"].result.rows == [{"n": 99}]
+        assert executed == ["upstream"]
+
     def test_cache_ref_aliased_to_query_name(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
@@ -404,17 +433,19 @@ class TestCacheRefIsolation:
         rows_ok = executor.execute_query("composed", {"region": "North"})
         assert rows_ok == [{"val": 10}]
 
-    def test_empty_upstream_fails_loudly(self) -> None:
-        """An upstream that returned zero rows can't be composed over (no schema to
-        infer) — the isolated engine fails loudly rather than returning wrong data.
-
-        Pins the behavior change from the removed json_to_recordset path (which
-        raised a ValueError on empty rows): the failure is loud, not silent.
-        """
+    def test_empty_upstream_composes_over_its_declared_schema(self) -> None:
+        from dbt_charts.core.column_types import ColumnType
         from dbt_charts.core.execute.cache_composition import compose_over_named_rows
 
-        with pytest.raises(RuntimeError, match="Isolated-engine query failed"):
-            compose_over_named_rows("SELECT * FROM base", {"base": []}, [])
+        rows, schema = compose_over_named_rows(
+            "SELECT * FROM base",
+            {"base": []},
+            [],
+            schemas={"base": {"n": ColumnType(kind="integer")}},
+        )
+
+        assert rows == []
+        assert schema == {"n": ColumnType(kind="integer")}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -680,7 +711,7 @@ class TestCacheRefMaxRowsEnforcement:
         rows = executor.execute_query("composed")
         assert len(rows) == 3
 
-        key = executor.cache_key("composed", {})
+        key = plan(executor.ctx, ["composed"], {})[0].cache_key
         cached = cache.get(*key, ttl=None)
         assert cached is not None
         assert len(cached.rows) == 3, (
@@ -722,7 +753,7 @@ class TestCacheRefMaxRowsEnforcement:
         """Regression guard: the ceiling must bound compose_over_named_rows'
         own fetch via fetchmany(), not fetch all rows then slice. Reverting
         to fetchall() would make the row-count assertions above still pass
-        (apply_row_limit_truncation/_enforce_result_limits reproduce
+        (apply_row_limit_truncation/limit_rows reproduce
         identical visible output from a full fetch) while silently pulling
         an unbounded composed result into memory — the OOM the driver-bound
         fetch exists to prevent, on the isolated compose connection too.
@@ -735,6 +766,7 @@ class TestCacheRefMaxRowsEnforcement:
         """
         import duckdb
 
+        from dbt_charts.core.column_types import ColumnType
         from dbt_charts.core.execute.cache_composition import compose_over_named_rows
 
         fetchmany_args: list[int] = []
@@ -758,6 +790,7 @@ class TestCacheRefMaxRowsEnforcement:
             sql="SELECT * FROM t",
             named_rows={"t": [{"n": i} for i in range(20)]},
             params=[],
+            schemas={"t": {"n": ColumnType(kind="integer")}},
             limit=4,
         )
 

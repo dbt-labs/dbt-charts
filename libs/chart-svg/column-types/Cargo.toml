@@ -1,0 +1,10 @@
+[package]
+name = "column-types"
+version = "0.0.1"
+edition = "2021"
+description = "A query column's declared type, shared by resolve, bind and chart-renderer: the wire form of dbt_charts.core.column_types.ColumnType."
+
+[dependencies]
+diagnostic = { path = "../diagnostic" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }

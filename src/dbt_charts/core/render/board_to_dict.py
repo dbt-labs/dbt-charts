@@ -42,11 +42,14 @@ from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_KPI_NO_DATA
+from dbt_charts.core.execute.chart_data_provider import (
+    ResolveDataProvider,
+    chart_rows,
+)
 from dbt_charts.core.execute.chart_resolution import (
     resolve_chart_with_runtime_inputs,
 )
 from dbt_charts.core.execute.column_formats import with_dbt_column_formats
-from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.boards import resolve_display_text_via
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 
@@ -343,7 +346,7 @@ def _table_text_rows(
 
 def _render_chart_item(
     chart: Chart,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     chart_style_context: ChartStyleContext,
     error_collector: list[Diagnostic] | None = None,
@@ -380,7 +383,7 @@ def _render_chart_item(
     from dbt_charts.core.render.errors import RenderError
 
     try:
-        data = executor.execute_chart(chart, variables)
+        data = chart_rows(chart, results, variables).rows
         # Resolve against the full result so data-aware resolution (auto type,
         # auto fields) is unaffected by the cap; only the emitted rows shrink.
         resolved = resolve_chart_with_runtime_inputs(
@@ -388,7 +391,7 @@ def _render_chart_item(
             data,
             chart_style_context,
             0.0,
-            executor,
+            results,
             variables,
             filter_variables=filter_variables,
             link_open=link_open,
@@ -472,7 +475,7 @@ def _render_chart_item(
 
 def _render_board_items(
     board: Board,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     error_collector: list[Diagnostic] | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
@@ -482,13 +485,13 @@ def _render_board_items(
     include_text_format: bool = False,
 ) -> list[dict[str, Any]]:
     """Walk layout items and serialize each."""
-    results: list[dict[str, Any]] = []
+    rendered_items = []
     for item in board.layout.items:
         if item.type == "chart" and item.chart:
-            results.append(
+            rendered_items.append(
                 _render_chart_item(
                     item.chart,
-                    executor,
+                    results,
                     variables,
                     board.chart_style_context,
                     error_collector,
@@ -499,12 +502,12 @@ def _render_board_items(
                 )
             )
         elif item.type == "board" and item.board:
-            results.append(
+            rendered_items.append(
                 {
                     "type": "board",
                     "board": _board_to_dict(
                         item.board,
-                        executor,
+                        results,
                         variables,
                         error_collector,
                         max_rows_per_query,
@@ -514,12 +517,12 @@ def _render_board_items(
                     ),
                 }
             )
-    return results
+    return rendered_items
 
 
 def _board_to_dict(
     board: Board,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     error_collector: list[Diagnostic] | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
@@ -550,14 +553,14 @@ def _board_to_dict(
             ),
         )
     title = resolve_display_text_via(
-        executor, board.title, variables, resolved_style=board.resolved_style
+        results, board.title, variables, resolved_style=board.resolved_style
     )
     result: dict[str, Any] = {
         "id": board.id,
         "title": title,
         "items": _render_board_items(
             board,
-            executor,
+            results,
             variables,
             error_collector,
             max_rows_per_query,
@@ -568,7 +571,7 @@ def _board_to_dict(
     }
     if include_text_format and board.text:
         result["text"] = resolve_display_text_via(
-            executor, board.text, variables, resolved_style=board.resolved_style
+            results, board.text, variables, resolved_style=board.resolved_style
         )
     if board.variables:
         result["variables"] = {
@@ -585,7 +588,7 @@ def _board_to_dict(
 
 def board_to_dict(
     board: Board,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     error_collector: list[Diagnostic] | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
@@ -598,8 +601,8 @@ def board_to_dict(
         board.variable_registry or {}  # type-state: silent_fallback — none declared
     )
     return _board_to_dict(
-        with_dbt_column_formats(board, executor, variables),
-        executor,
+        with_dbt_column_formats(board, results, variables),
+        results,
         variables,
         error_collector,
         max_rows_per_query,

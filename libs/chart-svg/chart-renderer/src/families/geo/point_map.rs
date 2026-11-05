@@ -25,6 +25,7 @@
 //!
 //! `bind` holds what the data decides; `layout` fits it to the cell and returns nodes.
 
+use crate::scene_path::scene_path;
 use std::collections::HashMap;
 
 use d3rs::geojson::{Feature, FeatureCollection, GeoJson, Geometry};
@@ -34,13 +35,13 @@ use serde_json::{json, Map, Value};
 use super::source::{decode, GeoSource};
 use super::js_cell;
 use super::projection;
-use crate::codes;
+use diagnostic::codes;
 use crate::common::{
     category_scale_for, series_color, CategoryColorScale, FieldLabels, FormatSlot, Font,
     TitleStyle,
 };
 use crate::contract;
-use crate::diagnostic::{warn, Diagnostic};
+use diagnostic::{warn, Diagnostic};
 use crate::families::color_scale::{ContinuousColor, GradientAt};
 use crate::families::legend::{
     color_channel_title, fold_symbol_limit, legend_fit_bounds, legend_origin, stack_legends, symbol_legend, vega_default_legend,
@@ -191,12 +192,11 @@ pub struct Bound {
     fit: bool,
 }
 
-/// Python's `float(value)` of a cell; `None` where it raises.
+/// A cell as a number; text is none, however it reads.
 fn py_float(value: &Value) -> Option<f64> {
     match value {
         Value::Number(n) => n.as_f64(),
         Value::Bool(b) => Some(f64::from(u8::from(*b))),
-        Value::String(s) => s.trim().parse().ok(),
         _ => None,
     }
 }
@@ -235,7 +235,7 @@ fn coordinate(row: &Map<String, Value>, field: &str) -> f64 {
 }
 
 fn number_of(cell: Option<&Value>, what: &str) -> Result<f64, String> {
-    valid_number(cell).ok_or_else(|| crate::refuse!("a point map row with a missing or non-numeric {what} is not supported"))
+    valid_number(cell).ok_or_else(|| diagnostic::refuse!("a point map row with a missing or non-numeric {what} is not supported"))
 }
 
 /// The latitude and longitude fields; a point map with neither leaves its marks at the view's center.
@@ -247,7 +247,7 @@ fn coordinate_fields<'a>(payload: &Payload, r: &'a Resolved) -> Result<Option<(&
         (Some(lat), Some(lon)) => Ok(Some((lat, lon))),
         (None, None) => Ok(None),
         _ if r.size.is_none() => Err(payload.painted_no_marks()),
-        _ => Err(crate::refuse!("production errors too, Vega's scenegraph throws: a sized point map with one of latitude and longitude is not supported").into()),
+        _ => Err(diagnostic::refuse!("production errors too, Vega's scenegraph throws: a sized point map with one of latitude and longitude is not supported").into()),
     }
 }
 
@@ -333,7 +333,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let r: Resolved = Deserialize::deserialize(&payload.resolved).map_err(|e| format!("point_map payload: {e}"))?;
     let fields = coordinate_fields(payload, &r)?;
     if r.collapse && (r.size.is_some() || r.resolved_channels.contains_key("color")) {
-        return Err(crate::refuse!("a collapsed point map with a size or color channel is not supported").into());
+        return Err(diagnostic::refuse!("a collapsed point map with a size or color channel is not supported").into());
     }
     let all = &payload.rows;
     let bounded = fields.filter(|_| r.geo_projection_type == "albersUsa");
@@ -383,7 +383,7 @@ fn bind_basemap(payload: &Payload, r: &Resolved) -> Result<Option<Vec<GeoJson>>,
         return Ok(None);
     };
     if r.basemap_fill.is_none() {
-        return Err(crate::refuse!("a point map basemap with no fill is not supported").into());
+        return Err(diagnostic::refuse!("a point map basemap with no fill is not supported").into());
     }
     let geometries = payload.geometries.as_ref().ok_or_else(|| {
         format!("basemap: payload.geometries is absent; basemap_geo_url {url:?} needs its document")
@@ -413,15 +413,17 @@ fn bind_marks(
     let color_field = match r.resolved_channels.get("color") {
         None => None,
         Some(ch) if ch.mode == "series" => Some(ch.data_field.as_deref().ok_or("point_map: a series color channel names no data_field")?),
-        Some(ch) => return Err(crate::refuse!("a point map color channel in {} mode is not supported", ch.mode).into()),
+        Some(ch) => return Err(diagnostic::refuse!("a point map color channel in {} mode is not supported", ch.mode).into()),
     };
-    let color_type = color_field.map(|field| {
-        if r.resolved_channels["color"].categorical {
-            VegaType::Nominal
-        } else {
-            infer_vega_type(all_rows, field)
-        }
-    });
+    let color_type = color_field
+        .map(|field| {
+            Ok::<_, String>(if r.resolved_channels["color"].categorical {
+                VegaType::Nominal
+            } else {
+                infer_vega_type(&payload.schema.rows, all_rows, field)?
+            })
+        })
+        .transpose()?;
 
     // Vega-Lite filters a row whose size, or continuous color, is not a finite number
     // (`isValid(x) && isFinite(+x)`) before it draws or scales anything.
@@ -475,7 +477,7 @@ fn bind_marks(
         groups.sort_by_key(|g| std::cmp::Reverse(g.count));
         // Vega lists a group the projection drops ahead of the groups it ties with.
         if albers && groups.iter().any(|g| !g.in_fit && groups.iter().filter(|o| o.count == g.count).count() > 1) {
-            return Err(crate::refuse!("a collapsed albersUsa map whose null or non-numeric coordinates tie another group in count is not supported").into());
+            return Err(diagnostic::refuse!("a collapsed albersUsa map whose null or non-numeric coordinates tie another group in count is not supported").into());
         }
     }
 
@@ -589,9 +591,11 @@ fn bind_marks(
             }
         }
     }
-    let other_types: Vec<VegaType> = others.iter().map(|f| infer_vega_type(all_rows, f)).collect();
-    let aware_others: std::collections::HashMap<&str, bool> =
-        others.iter().map(|f| (f.as_ref(), crate::families::heatmap::date_column_aware(rows, f))).collect();
+    let other_types: Vec<VegaType> = others.iter().map(|f| infer_vega_type(&payload.schema.rows, all_rows, f)).collect::<Result<_, _>>()?;
+    let aware_others: std::collections::HashMap<&str, bool> = others
+        .iter()
+        .map(|f| Ok((f.as_ref(), crate::families::heatmap::date_column_aware(&payload.schema.rows, rows, f)?)))
+        .collect::<Result<_, String>>()?;
     let size_title = match r.size.as_deref() {
         Some(f) => Some(color_channel_title(f, &r.legend, &r.field_labels)?),
         None => None,
@@ -749,7 +753,7 @@ fn bind_color(
         VegaType::Temporal => {
             let days: Vec<f64> = rows.iter().map(|row| row.get(field).and_then(date_cell_day).expect("filtered in bind_marks")).collect();
             let (lo, hi) = extent(&days);
-            let aware = crate::families::heatmap::date_column_aware(rows, field);
+            let aware = crate::families::heatmap::date_column_aware(&payload.schema.rows, rows, field)?;
             Ok((Coloring::Gradient { scale: ContinuousColor::dates(&d3rs::vega_schemes::BLUES, lo, hi, aware), title }, Vec::new()))
         }
         VegaType::Nominal | VegaType::Ordinal => {
@@ -760,7 +764,7 @@ fn bind_color(
             for row in rows {
                 let cell = row.get(field).ok_or_else(|| format!("point_map: a row lacks the color field {field:?}"))?;
                 if cell.is_array() {
-                    return Err(crate::refuse!("a point map color value that is a list is not supported").into());
+                    return Err(diagnostic::refuse!("a point map color value that is a list is not supported").into());
                 }
                 let key = js_cell::string(cell);
                 if !keys.contains(&key) {
@@ -937,7 +941,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     let basemap_paths: Vec<Option<PathData>> = match &bound.basemap {
         Some(features) => {
             let path = fitter.at((plot_w, plot_h))?.into_path();
-            features.iter().map(|f| path.path(f)).collect::<Result<_, _>>()?
+            features.iter().map(|f| path.path(f).map(|d| d.map(|d| scene_path(&d)))).collect::<Result<_, _>>()?
         }
         None => Vec::new(),
     };
@@ -1070,7 +1074,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     )?;
     let laid = layout(&bound, &frame, &title, fonts)?;
     for diagnostic in laid.diagnostics {
-        crate::diagnostic::warn(diagnostic);
+        diagnostic::warn(diagnostic);
     }
     let mut svg = String::new();
     frame.open(&mut svg);
@@ -1145,7 +1149,7 @@ mod tests {
         assert_eq!(inside(json!(61.2), json!(-149.9)), Some(true));
         assert_eq!(inside(json!(21.3), json!(-157.8)), Some(true));
         assert_eq!(inside(json!(23.5), json!(-157.8)), Some(false));
-        assert_eq!(inside(json!("40.7"), json!("-74")), Some(true));
+        assert_eq!(inside(json!("40.7"), json!("-74")), None);
         assert_eq!(inside(json!(true), json!(false)), Some(false));
         assert_eq!(inside(Value::Null, json!(-74.0)), None);
         assert_eq!(inside(json!("north"), json!(-74.0)), None);
@@ -1155,7 +1159,7 @@ mod tests {
     #[test]
     fn only_a_readable_negative_size_is_negative() {
         let negative = |v: Value| has_negative_size(&row(json!({"s": v})), "s");
-        assert!(negative(json!(-0.5)) && negative(json!("-2")));
+        assert!(negative(json!(-0.5)) && !negative(json!("-2")));
         assert!(!negative(json!(0)) && !negative(Value::Null) && !negative(json!("many")));
         assert!(!has_negative_size(&row(json!({})), "s"));
     }

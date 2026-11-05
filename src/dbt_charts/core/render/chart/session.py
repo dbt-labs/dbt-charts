@@ -7,7 +7,6 @@ Holds the shared board style and sends each chart to the Rust engine
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from dbt_charts.core.compile.models.board.normalized import (
     NO_TITLE_SHIFT,
@@ -31,10 +30,10 @@ from dbt_charts.core.compile.models.chart.resolved import (
 )
 from dbt_charts.core.compile.models.primitives import PieMode
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
+from dbt_charts.core.execute.cache_backend import ResultRows
 from dbt_charts.core.render.engine import render_native
 from dbt_charts.core.render.pie_layout import pie_box
 from dbt_charts.core.render.sizing import custom_chart_height
-from dbt_charts.core.utils import Rows
 
 
 @dataclass
@@ -50,7 +49,7 @@ class BoardRenderSession:
     def render_svg_family(
         self,
         chart: ResolvedChart,
-        data: list[dict[str, Any]],
+        data: ResultRows,
         *,
         width: float,
         height: float | None = None,
@@ -58,7 +57,7 @@ class BoardRenderSession:
         inset: dict[str, int | float] | None = None,
         padding: dict[str, int | float] | None = None,
         title_shift: TitleShift = NO_TITLE_SHIFT,
-        datasets: dict[str | None, Rows] | None = None,
+        datasets: dict[str | None, ResultRows] | None = None,
         measuring: bool = False,
         authored_height: float | None = None,
         pie_mode: PieMode | None = None,

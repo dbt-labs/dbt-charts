@@ -99,14 +99,100 @@ def test_a_failing_probe_skips_the_advice_and_keeps_the_render(
 ) -> None:
     from dbt_charts.core.diagnostics.execution import ExecutionError
     from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.execute.run import Failed, Outcome
 
-    original = Executor.execute_query
+    original = Executor.run_misses
 
-    def failing(self: Executor, query_name: str, *args: Any, **kwargs: Any) -> Any:
-        if query_name.startswith("_restated_distinct_"):
-            raise ExecutionError("probe failed")
-        return original(self, query_name, *args, **kwargs)
+    def failing(self: Executor, *args: Any, **kwargs: Any) -> dict[str, Outcome]:
+        outcomes = original(self, *args, **kwargs)
+        return {
+            name: Failed(ExecutionError("probe failed"), None)
+            if name.startswith("_restated_distinct_")
+            else outcome
+            for name, outcome in outcomes.items()
+        }
 
-    monkeypatch.setattr(Executor, "execute_query", failing)
+    monkeypatch.setattr(Executor, "run_misses", failing)
 
     assert _warnings(tmp_path, "[1970, 1971, 1972]") == []
+
+
+_NESTED = """
+source: cars
+rows:
+  - variables:
+      pick:
+        options:
+          static: [1970, 1971]
+        input: select
+    queries:
+      q:
+        sql: |
+          SELECT model_year, COUNT(*) AS n FROM cars
+          WHERE {{ filter('model_year', pick, '>=') }}
+          GROUP BY 1
+    charts:
+      c:
+        type: bar
+        query: q
+        x: model_year
+        y: n
+    rows:
+      - c
+  - variables:
+      weight_floor:
+        options:
+          static: [10, 20]
+        input: select
+    queries:
+      q2:
+        sql: |
+          SELECT weight, COUNT(*) AS n FROM trucks
+          WHERE {{ filter('weight', weight_floor, '>=') }}
+          GROUP BY 1
+    charts:
+      c2:
+        type: bar
+        query: q2
+        x: weight
+        y: n
+    rows:
+      - c2
+"""
+
+
+def test_nested_boards_each_probe_their_own_column(
+    tmp_path: Path,
+) -> None:
+    reset_config()
+    with duckdb.connect(str(tmp_path / "cars.duckdb")) as con:
+        con.execute(
+            "CREATE TABLE cars AS SELECT * FROM (VALUES (1970), (1971)) t(model_year)"
+        )
+        con.execute(
+            "CREATE TABLE trucks AS SELECT * FROM (VALUES (10), (20)) t(weight)"
+        )
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n  cars:\n    type: duckdb\n    path: cars.duckdb\n", encoding="utf-8"
+    )
+    (tmp_path / "charts").mkdir()
+    (tmp_path / "charts/board.yml").write_text(dedent(_NESTED), encoding="utf-8")
+    cache = open_cache(None)
+    with ProjectSession.open(str(tmp_path), cache=cache) as session:
+        result = session.render_board(
+            session.project.path("charts/board.yml").read_board(),
+            format="svg",
+            use_cache=False,
+            restated_check=True,
+        )
+    cache.close()
+    assert result.status != "error", (result.validation_errors, result.board_error)
+    warned = {
+        w.path: w.message for w in result.warnings if w.code == "WARN-RESTATED-INFERRED"
+    }
+    assert sorted(warned) == [
+        "rows.0.variables.pick.options.static",
+        "rows.1.variables.weight_floor.options.static",
+    ]
+    assert "cars.model_year" in warned["rows.0.variables.pick.options.static"]
+    assert "trucks.weight" in warned["rows.1.variables.weight_floor.options.static"]

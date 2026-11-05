@@ -20,10 +20,11 @@ name: Release to PyPI
 # all — cutting a tag there only gets a commit exported and tagged here;
 # this repo's own `release: published` event is what actually ships it.
 #
-# Each export push to main publishes its `X.Y.Z.devN` artifacts (version from
-# the nearest dbt-charts-v* tag, stamped by _build_backend.py) via `pypi-dev`.
-# A commit already carrying its release tag builds the stable version, which
-# only the GitHub Release publishes.
+# Only the nightly export's push to main publishes `X.Y.Z.devN` artifacts
+# (version from the nearest dbt-charts-v* tag, stamped by _build_backend.py) via
+# `pypi-dev`. A release export pushes its commit before mirroring its tag, so
+# each job sees the tag or not depending on when it checks out; only the GitHub
+# Release publishes the stable version.
 #
 # The package ships the Rust extension `dbt_charts._engine` as cp311-abi3
 # wheels: one per platform below, plus an sdist. maturin-action builds them
@@ -205,7 +206,11 @@ jobs:
 
   publish-dev:
     needs: [sdist, wheels]
-    if: github.event_name == 'push' && needs.sdist.outputs.is_dev == 'true'
+    # The message is set by the monorepo's .buildkite/copybara_export.sh.
+    if: >-
+      github.event_name == 'push'
+      && startsWith(github.event.head_commit.message, 'Copybara nightly export')
+      && needs.sdist.outputs.is_dev == 'true'
     runs-on: ubuntu-latest
     environment: pypi-dev
     permissions:
@@ -220,6 +225,16 @@ jobs:
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
           version: "0.13.6"
+
+      - name: Refuse anything but one dev version
+        # Each job stamps its own version, so one that saw a fresh tag builds stable.
+        run: |
+          versions=$(ls dist | sed -E 's/^dbt_charts-([^-]+)(-.*\.whl|\.tar\.gz)$/\1/' | sort -u)
+          dev='^[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]+$'
+          if [[ ! "$versions" =~ $dev ]]; then
+            echo "::error::dev publish needs one X.Y.Z.devN version in dist/, got: $(echo $versions)"
+            exit 1
+          fi
 
       - run: uv publish --trusted-publishing always dist/*
 

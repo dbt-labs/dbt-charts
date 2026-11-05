@@ -35,6 +35,8 @@ from dbt_charts.core.compile.resolve.style.board import resolve_style_and_contex
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 from dbt_charts.core.render.converters.chart import render_chart_artifact
 
+from ...._results import rows_result
+
 _FIXTURE_DIR = Path(__file__).parent / "fixtures" / "parity"
 # Every fixture-backed family renders at the same slot the VL parity fixtures
 # already assume (test_render_parity.py's _DEFAULT_BOX) — pie's resolve bakes
@@ -138,7 +140,12 @@ def _render_svg(chart_type: str) -> str:
 
     resolved = resolve(compiled, data, chart_style_context=board_ctx, width=_WIDTH)
     artifact = render_resolved_chart(
-        resolved, data, board_rs, width=_WIDTH, height=_HEIGHT, is_placeholder=False
+        resolved,
+        rows_result(data),
+        board_rs,
+        width=_WIDTH,
+        height=_HEIGHT,
+        is_placeholder=False,
     )
     return render_chart_artifact(artifact, "svg")
 

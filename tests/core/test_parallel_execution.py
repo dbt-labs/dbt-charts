@@ -16,9 +16,11 @@ from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 from dbt_charts.core.execute.lookup import Miss
+from dbt_charts.core.execute.run import Failed
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 from dbt_charts.core.render import render
 
+from .._lookup import planned_query
 from .._results import rows_result
 from ._board_utils import make_test_board
 
@@ -40,7 +42,11 @@ def _project_with_duckdb_source(
 def _run_parallel(
     executor: Executor, names: set[str], max_workers: int = 8
 ) -> dict[str, Exception | None]:
-    return executor.run_misses(executor.lookup(names), None, max_workers)
+    outcomes = executor.run_misses(executor.lookup(names), max_workers)
+    return {
+        name: outcome.error if isinstance(outcome, Failed) else None
+        for name, outcome in outcomes.items()
+    }
 
 
 def _slow_adapter_execute(delay: float = 0.1):
@@ -246,8 +252,8 @@ class TestRunMisses:
         assert errors["users"] is None
         assert errors["orders"] is None
 
-    def test_cache_write_failure_fails_only_that_query(self):
-        """A store write that raises is that query's error, not the render's."""
+    def test_cache_write_failure_keeps_the_rows(self):
+        """A store write that raises loses only the cache entry, not the rows."""
         from dbt_charts.core.execute.cache_backend import QueryResultCache
 
         result = compile(SIMPLE_BOARD_YAML)
@@ -272,10 +278,9 @@ class TestRunMisses:
 
         errors = _run_parallel(executor, {"sales", "users", "orders"})
 
-        assert isinstance(errors["sales"], OSError)
-        assert errors["users"] is None
-        assert errors["orders"] is None
-        assert executor._query_errors["sales"] is errors["sales"]
+        assert errors == {"sales": None, "users": None, "orders": None}
+        assert executor.ledger.errors == {}
+        assert len(executor.ledger.memo) == 3
 
     def test_empty_query_set(self):
         """Empty query set should be a no-op."""
@@ -315,8 +320,8 @@ class TestExecutorCacheThreadSafety:
         def write_cache(key: str):
             try:
                 for _ in range(100):
-                    executor._cache[key] = [{"x": 1}]
-                    _ = executor._cache.get(key)
+                    executor.ledger.memo[key] = [{"x": 1}]
+                    _ = executor.ledger.memo.get(key)
             except Exception as e:  # noqa: BLE001
                 errors.append(e)
 
@@ -480,7 +485,7 @@ class TestCacheHitPartitioning:
 
         submitted_names: list[set] = []
 
-        def capturing_parallel(_exec, found, variables, max_workers):
+        def capturing_parallel(_exec, found, max_workers):
             submitted_names.append({miss.name for miss in found.misses})
             return {}
 
@@ -525,7 +530,7 @@ class TestCacheHitPartitioning:
 
         submitted_names: list[set] = []
 
-        def capturing_parallel(_exec, found, variables, max_workers):
+        def capturing_parallel(_exec, found, max_workers):
             submitted_names.append({miss.name for miss in found.misses})
             return {}
 
@@ -619,4 +624,5 @@ def test_run_propagates_attribution_to_every_worker() -> None:
 
 
 def _miss(name: str) -> Miss:
-    return Miss(name, SqlQuery(sql="SELECT 1", source="db"), ("s", name, "v"))
+    query = SqlQuery(sql="SELECT 1", source="db")
+    return Miss(planned_query(name, query, ("s", name, "v")))

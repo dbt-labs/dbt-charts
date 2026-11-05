@@ -304,12 +304,12 @@ class TestColumnOptionUsesNamedQueryCache:
 
         # First render: pre-execute all queries (what renderer.py does)
         all_names = collect_all_query_names(result.board)
-        executor.run_misses(executor.lookup(all_names), None, 8)
+        executor.run_misses(executor.lookup(all_names), 8)
 
         calls_after_first_render = registry.execute.call_count
 
         # Second render: same pre-execute — the column-option query is cached
-        executor.run_misses(executor.lookup(all_names), None, 8)
+        executor.run_misses(executor.lookup(all_names), 8)
 
         # The adapter must not have been called again for the column option query
         assert registry.execute.call_count == calls_after_first_render
@@ -358,7 +358,7 @@ class TestFailingColumnOptionQuery:
         registry.project_file_sources.return_value = {}
         registry.database_file_version.return_value = ""
         executor = Executor(board=result.board, adapter_registry=registry)
-        executor._query_errors["_var_options_region"] = QueryError(
+        executor.ledger.errors["_var_options_region"] = QueryError(
             "no such table: regions"
         )
 

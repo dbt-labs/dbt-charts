@@ -10,9 +10,10 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.board.normalized import Board
-from dbt_charts.core.execute import Executor
+from dbt_charts.core.execute import Executor, run as run_stage
 from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.lookup import Miss
+from dbt_charts.core.execute.lookup import Ledger, Miss
+from dbt_charts.core.execute.plan import ExecContext
 from dbt_charts.core.render.render_result import RenderResult
 from dbt_charts.core.render.renderer import prefetch_tab_queries, render
 
@@ -117,13 +118,13 @@ def _spied_render(
         query_registry=result.query_registry,
     )
     seen: list[str] = []
-    original = executor._execute_miss
+    original = run_stage.execute_miss
 
-    def spy(miss: Miss, *args: Any, **kwargs: Any) -> Any:
+    def spy(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Any:
         seen.append(miss.name)
-        return original(miss, *args, **kwargs)
+        return original(ctx, ledger, miss)
 
-    monkeypatch.setattr(executor, "_execute_miss", spy)
+    monkeypatch.setattr(run_stage, "execute_miss", spy)
     rendered = render(result.board, executor, **render_kwargs)
     return rendered, seen, result.board, executor
 
@@ -262,10 +263,10 @@ def test_prefetch_failure_is_returned_not_raised(
         _TWO_TAB_BOARD, local_project, monkeypatch, format="svg"
     )
 
-    def boom(miss: Miss, *args: Any, **kwargs: Any) -> Any:
+    def boom(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Any:
         raise RuntimeError("warehouse down")
 
-    monkeypatch.setattr(executor, "_execute_miss", boom)
+    monkeypatch.setattr(run_stage, "execute_miss", boom)
 
     prefetched = prefetch_tab_queries(board, executor, {}, max_workers=2)
 

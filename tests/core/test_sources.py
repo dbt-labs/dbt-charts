@@ -2374,3 +2374,18 @@ sources:
         declared = load_declared_sources(FilesystemProject(tmp_path))
         assert declared.implicit_source == "shop"
         assert declared.sources == {"shop": {"type": "dbt_profile"}}
+
+    def test_the_implicit_source_takes_the_linked_dbt_projects_profile(
+        self, tmp_path: Path
+    ) -> None:
+        package = tmp_path / "package"
+        linked = package / "integration_tests"
+        linked.mkdir(parents=True)
+        (package / "dbt_project.yml").write_text("name: zendesk\n")
+        (linked / "dbt_project.yml").write_text(
+            "name: zendesk_integration_tests\nprofile: integration_tests\n"
+        )
+        project = FilesystemProject(package, dbt_root=linked)
+        for declared in (load_declared_sources(project), load_project_sources(project)):
+            assert declared.implicit_source == "integration_tests"
+            assert declared.sources == {"integration_tests": {"type": "dbt_profile"}}

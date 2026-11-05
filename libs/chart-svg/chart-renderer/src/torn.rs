@@ -155,7 +155,7 @@ pub struct ValueTear<'a> {
 
 impl<'a> ValueTear<'a> {
     pub fn of(tear: Option<&'a TornBaseline>, lo: f64, hi: f64) -> Option<Self> {
-        let tear = tear.filter(|t| t.visible)?;
+        let tear = tear.filter(|t| t.enabled)?;
         torn_edge_value(lo, hi).map(|edge| Self { tear, edge })
     }
 

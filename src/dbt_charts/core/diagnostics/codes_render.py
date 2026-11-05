@@ -322,6 +322,48 @@ ERR_COLOR_NULL_SERIES = REGISTRY.register(
     )
 )
 
+ERR_CHART_CELL_TYPE_MISMATCH = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CHART-CELL-TYPE-MISMATCH",
+        domain="render",
+        title="A cell does not match its column's declared type",
+        message_template=(
+            "Column {column!r} is declared {declared} but holds {value}. "
+            "Cast the column in the query so its cells match its type."
+        ),
+        doc=(
+            "Fired when a query result's cell contradicts the type its column "
+            "was declared with, for example text in an integer column. Types "
+            "come from the source and are never re-read from cell values, so "
+            "the renderer stops instead of drawing a guess."
+        ),
+        summary="Fired when a result cell does not match its column's declared type.",
+        docs_topic="charts",
+    )
+)
+
+ERR_CHART_MEASURE_IS_TEXT = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CHART-MEASURE-IS-TEXT",
+        domain="render",
+        title="A plotted measure is a text column",
+        message_template=(
+            "`{column}` is text, so it cannot be plotted as a number. "
+            "Cast it to a number in the query, for example "
+            "CAST({column} AS DOUBLE)."
+        ),
+        doc=(
+            "Fired when a chart plots a column as a number (a bar, line, area "
+            "or wide y, a size, a pie theta, a gradient color, a layer y) "
+            "and the source declares that column as text. Text "
+            "whose cells look numeric is still text: the renderer never "
+            "reads a number out of it."
+        ),
+        summary="Fired when a plotted measure column is declared as text.",
+        docs_topic="charts",
+    )
+)
+
 ERR_PIE_NULL_THETA = REGISTRY.register(
     ErrorCode(
         code="ERR-PIE-NULL-THETA",
@@ -3701,6 +3743,30 @@ ERR_TABLE_SWATCH_NOT_COLOR = REGISTRY.register(
             "the wrong column or the query carries the wrong content; rendering "
             "it as text would hide the mistake."
         ),
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_SPARK_COLUMN_TYPE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-SPARK-COLUMN-TYPE",
+        domain="render",
+        title="a spark column is not declared as an array of numbers",
+        message_template=(
+            "table spark {spark_type!r} on column {column!r} needs an array of "
+            "numbers, but the query declares the column as {declared}. "
+            "Aggregate the values into an array in the query, for example "
+            "ARRAY_AGG(value ORDER BY month)."
+        ),
+        doc=(
+            "Fired when a table draws a `columns`, `line` or `area` spark from "
+            "a column that the source declares as something other than an "
+            "array of numbers, for example text. The renderer never parses an "
+            "array out of text, so the query has to return a real array. A "
+            "column whose cells are all empty, or a spark that is not drawn "
+            "(a transposed table), is not checked."
+        ),
+        summary="Fired when a drawn spark column is not declared as an array of numbers.",
         docs_topic="charts",
     )
 )

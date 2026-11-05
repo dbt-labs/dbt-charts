@@ -21,6 +21,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style_and_context,
 )
 
+from .._results import rows_schema
+
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
 # ---------------------------------------------------------------------------
@@ -450,7 +452,13 @@ class TestPivotStyleColumnsIsStylingOnly:
             style={"columns": {"region": {"label": "Rgn"}}},
         )
         resolved = resolve(chart, self.DATA, chart_style_context=_BOARD_CTX)
-        svg = render_table_svg(resolved, [], width=600, board_style=_board_style())
+        svg = render_table_svg(
+            resolved,
+            [],
+            width=600,
+            board_style=_board_style(),
+            schema=rows_schema(self.DATA),
+        )
         assert "rgn" in svg.lower()
 
     def test_empty_data_flat_table_with_style_columns_renders(self) -> None:
@@ -465,10 +473,15 @@ class TestPivotStyleColumnsIsStylingOnly:
             query_name="q",
             style={"columns": {"region": {"label": "Rgn", "visible": True}}},
         )
-        resolved = resolve(
-            chart, [{"region": "East", "amt": 10}], chart_style_context=_BOARD_CTX
+        rows = [{"region": "East", "amt": 10}]
+        resolved = resolve(chart, rows, chart_style_context=_BOARD_CTX)
+        svg = render_table_svg(
+            resolved,
+            [],
+            width=600,
+            board_style=_board_style(),
+            schema=rows_schema(rows),
         )
-        svg = render_table_svg(resolved, [], width=600, board_style=_board_style())
         assert "rgn" in svg.lower()
 
     def test_a_pivoted_value_colliding_with_the_measure_name_renders(self) -> None:

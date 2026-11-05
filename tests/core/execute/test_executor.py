@@ -18,6 +18,7 @@ from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure
 from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.plan import manifest_version
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 
@@ -103,7 +104,7 @@ def test_query_without_dbt_jinja_ignores_the_manifest(tmp_path: Path) -> None:
     def never_resolved() -> None:
         raise AssertionError("a query without dbt Jinja must not resolve its source")
 
-    before = executor._manifest_version(query, never_resolved)
+    before = manifest_version(executor.ctx, query, never_resolved)
     _write_manifest(tmp_path, "t_b")
     executor_after = Executor(
         board,
@@ -112,7 +113,7 @@ def test_query_without_dbt_jinja_ignores_the_manifest(tmp_path: Path) -> None:
         result_cache=cache,
     )
 
-    assert before == "" == executor_after._manifest_version(query, never_resolved)
+    assert before == "" == manifest_version(executor_after.ctx, query, never_resolved)
     assert _run(project, board, cache) == 1
 
 

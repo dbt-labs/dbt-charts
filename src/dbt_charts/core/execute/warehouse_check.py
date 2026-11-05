@@ -183,11 +183,11 @@ def warehouse_check(
         DbtChartsError: the query's source cannot be resolved.
     """
     from dbt_charts.core.execute.adapters.base import QueryResult
-    from dbt_charts.core.execute.executor import (
+    from dbt_charts.core.execute.executor import utc_now
+    from dbt_charts.core.execute.plan import (
         CACHE_REF_JINJA_RE,
         merge_board_variables,
         resolve_query_references,
-        utc_now,
     )
 
     # {{ queries.X.cache }} composes another query's *cached result*, which the

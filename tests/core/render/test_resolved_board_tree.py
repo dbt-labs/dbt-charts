@@ -13,6 +13,8 @@ import re
 from typing import Any
 from unittest.mock import MagicMock
 
+from ..._results import rows_result
+
 
 def _make_board() -> Any:
     """Compile a minimal multi-chart board (bar + kpi + table + callout)."""
@@ -71,7 +73,11 @@ def _make_executor(board: Any) -> Any:
         return results.get(name, [])
 
     executor.execute_query.side_effect = _execute_query
+    executor.execute_query_result.side_effect = lambda name, variables: rows_result(
+        _execute_query(name, variables)
+    )
     executor.execute_chart.return_value = []
+    executor.execute_chart_result.return_value = rows_result([])
     executor.execute_batch.return_value = {}
     return executor
 
@@ -237,7 +243,7 @@ def test_repeated_pie_layout_items_carry_their_slot_width_resolution() -> None:
     board = _make_repeated_pie_board()
     executor = MagicMock()
     executor.render_with_range_filters.return_value = None
-    executor.execute_query.return_value = [
+    pie_rows = [
         {"series": name, "value": value}
         for name, value in [
             ("Enterprise Strategic Accounts", 22),
@@ -248,6 +254,8 @@ def test_repeated_pie_layout_items_carry_their_slot_width_resolution() -> None:
             ("Partners & Channel", 10),
         ]
     ]
+    executor.execute_query.return_value = pie_rows
+    executor.execute_query_result.return_value = rows_result(pie_rows)
 
     resolved, _cache = build_resolved_board(board, executor, {}, render_first=True)
 
@@ -395,7 +403,11 @@ def test_overlay_layer_board_path_includes_non_primary_layer_data() -> None:
         return query_data.get(name, [])
 
     executor.execute_query.side_effect = _execute
+    executor.execute_query_result.side_effect = lambda name, variables: rows_result(
+        _execute(name, variables)
+    )
     executor.execute_chart.return_value = []
+    executor.execute_chart_result.return_value = rows_result([])
     executor.execute_batch.return_value = {}
 
     board_style = resolve_style(get_theme_style(get_default_theme_name()))

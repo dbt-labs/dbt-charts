@@ -21,6 +21,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_DBT_PROJECT_NO_LOCAL_WAREHOUSE,
 )
 from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+from dbt_charts.core.execute.plan import resolve_source
 from dbt_charts.core.execute.source_resolver import DbtContext
 
 
@@ -126,9 +127,7 @@ def test_the_executor_chooses_the_source_on_the_expanded_sql(
         query_registry=compiled.query_registry,
     )
 
-    resolved = executor._resolve_source(  # noqa: SLF001
-        compiled.query_registry["agg"], "agg"
-    )
+    resolved = resolve_source(executor.ctx, compiled.query_registry["agg"], "agg")
 
     assert isinstance(resolved, DbtTargetSourceConfig)
     assert resolved.type == "duckdb"

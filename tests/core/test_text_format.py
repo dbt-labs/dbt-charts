@@ -4,6 +4,8 @@ import pytest
 
 from dbt_charts.core.compile.models.primitives import BoardLinks
 
+from .._results import rows_result, rows_schema
+
 """Tests for text render output format."""
 
 import dataclasses
@@ -19,6 +21,7 @@ from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.renderer import render
 
+from .._lookup import collect_via_execute_query
 from ._board_utils import _default_chart_style_context, _default_resolved_style
 from ._svg_render import PINNED_RENDER_TIME
 
@@ -39,10 +42,13 @@ def _make_executor(data: list[dict]) -> MagicMock:
     """
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.render_with_range_filters.return_value = None
-    executor.execute_chart.return_value = data
     executor.execute_query.return_value = data
+    executor.execute_query.return_value = data
+    executor.execute_query_result.return_value = rows_result(data)
+    executor.execute_chart_result.return_value = rows_result(data)
     executor.cache_hit_ats = []
     executor.rendered_at = PINNED_RENDER_TIME
+    collect_via_execute_query(executor)
     return executor
 
 
@@ -64,6 +70,7 @@ def _make_compiled_executor(
     ok = Mock()
     ok.is_success = True
     ok.data = data
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()
@@ -1235,6 +1242,7 @@ rows:
         ok = Mock()
         ok.is_success = True
         ok.data = [{"x": 1}, {"x": 2}, {"x": 3}]
+        ok.schema = rows_schema(ok.data)
         ok.resolved_relations = None
         ok.truncated_reason = "max_rows"
         mock_registry = Mock()

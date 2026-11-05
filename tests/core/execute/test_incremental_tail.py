@@ -1160,7 +1160,7 @@ class TestDecimalWatermarkThroughRealCache:
     coerced Decimal -> float on write, so a prior row's key came back as
     `101.2` (float) while the freshly-queried tail row's key stayed
     `Decimal('101.20')` — `Decimal('101.20') == 101.2` is False, so the
-    dedup in `_merge_incremental_rows` never recognized the boundary row as
+    dedup in `merge_incremental_rows` never recognized the boundary row as
     restated and it duplicated on every warm render, unbounded."""
 
     def test_four_renders_do_not_duplicate_the_boundary_row(self, tmp_path) -> None:
@@ -1210,12 +1210,12 @@ class TestIncomparableWatermarkTypesRaise:
 
     def test_merge_raises_on_incomparable_key_types(self) -> None:
         from dbt_charts.core.diagnostics.execution import QueryError
-        from dbt_charts.core.execute.executor import _merge_incremental_rows
+        from dbt_charts.core.execute.incremental import merge_incremental_rows
 
         tail_rows = [{"ts": 3, "val": 30}]
         prior_rows = [{"ts": "not-a-number", "val": 10}]
         with pytest.raises(QueryError, match="not.*orderable"):
-            _merge_incremental_rows(tail_rows, prior_rows, "ts", "q")
+            merge_incremental_rows(tail_rows, prior_rows, "ts", "q")
 
 
 # ─── CRITICAL (round 3): temporal incremental watermark column across cache backends ──
@@ -1375,12 +1375,12 @@ class TestUnparseableCachedTemporalKeyRaises:
 
     def test_unparseable_cached_datetime_string_raises(self) -> None:
         from dbt_charts.core.diagnostics.execution import QueryError
-        from dbt_charts.core.execute.executor import _merge_incremental_rows
+        from dbt_charts.core.execute.incremental import merge_incremental_rows
 
         tail_rows = [{"ts": datetime(2026, 8, 22, 1, 0), "val": 30}]
         prior_rows = [{"ts": "not-a-timestamp", "val": 10}]
         with pytest.raises(QueryError, match="ts"):
-            _merge_incremental_rows(tail_rows, prior_rows, "ts", "q")
+            merge_incremental_rows(tail_rows, prior_rows, "ts", "q")
 
 
 # ─── CRITICAL (round 4 regression): genuinely-VARCHAR incremental column ────

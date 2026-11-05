@@ -25,6 +25,8 @@ from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.engine import chart_geometries, render_native
 from dbt_charts.core.render.geo.loader import geometry_fetcher_scope
 
+from ..._results import rows_result
+
 _FETCHED = "fake-geo-source"
 
 
@@ -40,7 +42,12 @@ def _chart(geo_source: str) -> ResolvedGeoshapeChart:
 def _render(chart: ResolvedGeoshapeChart) -> str:
     style, _ = resolve_style_and_context(get_theme_style())
     svg, _ = render_native(
-        chart, [], width=400.0, height=300.0, padding=None, board_style=style
+        chart,
+        rows_result([]),
+        width=400.0,
+        height=300.0,
+        padding=None,
+        board_style=style,
     )
     return svg
 
@@ -121,7 +128,12 @@ def test_a_fetched_basemap_that_is_not_json_names_the_authored_source() -> None:
         pytest.raises(ChartDataError) as raised,
     ):
         render_native(
-            chart, rows, width=400.0, height=300.0, padding=None, board_style=style
+            chart,
+            rows_result(rows),
+            width=400.0,
+            height=300.0,
+            padding=None,
+            board_style=style,
         )
 
     assert "nyc-neighborhoods" in str(raised.value)

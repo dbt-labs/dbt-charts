@@ -28,7 +28,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::common::{Font, FormatSlot, Stroke, StyleChannel, TitleStyle};
-use crate::diagnostic::{warn, Diagnostic};
+use diagnostic::{warn, Diagnostic};
 use crate::families::legend::LegendConfig;
 use crate::layout::Rect;
 use crate::Payload;
@@ -315,16 +315,15 @@ impl From<WheelError> for Diagnostic {
 
 /// `float(value or 0)` as Python's `compute_shares` reads a theta cell: a falsy cell
 /// (missing, null, `false`, `""`, an empty list or mapping) is `0.0`, a number or boolean is
-/// itself, and text goes through the float parse. `None` where Python raises (text that is
-/// not a number, a non-empty list or mapping). Rust's float grammar is narrower than
-/// Python's (`"1_0"` is `10.0` there), so such text reads as unreadable here.
+/// itself, and non-empty text is `None` whatever it reads like (a string is text, never a
+/// magnitude), as is a non-empty list or mapping.
 fn python_float(cell: Option<&Value>) -> Option<f64> {
     match cell {
         None | Some(Value::Null) => Some(0.0),
         Some(Value::Bool(flag)) => Some(f64::from(u8::from(*flag))),
         Some(Value::Number(n)) => n.as_f64(),
         Some(Value::String(text)) if text.is_empty() => Some(0.0),
-        Some(Value::String(text)) => text.trim().parse::<f64>().ok(),
+        Some(Value::String(_)) => None,
         Some(Value::Array(items)) if items.is_empty() => Some(0.0),
         Some(Value::Object(fields)) if fields.is_empty() => Some(0.0),
         Some(_) => None,
@@ -491,7 +490,7 @@ fn warn_when_sized_mode_starves_wheel(payload: &Payload, mode: Mode, fonts: &Fon
     if ratio < WHEEL_DOMINANCE_MIN_RATIO {
         let chart_id = payload.resolved.get("id").and_then(Value::as_str).ok_or("pie payload: id is absent")?;
         warn(Diagnostic::new(
-            &crate::codes::WARN_PIE_SIZED_MODE_MISSES_GUARD,
+            &diagnostic::codes::WARN_PIE_SIZED_MODE_MISSES_GUARD,
             [
                 ("chart_id", serde_json::json!(chart_id)),
                 ("floor", serde_json::json!(WHEEL_DOMINANCE_MIN_RATIO)),
@@ -515,17 +514,20 @@ mod tests {
     use super::bind::project_pie_table_rows;
     use super::*;
 
-    /// A theta whose slices sum past the largest double (or a cell Python reads as
-    /// `nan`/`inf`) has no share to draw: refused by name, never laid out.
+    /// A theta whose slices sum past the largest double has no share to draw:
+    /// refused by name, never laid out. Text (`"nan"`, `"1"`) is no number.
     #[test]
     fn a_non_finite_slice_total_is_refused_by_name() {
         let rows = |cells: Vec<Value>| -> Vec<serde_json::Map<String, Value>> {
             cells.into_iter().map(|v| json!({"v": v}).as_object().unwrap().clone()).collect()
         };
-        for cells in [vec![json!(1e308), json!(1e308)], vec![json!("nan"), json!(1)], vec![json!("inf")]] {
-            let err = pie_totals("v", &rows(cells.clone())).unwrap_err();
-            assert!(err.contains("non-finite"), "{err}");
-            assert!(has_slices("v", &rows(cells)).unwrap_err().contains("non-finite"));
+        let cells = vec![json!(1e308), json!(1e308)];
+        let err = pie_totals("v", &rows(cells.clone())).unwrap_err();
+        assert!(err.contains("non-finite"), "{err}");
+        assert!(has_slices("v", &rows(cells)).unwrap_err().contains("non-finite"));
+        for text in [json!("nan"), json!("1")] {
+            let err = pie_totals("v", &rows(vec![text])).unwrap_err();
+            assert!(err.contains("not a number"), "{err}");
         }
     }
     use serde_json::json;
@@ -1129,11 +1131,11 @@ mod tests {
             font["size"] = json!(size);
             make_payload(json)
         };
-        let (svg, warnings) = crate::diagnostic::collect(|| render(&donut(96.0), &test_fonts()));
+        let (svg, warnings) = diagnostic::collect(|| render(&donut(96.0), &test_fonts()));
         svg.expect("renders");
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         let w = &warnings[0];
-        assert_eq!(w.code, crate::codes::WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS.id);
+        assert_eq!(w.code, diagnostic::codes::WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS.id);
         assert_eq!(w.params["chart_id"], json!("pie"));
         assert_eq!(w.params["formatted_value"], json!("443023"));
         let text = w.params["text_width"].as_f64().unwrap();
@@ -1143,7 +1145,7 @@ mod tests {
             (w.params["slot_width"].as_f64().unwrap(), w.params["slot_height"].as_f64().unwrap());
         assert!((hole - slot_w.min(slot_h) * 0.9 * 0.6).abs() < 1e-9, "{hole} {slot_w} {slot_h}");
 
-        let (svg, warnings) = crate::diagnostic::collect(|| render(&donut(18.0), &test_fonts()));
+        let (svg, warnings) = diagnostic::collect(|| render(&donut(18.0), &test_fonts()));
         svg.expect("renders");
         assert!(warnings.is_empty(), "{warnings:?}");
     }
@@ -1748,8 +1750,8 @@ mod tests {
             }
         });
         let cut = |field: &str, text: &str| {
-            crate::diagnostic::Diagnostic::new(
-                &crate::codes::WARN_CHART_TITLE_TRUNCATED,
+            diagnostic::Diagnostic::new(
+                &diagnostic::codes::WARN_CHART_TITLE_TRUNCATED,
                 [
                     ("authored_field", json!(field)),
                     ("authored_text", json!(text)),
@@ -1758,7 +1760,7 @@ mod tests {
             )
         };
         let payload = make_payload(json.clone());
-        let (svg, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
+        let (svg, warnings) = diagnostic::collect(|| render(&payload, &test_fonts()));
         svg.expect("renders");
         assert_eq!(warnings, vec![cut("title", "A TITLE FAR TOO LONG FOR A NARROW CARD TO HOLD")]);
 
@@ -1766,13 +1768,13 @@ mod tests {
         json["resolved"]["title"] = json!("Short");
         json["resolved"]["subtitle"] = json!(subtitle);
         let payload = make_payload(json);
-        let (_, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
+        let (_, warnings) = diagnostic::collect(|| render(&payload, &test_fonts()));
         assert_eq!(warnings, vec![cut("subtitle", subtitle)]);
 
         let mut wide = make_pie_payload(Value::Null);
         wide["resolved"]["title"] = json!("Fits");
         let payload = make_payload(wide);
-        let (_, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
+        let (_, warnings) = diagnostic::collect(|| render(&payload, &test_fonts()));
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 
@@ -2348,7 +2350,7 @@ mod tests {
             ("no flag", |p| p["resolved"]["resolved_channels"]["color"]["quantitative_data"] = Value::Null, "quantitative_data flag"),
             ("gradient", |p| p["resolved"]["resolved_channels"]["color"]["mode"] = json!("gradient"), "gradient legend"),
             ("number", |p| p["rows"][0]["category"] = json!(7), "non-string color value"),
-            ("date", |p| p["rows"][0]["category"] = json!("2024-01-31"), "date-like color"),
+            ("date", |p| p["rows"].as_array_mut().unwrap().iter_mut().for_each(|row| row["category"] = json!("2024-01-31")), "date-like color"),
             ("overlay", |p| p["resolved"]["legend"]["position"]["overlay"] = json!(true), "overlay true"),
         ];
         for (name, edit, expected) in cases {
@@ -2578,7 +2580,7 @@ mod tests {
         let Some(extent) = scene::root_extent(&laid_out.nodes) else { panic!("one root card") };
         assert_eq!((extent.width, extent.height), (220.0, 180.0));
         assert_eq!(laid_out.diagnostics.len(), 1, "{:?}", laid_out.diagnostics);
-        assert_eq!(laid_out.diagnostics[0].code, crate::codes::WARN_CHART_TITLE_TRUNCATED.id);
+        assert_eq!(laid_out.diagnostics[0].code, diagnostic::codes::WARN_CHART_TITLE_TRUNCATED.id);
         assert!(laid_out.data_box.width > 0.0 && laid_out.insets.left >= 0.0);
     }
 
@@ -2604,7 +2606,7 @@ mod tests {
         let bound = bind::bind(&payload, Mode::Direct).expect("binds");
         let fonts = test_fonts();
         let (laid_out, warnings) =
-            crate::diagnostic::collect(|| layout::layout(&bound, cell(220.0, 14.0), &Measure { fonts: &fonts }));
+            diagnostic::collect(|| layout::layout(&bound, cell(220.0, 14.0), &Measure { fonts: &fonts }));
         assert!(laid_out.is_err());
         assert_eq!(warnings.len(), 1, "{warnings:?}");
     }
@@ -2639,7 +2641,7 @@ mod tests {
             bind::bind(&payload, Mode::Direct).err().expect("bind refuses"),
             "pie: total.format moved to style.total_style.value.format"
         );
-        let (rendered, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
+        let (rendered, warnings) = diagnostic::collect(|| render(&payload, &test_fonts()));
         assert_eq!(rendered.unwrap_err(), "pie: total.format moved to style.total_style.value.format");
         assert!(warnings.is_empty(), "{warnings:?}");
     }
@@ -2650,7 +2652,7 @@ mod tests {
         json["resolved"]["palette"] = json!(["not-a-color", "#779bc9", "#ad9c7f"]);
         let payload = make_payload(json);
         let err = render(&payload, &test_fonts()).expect_err("a swatch that is no color refuses");
-        assert_eq!(err.code, crate::codes::ERR_TABLE_SWATCH_NOT_COLOR.id, "{err}");
+        assert_eq!(err.code, diagnostic::codes::ERR_TABLE_SWATCH_NOT_COLOR.id, "{err}");
     }
 
     #[test]
@@ -2661,6 +2663,6 @@ mod tests {
             .map(|i| json!({"category": format!("Category number {i}"), "revenue": 100.0 + f64::from(i)}))
             .collect::<Vec<_>>());
         let err = render(&make_payload(json), &test_fonts()).expect_err("a legend taller than its plot cannot center");
-        assert_eq!(err.code, crate::codes::ERR_LEGEND_ALIGN_UNSUPPORTED.id, "{err}");
+        assert_eq!(err.code, diagnostic::codes::ERR_LEGEND_ALIGN_UNSUPPORTED.id, "{err}");
     }
 }

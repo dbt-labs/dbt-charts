@@ -26,6 +26,7 @@ from dbt_charts.core.diagnostics import ERR_RESOLVED_PIE_DATA_MISMATCH
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 from dbt_charts.core.render.errors import RenderError
 
+from ...._results import rows_result
 from ..._engine_render import render_pie_svg
 
 _SLICE_LABEL = re.compile(
@@ -127,7 +128,7 @@ def test_rows_different_from_the_resolution_snapshot_are_refused() -> None:
     with pytest.raises(RenderError) as exc_info:
         render_resolved_chart(
             resolved,
-            [{"segment": "A", "value": 1}, {"segment": "B", "value": 99}],
+            rows_result([{"segment": "A", "value": 1}, {"segment": "B", "value": 99}]),
             resolve_style(get_theme_style(get_default_theme_name())),
         )
     assert exc_info.value.code == ERR_RESOLVED_PIE_DATA_MISMATCH

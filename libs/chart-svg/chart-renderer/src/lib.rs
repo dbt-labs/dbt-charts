@@ -4,12 +4,10 @@
 
 pub mod annotation;
 pub mod board;
-pub mod codes;
 pub mod common;
 pub mod conditions;
 pub mod constants;
 pub mod contract;
-pub mod diagnostic;
 pub mod embed_fonts;
 pub mod families;
 pub mod layout;
@@ -22,9 +20,11 @@ pub mod label_template;
 pub mod labels_expr;
 pub(crate) mod legend_view;
 pub mod number_locale;
+pub mod payload_schema;
 pub mod pattern;
 pub mod prose;
 pub(crate) mod selected;
+pub mod scene_path;
 pub mod sizing;
 pub mod step_band;
 pub mod svg;
@@ -42,7 +42,7 @@ pub mod tree;
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use diagnostic::{Diagnostic, RenderOutput};
+use diagnostic::{codes, Diagnostic, RenderOutput};
 use scene::{Attrs, Chars, Escape, Node, Role, Run, Shape};
 use serde::Deserialize;
 use serde_json::Value;
@@ -329,6 +329,21 @@ pub(crate) fn test_board_style(style: Value) -> Option<BoardStyle> {
     Some(serde_json::from_value(with_required_board_fields(style)).expect("board style parses"))
 }
 
+/// `payload` with the schema the Python seam would send beside its inline
+/// rows, unless the test declares one.
+#[cfg(test)]
+pub(crate) fn with_test_schema(mut payload: Value) -> Value {
+    let fields = payload.as_object_mut().expect("a payload is an object");
+    if !fields.contains_key("schema") {
+        let rows_of = |v: &Value| serde_json::from_value::<Vec<serde_json::Map<String, Value>>>(v.clone()).expect("rows are objects");
+        let rows = fields.get("rows").map(rows_of).unwrap_or_default();
+        let datasets: Option<HashMap<String, Vec<serde_json::Map<String, Value>>>> =
+            fields.get("datasets").filter(|d| !d.is_null()).map(|d| serde_json::from_value(d.clone()).expect("datasets are rows"));
+        fields.insert("schema".into(), payload_schema::test_payload_schema_json(&rows, datasets.as_ref()));
+    }
+    payload
+}
+
 /// A unit-test payload as the Python seam would send it: every resolved table
 /// column carries the link modes `ResolvedTableColumnConfig` always emits.
 #[cfg(test)]
@@ -422,6 +437,9 @@ pub struct Payload {
     /// layer authors a differing `query_name`.
     #[serde(default)]
     pub datasets: Option<HashMap<String, Vec<serde_json::Map<String, Value>>>>,
+    /// The declared type of each column of `rows` and of each dataset; read
+    /// through `PayloadSchema::get`, which errors on an undeclared column.
+    pub schema: payload_schema::PayloadSchema,
     /// Every geo source a map chart draws, as the TopoJSON or GeoJSON document's
     /// JSON text keyed by the chart's `geo_url`. The engine does no I/O: the host
     /// loads the documents and the engine parses each distinct text once
@@ -497,9 +515,15 @@ impl Payload {
         self.rows.is_empty() && self.datasets.as_ref().is_none_or(|sets| sets.values().all(Vec::is_empty))
     }
 
+    /// This payload with its rows declared as `row_types`.
+    pub(crate) fn with_row_types(mut self, row_types: column_types::ColumnTypes) -> Payload {
+        self.schema.rows = row_types;
+        self
+    }
+
     /// This payload over `resolved` and `rows`, without copying the ones it replaces.
     pub(crate) fn with_inputs(&self, resolved: Value, rows: Vec<serde_json::Map<String, Value>>) -> Payload {
-        let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, variable_options, filter_variables, interactive_controls, link_context, datasets, geometries, measuring, title_shift, is_placeholder, pie_mode, board_composed, authored_height, placement, max_template_output_bytes, cell_text } = self;
+        let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, variable_options, filter_variables, interactive_controls, link_context, datasets, schema, geometries, measuring, title_shift, is_placeholder, pie_mode, board_composed, authored_height, placement, max_template_output_bytes, cell_text } = self;
         Payload {
             resolved,
             rows,
@@ -516,6 +540,7 @@ impl Payload {
             interactive_controls: *interactive_controls,
             link_context: link_context.clone(),
             datasets: datasets.clone(),
+            schema: schema.clone(),
             geometries: geometries.clone(),
             measuring: *measuring,
             title_shift: title_shift.clone(),
@@ -602,6 +627,12 @@ pub(crate) fn painted_no_marks(card_width: f64, chart_id: Value, row_count: usiz
 /// every family reads plain numbers from `rows` and `datasets`.
 impl<'de> Deserialize<'de> for Payload {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // A unit test writes inline rows and leaves their declared types to
+        // `with_test_schema`.
+        #[cfg(test)]
+        let mut payload = Payload::deserialize(with_test_schema(Value::deserialize(deserializer)?))
+            .map_err(serde::de::Error::custom)?;
+        #[cfg(not(test))]
         let mut payload = Payload::deserialize(deserializer)?;
         payload.cell_text = common::decode_cells(&mut payload.rows).map_err(serde::de::Error::custom)?;
         for rows in payload.datasets.iter_mut().flat_map(HashMap::values_mut) {
@@ -644,6 +675,7 @@ pub fn render_sized(
     payload: &Payload,
     fonts: &measure::FontBook,
 ) -> Result<(String, Option<f64>), Diagnostic> {
+    payload.schema.check(&payload.rows, payload.datasets.as_ref())?;
     in_payload_scope(payload, || render_in_scope(payload, fonts))
 }
 
@@ -731,6 +763,7 @@ fn draw_family(
         return families::empty::render(chart_type, payload, fonts).map(|svg| (svg, None));
     }
     families::cartesian_errors::check(payload, chart_type)?;
+    payload_schema::refuse_text_measures(payload, chart_type)?;
     // A Vega-family root is `class="marks"`, the host of the hover markers.
     if chart_type == "callout" {
         let (svg, natural_height) = families::callout::render_sized(payload)?;

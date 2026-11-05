@@ -41,6 +41,8 @@ use measure::Measure;
 pub struct MeasurePayload {
     pub resolved: Value,
     pub rows: Vec<serde_json::Map<String, Value>>,
+    /// The declared type of each column of `rows`.
+    pub schema: column_types::ColumnTypes,
     pub fonts_dir: Option<String>,
     /// `style.fonts.numeral`: the family the digits paint in, so the family they measure in.
     pub numeral_family: String,
@@ -294,9 +296,11 @@ fn natural_width_in_scope(
     payload: &MeasurePayload,
     fonts: &FontBook,
 ) -> Result<Option<IntrinsicWidth>, String> {
+    payload.schema.check_rows(&payload.rows).map_err(|m| m.into_diagnostic().to_string())?;
     let chart = bind_chart(super::Source {
         resolved: &payload.resolved,
         rows: &payload.rows,
+        types: &payload.schema,
         cell_text: &payload.cell_text,
         formats: payload.formats.as_ref(),
         sub_unit_specs: payload.sub_unit_specs.as_ref(),

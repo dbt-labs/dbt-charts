@@ -33,6 +33,7 @@ from dbt_charts.core.compile.models.source import (
 from dbt_charts.core.execute import Executor, metricflow
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.metricflow import SemanticLayer
+from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.semantic_bundle import SemanticDataset
 
 FRAGMENT = """\
@@ -457,7 +458,7 @@ def test_a_changed_bundle_changes_the_cache_key(tmp_path: Path) -> None:
             adapter_registry=build_adapter_registry(project),
             query_registry=result.query_registry,
         )
-        return executor.cache_key("q", {})
+        return plan(executor.ctx, ["q"], {})[0].cache_key
 
     before = key()
     assert before == key()
@@ -584,7 +585,7 @@ def test_a_changed_required_flag_changes_the_cache_key(tmp_path: Path) -> None:
             adapter_registry=build_adapter_registry(project),
             query_registry=result.query_registry,
         )
-        return executor.cache_key("q", {})
+        return plan(executor.ctx, ["q"], {})[0].cache_key
 
     before = key(project)
     (tmp_path / "dbt_charts.yml").write_text(

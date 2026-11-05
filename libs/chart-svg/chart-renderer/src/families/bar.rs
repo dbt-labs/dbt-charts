@@ -71,9 +71,9 @@ mod vertical;
 use self::facet::{color_one_to_one, render_facet};
 use self::marks::overlap_fraction;
 
-use crate::codes;
+use diagnostic::codes;
 use crate::constants::bar::CONTINUOUS_BAR_MAX_SIZE;
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use std::collections::HashMap;
 
 use serde::Deserialize;
@@ -259,6 +259,9 @@ pub(crate) struct BarResolved {
     /// The host's board URL scheme, from the payload; rewrites each datum href.
     #[serde(skip)]
     link_context: Option<crate::href::LinkContext>,
+    /// The declared types of the payload's rows, which a tooltip column's format reads.
+    #[serde(skip)]
+    column_types: column_types::ColumnTypes,
     /// The columns a link's `{{ y }}` and `{{ color }}` read: the authored
     /// ones, or on a wide chart the first measure and the authored dimension
     /// (else the fold's raw measure name). Set before the fold overwrites
@@ -558,7 +561,8 @@ pub(crate) struct MarkBorder {
 /// decided ahead of `render` so the engine reports the same code and params.
 pub fn production_errors(payload: &Payload) -> Result<(), Diagnostic> {
     // An unparseable payload is `render`'s own error to report.
-    let Ok(r) = BarResolved::deserialize(&payload.resolved) else { return Ok(()) };
+    let Ok(mut r) = BarResolved::deserialize(&payload.resolved) else { return Ok(()) };
+    r.column_types = payload.schema.rows.clone();
     overlap_errors(&r, payload)
 }
 
@@ -641,6 +645,7 @@ impl BarResolved {
         r.series_palette = payload.series_palette(&r.palette);
         r.patterns = crate::pattern::PatternPlan::from_resolved(&payload.resolved)?;
         r.link_context = payload.link_context.clone();
+        r.column_types = payload.schema.rows.clone();
         r.link_y = r.y.clone();
         r.link_color = r.color.clone();
         Ok(r)
@@ -715,7 +720,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     }
     let cell = Rect { x: 0.0, y: 0.0, width: bound.payload.width, height: bound.payload.height };
     let laid_out = layout::layout(&bound, cell, &Measure { fonts })?;
-    laid_out.diagnostics.into_iter().for_each(crate::diagnostic::warn);
+    laid_out.diagnostics.into_iter().for_each(diagnostic::warn);
     Ok(print::print(&laid_out.nodes))
 }
 
@@ -772,9 +777,10 @@ fn x_resolution(
     r: &BarResolved,
     chart_rows: &[serde_json::Map<String, Value>],
 ) -> Result<crate::families::x_type::FilledX, String> {
-    let normalized = crate::families::temporal::normalize_labeled_temporal(chart_rows, &r.x)?;
+    let normalized = crate::families::temporal::normalize_labeled_temporal(&r.column_types, chart_rows, &r.x)?;
     let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
     crate::families::x_type::resolve_filled_x(
+        &r.column_types,
         &normalized,
         &r.x,
         &crate::families::x_type::XAxis::of(&r.style.axis_x),
@@ -1516,14 +1522,14 @@ mod tests {
         }
 
         /// A one-category base under bar layers grouped by `region`, one dataset per layer.
-        fn own_color_layers_svg(datasets: &[&[(&str, f64)]]) -> Result<String, crate::diagnostic::Diagnostic> {
+        fn own_color_layers_svg(datasets: &[&[(&str, f64)]]) -> Result<String, diagnostic::Diagnostic> {
             own_color_layers_with(datasets, |_| {})
         }
 
         fn own_color_layers_with(
             datasets: &[&[(&str, f64)]],
             edit: impl FnOnce(&mut serde_json::Value),
-        ) -> Result<String, crate::diagnostic::Diagnostic> {
+        ) -> Result<String, diagnostic::Diagnostic> {
             let mut payload_json = make_vertical_payload(&[("1", 120.0), ("3", 150.0)], false);
             payload_json["resolved"]["query_name"] = serde_json::json!("actual");
             let mut layers = Vec::new();
@@ -1952,7 +1958,7 @@ mod tests {
             })
         }
 
-        fn area_svg(layer: serde_json::Value) -> Result<String, crate::diagnostic::Diagnostic> {
+        fn area_svg(layer: serde_json::Value) -> Result<String, diagnostic::Diagnostic> {
             render(&make_payload(payload_with_layer(&[("Jan", 100.0, 40.0), ("Feb", 120.0, 60.0)], layer)), &test_fonts())
         }
 
@@ -2045,7 +2051,7 @@ mod tests {
                 row["region"] = serde_json::json!("North");
             }
             let err = crate::families::cartesian_errors::check(&make_payload(payload_json), "bar").unwrap_err();
-            assert!(err.to_string().contains(crate::codes::ERR_STEP_BAND_MULTI_SERIES.id), "{err}");
+            assert!(err.to_string().contains(diagnostic::codes::ERR_STEP_BAND_MULTI_SERIES.id), "{err}");
         }
 
         /// An area layer's edge line adds no ink to the fit (production's bounds stop at
@@ -4343,7 +4349,8 @@ mod tests {
             "an authored ordinal type keeps numeric x banded"
         );
         let years: Vec<(f64, f64)> = (2017..=2024).map(|y| (f64::from(y), 100.0 + f64::from(y))).collect();
-        assert!(!linear(&years, &|_| {}), "a year column is a date, so it is banded");
+        let decimal = |p: &mut serde_json::Value| crate::payload_schema::test_declare(p, &[("product", "decimal")]);
+        assert!(!linear(&years, &decimal), "a decimal year column is a date, so it is banded");
     }
 
     /// The quantitative-x gate: numeric x routes off the band arm — the
@@ -6446,7 +6453,7 @@ mod tests {
     }
 
     /// A rail bar of twelve monthly dates, its x domain authored to January through July.
-    fn narrowed_domain_rail_bar(width: f64, right_axis: bool) -> (String, Vec<crate::diagnostic::Diagnostic>) {
+    fn narrowed_domain_rail_bar(width: f64, right_axis: bool) -> (String, Vec<diagnostic::Diagnostic>) {
         use serde_json::json;
         let mut p = make_rail_strip_payload();
         p["width"] = json!(width);
@@ -6462,7 +6469,7 @@ mod tests {
         p["rows"] = json!(rows);
         p["resolved"]["style"]["axis_x"]["type"] = json!("temporal");
         p["resolved"]["style"]["axis_x"]["scale"] = json!({"continuous": {"domain": ["2024-01-01", "2024-07-01"]}});
-        crate::diagnostic::collect(|| render(&make_payload(p), &test_fonts()).expect("renders"))
+        diagnostic::collect(|| render(&make_payload(p), &test_fonts()).expect("renders"))
     }
 
     /// A date past an authored x domain sits under no axis label, so the strip keeps
@@ -6498,7 +6505,7 @@ mod tests {
                     .collect();
                 p["rows"] = json!(rows);
                 p["resolved"]["style"]["axis_x"]["type"] = json!("temporal");
-                let (svg, warnings) = crate::diagnostic::collect(|| render(&make_payload(p), &fonts).expect("renders"));
+                let (svg, warnings) = diagnostic::collect(|| render(&make_payload(p), &fonts).expect("renders"));
                 let edges = support_table_strip::strip_edges(&svg, &fonts, TEST_FONT);
                 assert!(!edges.cells.is_empty() && edges.cells.iter().all(|row| row.len() >= 2), "width {width}, right axis {right_axis}: the strip is hidden: {warnings:?}");
             }
@@ -6615,7 +6622,7 @@ mod tests {
         let mut p = bottom_strip_payload();
         p["rows"] = make_vertical_payload(&cats, false)["rows"].clone();
         p["width"] = serde_json::json!(120.0);
-        let (svg, warnings) = crate::diagnostic::collect(|| render(&make_payload(p), &test_fonts()));
+        let (svg, warnings) = diagnostic::collect(|| render(&make_payload(p), &test_fonts()));
         svg.expect("renders");
         let w = warnings.iter().find(|d| d.code == "WARN-BAR-BAND-WIDTH-TOO-NARROW").expect("warns");
         assert_eq!(serde_json::to_value(&w.params).unwrap()["distinct"], serde_json::json!(40));
@@ -7356,6 +7363,7 @@ mod tests {
             {"product": "Alpha", "alpha": 800.0, "zeta": 200.0},
             {"product": "Beta", "alpha": 600.0, "zeta": 150.0}
         ]);
+        crate::payload_schema::test_declare(&mut p, &[("mid", "float")]);
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
         let mut entries = Vec::new();
         for (pos, _) in svg.match_indices(&format!("width=\"{LEGEND_SWATCH}\"")) {
@@ -10149,6 +10157,7 @@ mod tests {
                 }
             },
             "rows": [],
+            "schema": {"rows": {"a": {"kind": "string", "element": null, "fields": null}, "b": {"kind": "float", "element": null, "fields": null}}, "datasets": {}},
             "width": 600.0, "height": 400.0,
             "background": "#ffffff", "fonts_dir": null, "padding": null
         });
@@ -11188,7 +11197,7 @@ mod tests {
                     row["revenue"] = serde_json::json!(300.0);
                 }
             }
-            crate::diagnostic::collect(|| render(&make_payload(p), &test_fonts()).expect("renders"))
+            diagnostic::collect(|| render(&make_payload(p), &test_fonts()).expect("renders"))
         };
         let (wrapped, warnings) = render_named("Northern Operations Division");
         assert!(wrapped.contains("<tspan>10 Northern</tspan>") && wrapped.contains("dy=\"13\">Operations Division</tspan>"), "{wrapped}");
@@ -17301,7 +17310,7 @@ mod tests {
             json!({"kind": "category", "value": name})
         }
 
-        fn annotated(mut payload: Value, annotations: Vec<Value>) -> Result<String, crate::diagnostic::Diagnostic> {
+        fn annotated(mut payload: Value, annotations: Vec<Value>) -> Result<String, diagnostic::Diagnostic> {
             payload["resolved"]["annotations"] = Value::Array(annotations);
             render(&make_payload(payload), &test_fonts())
         }
@@ -17623,7 +17632,7 @@ mod tests {
 
         /// The stacked rail payload on a dated category axis, with a labeled
         /// trend over it whose text sits outside the line end.
-        fn dated_rail_with_trend(position: Value) -> Result<String, crate::diagnostic::Diagnostic> {
+        fn dated_rail_with_trend(position: Value) -> Result<String, diagnostic::Diagnostic> {
             let mut payload = make_stacked_payload("vertical", "zero");
             payload["resolved"]["style"]["axis_y"]["tick_values"] = json!([]);
             payload["resolved"]["style"]["axis_y"]["ticks"]["count"] = json!(null);
@@ -17719,7 +17728,7 @@ mod tests {
             payload["resolved"]["style"]["label_usable_ratio"] = json!(0.8);
             payload["resolved"]["style"]["axis_x"]["fill"] = json!("null");
             payload["resolved"]["title"] = json!("T ".repeat(300));
-            let (rendered, sunk) = crate::diagnostic::collect(|| {
+            let (rendered, sunk) = diagnostic::collect(|| {
                 annotated(payload, vec![annotation(0, Value::Null, value(json!(700.0)))])
             });
             assert_eq!(rendered.unwrap_err().code, "ERR-ANNOTATION-UNSUPPORTED");
@@ -17849,7 +17858,7 @@ mod tests {
                 let (payload, fonts) = bound_of(json);
                 let bound = super::super::bind::bind(&payload).expect("bar binds");
                 let cell = crate::layout::Rect { x: 0.0, y: 0.0, width: 420.0, height: 260.0 };
-                let (laid, sunk) = crate::diagnostic::collect(|| {
+                let (laid, sunk) = diagnostic::collect(|| {
                     super::super::layout::layout(&bound, cell, &measure::Measure { fonts: &fonts })
                 });
                 let laid = laid.expect("bar lays out");
@@ -17889,7 +17898,7 @@ mod tests {
             let bound = super::super::bind::bind(&payload).expect("bar binds");
             let cell = crate::layout::Rect { x: 0.0, y: 0.0, width: payload.width, height: payload.height };
             let laid = super::super::layout::layout(&bound, cell, &measure::Measure { fonts: &fonts }).unwrap();
-            let (svg, sunk) = crate::diagnostic::collect(|| render(&payload, &fonts));
+            let (svg, sunk) = diagnostic::collect(|| render(&payload, &fonts));
             assert_eq!(svg.unwrap(), print::print(&laid.nodes));
             assert!(!laid.diagnostics.is_empty(), "the payload must warn for forwarding to be tested");
             assert_eq!(sunk, laid.diagnostics);

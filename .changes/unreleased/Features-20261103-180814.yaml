@@ -1,0 +1,3 @@
+kind: Features
+body: dct doctor warns when profiles.yml is newer than the dbt manifest, which leaves ref() and source() pointing at the old schema.
+time: 2026-11-03T18:08:14.634081-08:00

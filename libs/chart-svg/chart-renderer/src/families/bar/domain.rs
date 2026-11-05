@@ -861,11 +861,12 @@ impl Extras {
         color_field: Option<&str>,
         tiered: bool,
         fields: &[crate::families::tooltip_extra::TooltipField],
+        types: &column_types::ColumnTypes,
     ) -> Result<Self, String> {
         let mut by_key = HashMap::new();
         if !fields.is_empty() {
             for (row, key) in rows.iter().zip(row_keys(rows, cat_field, color_field, tiered)) {
-                by_key.insert(key, crate::families::tooltip_extra::rows_for(fields, row)?);
+                by_key.insert(key, crate::families::tooltip_extra::rows_for(fields, row, types)?);
             }
         }
         Ok(Self(by_key))

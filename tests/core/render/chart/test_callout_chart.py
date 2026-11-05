@@ -27,6 +27,8 @@ from dbt_charts.core.render.chart.vega_lite import render_chart
 from dbt_charts.core.render.engine import render_callout_card
 from dbt_charts.core.render.renderer import render
 
+from ...._lookup import collect_via_execute_query
+from ...._results import rows_result
 from ..._board_utils import merged_patch
 from ..._svg_render import PINNED_RENDER_TIME
 from ._callout_test_helpers import (
@@ -113,7 +115,7 @@ def test_callout_default_tone_is_info(make_chart) -> None:
         chart,
         resolved_style=_rs,
         chart_style_context=_ctx,
-        data=[],
+        data=rows_result([]),
         format="svg",
         width=220,
     )
@@ -140,7 +142,7 @@ def test_callout_warning_tone_resolves_warning_palette_roles(make_chart) -> None
         chart,
         resolved_style=_rs,
         chart_style_context=_ctx,
-        data=[],
+        data=rows_result([]),
         format="svg",
         width=220,
     )
@@ -166,7 +168,7 @@ def test_callout_positive_tone_resolves_positive_palette_roles(make_chart) -> No
         chart,
         resolved_style=_rs,
         chart_style_context=_ctx,
-        data=[],
+        data=rows_result([]),
         format="svg",
         width=220,
     )
@@ -209,7 +211,7 @@ def _render_callout(make_chart, style: dict | None, *board_patches):
         chart,
         resolved_style=rs,
         chart_style_context=ctx,
-        data=[],
+        data=rows_result([]),
         format="svg",
         width=220,
     )
@@ -369,7 +371,7 @@ def test_callout_renders_message_and_title(make_chart) -> None:
         chart,
         resolved_style=_rs,
         chart_style_context=_ctx,
-        data=[],
+        data=rows_result([]),
         format="svg",
         width=220,
     )
@@ -390,7 +392,7 @@ def test_callout_skips_query_execution(make_chart) -> None:
         message="No query should run",
     )
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    executor.execute_chart.side_effect = AssertionError(
+    executor.execute_query.side_effect = AssertionError(
         "callout must not execute queries"
     )
 
@@ -405,7 +407,7 @@ def test_callout_skips_query_execution(make_chart) -> None:
         render_cache={},
     )
 
-    executor.execute_chart.assert_not_called()
+    executor.execute_query.assert_not_called()
     svg_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", svg)).strip()
     assert "No query should run" in svg_text
     assert height > 60
@@ -451,6 +453,9 @@ def test_chart_data_error_fallback_renders_as_a_quiet_callout_tile(make_chart) -
     chart = make_chart("kpi", x=None, y=None, value="value", label="Broken KPI")
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = [{"value": 1}, {"value": 2}]
+    executor.execute_query_result.return_value = rows_result(
+        executor.execute_query.return_value
+    )
 
     rs, ctx = resolve_style_and_context(get_theme_style())
     svg, height = render_chart_item(
@@ -937,9 +942,9 @@ def _render_board_svg(yaml_src: str) -> str:
     assert result.board is not None
 
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    executor.execute_chart.return_value = []
     executor.cache_hit_ats = []
     executor.rendered_at = PINNED_RENDER_TIME
+    collect_via_execute_query(executor)
 
     svg = render(result.board, executor, format="svg").output
     assert isinstance(svg, str)

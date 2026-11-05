@@ -12,6 +12,8 @@ from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.renderer import render
 
+from .._lookup import collect_via_execute_query
+from .._results import rows_result
 from ._board_utils import _default_chart_style_context, _default_resolved_style
 from ._svg_render import PINNED_RENDER_TIME
 
@@ -25,9 +27,10 @@ def _make_executor(data: list[dict]) -> MagicMock:
     """
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.render_with_range_filters.return_value = None
-    executor.execute_chart.return_value = data
+    executor.execute_query_result.return_value = rows_result(data)
     executor.cache_hit_ats = []
     executor.rendered_at = PINNED_RENDER_TIME
+    collect_via_execute_query(executor)
     return executor
 
 

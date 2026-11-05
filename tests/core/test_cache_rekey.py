@@ -17,6 +17,7 @@ from dbt_charts.core.execute.duckdb_cache import (
     compute_source_hash,
     compute_variables_hash,
 )
+from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 from .._results import rows_result, rows_schema
@@ -196,7 +197,7 @@ class TestReferenceExpansionKeysCache:
                 adapter_registry=registry,
                 query_registry=compiled.query_registry,
             )
-            return executor.cache_key("downstream", {})
+            return plan(executor.ctx, ["downstream"], {})[0].cache_key
 
         assert key_for("v1") != key_for("v2")
 

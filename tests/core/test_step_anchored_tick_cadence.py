@@ -61,6 +61,8 @@ from dbt_charts.core.compile.resolve.style.board import resolve_style_and_contex
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
+from .._results import rows_result
+
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
 
@@ -147,7 +149,7 @@ class TestRenderGate:
         chart = BarChart(id="bar", type="bar", x="month", y="value", style=style)
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         with pytest.raises(ChartDataError, match="ticks.time_unit"):
-            render_resolved_chart(resolved, data, _BOARD_STYLE)
+            render_resolved_chart(resolved, rows_result(data), _BOARD_STYLE)
 
     def test_temporal_x_with_bare_step_raises_pointing_at_time_unit(self):
         """Gate 4 (bare step) on a temporal axis: a bare number names no calendar cadence,
@@ -159,7 +161,7 @@ class TestRenderGate:
         chart = LineChart(id="line", type="line", x="year", y="value", style=style)
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         with pytest.raises(ChartDataError, match="ticks.step") as exc:
-            render_resolved_chart(resolved, data, _BOARD_STYLE)
+            render_resolved_chart(resolved, rows_result(data), _BOARD_STYLE)
         assert "ticks.time_unit" in str(exc.value)
 
     def test_ordinal_x_with_bare_step_raises_without_recommending_count(self):
@@ -176,7 +178,7 @@ class TestRenderGate:
         chart = BarChart(id="bar", type="bar", x="month", y="value", style=style)
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         with pytest.raises(ChartDataError, match="ticks.step") as exc:
-            render_resolved_chart(resolved, data, _BOARD_STYLE)
+            render_resolved_chart(resolved, rows_result(data), _BOARD_STYLE)
         assert "ticks.count" not in str(exc.value)
 
 
@@ -203,7 +205,7 @@ class TestEveryXAxisPathIsCovered:
         chart = BarChart(id="hbar", type="bar", x="team", y="value", style=style)
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         with pytest.raises(ChartDataError, match="ticks.step") as exc:
-            render_resolved_chart(resolved, data, _BOARD_STYLE)
+            render_resolved_chart(resolved, rows_result(data), _BOARD_STYLE)
         assert "orientation" in str(exc.value)
 
     def test_multi_measure_heatmap_x_with_step_raises(self):
@@ -223,4 +225,4 @@ class TestEveryXAxisPathIsCovered:
         )
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         with pytest.raises(ChartDataError, match="ticks.step"):
-            render_resolved_chart(resolved, data, _BOARD_STYLE)
+            render_resolved_chart(resolved, rows_result(data), _BOARD_STYLE)

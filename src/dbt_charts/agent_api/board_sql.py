@@ -30,7 +30,8 @@ from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.execute.cache_backend import QueryResultCache
 from dbt_charts.core.execute.cache_composition import CompositionError
 from dbt_charts.core.execute.executor import Executor
-from dbt_charts.core.execute.run import CACHE_REF_JINJA_RE
+from dbt_charts.core.execute.lookup import data_age
+from dbt_charts.core.execute.plan import CACHE_REF_JINJA_RE
 from dbt_charts.core.project import Project, board_identity
 from dbt_charts.core.validate import normalize_data_for_json
 
@@ -130,7 +131,7 @@ def execute_board_sql(
     now = datetime.now(UTC)
     refs: list[CacheRef] = []
     for name in cache_refs:
-        age = executor.data_age(name)
+        age = data_age(executor.ledger, name)
         assert age is not None  # executing the composing query ran each upstream
         as_of, hit = age
         refs.append(

@@ -58,7 +58,8 @@ from dbt_charts.core.render.warnings.pie_dominant_segment import (
     detect as detect_pie_dominant_segment,
 )
 
-from ..._lookup import all_miss
+from ..._lookup import collect_via_execute_query
+from ..._results import rows_result
 from .._svg_render import PINNED_RENDER_TIME
 
 # Bound before any test patches the module attribute, so the per-chart patch
@@ -118,39 +119,28 @@ def _make_chart(chart_id: str = "c1") -> Chart:
 def _executor_good_bad(good_rows, bad_exc):
     """Executor where q_good succeeds and q_bad raises.
 
-    Both ``execute_chart`` (the data-format walk's own lookup, keyed by
-    chart id — board_to_dict.py) and ``execute_query`` (the real svg draw's
-    lookup, keyed by query name — layout_sizing.build_chart_datasets) must
-    fail the same way: render() now draws the board for every format, not
-    just svg, so both call sites run regardless of the requested format.
+    Render reads each query through ``QueryResults``, which the pre-pass
+    collects from this mock's ``execute_query_result``.
     """
     mock = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-
-    def _execute_chart_side_effect(chart, variables):
-        if chart.id == "good":
-            return good_rows
-        raise bad_exc
 
     def _execute_query_side_effect(query_name, variables=None):
         if query_name == "q_good":
             return good_rows
         raise bad_exc
 
-    mock.execute_chart.side_effect = _execute_chart_side_effect
     mock.execute_query.side_effect = _execute_query_side_effect
-    mock._query_errors = {}
+    mock.execute_query_result.side_effect = lambda query_name, variables=None: (
+        rows_result(_execute_query_side_effect(query_name, variables))
+    )
     # render() now draws the board for every format (not just svg), and the
     # svg footer/timestamp code iterates this attribute directly — it must be
     # a real (empty) list, not the default MagicMock attribute.
     mock.cache_hit_ats = []
     mock.rendered_at = PINNED_RENDER_TIME
-    # An unconfigured MagicMock.lookup() returns a mock with no misses, which
-    # would route every query through render()'s synchronous cache-hit
-    # pre-pass (a plain, un-isolated `execute_query` call) instead of the
-    # mocked-out `run_misses` — raising bad_exc there, outside
-    # any chart-isolation try/except, rather than where each test means it to
-    # fire (the per-chart draw/data-walk calls below).
-    mock.lookup.side_effect = all_miss
+    # Collection reads each query through the mock's `execute_query`, so a
+    # failing query is collected as that chart's error rather than raised.
+    collect_via_execute_query(mock)
     return mock
 
 
@@ -164,14 +154,11 @@ def test_render_returns_render_result():
     board = _compile_two_chart_board()
 
     mock_executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    mock_executor.execute_chart.return_value = [{"value": 42}]
-    mock_executor.execute_query.return_value = [{"value": 42}]
-    mock_executor._query_errors = {}
+    mock_executor.execute_query_result.return_value = rows_result([{"value": 42}])
     mock_executor.cache_hit_ats = []
     mock_executor.rendered_at = PINNED_RENDER_TIME
 
     with (
-        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -197,7 +184,6 @@ def test_one_runtime_failure_other_charts_render():
     executor = _executor_good_bad([{"value": 42}], bad_exc)
 
     with (
-        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -220,7 +206,6 @@ def test_missing_csv_file_code_reaches_chart_error():
     executor = _executor_good_bad([{"value": 42}], bad_exc)
 
     with (
-        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -267,7 +252,6 @@ def test_chart_render_error_isolated():
     executor = _executor_good_bad([{"value": 42}], bad_exc)
 
     with (
-        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -287,7 +271,6 @@ def test_chart_jinja_error_isolated():
     executor = _executor_good_bad([{"value": 42}], bad_exc)
 
     with (
-        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -307,7 +290,6 @@ def test_chart_internal_exception_isolated():
     executor = _executor_good_bad([{"value": 42}], bad_exc)
 
     with (
-        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -331,7 +313,7 @@ def test_render_chart_item_error_collector():
     """render_chart_item appends to error_collector on failure."""
     _chart = _make_chart("c1")
     mock_exec = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    mock_exec.execute_chart.side_effect = ExecutionError("timeout")
+    mock_exec.execute_query.side_effect = ExecutionError("timeout")
 
     rs, ctx = resolve_style_and_context(get_theme_style())
     collector: list[Diagnostic] = []
@@ -358,7 +340,7 @@ def test_render_chart_item_error_diagnostic_carries_authored_path():
     click-to-source grammar a source map can key into."""
     _chart = _make_chart("c1")
     mock_exec = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    mock_exec.execute_chart.side_effect = ExecutionError("timeout")
+    mock_exec.execute_query.side_effect = ExecutionError("timeout")
 
     rs, ctx = resolve_style_and_context(get_theme_style())
     collector: list[Diagnostic] = []
@@ -426,7 +408,7 @@ rows:
     chart = board.charts["borrowed"]
 
     mock_exec = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    mock_exec.execute_chart.side_effect = ExecutionError("timeout")
+    mock_exec.execute_query.side_effect = ExecutionError("timeout")
     mock_exec.get_query_provenance.return_value = []
 
     rs, ctx = resolve_style_and_context(get_theme_style())
@@ -451,7 +433,7 @@ def test_render_chart_item_no_collector_still_returns_error_block():
     """Without error_collector, render_chart_item still returns an error SVG."""
     _chart = _make_chart("c1")
     mock_exec = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    mock_exec.execute_chart.side_effect = ExecutionError("timeout")
+    mock_exec.execute_query.side_effect = ExecutionError("timeout")
 
     rs, ctx = resolve_style_and_context(get_theme_style())
     svg, _height = render_chart_item(
@@ -743,10 +725,8 @@ def test_build_resolved_board_chart_data_error_degrades_to_board_error() -> None
     board = _compile_two_chart_board()
     mock_executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock_executor.rendered_at = PINNED_RENDER_TIME
-    mock_executor._query_errors = {}
 
     with (
-        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -766,10 +746,8 @@ def test_build_resolved_board_unexpected_exception_degrades_to_board_error() -> 
     board = _compile_two_chart_board()
     mock_executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock_executor.rendered_at = PINNED_RENDER_TIME
-    mock_executor._query_errors = {}
 
     with (
-        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -802,11 +780,9 @@ def test_render_dashboard_survives_build_resolved_board_chart_data_error(
     project = local_project(tmp_path)
     mock_executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock_executor.rendered_at = PINNED_RENDER_TIME
-    mock_executor._query_errors = {}
 
     with (
         patch("dbt_charts.core.board.Executor", return_value=mock_executor),
-        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -955,16 +931,11 @@ def _resolve_stage_executor(rows_by_query: dict[str, list[dict[str, object]]]):
     mock.execute_query.side_effect = lambda name, variables=None, **_kw: rows_by_query[
         name
     ]
-    mock.execute_chart.side_effect = lambda chart, variables: rows_by_query[
-        chart.query_name
-    ]
-    # Route every query through the (patched-out) parallel pre-pass rather than
-    # the synchronous cache-hit branch, so a failing query surfaces where it
-    # does in production: inside the sizing pass and the render walk, not in
-    # render()'s unguarded pre-execution loop.
-    mock.lookup.side_effect = all_miss
-    mock._query_errors = {}
-    mock.query_data_ages = {}
+    mock.execute_query_result.side_effect = lambda name, variables=None, **_kw: (
+        rows_result(rows_by_query[name])
+    )
+    # Collect through the mock's `execute_query_result`, as the real pre-pass does.
+    collect_via_execute_query(mock)
     mock.cache_hit_ats = []
     mock.rendered_at = PINNED_RENDER_TIME
     return mock
@@ -1251,9 +1222,8 @@ def test_query_execution_failure_still_isolates_through_the_real_pipeline() -> N
             raise QueryError("column 'nope' does not exist", "q_broken")
         return [{"value": 42}]
 
-    executor.execute_query.side_effect = _execute_query
-    executor.execute_chart.side_effect = lambda chart, variables: _execute_query(
-        chart.query_name
+    executor.execute_query_result.side_effect = lambda name, variables=None, **_kw: (
+        rows_result(_execute_query(name, variables))
     )
 
     result = _render_real_resolve(board, executor)
@@ -1350,7 +1320,7 @@ def _real_executor_with_failing_query(
     every ``execute_query`` invocation, across threads, sees the same failure.
     """
     from dbt_charts.cli.filesystem_project import FilesystemProject
-    from dbt_charts.core.execute import executor as _executor_mod
+    from dbt_charts.core.execute import run as _run_mod
     from dbt_charts.core.execute.adapters import build_adapter_registry
 
     _write_duckdb_project(tmp_path)
@@ -1368,7 +1338,7 @@ def _real_executor_with_failing_query(
         query_registry=result.query_registry,
     )
 
-    real_resolve_refs = _executor_mod.resolve_query_references
+    real_resolve_refs = _run_mod.resolve_query_references
 
     def _boom(query, *, all_queries, query_name=None):
         if query_name == "q_bad":
@@ -1384,7 +1354,7 @@ def test_query_execution_failure_is_recorded_at_resolve_not_swallowed(
     """A stored query failure surfaces as a chart resolve failure, not an
     empty-data resolve.
 
-    Runs the real parallel pre-pass so ``executor._query_errors['q_bad']``
+    Runs the real parallel pre-pass so ``executor.ledger.errors['q_bad']``
     holds the failure (both queries are cache misses, submitted together via
     ``run_misses``, as production does), then calls
     ``build_resolved_board`` directly — the same call
@@ -1392,7 +1362,7 @@ def test_query_execution_failure_is_recorded_at_resolve_not_swallowed(
     walk downstream to redundantly re-execute the query.
     """
     from dbt_charts.core.compile.models.board.resolved import ChartResolveFailure
-    from dbt_charts.core.execute import executor as _executor_mod
+    from dbt_charts.core.execute import run as _run_mod
     from dbt_charts.core.execute.collect import collect_all_query_names
 
     board, executor, _boom = _real_executor_with_failing_query(
@@ -1400,14 +1370,14 @@ def test_query_execution_failure_is_recorded_at_resolve_not_swallowed(
     )
 
     found = executor.lookup(collect_all_query_names(board), {})
-    with patch.object(_executor_mod, "resolve_query_references", side_effect=_boom):
-        executor.run_misses(found, {}, 8)
+    with patch.object(_run_mod, "resolve_query_references", side_effect=_boom):
+        executor.run_misses(found, 8)
 
-    assert "q_bad" in executor._query_errors
-    assert isinstance(executor._query_errors["q_bad"], JinjaError)
+    assert "q_bad" in executor.ledger.errors
+    assert isinstance(executor.ledger.errors["q_bad"], JinjaError)
 
     resolve_errors: dict[str, ChartResolveFailure] = {}
-    with patch.object(_executor_mod, "resolve_query_references", side_effect=_boom):
+    with patch.object(_run_mod, "resolve_query_references", side_effect=_boom):
         resolved, _cache = build_resolved_board(
             board, executor, {}, resolve_errors=resolve_errors
         )
@@ -1426,7 +1396,7 @@ def test_inactive_tab_query_failure_is_recorded_not_swallowed(tmp_path: Path) ->
     ``_require_resolved`` — a separate function with its own catch.
     """
     from dbt_charts.core.compile.models.board.resolved import ChartResolveFailure
-    from dbt_charts.core.execute import executor as _executor_mod
+    from dbt_charts.core.execute import run as _run_mod
 
     board, executor, _boom = _real_executor_with_failing_query(
         tmp_path,
@@ -1435,7 +1405,7 @@ def test_inactive_tab_query_failure_is_recorded_not_swallowed(tmp_path: Path) ->
     )
 
     resolve_errors: dict[str, ChartResolveFailure] = {}
-    with patch.object(_executor_mod, "resolve_query_references", side_effect=_boom):
+    with patch.object(_run_mod, "resolve_query_references", side_effect=_boom):
         resolved, _cache = build_resolved_board(
             board, executor, {}, resolve_errors=resolve_errors
         )
@@ -1479,14 +1449,14 @@ def test_category_color_planning_isolates_a_fresh_non_execution_error(
     to its own chart rather than abort the whole board resolution.
     """
     from dbt_charts.core.compile.models.board.resolved import ChartResolveFailure
-    from dbt_charts.core.execute import executor as _executor_mod
+    from dbt_charts.core.execute import run as _run_mod
 
     board, executor, _boom = _real_executor_with_failing_query(
         tmp_path, lambda: JinjaError("simulated bad template", "{{ boom }}")
     )
 
     resolve_errors: dict[str, ChartResolveFailure] = {}
-    with patch.object(_executor_mod, "resolve_query_references", side_effect=_boom):
+    with patch.object(_run_mod, "resolve_query_references", side_effect=_boom):
         resolved, _cache = build_resolved_board(
             board, executor, {}, resolve_errors=resolve_errors
         )
@@ -1505,7 +1475,7 @@ def test_emit_board_artifact_reports_failure_for_a_query_error(
     """
     from dbt_charts.agent_api.board_artifact import emit_board_artifact
     from dbt_charts.cli.filesystem_project import FilesystemProject
-    from dbt_charts.core.execute import executor as _executor_mod
+    from dbt_charts.core.execute import run as _run_mod
     from dbt_charts.core.execute.adapters import build_adapter_registry
 
     def _make_error() -> QueryError:
@@ -1516,7 +1486,7 @@ def test_emit_board_artifact_reports_failure_for_a_query_error(
     _board, _executor, _boom = _real_executor_with_failing_query(tmp_path, _make_error)
     project = FilesystemProject(tmp_path)
 
-    with patch.object(_executor_mod, "resolve_query_references", side_effect=_boom):
+    with patch.object(_run_mod, "resolve_query_references", side_effect=_boom):
         result = emit_board_artifact(
             tmp_path / "charts" / "board.yml",
             tmp_path / "out" / "board.artifact.json",
@@ -1572,7 +1542,6 @@ def test_missing_required_variables_stays_board_fatal(
 
     with (
         patch("dbt_charts.core.board.Executor", return_value=executor),
-        patch.object(Executor, "run_misses"),
     ):
         result = render_dashboard(
             board=InMemoryBoard(
@@ -1629,7 +1598,6 @@ def test_board_level_draw_failure_still_returns_data_format_payload() -> None:
     )
 
     with (
-        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -1662,7 +1630,6 @@ def test_data_format_walk_exception_becomes_board_error_not_raise() -> None:
         raise TypeError("Object of type X is not JSON serializable")
 
     with (
-        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -1691,7 +1658,6 @@ def test_draw_board_error_takes_priority_over_walk_board_error() -> None:
         raise TypeError("walk exploded")
 
     with (
-        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",

@@ -63,7 +63,7 @@ def collect_all_query_names(board: Board) -> set[str]:
     and by chart display text. Descends into nested boards.
 
     Names are not all keys in ``board.queries``: a nested board's own
-    ``queries:`` resolve through ``Executor.get_query``. Callers pass the result
+    ``queries:`` resolve through the plan stage's ``get_query``. Callers pass the result
     to ``Executor.lookup``.
     """
     names: set[str] = set(text_query_references([board.title, board.text]))

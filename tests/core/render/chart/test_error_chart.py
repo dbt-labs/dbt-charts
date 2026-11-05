@@ -37,6 +37,7 @@ from dbt_charts.core.render.engine import render_callout_card
 from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
 from dbt_charts.core.render.svg_utils import extract_svg_dimensions
 
+from ...._results import rows_result
 from ._callout_test_helpers import resolved_callout
 
 
@@ -87,7 +88,7 @@ def test_default_theme_callout_chart_resolves_tone_colors_in_svg(make_chart) -> 
         chart,
         resolved_style=resolve_style(get_theme_style("clarity")),
         chart_style_context=resolve_chart_style_context(get_theme_style("clarity")),
-        data=[],
+        data=rows_result([]),
         format="svg",
         width=220,
     )
@@ -118,7 +119,7 @@ def test_explicit_callout_chart_renders_wrapped_message(make_chart) -> None:
         chart,
         resolved_style=resolve_style(get_theme_style()),
         chart_style_context=resolve_chart_style_context(get_theme_style()),
-        data=[],
+        data=rows_result([]),
         format="svg",
         width=220,
     )
@@ -296,6 +297,9 @@ def test_chart_data_error_fallback_wraps_message(make_chart) -> None:
     chart = make_chart("kpi", x=None, y=None, value="value", label="Broken KPI")
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = [{"value": 1}, {"value": 2}]
+    executor.execute_query_result.return_value = rows_result(
+        executor.execute_query.return_value
+    )
 
     rs, ctx = resolve_style_and_context(get_theme_style())
     svg, height = render_chart_item(
@@ -489,6 +493,7 @@ def test_vl_chart_error_tile_renders_through_engine_with_code_hint_and_error_lin
         model="orders",
         available=["revenue", "region"],
     )
+    executor.execute_query_result.side_effect = executor.execute_query.side_effect
     rs, ctx = resolve_style_and_context(get_theme_style())
 
     svg, _ = render_chart_item(
@@ -524,6 +529,7 @@ def _failed_tile_svg(make_chart, theme: str, title: str | None) -> str:
         model="orders",
         available=["revenue", "region"],
     )
+    executor.execute_query_result.side_effect = executor.execute_query.side_effect
     rs, ctx = resolve_style_and_context(get_theme_style(theme))
     svg, _ = render_chart_item(
         resolve(chart, [], chart_style_context=ctx),
@@ -858,6 +864,7 @@ def test_a_render_stage_failure_draws_its_tile_where_the_band_puts_the_body(
         model="orders",
         available=["revenue"],
     )
+    executor.execute_query_result.side_effect = executor.execute_query.side_effect
     rs, ctx = resolve_style_and_context(get_theme_style())
     resolved = resolve(chart, [], chart_style_context=ctx)
     card_padding = float(rs.frame.card_padding)

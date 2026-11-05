@@ -47,6 +47,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.render.chart.vega_lite import render_chart
 
+from .._results import rows_result
+
 _DATA = [
     {"date": "2024-01-01", "revenue": 0},
     {"date": "2024-01-02", "revenue": 10000},
@@ -91,7 +93,7 @@ def test_board_level_axis_y_si_format_matches_chart_level_render():
         _line_chart("board_level"),
         board_style,
         board_ctx,
-        _DATA,
+        rows_result(_DATA),
         format="svg",
         width=400,
         height=250,
@@ -108,7 +110,7 @@ def test_board_level_axis_y_si_format_matches_chart_level_render():
         chart_local,
         chart_style,
         chart_ctx,
-        _DATA,
+        rows_result(_DATA),
         format="svg",
         width=400,
         height=250,
@@ -269,7 +271,13 @@ def test_board_family_axis_y_beats_board_axis_y():
     )
     style, ctx = resolve_style_and_context(get_theme_style(), patch)
     svg = render_chart(
-        _line_chart("fam"), style, ctx, _DATA, format="svg", width=400, height=250
+        _line_chart("fam"),
+        style,
+        ctx,
+        rows_result(_DATA),
+        format="svg",
+        width=400,
+        height=250,
     )
 
     assert not _dollar_labels(svg), (
@@ -468,7 +476,13 @@ def test_board_family_axis_x_beats_board_axis_x():
         query_name="q",
     )
     svg = render_chart(
-        chart, style, ctx, scatter_data, format="svg", width=400, height=250
+        chart,
+        style,
+        ctx,
+        rows_result(scatter_data),
+        format="svg",
+        width=400,
+        height=250,
     )
 
     assert not _dollar_labels(svg), (

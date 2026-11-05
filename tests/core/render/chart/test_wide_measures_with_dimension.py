@@ -31,6 +31,8 @@ from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_COLOR_NULL_SERIES
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
+from ...._results import rows_result
+
 _BOARD_STYLE, _ = resolve_style_and_context(get_theme_style("stark"))
 _CTX = resolve_chart_style_context(get_theme_style("stark"))
 
@@ -62,7 +64,9 @@ def _color_domains(node: Any) -> list[list[str]]:
 
 def _render(chart, data):
     rc = resolve(chart, data, chart_style_context=_CTX)
-    return rc, render_resolved_chart(rc, data, _BOARD_STYLE, width=480).payload
+    return rc, render_resolved_chart(
+        rc, rows_result(data), _BOARD_STYLE, width=480
+    ).payload
 
 
 class TestCompositeSeries:

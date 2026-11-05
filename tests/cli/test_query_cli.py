@@ -783,3 +783,85 @@ class TestQueryCliListVars:
         assert result.exit_code != 0
         assert "ERR-VARIABLE-VALUE-INVALID" in result.output
         assert "channel" in result.output
+
+
+_BQ_NATIVE_SQL = "select count(*) as n from `dbt-package-testing.zendesk.tickets`"
+_BQ_BOARD = """\
+title: Shop
+queries:
+  native:
+    sql: {native}
+  translated:
+    dialect: duckdb
+    sql: select count(*) as n from "dbt-package-testing".zendesk.tickets
+charts:
+  c:
+    query: native
+    type: table
+"""
+
+
+@pytest.fixture
+def bigquery_dbt_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A bare dbt project whose profile is BigQuery with a hyphenated project id."""
+    (tmp_path / "dbt_project.yml").write_text("name: shop\nprofile: shop\n")
+    (tmp_path / "profiles.yml").write_text(
+        "shop:\n"
+        "  target: dev\n"
+        "  outputs:\n"
+        "    dev:\n"
+        "      type: bigquery\n"
+        "      method: oauth\n"
+        "      project: dbt-package-testing\n"
+        "      dataset: zendesk\n"
+        "      threads: 1\n"
+    )
+    (tmp_path / "charts").mkdir()
+    (tmp_path / "charts" / "b.yml").write_text(
+        _BQ_BOARD.format(native=json.dumps(_BQ_NATIVE_SQL))
+    )
+    monkeypatch.setenv("DBT_PROFILES_DIR", str(tmp_path))
+    monkeypatch.delenv("DBT_TARGET", raising=False)
+    monkeypatch.delenv("DBT_PROFILE", raising=False)
+    return tmp_path
+
+
+class TestValidateLintsInTheProfileDialect:
+    """A dbt_profile source lints in its warehouse's dialect, not generic SQL."""
+
+    def _validate(self, project: Path, *args: str) -> Result:
+        return runner.invoke(
+            app, ["query", *args, "--validate", "--project-dir", str(project)]
+        )
+
+    @pytest.mark.parametrize("query", ["native", "translated"])
+    def test_board_query(self, bigquery_dbt_project: Path, query: str) -> None:
+        result = self._validate(bigquery_dbt_project, "charts/b.yml", query)
+        assert "No issues" in result.output, result.output
+        assert "WARN-PARSE-ERROR" not in result.output, result.output
+
+    def test_ad_hoc_sql(self, bigquery_dbt_project: Path) -> None:
+        result = self._validate(bigquery_dbt_project, "shop", _BQ_NATIVE_SQL)
+        assert "WARN-PARSE-ERROR" not in result.output, result.output
+        assert "No issues" in result.output
+
+    def test_explicit_dialect_still_wins(self, bigquery_dbt_project: Path) -> None:
+        result = self._validate(
+            bigquery_dbt_project, "shop", _BQ_NATIVE_SQL, "--dialect", "duckdb"
+        )
+        assert "WARN-PARSE-ERROR" in result.output, result.output
+
+    def test_ad_hoc_sql_without_a_profile_is_a_clean_error(
+        self,
+        bigquery_dbt_project: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        empty = tmp_path_factory.mktemp("no_profiles")
+        (bigquery_dbt_project / "profiles.yml").unlink()
+        monkeypatch.setenv("DBT_PROFILES_DIR", str(empty))
+        monkeypatch.setenv("HOME", str(empty))
+        result = self._validate(bigquery_dbt_project, "shop", _BQ_NATIVE_SQL)
+        assert result.exit_code == 1, result.output
+        assert "profiles.yml" in result.output
+        assert result.exception is None or isinstance(result.exception, SystemExit)

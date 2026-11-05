@@ -8,6 +8,7 @@ import pkgutil
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 import pytest
@@ -1287,7 +1288,9 @@ def _date_affix_board(
             "style": {"support": {"format": fmt}},
         }
     board = _board({"c": chart}, style_formats=aliases or None)
-    board["queries"] = {"t": {"columns": ["d", "n"], "values": [["2026-01-15", 1.0]]}}
+    board["queries"] = {
+        "t": {"columns": ["d", "n"], "values": [[date(2026, 1, 15), 1.0]]}
+    }
     return board
 
 

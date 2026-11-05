@@ -11,6 +11,8 @@ import pytest
 from dbt_charts.core.board import render_dashboard
 from dbt_charts.core.project import InMemoryBoard
 
+from .._results import rows_schema
+
 ROWS = [
     {"segment": "North America", "sessions": 40},
     {"segment": "Europe", "sessions": 25},
@@ -60,6 +62,7 @@ def _registry(rows: list[dict[str, Any]]) -> Mock:
     ok = Mock()
     ok.is_success = True
     ok.data = rows
+    ok.schema = rows_schema(ok.data)
     ok.column_descriptions = None
     ok.resolved_relations = None
     ok.truncated_reason = None

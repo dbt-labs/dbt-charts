@@ -329,8 +329,8 @@ fn same_box(a: Rect, b: Rect) -> bool {
 pub(crate) fn pin_plot_box<T>(
     whole: Rect,
     authored: Option<Padding>,
-    mut lay: impl FnMut(Padding) -> Result<(Rect, T), crate::diagnostic::Diagnostic>,
-) -> Result<T, crate::diagnostic::Diagnostic> {
+    mut lay: impl FnMut(Padding) -> Result<(Rect, T), diagnostic::Diagnostic>,
+) -> Result<T, diagnostic::Diagnostic> {
     let mut pad = authored.unwrap_or(Padding { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 });
     let (mut at, mut laid) = lay(pad)?;
     let mut spent = false;
@@ -598,7 +598,7 @@ mod tests {
 
     /// A chart whose value-axis labels reach `ink` px left of its plot: the plot starts at
     /// `padding.left + ink` and gives up that much width.
-    fn lay(ink: f64) -> impl FnMut(Padding) -> Result<(Rect, Padding), crate::diagnostic::Diagnostic> {
+    fn lay(ink: f64) -> impl FnMut(Padding) -> Result<(Rect, Padding), diagnostic::Diagnostic> {
         move |padding| {
             let x = padding.left + ink;
             Ok((Rect { x, y: padding.top + 6.0, width: 400.0 - x - padding.right - 10.0, height: 220.0 - padding.top - padding.bottom - 6.0 - 10.0 }, padding))

@@ -43,6 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from dbt_charts.core.compile.models.style.authored._base import (
     AreaMarkStylePatch,
     AxisGridThresholdStylePatch,
+    AxisGridTornBaselineStylePatch,
     AxisLabelStylePatch,
     AxisLineStylePatch,
     AxisTicksStylePatch,
@@ -119,6 +120,7 @@ __all__ = [
     "AreaChartStylePatch",
     "AreaMarkStylePatch",
     "AxisGridThresholdStylePatch",
+    "AxisGridTornBaselineStylePatch",
     "AxisLabelStylePatch",
     "AxisLineStylePatch",
     "AxisTicksStylePatch",

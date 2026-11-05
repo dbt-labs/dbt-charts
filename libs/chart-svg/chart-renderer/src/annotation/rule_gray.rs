@@ -3,7 +3,7 @@
 //! crosses, stepped louder off any gridline.
 
 use super::DataMark;
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::labels_expr::colors::{contrast, Color};
 
 /// The contrast a rule must hold against the canvas and the marks it crosses.

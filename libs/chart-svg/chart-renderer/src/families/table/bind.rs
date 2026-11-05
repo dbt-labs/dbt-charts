@@ -35,10 +35,10 @@ use super::BOARD_FORMATS;
 use super::NULL_DISPLAY;
 use super::PIVOT_LEAF_SEP;
 use super::VALID_FONT_WEIGHTS;
-use crate::codes;
+use column_types::{ColumnType, ColumnTypes};
+use diagnostic::codes;
 use crate::common::format_kpi_parts;
 use crate::common::KpiParts;
-use crate::common::format_numeric_auto;
 use crate::common::py_rstrip;
 use crate::common::tag_at;
 use crate::common::CellRow;
@@ -49,9 +49,9 @@ use crate::common::PartsOptions;
 use crate::common::ScaleTarget;
 use crate::common::ScaledColumn;
 use crate::common::{py_scalar_key, PyKey};
-use crate::diagnostic::py_repr;
-use crate::diagnostic::py_str;
-use crate::diagnostic::Diagnostic;
+use diagnostic::py_repr;
+use diagnostic::py_str;
+use diagnostic::Diagnostic;
 use crate::families::table_dates;
 use crate::Payload;
 use crate::TonesStyle;
@@ -835,18 +835,11 @@ pub(super) fn is_summary_role(role: RowRole) -> bool {
     matches!(role, RowRole::Summary | RowRole::Total)
 }
 
-/// A JSON number or numeric string
-/// coerces to `f64`, anything else (including `null`) is not numeric. JSON
-/// cannot encode NaN/±Infinity, so the `Value::Number` arm's own guard has
-/// no reachable input — every `Value::Number` this parses is finite. The
-/// string arm can still parse to a non-finite value (`"inf"`, `"1e999"`),
-/// which production's own guard (`math.isfinite(result)`) rejects too.
+/// A JSON number coerces to `f64`; anything else (a string whatever it reads
+/// like, `null`) is not numeric. JSON cannot encode NaN/±Infinity, so every
+/// number here is finite.
 pub(crate) fn coerce_numeric_cell(value: Option<&Value>) -> Option<f64> {
-    match value? {
-        Value::Number(n) => n.as_f64(),
-        Value::String(s) => s.trim().parse().ok().filter(|v: &f64| v.is_finite()),
-        _ => None,
-    }
+    value?.as_f64()
 }
 
 /// `row_role` names the query column that marks each row; a name the query
@@ -981,7 +974,7 @@ pub(super) fn format_numeric_col(
     let mut cells = format_magnitudes(rows, col, symbol_mode, row_roles)?;
     for (cell, row) in cells.iter_mut().zip(rows) {
         let raw = row.get(col.name.as_str());
-        if numeric_value(raw).is_some() || raw.is_none_or(Value::is_null) {
+        if coerce_numeric_cell(raw).is_some() || raw.is_none_or(Value::is_null) {
             continue;
         }
         let text = match raw {
@@ -1008,7 +1001,7 @@ pub(super) fn format_magnitudes(
     // Collect raw f64 values (None = null/missing).
     let raw: Vec<Option<f64>> = rows
         .iter()
-        .map(|r| numeric_value(r.get(col.name.as_str())))
+        .map(|r| coerce_numeric_cell(r.get(col.name.as_str())))
         .collect();
     // A column with no format prints the engine's `number`, which the board may
     // have redefined.
@@ -1194,25 +1187,23 @@ pub(super) fn format_magnitudes(
         .collect()
 }
 
-/// The number a lane cell paints: a number, or a string `float()` reads that is
-/// not date-shaped (`"2024"` is a date, never a magnitude).
-pub(super) fn numeric_value(raw: Option<&Value>) -> Option<f64> {
-    match raw {
-        Some(Value::Number(n)) => n.as_f64(),
-        Some(Value::String(s)) if !is_date_like_str(s) => s.trim().parse().ok(),
-        _ => None,
-    }
-}
-
-/// A number, any cell of a column with an
-/// authored `format:` (a null or blank one included), or a string `float()`
-/// reads.
+/// A number, or any cell of a column with an authored `format:` (a null or
+/// blank one included).
 pub(super) fn is_numeric_cell(col: &ColMeta, raw: Option<&Value>) -> bool {
     match raw {
         Some(Value::Bool(_)) => false,
         Some(Value::Number(_)) => true,
-        _ if col.cfg.format.is_some() => true,
-        Some(Value::String(s)) => s.trim().parse::<f64>().is_ok(),
+        _ => col.cfg.format.is_some(),
+    }
+}
+
+/// A non-blank cell of a declared `date` column, or a date-shaped cell of a
+/// `string` column: the text the date lane right-aligns and paints in the
+/// tabular face. Any other declared kind holds no date text.
+pub(crate) fn is_date_text(kind: &ColumnType, raw: Option<&Value>) -> bool {
+    match (kind, raw) {
+        (ColumnType::Date, Some(Value::String(s))) => !s.trim().is_empty(),
+        (ColumnType::String, Some(Value::String(s))) => is_date_like_str(s),
         _ => false,
     }
 }
@@ -1220,13 +1211,13 @@ pub(super) fn is_numeric_cell(col: &ColMeta, raw: Option<&Value>) -> bool {
 /// The cells painted in the tabular
 /// numeric stack.
 pub(super) fn wants_tabular_font(col: &ColMeta, raw: Option<&Value>) -> bool {
-    is_numeric_cell(col, raw) || is_date_like_cell(raw)
+    is_numeric_cell(col, raw) || is_date_text(&col.kind, raw)
 }
 
-/// A string in a right-aligned date lane that is neither date-like nor
-/// numeric, with no authored format (a timestamp, say): production paints it
-/// through the text branch in the body font, end-anchored at the lane's
-/// `number_x`, not as a lane cell.
+/// A string in a right-aligned date lane that is not date-like, with no
+/// authored format (a timestamp, say): it paints through the
+/// text branch in the body font, end-anchored at the lane's `number_x`, not
+/// as a lane cell.
 pub(super) fn is_plain_date_lane_cell(col: &ColMeta, raw: Option<&Value>) -> bool {
     col.is_date
         && matches!(raw, Some(Value::String(s)) if !s.trim().is_empty())
@@ -1265,7 +1256,7 @@ pub(super) fn format_temporal_cell(col: &ColMeta, s: &str) -> Result<Option<Stri
             col.name.as_str()
         )
     };
-    let parsed = table_dates::parse_temporal(s.trim());
+    let parsed = table_dates::parse_temporal(s.trim(), &col.kind);
     if matches!(parsed, Ok(None)) {
         return Ok(None);
     }
@@ -1311,7 +1302,7 @@ pub(super) fn format_kind_mismatch(fmt: &str, remedy: &str) -> Diagnostic {
 /// content). Every temporal string paints through `format_temporal_cell`; every
 /// other string (US/short/quarter/year-month/year shapes, and an impossible
 /// calendar date) falls through verbatim. A shape production would format that
-/// the port does not reach (a number under an authored format) errs by name.
+/// the port does not reach (a timestamp under an authored format) errs by name.
 pub(super) fn format_date_col(
     rows: &[serde_json::Map<String, Value>],
     col: &ColMeta,
@@ -1331,8 +1322,8 @@ pub(super) fn format_date_col(
                 Some(Value::String(s)) if !s.trim().is_empty() => {
                     let text = match format_temporal_cell(col, s)? {
                         // A timestamp is not `is_date_like`, so under an authored
-                        // format it takes the numeric lane's paint path
-                        // Which this lane never draws.
+                        // format it takes the numeric lane's paint path, which
+                        // this lane never draws.
                         Some(_) if authored.is_some() && !is_date_like_str(s) => {
                             return Err(Diagnostic::from(refuse(format!(
                             "the timestamp {s:?} under an authored format paints on the numeric \
@@ -1340,17 +1331,6 @@ pub(super) fn format_date_col(
                         ))));
                         }
                         Some(text) => text,
-                        None if authored.is_some() && s.trim().parse::<f64>().is_ok() => {
-                            // A year-shaped string stays verbatim under a strftime
-                            // spec; any other numeric-looking string would take the
-                            // numeric formatter production picks by spec kind.
-                            if !(table_dates::is_time_format(spec) && is_date_like_str(s)) {
-                                return Err(Diagnostic::from(refuse(format!(
-                                    "numeric cell {s:?} under an authored format is not supported"
-                                ))));
-                            }
-                            s.clone()
-                        }
                         None => s.clone(),
                     };
                     Ok(Cell {
@@ -1358,30 +1338,11 @@ pub(super) fn format_date_col(
                         ..Default::default()
                     })
                 }
-                // Invariant #11: a number mixed into an otherwise date-shaped
-                // lane (`is_date` fires when *any* cell is date-like) still
-                // carries a real value — production renders it on the numeric
-                // lane it establishes, not the null sentinel.
-                Some(Value::Number(n)) => {
-                    let v = n.as_f64().ok_or_else(|| {
-                        format!(
-                            "table: date column '{}' has non-finite number",
-                            col.name.as_str()
-                        )
-                    })?;
-                    if authored.is_some() {
-                        return Err(Diagnostic::from(refuse(format!(
-                            "numeric cell {v} under an authored format is not supported"
-                        ))));
-                    }
-                    let lanes = format_numeric_auto(v)?;
-                    Ok(Cell {
-                        text: lanes.number,
-                        suffix: (!lanes.suffix.is_empty()).then_some(lanes.suffix),
-                        full_suffix: (!lanes.measured_suffix.is_empty())
-                            .then_some(lanes.measured_suffix),
-                        ..Default::default()
-                    })
+                Some(other @ (Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_))) => {
+                    Err(Diagnostic::refused(format!(
+                        "table: date column '{}' holds {other}",
+                        col.name
+                    )))
                 }
                 _ => Ok(Cell {
                     text: NULL_DISPLAY.to_string(),
@@ -1465,12 +1426,6 @@ pub(super) fn iso_day(value: Option<&Value>) -> Option<String> {
     crate::time_axis::date_text_day(text)?;
     let (y, m, d) = crate::time_axis::parse_iso_date(text)?;
     Some(format!("{y:04}-{m:02}-{d:02}"))
-}
-
-/// The date-lane membership test: a string cell matching any recognized
-/// date shape (production's `is_date_like`, string arm).
-pub(crate) fn is_date_like_cell(value: Option<&Value>) -> bool {
-    matches!(value, Some(Value::String(s)) if is_date_like_str(s))
 }
 
 /// The leaf
@@ -1566,13 +1521,14 @@ pub(super) fn check_transpose_input(
 pub(super) fn transposed_inputs(
     resolved: &Value,
     rows: &[serde_json::Map<String, Value>],
+    types: &ColumnTypes,
 ) -> Result<(Value, Vec<serde_json::Map<String, Value>>), Diagnostic> {
     let mut flat = resolved.clone();
     flat["style"]["table"]["transpose"] = json!(false);
     let flat_resolved: Resolved =
         Deserialize::deserialize(&flat).map_err(|e| format!("table payload: {e}"))?;
     check_transpose_input(&flat_resolved.columns, rows)?;
-    let (cols, ..) = visible_columns(&flat_resolved, rows, &None)?;
+    let (cols, ..) = visible_columns(&flat_resolved, rows, types, &None)?;
     let row_roles = resolve_row_roles(rows, flat_resolved.row_role.as_deref());
     let cell_data = build_cell_data(rows, &cols, "all", &row_roles)?;
     let pivoted = cols
@@ -1598,6 +1554,12 @@ pub(super) fn transposed_inputs(
     flat["spanners"] = Value::Null;
     flat["row_role"] = Value::Null;
     Ok((flat, pivoted))
+}
+
+/// The declared types of `transposed_inputs`' rows: the labels and the values,
+/// already formatted as their source columns print them, are text.
+pub(super) fn transposed_types() -> ColumnTypes {
+    ColumnTypes::default().with("__metric__", ColumnType::String).with("__value__", ColumnType::String)
 }
 
 /// A `visible: false` entry must address a post-pivot column or a measure key
@@ -1801,8 +1763,8 @@ pub(super) fn validate_pivot_fields(
     Ok((effective_rows, effective_values))
 }
 
-/// A pivot dimension whose every non-null value is a
-/// calendar instant sorts chronologically, one whose every non-null value is a
+/// A pivot dimension whose every non-null value is a declared date or
+/// timestamp sorts chronologically, one whose every non-null value is a
 /// number sorts ascending, any other keeps query order (the author's lever for
 /// business-ordered categories and a trailing "Total"). Nulls sort last in a
 /// sorted dimension; an unsorted dimension beside a sorted one is keyed by
@@ -1810,20 +1772,26 @@ pub(super) fn validate_pivot_fields(
 pub(super) fn order_col_tuples(
     col_tuples: Vec<Vec<String>>,
     columns: &[String],
+    types: &ColumnTypes,
     data: &[serde_json::Map<String, Value>],
     tags: &[CellRow],
-) -> Vec<Vec<String>> {
-    let instant_of = |v: &Value| -> Option<(u32, u32, u32, u32, u32, u32, u32)> {
+) -> Result<Vec<Vec<String>>, Diagnostic> {
+    let instant_of = |v: &Value, declared: &ColumnType| -> Option<(u32, u32, u32, u32, u32, u32, u32)> {
         let Value::String(s) = v else { return None };
-        if let Ok(Some(moment)) = table_dates::parse_temporal(s) {
+        if *declared != ColumnType::String {
+            return Some(table_dates::parse_temporal(s, declared).ok()??.instant());
+        }
+        // A string column keeps today's shape rules: ISO text, then a labeled bucket.
+        if let Ok(Some(moment)) = table_dates::parse_iso(s) {
             return Some(moment.instant());
         }
         let (y, m, d) = crate::families::temporal::parse_bucket_string(s)?;
         Some((u32::try_from(y).ok()?, m, d, 0, 0, 0, 0))
     };
-    let dim_orders: Vec<Option<DimOrder>> = columns
+    let dim_orders = columns
         .iter()
         .map(|col| {
+            let declared = types.get(col)?;
             let mut non_null: Vec<(String, Value)> = Vec::new();
             for (i, row) in data.iter().enumerate() {
                 let tag = tags.get(i).and_then(|t| t.get(col));
@@ -1834,14 +1802,14 @@ pub(super) fn order_col_tuples(
                 }
             }
             if non_null.is_empty() {
-                return None;
+                return Ok(None);
             }
             let instants: Vec<_> = non_null
                 .iter()
-                .filter_map(|(t, v)| instant_of(v).map(|i| (t.clone(), i)))
+                .filter_map(|(t, v)| instant_of(v, declared).map(|i| (t.clone(), i)))
                 .collect();
             if instants.len() == non_null.len() {
-                return Some(DimOrder::Instant(instants.into_iter().collect()));
+                return Ok(Some(DimOrder::Instant(instants.into_iter().collect())));
             }
             let numbers: Vec<_> = non_null
                 .iter()
@@ -1850,12 +1818,12 @@ pub(super) fn order_col_tuples(
                     _ => None,
                 })
                 .collect();
-            (numbers.len() == non_null.len())
-                .then(|| DimOrder::Number(numbers.into_iter().collect()))
+            Ok((numbers.len() == non_null.len())
+                .then(|| DimOrder::Number(numbers.into_iter().collect())))
         })
-        .collect();
+        .collect::<Result<Vec<Option<DimOrder>>, Diagnostic>>()?;
     if dim_orders.iter().all(Option::is_none) {
-        return col_tuples;
+        return Ok(col_tuples);
     }
     let first_seen: Vec<std::collections::HashMap<String, usize>> = (0..columns.len())
         .map(|dim| {
@@ -1889,7 +1857,7 @@ pub(super) fn order_col_tuples(
     };
     let mut ordered = col_tuples;
     ordered.sort_by(compare);
-    ordered
+    Ok(ordered)
 }
 
 /// A pivot dimension value's label: the wire's `str()` text for a tagged cell (a
@@ -1929,6 +1897,7 @@ pub(super) fn py_key(column: &str, cell: &Value) -> Result<PyKey, Diagnostic> {
 /// (`order_col_tuples`).
 pub(super) fn pivot_table_data(
     data: &[serde_json::Map<String, Value>],
+    types: &ColumnTypes,
     tags: &[CellRow],
     row_dims: &[String],
     columns: &[String],
@@ -1987,7 +1956,7 @@ pub(super) fn pivot_table_data(
         }
     }
 
-    let col_tuples = order_col_tuples(col_tuples, columns, data, tags);
+    let col_tuples = order_col_tuples(col_tuples, columns, types, data, tags)?;
     let leaf_cols: Vec<String> = col_tuples
         .iter()
         .flat_map(|ct| pivot_leaf_keys(ct, values))
@@ -2084,10 +2053,20 @@ pub(super) fn pivot_table_data(
         build_pivot_levels(&col_tuples, columns.len(), n_measures)
     };
 
+    let mut pivoted_types = ColumnTypes::default();
+    for dim in row_dims.iter().chain(row_role.map(|role| role.to_string()).as_ref()) {
+        pivoted_types = pivoted_types.with(dim, types.get(dim)?.clone());
+    }
+    for col_tuple in &col_tuples {
+        for (leaf, measure) in pivot_leaf_keys(col_tuple, values).into_iter().zip(values) {
+            pivoted_types = pivoted_types.with(leaf, types.get(measure)?.clone());
+        }
+    }
     let mut col_order = row_dims.to_vec();
     col_order.extend(leaf_cols);
 
     Ok(PivotResult {
+        types: pivoted_types,
         rows: wide_rows,
         n_row_dims: row_dims.len(),
         col_order,
@@ -2254,6 +2233,7 @@ pub(super) fn build_cell_data(
 pub(super) fn visible_columns<'a>(
     r: &'a Resolved,
     rows: &'a [serde_json::Map<String, Value>],
+    types: &ColumnTypes,
     pivot: &'a Option<PivotResult>,
 ) -> Result<(Vec<ColMeta>, usize, Vec<Vec<PivotLevel>>), Diagnostic> {
     let row_role = r.row_role.as_deref();
@@ -2294,6 +2274,43 @@ pub(super) fn visible_columns<'a>(
         .case
         .as_deref()
         .ok_or("table: header requires table.header.font.case")?;
+
+    // `visible: false` is the sole mechanism that removes a column from the
+    // rendered set. Production applies this filter to the
+    // *post-pivot* column list too, then remaps every group-span descriptor
+    // onto the surviving leaves — hiding a leaf narrows
+    // the span that covers it instead of leaving a phantom column in its
+    // index math.
+    // `pivot` itself stays untouched — its col_order Strings are still
+    // borrowed by every ColMeta::name in `cols` below — so the post-filter
+    // shape is tracked in these two standalone locals instead of mutating
+    // PivotResult in place.
+    // Measure keys a pivot fanned onto its leaves (`_addressed_via_expansion`).
+    let mut fanned_measures: BTreeSet<&str> = BTreeSet::new();
+    if let Some(p) = &pivot {
+        let values: &[String] = &p.values;
+        let leaves = col_names.iter().skip(p.n_row_dims).copied();
+        if p.levels.is_empty() {
+            let measure = values.first().filter(|m| r.columns.contains_key(*m));
+            if let Some(m) = measure {
+                if leaves.clone().any(|leaf| !r.columns.contains_key(leaf)) {
+                    fanned_measures.insert(m);
+                }
+            }
+        } else {
+            for leaf in leaves {
+                let last = leaf.rsplit(PIVOT_LEAF_SEP).next().unwrap_or(leaf);
+                if r.columns.contains_key(last) {
+                    fanned_measures.insert(last);
+                } else if !values.iter().any(|v| v == last) && values.len() == 1 {
+                    if let Some(m) = values.first().filter(|m| r.columns.contains_key(*m)) {
+                        fanned_measures.insert(m);
+                    }
+                }
+            }
+        }
+    }
+    check_visible_addressable(chart_id, &r.columns, rows, row_role, &fanned_measures)?;
 
     // Build column metadata.
     let cols: Vec<ColMeta> = col_names
@@ -2391,7 +2408,8 @@ pub(super) fn visible_columns<'a>(
             }
 
             // A pivot leaf is built at render time, so its align verdict is too:
-            // `classify_date_column_align` (right iff every non-null value is date-like).
+            // `classify_date_column_align` (right for a declared `date` column).
+            let kind = types.get(name)?;
             if is_leaf && cfg.align.is_none() {
                 let mut values = rows
                     .iter()
@@ -2400,7 +2418,7 @@ pub(super) fn visible_columns<'a>(
                         !v.is_null() && !matches!(v, Value::String(s) if s.trim().is_empty())
                     })
                     .peekable();
-                if values.peek().is_some() && values.all(|v| is_date_like_cell(Some(v))) {
+                if values.peek().is_some() && values.all(|v| is_date_text(kind, Some(v))) {
                     cfg.align = Some("right".to_string());
                 }
             }
@@ -2420,22 +2438,18 @@ pub(super) fn visible_columns<'a>(
             // a text or date cell beside them is painted on its own terms.
             let is_numeric = rows
                 .iter()
-                .any(|row| numeric_value(row.get(name)).is_some());
+                .any(|row| coerce_numeric_cell(row.get(name)).is_some());
 
-            // Date lane (invariant #11): a non-numeric column with date-like
-            // content that is right-aligned, or that mixes in a cell the
-            // numeric lane would take (an authored `format:` makes every cell
-            // one). Trusts the resolved `align` verdict as
-            // *whether* the column right-aligns; a plain right-aligned text
-            // column with no date-shaped content (e.g. a pie attachment's
-            // percent-string column) never earns this lane.
-            let has_date_like = rows.iter().any(|row| is_date_like_cell(row.get(name)));
-            let has_lane_cell = rows.iter().any(|row| {
-                let v = row.get(name);
-                !is_date_like_cell(v)
-                    && (cfg.format.is_some()
-                        || matches!(v, Some(Value::String(s)) if s.trim().parse::<f64>().is_ok()))
-            });
+            // Date lane (invariant #11): a non-numeric declared `date` column
+            // that is right-aligned, or that mixes in a cell the numeric lane
+            // would take (an authored `format:` makes every cell one). Trusts
+            // the resolved `align` verdict as *whether* the column
+            // right-aligns; a plain right-aligned text column (e.g. a pie
+            // attachment's percent-string column) never earns this lane.
+            let has_date_like = rows.iter().any(|row| is_date_text(kind, row.get(name)));
+            let has_lane_cell = rows
+                .iter()
+                .any(|row| !is_date_text(kind, row.get(name)) && cfg.format.is_some());
             let is_date = !is_numeric
                 && has_date_like
                 && (cfg.align.as_deref() == Some("right") || has_lane_cell);
@@ -2471,6 +2485,7 @@ pub(super) fn visible_columns<'a>(
                 name: name.to_string(),
                 header,
                 cfg,
+                kind: kind.clone(),
                 is_numeric,
                 is_date,
                 is_day,
@@ -2479,42 +2494,6 @@ pub(super) fn visible_columns<'a>(
         })
         .collect::<Result<Vec<_>, String>>()?;
 
-    // `visible: false` is the sole mechanism that removes a column from the
-    // rendered set. Production applies this filter to the
-    // *post-pivot* column list too, then remaps every group-span descriptor
-    // onto the surviving leaves — hiding a leaf narrows
-    // the span that covers it instead of leaving a phantom column in its
-    // index math.
-    // `pivot` itself stays untouched — its col_order Strings are still
-    // borrowed by every ColMeta::name in `cols` below — so the post-filter
-    // shape is tracked in these two standalone locals instead of mutating
-    // PivotResult in place.
-    // Measure keys a pivot fanned onto its leaves (`_addressed_via_expansion`).
-    let mut fanned_measures: BTreeSet<&str> = BTreeSet::new();
-    if let Some(p) = &pivot {
-        let values: &[String] = &p.values;
-        let leaves = col_names.iter().skip(p.n_row_dims).copied();
-        if p.levels.is_empty() {
-            let measure = values.first().filter(|m| r.columns.contains_key(*m));
-            if let Some(m) = measure {
-                if leaves.clone().any(|leaf| !r.columns.contains_key(leaf)) {
-                    fanned_measures.insert(m);
-                }
-            }
-        } else {
-            for leaf in leaves {
-                let last = leaf.rsplit(PIVOT_LEAF_SEP).next().unwrap_or(leaf);
-                if r.columns.contains_key(last) {
-                    fanned_measures.insert(last);
-                } else if !values.iter().any(|v| v == last) && values.len() == 1 {
-                    if let Some(m) = values.first().filter(|m| r.columns.contains_key(*m)) {
-                        fanned_measures.insert(m);
-                    }
-                }
-            }
-        }
-    }
-    check_visible_addressable(chart_id, &r.columns, rows, row_role, &fanned_measures)?;
     let visible_flags: Vec<bool> = cols.iter().map(|c| c.cfg.visible != Some(false)).collect();
     let (pivot_n_row_dims, pivot_levels_visible): (usize, Vec<Vec<PivotLevel>>) = match &pivot {
         Some(p) => {
@@ -2574,6 +2553,7 @@ pub(super) fn visible_columns<'a>(
 pub(super) fn pivot_for(
     r: &Resolved,
     query_rows: &[serde_json::Map<String, Value>],
+    types: &ColumnTypes,
     cell_text: &[CellRow],
 ) -> Result<Option<PivotResult>, Diagnostic> {
     let row_role = r.row_role.as_deref();
@@ -2594,21 +2574,23 @@ pub(super) fn pivot_for(
                 return Err("table: a chart-root link on a pivot table not supported".into());
             }
             Ok(Some(pivot_table_data(
-                query_rows, cell_text, &row_dims, columns, &values, row_role,
+                query_rows, types, cell_text, &row_dims, columns, &values, row_role,
             )?))
         }
         _ => Ok(None),
     }
 }
 
-/// The rows the table lays out: the pivot's reshaped rows, else the query's.
+/// The rows the table lays out and their declared types: the pivot's
+/// reshaped rows, else the query's.
 pub(super) fn table_rows<'a>(
     query_rows: &'a [serde_json::Map<String, Value>],
+    query_types: &'a ColumnTypes,
     pivot: &'a Option<PivotResult>,
-) -> &'a [serde_json::Map<String, Value>] {
+) -> (&'a [serde_json::Map<String, Value>], &'a ColumnTypes) {
     match pivot {
-        Some(p) => &p.rows,
-        None => query_rows,
+        Some(p) => (&p.rows, &p.types),
+        None => (query_rows, query_types),
     }
 }
 
@@ -2625,17 +2607,18 @@ pub(super) fn bind_chart(src: Source) -> Result<Chart, Diagnostic> {
         Deserialize::deserialize(src.resolved).map_err(|e| format!("table payload: {e}"))?;
     check_row_role(&r, src.rows)?;
     if r.style.table.transpose && !src.rows.is_empty() {
-        let (resolved, rows) = transposed_inputs(src.resolved, src.rows)?;
+        let (resolved, rows) = transposed_inputs(src.resolved, src.rows, src.types)?;
         return bind_chart(Source {
             resolved: &resolved,
             rows: &rows,
+            types: &transposed_types(),
             ..src
         });
     }
 
-    let pivot = pivot_for(&r, src.rows, src.cell_text)?;
-    let rows = table_rows(src.rows, &pivot);
-    let (cols, pivot_n_row_dims, pivot_levels_visible) = visible_columns(&r, rows, &pivot)?;
+    let pivot = pivot_for(&r, src.rows, src.types, src.cell_text)?;
+    let (rows, types) = table_rows(src.rows, src.types, &pivot);
+    let (cols, pivot_n_row_dims, pivot_levels_visible) = visible_columns(&r, rows, types, &pivot)?;
     let pivoted = pivot.is_some();
     let th = &r.style.table;
     let row_roles = resolve_row_roles(rows, r.row_role.as_deref());
@@ -2828,6 +2811,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let chart = bind_chart(Source {
         resolved: &payload.resolved,
         rows: &payload.rows,
+        types: &payload.schema.rows,
         cell_text: &payload.cell_text,
         formats: payload
             .board_style

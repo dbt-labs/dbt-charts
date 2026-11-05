@@ -6,30 +6,170 @@ Purpose: Read the per-render memo, the error memo and the persistent result cach
     failures)``. Nothing here executes a query; the
     caller applies the hits and runs the misses.
 
+    A render's mutable state is one ``Ledger``: the memo, the error memo, the
+    data ages and the truncations. ``lookup_and_record`` and ``run.settle`` are
+    its only writers.
+
 Entry Points:
-    - lookup(probes, ...) -> Lookup
+    - lookup(planned, ...) -> Lookup
+    - lookup_and_record(ctx, ledger, planned, ...) -> Lookup
+    - limit_rows(result, query_name, seed_reason) -> (ResultRows, TruncationInfo | None)
 """
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+import json
+import logging
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from dbt_charts.core.compile import config
+from dbt_charts.core.compile.models.board.normalized import VariableValues
+from dbt_charts.core.compile.models.cache import CachePolicy
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.diagnostics.execution import QueryError
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_QUERY_INTERRUPTED,
+    ERR_WAREHOUSE_AUTH,
+    ERR_WAREHOUSE_CONNECTION,
+)
+from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
 from dbt_charts.core.diagnostics.registry import REGISTRY, ErrorCode
+from dbt_charts.core.execute.adapters.base import ResolvedRelation
 from dbt_charts.core.execute.cache_backend import (
+    BrowsableResultCache,
     CachedQueryFailure,
     CacheRows,
     QueryResultCache,
     ResultRows,
     TruncatedReason,
+    TruncationInfo,
+)
+from dbt_charts.core.execute.duckdb_cache import compute_relevant_variables
+from dbt_charts.core.execute.plan import (
+    CacheKey,
+    ExecContext,
+    PlannedQuery,
+    source_version,
 )
 
-CacheKey = tuple[str, str, str]
+_logger = logging.getLogger(__name__)
+
 MemoKey = tuple[str, str, str, str]
-LimitEnforcer = Callable[[ResultRows, str, TruncatedReason | None], ResultRows]
+# (query name, data_as_of, policy, served by the persistent cache).
+DataAge = tuple[str, datetime, CachePolicy, bool]
+
+
+@dataclass
+class Ledger:
+    """Everything one render accumulates about its queries.
+
+    The memo is keyed by content *plus* the asking query's resolved policy
+    (``memo_key``): its slots are warmed from the persistent store, so a
+    content-only key would let one query's policy answer a sibling's read.
+    """
+
+    memo: dict[MemoKey, ResultRows] = field(default_factory=dict)
+    errors: dict[str, Exception] = field(default_factory=dict)
+    provenance: dict[str, list[ResolvedRelation]] = field(default_factory=dict)
+    # Query name -> why its result was cut by execution.max_rows or
+    # max_result_bytes this render; read by the query-result-truncated warning.
+    truncations: dict[str, TruncationInfo] = field(default_factory=dict)
+    # One record per query completion. Fresh executions carry the instant the
+    # rows came back; cache hits the entry's written_at. All records drive the
+    # snapshot expires_at; the cache-hit ones drive the "data as of" stamp.
+    ages: list[DataAge] = field(default_factory=list)
+    warehouse_hit_ats: list[datetime] = field(default_factory=list)
+
+
+def cache_hit_ats(ledger: Ledger) -> list[datetime]:
+    """Write-timestamps of every persistent-cache hit this render served.
+
+    Empty when every query ran fresh. The board-chrome freshness stamp reads
+    this to disclose data age; the selection policy lives with the stamp in
+    ``render/boards.py``.
+    """
+    return [at for _name, at, _policy, is_hit in ledger.ages if is_hit]
+
+
+def warehouse_cache_hit_ats(ledger: Ledger) -> list[datetime]:
+    """The ``cache_hit_ats`` whose cache key folds no content version, so their
+    data may have changed since the write."""
+    return list(ledger.warehouse_hit_ats)
+
+
+def data_age(ledger: Ledger, query_name: str) -> tuple[datetime, bool] | None:
+    """When *query_name*'s rows were produced, and whether the persistent cache
+    served them, as of its latest completion in this render; None when it has
+    not completed."""
+    for name, data_as_of, _policy, is_hit in reversed(ledger.ages):
+        if name == query_name:
+            return data_as_of, is_hit
+    return None
+
+
+def query_data_ages(ledger: Ledger) -> list[tuple[str, datetime, CachePolicy]]:
+    """Per-query (name, data_as_of, policy) for every query that completed.
+
+    Consumed by the snapshot writer to compute ``expires_at`` anchored on the
+    actual data age rather than the render timestamp.
+    """
+    return [(name, at, policy) for name, at, policy, _ in ledger.ages]
+
+
+def limit_rows(
+    result: ResultRows,
+    query_name: str,
+    seed_reason: TruncatedReason | None = None,
+) -> tuple[ResultRows, TruncationInfo | None]:
+    """The one chokepoint rows pass through before the memo or the store sees
+    them: the "never cache an oversized result" guarantee lives here.
+
+    ``seed_reason`` carries a truncation signal already detected upstream:
+    - ``"max_rows"``: adapter-return or cache-ref fetch already detected row
+      truncation (``QueryResult.truncated_reason`` or the post-fetchmany slice).
+    - ``"max_result_bytes"``: warm-cache path propagates a byte-truncation
+      signal from a prior write so the warning still fires on a cache hit
+      where the data is already under the current byte ceiling.
+    - ``None``: no upstream signal; both row- and byte-checks run from scratch.
+    The row-count check is defense-in-depth for adapter paths (fetch already
+    bounded); it is the primary check on the warm-cache path, where a lowered
+    ceiling could otherwise serve more rows than the new limit allows.
+
+    Byte size is checked by accumulating each row's serialized size
+    incrementally and cutting the moment the running total crosses
+    max_result_bytes — never by serializing the whole result to measure it,
+    which would defeat the point on an oversized result.
+
+    Returns the kept rows and, when anything was cut or seeded, the truncation.
+    """
+    reason: TruncatedReason | None = seed_reason
+    rows = result.rows
+    max_rows = config.resolve_max_rows()
+    if len(rows) > max_rows:
+        rows = rows[:max_rows]
+        if reason is None:
+            reason = "max_rows"
+
+    max_bytes = config.resolve_max_result_bytes()
+    kept: CacheRows = []
+    running_bytes = 0
+    for row in rows:
+        row_bytes = len(json.dumps(row, default=str))
+        if running_bytes + row_bytes > max_bytes:
+            reason = "max_result_bytes"
+            break
+        kept.append(row)
+        running_bytes += row_bytes
+
+    truncation = (
+        None
+        if reason is None
+        else TruncationInfo(
+            query_name=query_name, kept_row_count=len(kept), reason=reason
+        )
+    )
+    return ResultRows(kept, result.schema), truncation
 
 
 def memo_key(query: AnyQuery, cache_key: CacheKey) -> MemoKey:
@@ -58,26 +198,14 @@ def memo_key(query: AnyQuery, cache_key: CacheKey) -> MemoKey:
 
 
 @dataclass(frozen=True)
-class Probe:
-    """One query to look up, already keyed by the caller."""
-
-    name: str
-    query: AnyQuery
-    cache_key: CacheKey
-    # False for a call-level no-store or a `cache: false` policy.
-    use_store: bool
-    # Whether a stored hit may be refreshed by an incremental tail. Evaluated only
-    # on an incremental SQL store hit, since answering needs a source lookup.
-    tailable: Callable[[], bool]
-
-
-@dataclass(frozen=True)
 class CachedRows:
     """Rows served without executing: from the memo, or from the store."""
 
     result: ResultRows
     # When the store wrote them; None for rows this render's memo already held.
     written_at: datetime | None
+    # Set when the ceilings cut the stored rows, or the write recorded a cut.
+    truncation: TruncationInfo | None = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +216,7 @@ class Tail:
     # None when the prior rows are empty: there is nothing to resume from.
     watermark: Any | None  # type-state: explicit_any — MAX watermark; dialect-typed
     written_at: datetime
+    truncation: TruncationInfo | None = None
 
 
 @dataclass(frozen=True)
@@ -95,10 +224,20 @@ class Miss:
     """A query that must run. ``tail`` is set when the store held prior rows an
     incremental refresh can extend."""
 
-    name: str
-    query: AnyQuery
-    cache_key: CacheKey
+    planned: PlannedQuery
     tail: Tail | None = None
+
+    @property
+    def name(self) -> str:
+        return self.planned.name
+
+    @property
+    def query(self) -> AnyQuery:
+        return self.planned.query
+
+    @property
+    def cache_key(self) -> CacheKey:
+        return self.planned.cache_key
 
 
 @dataclass(frozen=True)
@@ -112,7 +251,7 @@ class Failure:
 
 @dataclass(frozen=True)
 class Lookup:
-    """Every probed query lands in exactly one of the three."""
+    """Every planned query lands in exactly one of the three."""
 
     hits: Mapping[str, CachedRows]
     misses: tuple[Miss, ...]
@@ -180,23 +319,22 @@ def _memoized_error(stored: Exception, query_name: str) -> QueryError:
 
 
 def lookup(
-    probes: Sequence[Probe],
+    planned: Sequence[PlannedQuery],
     *,
     memo: Mapping[MemoKey, ResultRows],
     errors: Mapping[str, Exception],
     result_cache: QueryResultCache | None,
-    enforce_limits: LimitEnforcer,
     force_refresh: bool = False,
     resume_incremental: bool,
 ) -> Lookup:
-    """Partition *probes* into hits, misses and replayed failures.
+    """Partition *planned* queries into hits, misses and replayed failures.
 
     Order per query: the per-render memo (the render's identity guarantee — it
     serves regardless of cache settings), then the error memo, then one probe of
-    the persistent store, gated on ``Probe.use_store`` and the query's own policy.
+    the persistent store, gated on ``PlannedQuery.use_store`` and the query's own policy.
     The store read passes the reader's ttl, because the key excludes the policy;
     both halves of the policy are enforced here, the only place the store is
-    read. A stored hit passes through *enforce_limits* so a ceiling lowered since
+    read. A stored hit passes through ``limit_rows`` so a ceiling lowered since
     the write still applies.
 
     ``force_refresh`` reads nothing: every query is a plain miss.
@@ -212,10 +350,10 @@ def lookup(
     hits: dict[str, CachedRows] = {}
     misses: list[Miss] = []
     failures: dict[str, Failure] = {}
-    for probe in probes:
-        name, query, cache_key = probe.name, probe.query, probe.cache_key
+    for query_plan in planned:
+        name, query, cache_key = query_plan.name, query_plan.query, query_plan.cache_key
         if force_refresh:
-            misses.append(Miss(name, query, cache_key))
+            misses.append(Miss(query_plan))
             continue
         # The memo precedes the error memo: the parallel pass writes rows into the
         # memo before its persistent write-through, which can raise and land an
@@ -228,8 +366,8 @@ def lookup(
         if name in errors:
             failures[name] = Failure(_memoized_error(errors[name], name))
             continue
-        if not (probe.use_store and query.cache.enabled and result_cache):
-            misses.append(Miss(name, query, cache_key))
+        if not (query_plan.use_store and query.cache.enabled and result_cache):
+            misses.append(Miss(query_plan))
             continue
         outcome = result_cache.get(*cache_key, ttl=query.cache.ttl_timedelta)
         if isinstance(outcome, CachedQueryFailure):
@@ -238,18 +376,18 @@ def lookup(
             if outcome.error_code is not None and outcome.error_code not in (
                 REGISTRY.codes(level="error")
             ):
-                misses.append(Miss(name, query, cache_key))
+                misses.append(Miss(query_plan))
             else:
                 failures[name] = Failure(
                     _replayed_query_error(outcome, name), outcome.failed_at
                 )
             continue
         if outcome is None:
-            misses.append(Miss(name, query, cache_key))
+            misses.append(Miss(query_plan))
             continue
         # A ceiling lowered since the write must not serve the old, larger set;
         # the write's own truncation signal rides along as the seed.
-        enforced = enforce_limits(
+        enforced, truncation = limit_rows(
             ResultRows(outcome.rows, outcome.schema), name, outcome.truncated_reason
         )
         if (
@@ -257,15 +395,166 @@ def lookup(
             # isinstance, not truthiness: the cache-key fold uses the same gate.
             and isinstance(query.incremental, str)
             and resume_incremental
-            and probe.tailable()
+            and query_plan.tailable
         ):
             try:
                 watermark = _compute_watermark(enforced.rows, query.incremental, name)
             except QueryError as exc:
                 failures[name] = Failure(exc)
                 continue
-            tail = Tail(enforced.rows, watermark, outcome.written_at)
-            misses.append(Miss(name, query, cache_key, tail))
+            tail = Tail(enforced.rows, watermark, outcome.written_at, truncation)
+            misses.append(Miss(query_plan, tail))
             continue
-        hits[name] = CachedRows(enforced, outcome.written_at)
+        hits[name] = CachedRows(enforced, outcome.written_at, truncation)
     return Lookup(hits, tuple(misses), failures)
+
+
+def lookup_and_record(
+    ctx: ExecContext,
+    ledger: Ledger,
+    planned: Sequence[PlannedQuery],
+    *,
+    resume_incremental: bool,
+    force_refresh: bool = False,
+) -> Lookup:
+    """Run ``lookup`` over *ledger* and the context's store, recording what it served.
+
+    A store hit warms the memo under the asking query's policy-scoped slot,
+    names the board's use of the entry, and records the hit's data age (it
+    powers both the snapshot ``expires_at`` and the "data as of" stamp). A
+    replayed store failure records its age too. An incremental miss's prior
+    rows were served from the store as well, so they record theirs.
+    """
+    found = lookup(
+        planned,
+        memo=ledger.memo,
+        errors=ledger.errors,
+        result_cache=ctx.result_cache,
+        force_refresh=force_refresh,
+        resume_incremental=resume_incremental,
+    )
+    by_name = {query_plan.name: query_plan for query_plan in planned}
+    for name, hit in found.hits.items():
+        if hit.written_at is not None:
+            query_plan = by_name[name]
+            ledger.memo[memo_key(query_plan.query, query_plan.cache_key)] = hit.result
+            _record_store_hit(ctx, ledger, query_plan, hit.written_at)
+            if hit.truncation is not None:
+                ledger.truncations[name] = hit.truncation
+    for miss in found.misses:
+        if miss.tail is not None:
+            _record_store_hit(ctx, ledger, by_name[miss.name], miss.tail.written_at)
+            if miss.tail.truncation is not None:
+                ledger.truncations[miss.name] = miss.tail.truncation
+    for name, failure in found.failures.items():
+        if failure.failed_at is not None:
+            ledger.ages.append(
+                (name, failure.failed_at, by_name[name].query.cache, False)
+            )
+    return found
+
+
+def _record_store_hit(
+    ctx: ExecContext, ledger: Ledger, planned: PlannedQuery, written_at: datetime
+) -> None:
+    if isinstance(ctx.result_cache, BrowsableResultCache):
+        ctx.result_cache.note_use(
+            *planned.cache_key, cache_board_slug(ctx), planned.name
+        )
+    ledger.ages.append((planned.name, written_at, planned.query.cache, True))
+    if not source_version(ctx, planned.query):
+        ledger.warehouse_hit_ats.append(written_at)
+
+
+def cache_board_slug(ctx: ExecContext) -> str:
+    """The board identity a cache entry records: its file slug, or, for a board
+    with no file (a preview from YAML text), its compiled id behind a ``/`` that
+    no file slug starts with, so a draft titled like a stored board never lists
+    or serves as that board."""
+    return ctx.board_slug if ctx.board_slug is not None else f"/{ctx.board.id}"
+
+
+def cache_outcome(
+    ctx: ExecContext,
+    query_name: str,
+    query: AnyQuery,
+    outcome: ResultRows | Exception,
+    variables: VariableValues | None,
+    cache_key: CacheKey,
+    truncated_reason: TruncatedReason | None = None,
+) -> None:
+    """Write this query's outcome — its rows or its error — to the cache.
+
+    One entry per key, so the write is the whole reconciliation: a success
+    (zero-row included) replaces a stale error, and an error replaces rows
+    the reader can no longer use, with no "clear the other store"
+    bookkeeping. Nothing about expiry is stored — freshness is derived on
+    read (see the cache_backend module docstring).
+
+    An error never displaces live rows — the backends enforce that, not
+    this caller. Within one execute_query the error write is only reached
+    after the read missed, but renders run concurrently over a shared key,
+    so a worker whose query timed out could otherwise wipe rows another
+    worker had just computed successfully.
+
+    ``truncated_reason`` persists the truncation fact alongside the rows it
+    describes, so a later warm read (``lookup``) can reconstruct the same
+    warning a fresh execution would, instead of losing it on a cache hit.
+    """
+    if not ctx.result_cache:
+        return
+
+    source_hash, query_hash, variables_hash = cache_key
+    ctx.result_cache.put(
+        source_hash,
+        query_hash,
+        variables_hash,
+        outcome,
+        board_slug=cache_board_slug(ctx),
+        query_name=query_name,
+        source_name=(
+            query.source
+            if is_sql_query(query) and isinstance(query.source, str)
+            else ""
+        ),
+        truncated_reason=truncated_reason,
+        variables=compute_relevant_variables(query, variables),
+    )
+
+
+def cache_failure(
+    ctx: ExecContext,
+    query_name: str,
+    query: AnyQuery,
+    variables: VariableValues | None,
+    cache_key: CacheKey,
+    exception: Exception,
+) -> None:
+    """Cache a query failure (if a backend is configured). Never raises.
+
+    DbtChartsError (policy / compile errors) are not cached: they are fast
+    to re-derive, always deterministic, and caching them would discard the
+    structured error code and message that callers check.
+
+    A cache write that fails must not replace the real query error the
+    caller is about to raise — hence the swallow, which the rows path
+    (whose failures the parallel prefetch records) deliberately lacks.
+    """
+    if isinstance(exception, DbtChartsError) and not isinstance(
+        exception, ExecutionError
+    ):
+        return
+    # Says nothing about the query: it was stopped, not answered.
+    # Credential and connection failures are fixed outside the board, so
+    # the next render must run the query again rather than replay them.
+    if isinstance(exception, DbtChartsError) and (
+        exception.code
+        in (ERR_QUERY_INTERRUPTED, ERR_WAREHOUSE_AUTH, ERR_WAREHOUSE_CONNECTION)
+    ):
+        return
+    try:
+        cache_outcome(ctx, query_name, query, exception, variables, cache_key)
+    except Exception:  # noqa: BLE001 — a failure-cache write may raise anything; it must not mask the query's own error
+        _logger.debug(
+            "Failed to cache query failure for '%s'", query_name, exc_info=True
+        )

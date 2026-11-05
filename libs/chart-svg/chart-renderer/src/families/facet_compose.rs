@@ -74,7 +74,7 @@
 //! callback for `layoutHeaders`'s column-footer pass, `grid.js:268`) —
 //! never a per-column value, despite painting once per column.
 
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 
 use scene::{Attrs, Node, Role};
 use serde_json::Value;
@@ -785,7 +785,7 @@ fn stack_chrome_above(frame_top: f64, chrome: Option<&FacetChrome>, panel_h: f64
 
 /// `svg`, a composed facet, with the tiles its panels painted with defined once at the root:
 /// a panel draws no `<defs>` of its own, so a tile is not repeated under one id per panel.
-pub(crate) fn with_pattern_defs(svg: String, patterns: &crate::pattern::PatternPlan) -> Result<String, crate::diagnostic::Diagnostic> {
+pub(crate) fn with_pattern_defs(svg: String, patterns: &crate::pattern::PatternPlan) -> Result<String, diagnostic::Diagnostic> {
     let Some(defs) = patterns.finish(true)? else { return Ok(svg) };
     let open_end = svg.find("<svg").and_then(|at| svg[at..].find('>').map(|end| at + end + 1)).expect("a composed facet is an <svg> document");
     Ok(format!("{}{}{}", &svg[..open_end], print::print(&[defs]), &svg[open_end..]))

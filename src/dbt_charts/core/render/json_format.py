@@ -16,7 +16,7 @@ from dbt_charts.core.compile.models.board.normalized import (
     VariableValues,
 )
 from dbt_charts.core.diagnostics import Diagnostic
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP, board_to_dict
 
 
@@ -46,7 +46,7 @@ def _json_default(obj: Any) -> Any:
 
 def render_board_json(
     board: Board,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     error_collector: list[Diagnostic] | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
@@ -59,7 +59,7 @@ def render_board_json(
     marks capped items with ``rows_truncated: {head, tail, total}``.
     """
     return json.dumps(
-        board_to_dict(board, executor, variables, error_collector, max_rows_per_query),
+        board_to_dict(board, results, variables, error_collector, max_rows_per_query),
         default=_json_default,
         indent=2,
     )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 from pathlib import Path
 from typing import Any
 
@@ -114,7 +115,13 @@ def test_duckdb_only_project_passes_and_skips_connection_without_flag(
     report = run_doctor(root, False)
 
     assert report.success is True
-    assert [c.status for c in report.checks if c.code != "connection"] == ["pass"] * 4
+    assert [(c.code, c.status) for c in report.checks if c.code != "connection"] == [
+        ("install", "pass"),
+        ("project", "pass"),
+        ("profiles", "pass"),
+        ("manifest", "skip"),
+        ("adapter", "pass"),
+    ]
     (connection,) = _checks(report, "connection")
     assert connection.status == "skip"
     assert connection.source is None
@@ -539,3 +546,97 @@ def test_a_coded_driver_error_during_the_probe_fails_the_connection_check(
     (connection,) = _checks(report, "connection")
     assert connection.status == "fail"
     assert "pinned" in connection.message
+
+
+def _manifest(root: Path, mtime: int, profiles_mtime: int | None = None) -> None:
+    manifest = root / "target" / "manifest.json"
+    manifest.parent.mkdir()
+    manifest.write_text("{}")
+    os.utime(manifest, (mtime, mtime))
+    if profiles_mtime is not None:
+        os.utime(root / "profiles.yml", (profiles_mtime, profiles_mtime))
+
+
+def test_manifest_older_than_profiles_warns_with_parse_hint(tmp_path: Path) -> None:
+    root = _project(tmp_path, {"w": _DBT_PROFILE_SOURCE}, profiles=_DUCKDB_PROFILE)
+    _manifest(root, mtime=1_000, profiles_mtime=2_000)
+
+    (check,) = _checks(run_doctor(root, with_warehouse=False), "manifest")
+
+    assert check.status == "warn"
+    assert "profiles.yml" in check.message
+    assert str(root / "target" / "manifest.json") in check.message
+    assert check.hint is not None and "dbt parse" in check.hint
+
+
+@pytest.mark.parametrize("profiles_mtime", [1_000, 500])
+def test_manifest_as_new_as_profiles_passes(
+    tmp_path: Path, profiles_mtime: int
+) -> None:
+    root = _project(tmp_path, {"w": _DBT_PROFILE_SOURCE}, profiles=_DUCKDB_PROFILE)
+    _manifest(root, mtime=1_000, profiles_mtime=profiles_mtime)
+
+    (check,) = _checks(run_doctor(root, with_warehouse=False), "manifest")
+
+    assert check.status == "pass"
+
+
+def test_manifest_check_skips_without_a_manifest(tmp_path: Path) -> None:
+    root = _project(tmp_path, {"w": _DBT_PROFILE_SOURCE}, profiles=_DUCKDB_PROFILE)
+
+    (check,) = _checks(run_doctor(root, with_warehouse=False), "manifest")
+
+    assert check.status == "skip"
+
+
+def test_manifest_check_honors_dbt_target_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _project(tmp_path, {"w": _DBT_PROFILE_SOURCE}, profiles=_DUCKDB_PROFILE)
+    manifest = root / "build" / "manifest.json"
+    manifest.parent.mkdir()
+    manifest.write_text("{}")
+    os.utime(manifest, (1_000, 1_000))
+    os.utime(root / "profiles.yml", (2_000, 2_000))
+    monkeypatch.setenv("DBT_TARGET_PATH", "build")
+
+    (check,) = _checks(run_doctor(root, with_warehouse=False), "manifest")
+
+    assert check.status == "warn"
+
+
+def test_manifest_check_uses_a_sources_own_target_path(tmp_path: Path) -> None:
+    root = _project(
+        tmp_path,
+        {"w": {**_DBT_PROFILE_SOURCE, "target_path": "build"}},
+        profiles=_DUCKDB_PROFILE,
+    )
+    _manifest(root, mtime=3_000, profiles_mtime=2_000)
+    stale = root / "build" / "manifest.json"
+    stale.parent.mkdir()
+    stale.write_text("{}")
+    os.utime(stale, (1_000, 1_000))
+
+    (check,) = _checks(run_doctor(root, with_warehouse=False), "manifest")
+
+    assert check.status == "warn"
+    assert str(stale) in check.message
+
+
+def test_manifest_check_passes_on_equal_mtimes_with_accurate_wording(
+    tmp_path: Path,
+) -> None:
+    root = _project(tmp_path, {"w": _DBT_PROFILE_SOURCE}, profiles=_DUCKDB_PROFILE)
+    _manifest(root, mtime=1_000, profiles_mtime=1_000)
+
+    (check,) = _checks(run_doctor(root, with_warehouse=False), "manifest")
+
+    assert "at least as new as" in check.message
+
+
+def test_manifest_check_skips_without_a_dbt_project(tmp_path: Path) -> None:
+    root = _project(tmp_path, {"local": _DUCKDB_SOURCE}, dbt=False)
+
+    (check,) = _checks(run_doctor(root, with_warehouse=False), "manifest")
+
+    assert check.status == "skip"

@@ -10,6 +10,7 @@ use d3rs::sankey::{Align, Sankey};
 use d3rs::shape::link_horizontal;
 use d3rs::stack::{Offset, Order};
 use d3rs::symbol::SymbolType;
+use crate::scene_path::scene_path;
 use d3rs::vega_schemes;
 use minijinja::value::{Object, ObjectRepr, Rest, Value, ValueKind};
 use minijinja::{Error, State};
@@ -212,7 +213,7 @@ fn sankey_link(args: &[Value]) -> Result<Value, Error> {
         (read(&["source", "x1"])?, read(&["y0"])?),
         (read(&["target", "x0"])?, read(&["y1"])?),
     );
-    Ok(Value::from(print::path_d(&path)))
+    Ok(Value::from(print::path_d(&scene_path(&path))))
 }
 
 // ── Stack ───────────────────────────────────────────────────────────────────
@@ -298,7 +299,7 @@ fn symbol(args: &[Value]) -> Result<Value, Error> {
              (filled) or plus, times, triangle2, asterisk, square2, diamond2 (stroked)"
         ))
     })?;
-    Ok(Value::from(print::path_d(&kind.draw(non_negative_or(SITE, "size", size.as_ref(), 64.0)?))))
+    Ok(Value::from(print::path_d(&scene_path(&kind.draw(non_negative_or(SITE, "size", size.as_ref(), 64.0)?)))))
 }
 
 // ── Format ──────────────────────────────────────────────────────────────────

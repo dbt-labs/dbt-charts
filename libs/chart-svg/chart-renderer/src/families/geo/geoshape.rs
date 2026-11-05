@@ -17,6 +17,7 @@
 //! `bind` holds what the data decides; `layout` fits it to the cell and returns
 //! nodes, which `render` prints between the frame and the title.
 
+use crate::scene_path::scene_path;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -27,13 +28,13 @@ use serde_json::{json, Map, Value};
 use super::js_cell;
 use super::projection;
 use super::source::{decode, Decoded, GeoSource};
-use crate::codes;
+use diagnostic::codes;
 use crate::common::{
     category_scale_for, series_color, CategoryColorScale, FieldLabels, FormatSlot, Font, ScaleTarget,
     Stroke, TitleStyle,
 };
 use crate::contract;
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::color_scale::ContinuousColor;
 use d3rs::js_math::js_number_string;
 use crate::families::heatmap::{category_legend_entries, CategoryScale};
@@ -297,6 +298,7 @@ fn affixed_label(value: Option<(&str, String)>, lookup: Option<(&str, String)>) 
 
 /// The features a lookup column matches and how each is painted.
 fn bind_choropleth(
+    types: &column_types::ColumnTypes,
     r: &Resolved,
     features: &[Feature],
     keys: &[String],
@@ -327,7 +329,7 @@ fn bind_choropleth(
         .then(|| display_text::slug_to_text(value_field).map(|t| r.field_labels.get(value_field).cloned().unwrap_or(t)))
         .transpose()?;
     let affixed = r.style.tooltip_format.has_affix();
-    let own_type = crate::families::temporal::infer_vega_type(rows, value_field);
+    let own_type = crate::families::temporal::infer_vega_type(types, rows, value_field)?;
     let mut overlay = Vec::new();
     let coloring = if own_type == crate::families::temporal::VegaType::Quantitative {
         let gradient = r
@@ -425,7 +427,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         if resolved.value_field.as_deref().is_none_or(|f| payload.rows.iter().any(|row| js_cell::has_ink(row.get(f)))) {
             return Err(payload.painted_no_marks());
         }
-        return Err(crate::refuse!("a json geo source with no geo_property and no value ink draws a blank chart that is not supported").into());
+        return Err(diagnostic::refuse!("a json geo source with no geo_property and no value ink draws a blank chart that is not supported").into());
     }
     let decoded = decode(&source, geometries)?;
     resolved.mark()?;
@@ -436,7 +438,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         (Some(lookup), value) if !rows.is_empty() && (value.is_some() || has_color_channel) => {
             let value = value.as_deref().ok_or("geoshape: value_field absent (resolver required)")?;
             let keys = join_keys(&source, &decoded, &resolved.geo_join_key)?;
-            Some(bind_choropleth(&resolved, &decoded.features, &keys, rows, (lookup, value))?)
+            Some(bind_choropleth(&payload.schema.rows, &resolved, &decoded.features, &keys, rows, (lookup, value))?)
         }
         _ => None,
     };
@@ -560,7 +562,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     let (plot_w, plot_h) = (m.plot_w, m.plot_h);
     let path = fitter.at((plot_w, plot_h))?.into_path();
     let paths: Vec<Option<PathData>> =
-        bound.decoded.features.iter().map(|f| path.path(&GeoJson::Feature(f.clone()))).collect::<Result<_, _>>()?;
+        bound.decoded.features.iter().map(|f| path.path(&GeoJson::Feature(f.clone())).map(|d| d.map(|d| scene_path(&d)))).collect::<Result<_, _>>()?;
 
     let clip_ids = ["geo-clip-0", "geo-clip-1"].map(|id| format!("{id}-{}", contract::scoped_id(&r.id)));
     let link_attrs = bound.href.as_deref().map(|url| {
@@ -669,7 +671,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     )?;
     let laid = layout(&bound, &frame, &title, fonts)?;
     for diagnostic in laid.diagnostics {
-        crate::diagnostic::warn(diagnostic);
+        diagnostic::warn(diagnostic);
     }
     let mut svg = String::new();
     frame.open(&mut svg);

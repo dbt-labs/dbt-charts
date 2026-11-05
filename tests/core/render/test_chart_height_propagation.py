@@ -537,7 +537,7 @@ class TestAlignColsHeights:
                 ("chart_short", 600.0): 200.0,
             },
             pre_resolved={"chart_tall": mock_tall, "chart_short": mock_short},
-            executor=executor,
+            results=executor,
             variables={"v": 1},
             resolved_style=_rs,
             chart_style_context=_ctx,

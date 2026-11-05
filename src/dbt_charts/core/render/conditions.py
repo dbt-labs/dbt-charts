@@ -32,7 +32,7 @@ def eval_bool_condition(
     expr: bool | str | SingleRowBoolProbe | None,
     if_none: bool,
     current_values: dict[str, Any],
-    executor: ChartDataProvider | None,
+    results: ChartDataProvider | None,
     context: str,
 ) -> bool:
     """Evaluate a bool/str/probe condition and return the result.
@@ -48,7 +48,7 @@ def eval_bool_condition(
         expr: The condition value (from YAML or a compiled model field).
         if_none: Value to return when expr is None.
         current_values: Current variable values for Jinja resolution.
-        executor: Required when expr is a SingleRowBoolProbe.
+        results: Required when expr is a SingleRowBoolProbe.
         context: Human-readable label for error messages (e.g. "Variable 'region' disabled").
 
     Raises:
@@ -57,11 +57,11 @@ def eval_bool_condition(
     """
     if not isinstance(expr, SingleRowBoolProbe):
         return eval_literal_condition(expr, if_none, current_values)
-    if executor is None:
+    if results is None:
         raise ValueError(
             f"{context} query '{expr.query}' requires an executor but none was provided"
         )
-    rows = executor.execute_query(expr.query, current_values)
+    rows = results.execute_query(expr.query, current_values)
     if not rows:
         raise ValueError(
             f"{context} query '{expr.query}' returned no rows; expected exactly 1"
@@ -82,7 +82,7 @@ def eval_bool_condition(
 def evaluate_visible(
     expr: bool | str | SingleRowBoolProbe | None,
     current_values: dict[str, Any],
-    executor: ChartDataProvider | None,
+    results: ChartDataProvider | None,
     context: str = "layout item",
 ) -> bool:
     """Return True when the layout item should be rendered.
@@ -90,14 +90,14 @@ def evaluate_visible(
     Args:
         expr: The visible value from the layout item.
         current_values: Current variable values for Jinja resolution.
-        executor: Required when expr is a SingleRowBoolProbe.
+        results: Required when expr is a SingleRowBoolProbe.
         context: Human-readable label for error messages (e.g. "layout item 'kpi_a'").
     """
     return eval_bool_condition(
         expr,
         True,
         current_values,
-        executor,
+        results,
         f"{context} visible",
     )
 

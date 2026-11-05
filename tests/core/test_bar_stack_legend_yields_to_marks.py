@@ -53,6 +53,8 @@ from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.chart.mark_extents import all_marks_degenerate
 from dbt_charts.core.render.chart.rendering import render_chart_item
 
+from .._results import rows_result
+
 _CTX = resolve_chart_style_context(get_theme_style())
 _RESOLVED_STYLE = resolve_style(get_theme_style())
 
@@ -294,6 +296,7 @@ def test_author_narrowed_compact_columns_is_read_by_the_classifier() -> None:
     data = _stacked_data(12)
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
+    executor.execute_query_result.return_value = rows_result(data)
     svg, _height = render_chart_item(
         resolved,
         executor,
@@ -382,6 +385,7 @@ def test_twenty_five_series_at_narrow_card_draws_marks_with_real_height() -> Non
     resolved = _resolved(25, _NARROW_WIDTH)
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
+    executor.execute_query_result.return_value = rows_result(data)
 
     svg, _height = render_chart_item(
         resolved,
@@ -410,6 +414,7 @@ def test_wide_measure_stacked_bar_at_narrow_card_draws_marks_with_real_height() 
     resolved = _resolved_wide(measure_count, _NARROW_WIDTH)
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
+    executor.execute_query_result.return_value = rows_result(data)
 
     svg, _height = render_chart_item(
         resolved,
@@ -436,6 +441,7 @@ def test_fourteen_series_at_floor_width_draws_marks_with_real_height() -> None:
     assert resolved.legend.visible is False
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
+    executor.execute_query_result.return_value = rows_result(data)
 
     svg, _height = render_chart_item(
         resolved,

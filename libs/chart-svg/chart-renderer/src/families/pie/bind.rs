@@ -6,11 +6,11 @@ use serde_json::Value;
 
 use super::{Attachment, LegendConfig, Mode, Parts, Resolved};
 use crate::common::{category_color, category_ink, category_scale_for, row_str, CategoryColorScale};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
+use crate::families::table::bind::is_date_text;
 use crate::families::legend::{
     fold_symbol_limit, legend_title_text, resolve_legend_values, VEGA_LEGEND_SYMBOL_LIMIT,
 };
-use crate::families::table::bind::is_date_like_cell;
 use crate::label_template::{Scope, Template};
 use crate::number_locale::d3_format;
 use crate::Payload;
@@ -119,7 +119,7 @@ pub fn bind(payload: &Payload, mode: Mode) -> Result<Bound<'_>, Diagnostic> {
         Mode::FullTable => Some(r.full_attachment.as_ref().ok_or("pie: the full-table mode has no attachment")?),
     };
     let attached = chosen.map(|a| bind_attached(payload, &r, a, &thetas, total)).transpose()?;
-    let wheel = bind_wheel(&r, &payload.rows, &thetas, total, mode.parts())?;
+    let wheel = bind_wheel(&r, &payload.rows, &payload.schema.rows, &thetas, total, mode.parts())?;
     let faded = payload.is_placeholder && attached.is_none();
     Ok(Bound { payload, r, thetas, total, wheel, attached, faded })
 }
@@ -133,7 +133,7 @@ pub fn bind_empty(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     if legend_is_drawn(&r) {
         return Err("pie: a visible legend over an empty result set is not ported".into());
     }
-    let wheel = bind_wheel(&r, &payload.rows, &[], 0.0, Mode::Direct.parts())?;
+    let wheel = bind_wheel(&r, &payload.rows, &payload.schema.rows, &[], 0.0, Mode::Direct.parts())?;
     Ok(Bound { payload, r, thetas: Vec::new(), total: 0.0, wheel, attached: None, faded: false })
 }
 
@@ -154,6 +154,7 @@ pub(super) fn color_field_of(r: &Resolved) -> Option<&str> {
 fn bind_wheel(
     r: &Resolved,
     rows: &[serde_json::Map<String, Value>],
+    types: &column_types::ColumnTypes,
     thetas: &[f64],
     total: f64,
     parts: Parts,
@@ -164,11 +165,11 @@ fn bind_wheel(
     // The board's plan for this field, if it binds one (#7167): the arc fill defers to it
     // over the local `slice.index % palette.len()`.
     let category_scale = color_field.and_then(|cf| category_scale_for(&r.category_colors, cf));
-    let legend = if parts.legend { plan_legend(r, rows, category_scale)? } else { None };
+    let legend = if parts.legend { plan_legend(r, rows, types, category_scale)? } else { None };
     let labels =
         if parts.labels { bind_labels(r, rows, thetas, total, color_field, category_scale)? } else { Vec::new() };
     let center = bind_center(r, total)?.filter(|_| parts.total);
-    let slices = bind_slices(r, rows, thetas, total, color_field, category_scale)?;
+    let slices = bind_slices(r, rows, types, thetas, total, color_field, category_scale)?;
     Ok(Wheel { slices, labels, center, legend })
 }
 
@@ -189,6 +190,7 @@ fn bind_center(r: &Resolved, total: f64) -> Result<Option<String>, String> {
 fn bind_slices(
     r: &Resolved,
     rows: &[serde_json::Map<String, Value>],
+    types: &column_types::ColumnTypes,
     thetas: &[f64],
     total: f64,
     color_field: Option<&str>,
@@ -218,7 +220,7 @@ fn bind_slices(
             };
             let aria = value_title
                 .as_deref()
-                .map(|value_title| pie_row_aria(r, rows, thetas, total, value_title, idx))
+                .map(|value_title| pie_row_aria(r, rows, types, thetas, total, value_title, idx))
                 .transpose()?;
             Ok(Slice { fill, aria, href: row_href(r, rows, idx)? })
         })
@@ -324,6 +326,7 @@ fn pie_legend_title_case(legend: &LegendConfig) -> Result<&str, String> {
 fn pie_row_aria(
     r: &Resolved,
     payload_rows: &[serde_json::Map<String, Value>],
+    types: &column_types::ColumnTypes,
     thetas: &[f64],
     total: f64,
     value_title: &str,
@@ -331,7 +334,7 @@ fn pie_row_aria(
 ) -> Result<String, String> {
     let header = r.identity_field.as_ref().map(|f| identity_string(&payload_rows[idx], Some(f)));
     let value = thetas[idx];
-    let extra = crate::families::tooltip_extra::rows_for(&r.tooltip, &payload_rows[idx])?;
+    let extra = crate::families::tooltip_extra::rows_for(&r.tooltip, &payload_rows[idx], types)?;
     let tt = crate::contract::PieTooltip {
         header: header.as_deref(),
         share: value / total,
@@ -397,6 +400,7 @@ fn identity_string(row: &serde_json::Map<String, Value>, field: Option<&String>)
 fn plan_legend(
     r: &Resolved,
     rows: &[serde_json::Map<String, Value>],
+    types: &column_types::ColumnTypes,
     category_scale: Option<&CategoryColorScale>,
 ) -> Result<Option<LegendPlan>, String> {
     let Some(color_field) = color_field_of(r).filter(|_| r.legend.visible) else {
@@ -435,12 +439,13 @@ fn plan_legend(
 
     // The scale's domain: the color values in row order, each once; a null
     // draws no entry.
+    let color_kind = types.get(color_field)?;
     let mut domain: Vec<&str> = Vec::new();
     for row in rows {
         match row.get(color_field) {
             None | Some(Value::Null) => {}
             Some(value @ Value::String(text)) => {
-                if is_date_like_cell(Some(value)) {
+                if color_kind.is_temporal() || is_date_text(color_kind, Some(value)) {
                     return Err("pie: a legend over a date-like color field (temporal scale) is not ported".into());
                 }
                 if !domain.contains(&text.as_str()) {
@@ -653,6 +658,12 @@ fn bind_table(
         total,
         category_scale,
     )?;
+    let declared = |field: &str| payload.schema.get(None, field).cloned();
+    let table_types = column_types::ColumnTypes::default()
+        .with("swatch", column_types::ColumnType::String)
+        .with("share", column_types::ColumnType::String)
+        .with("name", identity_field.map_or(Ok(column_types::ColumnType::String), |f| declared(f))?)
+        .with("value", declared(theta_field)?);
     let table_payload = Payload {
         cell_text: Vec::new(),
         max_template_output_bytes: None,
@@ -672,6 +683,7 @@ fn bind_table(
         interactive_controls: false,
         link_context: payload.link_context.clone(),
         datasets: None,
+        schema: crate::payload_schema::PayloadSchema { rows: table_types, ..Default::default() },
         geometries: None,
         measuring: false,
         title_shift: crate::TitleShift::default(),

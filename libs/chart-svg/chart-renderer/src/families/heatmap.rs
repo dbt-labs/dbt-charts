@@ -8,9 +8,9 @@
 pub mod bind;
 pub mod layout;
 
-use crate::codes;
+use diagnostic::codes;
 use crate::contract::HeatmapValue;
-use crate::diagnostic::{warn, Diagnostic};
+use diagnostic::{warn, Diagnostic};
 use crate::constants::axis::GRADIENT_NICE_TICK_COUNT;
 use crate::layout::Rect;
 use std::collections::HashMap;
@@ -429,7 +429,7 @@ pub(crate) struct HeaderFmt<'a> {
 }
 
 impl<'a> HeaderFmt<'a> {
-    pub(crate) fn of(rows: &[serde_json::Map<String, Value>], field: &str, axis: &'a AxisStyle) -> Result<Self, String> {
+    pub(crate) fn of(types: &column_types::ColumnTypes, rows: &[serde_json::Map<String, Value>], field: &str, axis: &'a AxisStyle) -> Result<Self, String> {
         let domain = first_appearance(rows, field);
         let strs: Vec<&str> = domain.iter().map(String::as_str).collect();
         let time = crate::time_axis::TimeAxis::over(&domain);
@@ -437,7 +437,7 @@ impl<'a> HeaderFmt<'a> {
         Ok(Self {
             time,
             tu,
-            standard_date: crate::families::temporal::x_values_are_standard_dates(&strs),
+            standard_date: crate::families::temporal::x_is_standard_date(types, field, &strs)?,
             format: crate::families::temporal::AuthoredTimeFormat::parse(
                 "heatmap",
                 crate::families::temporal::grain_format(&axis.grain_formats, tu),
@@ -679,6 +679,7 @@ pub(crate) fn cell_nodes(
 /// the text `null`. A date-like field that is not a date (typed ordinal) takes
 /// Vega's `ordinal` range instead: the `blues` ramp sampled at `(i + 1) / (n + 1)`.
 pub(crate) fn color_categories(
+    types: &column_types::ColumnTypes,
     r: &HeatmapResolved,
     rows: &[serde_json::Map<String, Value>],
 ) -> Result<CategoryScale, String> {
@@ -706,7 +707,7 @@ pub(crate) fn color_categories(
         domain.insert(0, NULL_CATEGORY.to_string());
     }
     // A pattern names the categories itself, so the ordinal ramp is only the unpatterned default.
-    let fills: Vec<crate::pattern::Paint> = if infer_vega_type(rows, &r.color) == VegaType::Ordinal && !r.patterns.is_active() {
+    let fills: Vec<crate::pattern::Paint> = if infer_vega_type(types, rows, &r.color)? == VegaType::Ordinal && !r.patterns.is_active() {
         (0..domain.len())
             .map(|i| crate::pattern::Paint::Color(d3rs::color::rgb_text(d3rs::color::quantize_sample(&d3rs::vega_schemes::BLUES, domain.len(), i))))
             .collect()
@@ -847,18 +848,24 @@ pub(crate) fn date_cell_day(cell: &Value) -> Option<f64> {
 
 /// A time scale's domain is the raw date extent (it is never niced); a column
 /// that is all one date has a zero-width domain. The flag is [`date_column_aware`].
-pub(crate) fn date_color_extent(rows: &[serde_json::Map<String, Value>], field: &str) -> Result<(f64, f64, bool), String> {
+pub(crate) fn date_color_extent(types: &column_types::ColumnTypes, rows: &[serde_json::Map<String, Value>], field: &str) -> Result<(f64, f64, bool), String> {
     let days = rows.iter().filter_map(|r| date_cell_day(r.get(field)?));
     let (min, max) = days.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), d| (lo.min(d), hi.max(d)));
     if min > max {
         return Err(format!("heatmap: the date color {field:?} holds no date"));
     }
-    Ok((min, max, date_column_aware(rows, field)))
+    Ok((min, max, date_column_aware(types, rows, field)?))
 }
 
-/// [`all_aware`](crate::time_zone::all_aware) over a date column's text cells.
-pub(crate) fn date_column_aware(rows: &[serde_json::Map<String, Value>], field: &str) -> bool {
-    crate::time_zone::all_aware(rows.iter().filter_map(|r| r.get(field)?.as_str()))
+/// Whether a date column holds instants: a declared `datetime_tz` does, a declared `date` or `datetime` never.
+/// A column of any other type is [`all_aware`](crate::time_zone::all_aware) over its text cells.
+pub(crate) fn date_column_aware(types: &column_types::ColumnTypes, rows: &[serde_json::Map<String, Value>], field: &str) -> Result<bool, String> {
+    let texts = || rows.iter().filter_map(|r| r.get(field)?.as_str());
+    Ok(match types.get(field)? {
+        column_types::ColumnType::DatetimeTz => texts().next().is_some(),
+        column_types::ColumnType::Date | column_types::ColumnType::Datetime => false,
+        _ => crate::time_zone::all_aware(texts()),
+    })
 }
 
 /// Vega's `heatmap` color range (`yellowgreenblue`) on a two-value domain: the
@@ -963,6 +970,17 @@ mod tests {
     use super::{render, row_str, RectMark};
     use crate::families::legend::unit_position;
     use crate::families::temporal::TimeUnit;
+
+    #[test]
+    fn the_declared_kind_decides_whether_a_date_column_holds_instants() {
+        let rows = [serde_json::json!({"d": "2024-01-01T00:00:00Z"}).as_object().unwrap().clone()];
+        let declared = |kind: &str| -> column_types::ColumnTypes {
+            serde_json::from_value(serde_json::json!({"d": {"kind": kind, "element": null, "fields": null}})).unwrap()
+        };
+        assert!(super::date_column_aware(&declared("datetime_tz"), &rows, "d").unwrap());
+        assert!(!super::date_column_aware(&declared("datetime"), &rows, "d").unwrap());
+        assert!(super::date_column_aware(&declared("string"), &rows, "d").unwrap());
+    }
 
     #[test]
     fn a_zero_width_color_domain_maps_to_the_middle() {
@@ -2019,7 +2037,7 @@ mod tests {
 
     fn dimension(cells: &[&str], is_x: bool) -> (Vec<String>, Option<TimeUnit>) {
         let axis: crate::common::AxisStyle = serde_json::from_value(axis_json(true, None)).unwrap();
-        let (rows, grain) = crate::families::heatmap_facet::date_dimension(&dimension_rows(cells), "d", &axis, is_x).unwrap();
+        let (rows, grain) = crate::families::heatmap_facet::date_dimension(&column_types::ColumnTypes::default().with("d", column_types::ColumnType::String), &dimension_rows(cells), "d", &axis, is_x).unwrap();
         (rows.iter().map(|r| row_str(r, "d")).collect(), grain)
     }
 
@@ -2042,7 +2060,7 @@ mod tests {
             .map(|c| json!({"d": c}).as_object().unwrap().clone())
             .collect();
         let axis: crate::common::AxisStyle = serde_json::from_value(axis_json(true, None)).unwrap();
-        let (rows, grain) = crate::families::heatmap_facet::date_dimension(&rows, "d", &axis, true).unwrap();
+        let (rows, grain) = crate::families::heatmap_facet::date_dimension(&column_types::ColumnTypes::default().with("d", column_types::ColumnType::String), &rows, "d", &axis, true).unwrap();
         assert_eq!(rows.iter().map(|r| row_str(r, "d")).collect::<Vec<_>>(), ["2024-01-01", "2024-02-01", ""]);
         assert_eq!(grain, Some(TimeUnit::YearMonth));
     }
@@ -2136,7 +2154,7 @@ mod tests {
         let fonts = test_fonts();
         let measure = measure::Measure { fonts: &fonts };
         let cell = crate::layout::Rect { x: 0.0, y: 0.0, width: 420.0, height: 260.0 };
-        let (laid, sunk) = crate::diagnostic::collect(|| super::layout::layout(&bound, cell, &measure));
+        let (laid, sunk) = diagnostic::collect(|| super::layout::layout(&bound, cell, &measure));
         let laid = laid.expect("heatmap lays out");
         assert!(sunk.is_empty(), "{sunk:?}");
         let fields: Vec<_> = laid
@@ -2168,7 +2186,7 @@ mod tests {
         let fonts = test_fonts();
         let cell = crate::layout::Rect { x: 0.0, y: 0.0, width: payload.width, height: payload.height };
         let laid = super::layout::layout(&bound, cell, &measure::Measure { fonts: &fonts }).unwrap();
-        let (svg, sunk) = crate::diagnostic::collect(|| render(&payload, &fonts));
+        let (svg, sunk) = diagnostic::collect(|| render(&payload, &fonts));
         assert_eq!(svg.unwrap(), print::print(&laid.nodes));
         assert_eq!(sunk, laid.diagnostics);
     }

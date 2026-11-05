@@ -353,7 +353,7 @@ def test_render_chart_item_terminal_isolates_a_bare_dbt_charts_error(make_chart)
 
     chart = make_chart("bar", x="month", y="revenue")
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    executor.execute_chart.side_effect = DbtChartsError.from_code(
+    executor.execute_query_result.side_effect = DbtChartsError.from_code(
         ERR_INTERNAL, message="terminal pipeline blew up"
     )
 
@@ -374,7 +374,7 @@ def test_render_chart_item_terminal_still_isolates_bug_class_errors(make_chart):
 
     chart = make_chart("bar", x="month", y="revenue")
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    executor.execute_chart.side_effect = ValueError("bad value")
+    executor.execute_query_result.side_effect = ValueError("bad value")
 
     output = render_chart_item_terminal(
         chart, executor, {}, 80, 20, formats=None, kpi_compact=_KPI_COMPACT

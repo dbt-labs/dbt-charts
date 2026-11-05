@@ -314,7 +314,7 @@ class TestInMemoryErrorShortCircuitsResultCache:
     """A query known-failed in memory must not pay a result-cache round-trip.
 
     On an all-errored dashboard the serial layout-sizing pass re-runs each
-    failing query's ``execute_query`` per chart. The in-memory ``_query_errors``
+    failing query's ``execute_query`` per chart. The in-memory ``ledger.errors``
     memo (populated by the parallel pre-execution pass) already knows the query
     failed, so the persistent outcome probe (``result_cache.get``) — a
     guaranteed miss and, in Cloud, a full Postgres round-trip — must be
@@ -328,7 +328,7 @@ class TestInMemoryErrorShortCircuitsResultCache:
         executor = _make_executor(result_cache=result_cache)
 
         stored = QueryError("Source 'analytics_bq' not found", "good_query")
-        executor._query_errors["good_query"] = stored
+        executor.ledger.errors["good_query"] = stored
 
         with pytest.raises(QueryError):
             executor.execute_query("good_query")
@@ -337,13 +337,13 @@ class TestInMemoryErrorShortCircuitsResultCache:
         result_cache.get.assert_not_called()
 
     def test_in_memory_cache_wins_over_query_errors(self) -> None:
-        """In-memory _cache result must be returned even when _query_errors has an entry.
+        """The ledger memo's rows win even when ``ledger.errors`` has an entry.
 
-        Regression for: parallel pre-execution writes to _cache before
-        attempting _cache_outcome. If the persistent write-through raises
+        Regression for: parallel pre-execution writes the memo before
+        attempting ``cache_outcome``. If the persistent write-through raises
         (e.g. Postgres FK constraint in the Cloud snapshots backend), the
-        exception lands in _query_errors — but _cache already holds the valid
-        rows from the successful query. Checking _cache before _query_errors
+        exception lands in ``ledger.errors`` — but the memo already holds the valid
+        rows from the successful query. Checking the memo before the errors
         ensures those rows are returned rather than raising a spurious error.
         """
         result_cache = Mock()
@@ -357,10 +357,10 @@ class TestInMemoryErrorShortCircuitsResultCache:
         # The memo is keyed by content *plus* the asking query's policy, so seed
         # it through the production key builder — a raw content key would land in
         # a slot execute_query never reads.
-        executor._cache[memo_key(query, cache_key)] = rows_result(valid_rows)
+        executor.ledger.memo[memo_key(query, cache_key)] = rows_result(valid_rows)
 
         # …but the persistent write-through failed and stored an error.
-        executor._query_errors["good_query"] = RuntimeError("FK constraint violation")
+        executor.ledger.errors["good_query"] = RuntimeError("FK constraint violation")
 
         # _cache result must win.
         result = executor.execute_query("good_query")

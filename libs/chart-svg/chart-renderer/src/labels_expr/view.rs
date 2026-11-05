@@ -442,7 +442,7 @@ fn geometry(spec: &AxisSpec, scale: &Scale, value: &Val) -> Res<Geom> {
 /// or a new one, which has only the position its `enter` set. An evaluation at the scale the last one saw is not
 /// a new evaluation: Vega does not re-run the encoder.
 fn item_before(axis: &str, value: &Val) -> Res<Val> {
-    let unmodeled = || EvalError::Unmodeled(crate::refuse!("labels.expr reading the item of the {axis:?} axis's labels on a layout this renderer does not lay out for it is not supported"));
+    let unmodeled = || EvalError::Unmodeled(diagnostic::refuse!("labels.expr reading the item of the {axis:?} axis's labels on a layout this renderer does not lay out for it is not supported"));
     let spec = VIEW.with(|v| v.borrow().axes.get(axis).cloned()).ok_or_else(unmodeled)?;
     let scale = with_scale(axis, |s| s.clone()).ok_or_else(unmodeled)?;
     let now = geometry(&spec, &scale, value)?;

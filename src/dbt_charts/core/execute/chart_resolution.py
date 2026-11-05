@@ -27,9 +27,9 @@ from dbt_charts.core.compile.template.display_text import DisplayTextInputs
 from dbt_charts.core.compile.template.query_result import QueryResult
 from dbt_charts.core.execute.cache_backend import CacheRows
 from dbt_charts.core.execute.chart_columns import raise_missing_chart_column
+from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
 from dbt_charts.core.execute.column_formats import raise_column_format_error
 from dbt_charts.core.execute.date_range_axis import proven_range
-from dbt_charts.core.execute.executor import Executor
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.chart.normalized import Chart
@@ -42,7 +42,7 @@ _EMPTY_TABLE_COLUMN_LINKS: Mapping[str, str] = MappingProxyType({})
 def collect_shared_y_datasets(
     chart: Chart,
     data: CacheRows,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
 ) -> dict[str, CacheRows]:
     """Return base and own-query rows drawn against the primary y scale, plus
@@ -60,7 +60,7 @@ def collect_shared_y_datasets(
             continue
         query_name = layer.query
         if query_name is not None and query_name not in datasets:
-            datasets[query_name] = executor.execute_query(query_name, variables)
+            datasets[query_name] = results.execute_query(query_name, variables)
     return datasets
 
 
@@ -76,12 +76,12 @@ class _LayerRows(Mapping[str, CacheRows]):
         self,
         rows: dict[str, CacheRows],
         deferred: set[str],
-        executor: Executor,
+        results: ResolveDataProvider,
         variables: VariableValues,
     ) -> None:
         self._rows = rows
         self._deferred = deferred - rows.keys()
-        self._executor = executor
+        self._executor = results
         self._variables = variables
 
     def __getitem__(self, query_name: str) -> CacheRows:
@@ -110,34 +110,34 @@ class _LayerRows(Mapping[str, CacheRows]):
 def collect_layer_datasets(
     chart: Chart,
     data: CacheRows,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
 ) -> Mapping[str, CacheRows]:
     """``collect_shared_y_datasets`` plus lazy access to every other layer query."""
-    shared = collect_shared_y_datasets(chart, data, executor, variables)
+    shared = collect_shared_y_datasets(chart, data, results, variables)
     if not isinstance(chart, (BarChart, LineChart, AreaChart, ScatterChart)):
         return shared
     own_queries = {layer.query for layer in chart.layers if layer.query is not None}
-    return _LayerRows(shared, own_queries, executor, variables)
+    return _LayerRows(shared, own_queries, results, variables)
 
 
 def collect_display_text_inputs(
     chart: Chart,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
 ) -> DisplayTextInputs:
     """The variables and query results a chart's display text reads."""
     return DisplayTextInputs(
         variables,
         {
-            name: QueryResult(name, executor.execute_query(key, variables))
+            name: QueryResult(name, results.execute_query(key, variables))
             for name, key in chart.text_queries.items()
         },
     )
 
 
 def chart_x_date_range(
-    chart: Chart, executor: Executor, variables: VariableValues
+    chart: Chart, results: ResolveDataProvider, variables: VariableValues
 ) -> tuple[date, date] | None:
     """The range a bar/line/area chart's x column is proven filtered to, or None."""
     if (
@@ -150,7 +150,7 @@ def chart_x_date_range(
         )
     ):
         return None
-    rendered = executor.render_with_range_filters(chart.query_name, variables)
+    rendered = results.render_with_range_filters(chart.query_name, variables)
     if rendered is None:
         return None
     sql, dialect, filters = rendered
@@ -162,7 +162,7 @@ def resolve_chart_with_runtime_inputs(
     data: list[dict[str, Any]],
     chart_style_context: ChartStyleContext,
     width: float,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     automatic_link_candidate: AutomaticLinkCandidate = None,
     table_column_links: Mapping[str, str] = _EMPTY_TABLE_COLUMN_LINKS,
@@ -185,8 +185,8 @@ def resolve_chart_with_runtime_inputs(
     chart gets, so pie's family-aware default (authored ``width:`` first)
     applies instead of a literal divide-by-zero width.
     """
-    raise_column_format_error(chart, executor)
-    layer_datasets = collect_layer_datasets(chart, data, executor, variables)
+    raise_column_format_error(chart, results)
+    layer_datasets = collect_layer_datasets(chart, data, results, variables)
     resolved = resolve(
         chart,
         data,
@@ -199,9 +199,9 @@ def resolve_chart_with_runtime_inputs(
         pie_title_font=pie_title_font,
         filter_variables=filter_variables,
         link_open=link_open,
-        display_text=collect_display_text_inputs(chart, executor, variables),
-        rendered_at=executor.rendered_at,
-        x_date_range=chart_x_date_range(chart, executor, variables),
+        display_text=collect_display_text_inputs(chart, results, variables),
+        rendered_at=results.rendered_at,
+        x_date_range=chart_x_date_range(chart, results, variables),
         title_width=title_width,
     )
     # After resolve, so a channel resolve diagnoses more specifically (a literal

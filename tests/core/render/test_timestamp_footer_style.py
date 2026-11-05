@@ -207,8 +207,8 @@ class TestDataFreshnessStamp:
         aged = datetime.now(UTC) - timedelta(hours=2, minutes=17)
         # Seed a cache-hit record so min(cache_hit_ats) sees `aged`. The board
         # query is inline values (no result_cache), so nothing appends to
-        # _query_data_ages during render — the seeded record is what min() sees.
-        executor._query_data_ages = [
+        # ledger.ages during render — the seeded record is what min() sees.
+        executor.ledger.ages = [
             ("_seeded", aged, CachePolicy(enabled=True, ttl=None), True)
         ]
 

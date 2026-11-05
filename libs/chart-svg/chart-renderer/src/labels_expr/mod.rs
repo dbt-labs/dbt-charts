@@ -147,21 +147,21 @@ pub fn describe(e: &EvalError, at: &str) -> String {
 }
 
 /// vl-convert's failure to convert: `what` is the message of a plain `Error`, or of the named class (`RangeError: ...`).
-fn conversion_failed(what: &str) -> crate::diagnostic::Diagnostic {
+fn conversion_failed(what: &str) -> diagnostic::Diagnostic {
     let named = what.split_once(": ").is_some_and(|(class, _)| class.ends_with("Error") && class.chars().all(|c| c.is_ascii_alphabetic()));
     let error = if named { what.to_string() } else { format!("Error: {what}") };
-    crate::diagnostic::Diagnostic::new(
-        &crate::codes::ERR_INTERNAL,
+    diagnostic::Diagnostic::new(
+        &diagnostic::codes::ERR_INTERNAL,
         [("message", serde_json::Value::String(format!("Vega-Lite to SVG conversion failed: {error}")))],
     )
 }
 
 /// What a chart becomes when its label expression throws: a bar paints no marks (`ERR-CHART-PAINTED-NO-MARKS`),
 /// while Vega draws a line, area or scatter chart half-built (or fails inside its scenegraph), which is not drawn here.
-pub(crate) fn throw_diagnostic(payload: &crate::Payload) -> crate::diagnostic::Diagnostic {
+pub(crate) fn throw_diagnostic(payload: &crate::Payload) -> diagnostic::Diagnostic {
     match payload.resolved.get("chart_type").and_then(serde_json::Value::as_str) {
         Some(family @ ("line" | "area" | "scatter")) => {
-            crate::diagnostic::Diagnostic::refused(crate::refuse!("{family}: a labels.expr that throws on an axis label is not supported"))
+            diagnostic::Diagnostic::refused(diagnostic::refuse!("{family}: a labels.expr that throws on an axis label is not supported"))
         }
         _ => payload.painted_no_marks(),
     }
@@ -169,7 +169,7 @@ pub(crate) fn throw_diagnostic(payload: &crate::Payload) -> crate::diagnostic::D
 
 /// The diagnostic production raises for a refusal that carries a [`describe`]d failure: a throw while painting
 /// leaves the chart with no marks, a rejected expression fails vl-convert's conversion.
-pub(crate) fn recode(d: crate::diagnostic::Diagnostic, payload: &crate::Payload) -> crate::diagnostic::Diagnostic {
+pub(crate) fn recode(d: diagnostic::Diagnostic, payload: &crate::Payload) -> diagnostic::Diagnostic {
     let text = d.to_string();
     if text.contains(THROWS_MARK) {
         throw_diagnostic(payload)
@@ -206,7 +206,7 @@ fn axis_exprs(resolved: &serde_json::Value) -> Vec<String> {
 
 /// Compiles every axis `labels.expr` the chart authors, the way Vega's compiler does before it draws anything: an
 /// expression it rejects fails the conversion whether or not this engine would have evaluated it.
-pub(crate) fn validate(resolved: &serde_json::Value) -> Result<(), crate::diagnostic::Diagnostic> {
+pub(crate) fn validate(resolved: &serde_json::Value) -> Result<(), diagnostic::Diagnostic> {
     for src in axis_exprs(resolved) {
         if let Err(EvalError::Unknown(what)) = Expr::parse(&src) {
             return Err(conversion_failed(&what));
@@ -468,7 +468,7 @@ impl Node {
                         _ => true,
                     };
                     if !ok {
-                        return Err(EvalError::Unmodeled(crate::refuse!("labels.expr reading {path}.{name} is not supported")));
+                        return Err(EvalError::Unmodeled(diagnostic::refuse!("labels.expr reading {path}.{name} is not supported")));
                     }
                 }
                 base.eval(datum)?.property(&key.eval(datum)?)?

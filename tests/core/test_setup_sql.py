@@ -17,7 +17,10 @@ from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.compile.normalize.queries import normalize_query
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.lookup import cache_outcome
+from dbt_charts.core.execute.plan import cache_key
 
+from .._results import rows_result
 from ._board_utils import make_test_board
 from .conftest import DbtHarness
 
@@ -340,12 +343,12 @@ class TestSetupSqlCacheKey:
             source="s",
         )
 
-        key_a = executor._cache_key("q", query_a, {}, lambda: None)
-        key_b = executor._cache_key("q", query_b, {}, lambda: None)
-        executor._cache_outcome("q", query_a, [{"val": 2}], {}, key_a)
-        executor._cache_outcome("q", query_b, [{"val": 3}], {}, key_b)
+        key_a = cache_key(executor.ctx, "q", query_a, {}, lambda: None)
+        key_b = cache_key(executor.ctx, "q", query_b, {}, lambda: None)
+        cache_outcome(executor.ctx, "q", query_a, rows_result([{"val": 2}]), {}, key_a)
+        cache_outcome(executor.ctx, "q", query_b, rows_result([{"val": 3}]), {}, key_b)
 
-        # _cache_outcome calls cache.put(source_hash, query_hash, vars_hash, outcome, ...)
+        # cache_outcome calls cache.put(source_hash, query_hash, vars_hash, outcome, ...)
         first_hash = result_cache.put.call_args_list[0].args[1]
         second_hash = result_cache.put.call_args_list[1].args[1]
 

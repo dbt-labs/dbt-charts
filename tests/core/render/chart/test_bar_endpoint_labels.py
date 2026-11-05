@@ -26,6 +26,8 @@ from dbt_charts.core.compile.resolve.style.board import resolve_style_and_contex
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
+from ...._results import rows_result
+
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
 
@@ -92,7 +94,7 @@ def resolve_bar_chart(make_chart, seed_with_bar_endpoint_labels):
 
 
 def _render(rc, data: list[dict[str, Any]]) -> dict[str, Any]:
-    artifact = render_resolved_chart(rc, data, _BOARD_STYLE, width=400)
+    artifact = render_resolved_chart(rc, rows_result(data), _BOARD_STYLE, width=400)
     assert artifact.kind == "vega_spec"
     return artifact.payload
 

@@ -3,6 +3,7 @@
 //! overflow, the conditional and gradient color and background channels, and the
 //! house number and date formats under the board's number locale.
 
+use column_types::ColumnType;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -14,11 +15,11 @@ use super::table::{WhenRule, VALID_FONT_WEIGHTS};
 use super::color_scale::nice_domain;
 use super::table_dates;
 use crate::common::ScaleTarget;
-use crate::codes;
+use diagnostic::codes;
 use crate::common::{
     format_kpi_parts, FormatParts, FormatSlot, PartsOptions,
 };
-use crate::diagnostic::{warn, Diagnostic};
+use diagnostic::{warn, Diagnostic};
 use crate::layout::{Insets, IntrinsicWidth, Layout, Rect};
 use crate::{Payload, TonesStyle};
 use measure::weighted::weighted_width;
@@ -323,12 +324,9 @@ impl Slots {
 }
 
 
+/// A JSON number; a string is text whatever it reads like.
 fn coerce_numeric_cell(v: &Value) -> Option<f64> {
-    match v {
-        Value::Number(n) => n.as_f64().filter(|f| f.is_finite()),
-        Value::String(s) => s.trim().parse::<f64>().ok().filter(|f| f.is_finite()),
-        _ => None,
-    }
+    v.as_f64().filter(|f| f.is_finite())
 }
 
 fn cell_to_display(v: &Value) -> String {
@@ -346,12 +344,14 @@ fn cell_to_display(v: &Value) -> String {
     }
 }
 
-/// `(prefix, number_str, suffix, is_numeric)` of one cell.
+/// `(prefix, number_str, suffix, is_numeric)` of one cell of a column declared
+/// `declared`: only a declared date or timestamp reads as a moment.
 /// `cascaded` is true only for the headline value, whose format can be a
 /// board-wide default: a non-date spec meeting a date falls back to
 /// `date_short` there, and is an error on the support slot.
 fn format_value_parts(
     cell: &Value,
+    declared: &ColumnType,
     spec: Option<&FormatSlot>,
     native: bool,
     chart_id: &str,
@@ -361,7 +361,7 @@ fn format_value_parts(
     sub_unit_specs: &SubUnitSpecs,
 ) -> Result<(String, String, String, bool), Diagnostic> {
     if let Value::String(s) = cell {
-        let temporal = table_dates::parse_temporal(s.trim());
+        let temporal = table_dates::parse_temporal(s.trim(), declared);
         if !matches!(temporal, Ok(None)) {
             return format_temporal(temporal, s, spec, chart_id, cascaded, formats);
         }
@@ -643,6 +643,7 @@ const DELTA_FORMATS: [&str; 4] = ["delta", "percent_delta", "percent_number_delt
 fn resolve_support_row(
     support: &Option<SupportCfg>,
     row: &serde_json::Map<String, Value>,
+    types: &column_types::ColumnTypes,
     kpi: &KpiChartStyle,
     slots: &Slots,
     tones: Option<&TonesStyle>,
@@ -654,15 +655,15 @@ fn resolve_support_row(
     let Some(support) = support else {
         return Ok(None);
     };
-    let cell = match &support.value {
-        Some(col) => column_cell(row, col, chart_id)?.clone(),
-        None => Value::Null,
+    let (cell, declared) = match &support.value {
+        Some(col) => (column_cell(row, col, chart_id)?.clone(), types.get(col)?.clone()),
+        None => (Value::Null, ColumnType::String),
     };
     // The support value keeps the BI default register and, as one flat
     // string, its affixes' gaps (`kpi_value_text`).
     let value_str = {
         let (s_prefix, s_number, s_suffix, _) =
-            format_value_parts(&cell, support.format.as_ref(), false, chart_id, false, true, formats, sub_unit_specs)?;
+            format_value_parts(&cell, &declared, support.format.as_ref(), false, chart_id, false, true, formats, sub_unit_specs)?;
         slots.support.cased(&format!("{s_prefix}{s_number}{s_suffix}"))?
     };
 
@@ -905,6 +906,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
 
     let (prefix, number_str, suffix, is_numeric) = format_value_parts(
         cell,
+        payload.schema.rows.get(&r.value)?,
         r.format.as_ref(),
         r.format_native,
         &r.id,
@@ -962,6 +964,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let support = resolve_support_row(
         &r.support,
         row,
+        &payload.schema.rows,
         kpi,
         &slots,
         tones,
@@ -1906,7 +1909,7 @@ mod format_tests {
             .filter_map(|c| {
                 let value = f64::from_bits(u64::from_str_radix(&c.value, 16).unwrap());
                 let (p, n, s, _) =
-                    format_value_parts(&json!(value), c.format.as_ref(), false, "battery", true, c.keep_affix_gaps, None, &en_us())
+                    format_value_parts(&json!(value), &ColumnType::Float, c.format.as_ref(), false, "battery", true, c.keep_affix_gaps, None, &en_us())
                         .unwrap();
                 let got = (p, n, s);
                 (got != c.parts).then(|| {
@@ -2007,7 +2010,7 @@ mod format_tests {
         let formats = formats.as_object().unwrap();
         let cell = Value::String("2026-03-04".into());
         let input = Some(wire("integer", "", ""));
-        let got = format_value_parts(&cell, input.as_ref(), false, "c", true, false, Some(formats), &en_us()).unwrap();
+        let got = format_value_parts(&cell, &ColumnType::Date, input.as_ref(), false, "c", true, false, Some(formats), &en_us()).unwrap();
         assert_eq!(got.1, "FY 2026");
         let err = time_alias("bad", Some(formats)).unwrap_err();
         assert!(err.contains("names no spec"), "{err}");
@@ -2478,7 +2481,7 @@ mod render_tests {
     fn support_overflow(width: f64) -> (String, Vec<Diagnostic>) {
         let mut p = with_support(kpi_payload("stacked", width));
         set(&mut p, "/support/label", json!(LONG_EXPLAINER));
-        let (svg, warnings) = crate::diagnostic::collect(|| svg_of(&p));
+        let (svg, warnings) = diagnostic::collect(|| svg_of(&p));
         (svg, warnings)
     }
 
@@ -3020,8 +3023,7 @@ mod render_tests {
 
     // Oracle: `kpi_value_text(27, "percent", ...)` coerces the cell through
     // `coerce_numeric_cell` to a float before `format_kpi_parts`, so the
-    // refusal quotes `27.0` for an integer, `27.5` for a float and `27.0` for
-    // the string `"27"`.
+    // refusal quotes `27.0` for an integer and `27.5` for a float.
     #[test]
     fn a_percent_refusal_quotes_the_kpi_cell_as_a_float() {
         let quoted = |cell: Value| {
@@ -3032,7 +3034,17 @@ mod render_tests {
         };
         assert_eq!(quoted(json!(27)), "27.0");
         assert_eq!(quoted(json!(27.5)), "27.5");
-        assert_eq!(quoted(json!("27")), "27.0");
+    }
+
+    /// A declared string prints as the text it is, whatever it reads like.
+    #[test]
+    fn a_numeric_looking_string_cell_prints_unchanged() {
+        let mut p = kpi_payload("stacked", 300.0);
+        set(&mut p, "/format", json!({"spec": ".1%"}));
+        p.rows = vec![json!({"revenue": "50.82"}).as_object().unwrap().clone()];
+        p.schema = crate::payload_schema::test_schema_for(&p.rows);
+        let svg = render(&p, &test_fonts()).expect("a string is no percent out of range");
+        assert!(svg.contains(">50.82<"), "{svg}");
     }
 
     #[test]
@@ -3202,7 +3214,7 @@ mod render_tests {
         set(&mut p, "/support/label", json!(LONG_EXPLAINER));
         let bound = bind(&p).unwrap();
         let cell = Rect { x: 0.0, y: 0.0, width: 200.0, height: 0.0 };
-        let (laid_out, sunk) = crate::diagnostic::collect(|| layout(&bound, cell, &measure));
+        let (laid_out, sunk) = diagnostic::collect(|| layout(&bound, cell, &measure));
         assert!(sunk.is_empty(), "{sunk:?}");
         let codes: Vec<_> = laid_out.unwrap().diagnostics.iter().map(|d| d.code).collect();
         assert_eq!(codes, ["WARN-KPI-SUPPORT-TRUNCATED"]);

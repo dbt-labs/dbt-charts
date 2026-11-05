@@ -102,28 +102,11 @@ def source_dialect(source_type: str | None) -> str | None:
     return source_type
 
 
-def dialect_for_source(
+def registered_source_type(
     source: str | None,
     sources: dict[str, Any],  # type-state: explicit_any — raw or validated registry
 ) -> str | None:
-    """The sqlglot dialect for a query's source, or None when unresolvable.
-
-    A source's `type` is its dialect when the type names one ("duckdb",
-    "bigquery", "sqlserver" via the alias table). Plenty don't: `csv` /
-    `json` / `parquet` are file sources, and `dbt_profile`'s real dialect
-    lives in the profile and isn't knowable until execute. sqlglot's own
-    registry is the arbiter — asking it for an unknown name raises rather
-    than degrading, and `dialects.get_dialect` can't stand in here because
-    it names warehouse types, not every sqlglot dialect.
-
-    None means "could not establish one", and callers must treat it as "do
-    not report parse findings" rather than falling back to the default
-    dialect: parsing BigQuery SQL as generic SQL is how a parse warning ends
-    up firing on ~40% of real boards. The callers that do fall back are
-    `agent_api.lookup_board_query_sql`, which reports no findings (it only
-    renders SQL text for a preview), and `ProjectSession.validate_query`,
-    which lints an ad-hoc statement the user asked to lint.
-    """
+    """The `type` of the registry entry named `source`, or None when there is none."""
     if source is None:
         return None
     config = sources.get(source)
@@ -137,7 +120,31 @@ def dialect_for_source(
         source_type = config.type
     else:
         return None
-    return source_dialect(source_type) if isinstance(source_type, str) else None
+    return source_type if isinstance(source_type, str) else None
+
+
+def dialect_for_source(
+    source: str | None,
+    sources: dict[str, Any],  # type-state: explicit_any — raw or validated registry
+) -> str | None:
+    """The sqlglot dialect for a query's source, or None when unresolvable.
+
+    A source's `type` is its dialect when the type names one ("duckdb",
+    "bigquery", "sqlserver" via the alias table). Plenty don't: `csv` /
+    `json` / `parquet` are file sources, and `dbt_profile`'s real dialect
+    lives in the profile and isn't knowable without reading it. sqlglot's own
+    registry is the arbiter — asking it for an unknown name raises rather
+    than degrading, and `dialects.get_dialect` can't stand in here because
+    it names warehouse types, not every sqlglot dialect.
+
+    This never reads a profile: the compile-time callers must stay free of
+    I/O. None means "could not establish one", and they must treat it as "do
+    not report parse findings" rather than falling back to the default
+    dialect: parsing BigQuery SQL as generic SQL is how a parse warning ends
+    up firing on ~40% of real boards. Callers that lint SQL the user asked to
+    check (`agent_api.query.source_sql_dialect`) read the profile themselves.
+    """
+    return source_dialect(registered_source_type(source, sources))
 
 
 # Top-level statements allowed by validate_select_only. exp.Select is further

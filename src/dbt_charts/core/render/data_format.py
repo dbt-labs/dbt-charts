@@ -17,7 +17,7 @@ from dbt_charts.core.compile.models.board.normalized import (
 from dbt_charts.core.compile.models.chart.normalized import _BaseChartFields
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
 from dbt_charts.core.diagnostics import ERR_DUPLICATE_CHART_ID, Diagnostic
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
 from dbt_charts.core.render.board_to_dict import (
     NO_ROW_CAP,
     board_to_dict,
@@ -141,7 +141,7 @@ def _flatten(
 
 def render_board_data(
     board: Board,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     error_collector: list[Diagnostic] | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
@@ -161,7 +161,7 @@ def render_board_data(
     need the overlays.
     """
     board_dict = board_to_dict(
-        board, executor, variables, error_collector, max_rows_per_query
+        board, results, variables, error_collector, max_rows_per_query
     )
     query_defs: dict[str, AnyQuery] = {}
     _collect_query_defs(board, query_defs)

@@ -19,8 +19,8 @@ queries:
   events:
     columns: [day, hits]
     values:
-      - ["2026-04-10", 12]
-      - ["2026-07-28", 34]
+      - [2026-04-10, 12]
+      - [2026-07-28, 34]
 charts:
   t:
     query: events

@@ -13,6 +13,8 @@ from pydantic import TypeAdapter
 
 from dbt_charts.core.constants.estimates import SPARK_BAR_TITLE_HEIGHT_PX
 
+from .._results import rows_result
+
 # The direct import `import dbt_charts.core.render.converters.chart` fails because
 # dbt_charts.core imports `render` as a function, shadowing the render subpackage
 # in the attribute chain. importlib.import_module bypasses this.
@@ -1562,7 +1564,7 @@ class TestAspectRatioDrivenSizing:
 
         from dbt_charts.core.compile.models.chart.normalized import Chart
 
-        defaults: dict = {"id": "test", "type": type}
+        defaults: dict = {"id": "test", "type": type, "query_name": "q"}
         # Satisfy required fields for special chart types
         if type == "kpi":
             defaults.setdefault("value", "value")
@@ -1635,8 +1637,12 @@ class TestAspectRatioDrivenSizing:
 
         class _Executor:
             @staticmethod
-            def execute_chart(chart, variables):
+            def execute_query(query_name, variables):
                 return rows
+
+            @staticmethod
+            def execute_query_result(query_name, variables):
+                return rows_result(rows)
 
         _rs, _ctx = resolve_style_and_context(get_theme_style())
         resolved = resolve(chart, rows, _ctx)
@@ -1701,12 +1707,16 @@ class TestAspectRatioDrivenSizing:
 
         class _Executor:
             @staticmethod
-            def execute_chart(chart, variables):
+            def execute_query(query_name, variables):
                 return [{"name": f"row{i}"} for i in range(5)]
+
+            @staticmethod
+            def execute_query_result(query_name, variables):
+                return rows_result([{"name": f"row{i}"} for i in range(5)])
 
         chart = self._chart("table")  # no title, no pagination
         _rs, _ctx = resolve_style_and_context(get_theme_style())
-        resolved = resolve(chart, _Executor.execute_chart(chart, {}), _ctx)
+        resolved = resolve(chart, _Executor.execute_query(chart.query_name, {}), _ctx)
         height = _get_table_height_from_data(
             chart,
             resolved,
@@ -1757,8 +1767,12 @@ class TestAspectRatioDrivenSizing:
 
         class _Executor:
             @staticmethod
-            def execute_chart(chart, variables):
+            def execute_query(query_name, variables):
                 return _DATA
+
+            @staticmethod
+            def execute_query_result(query_name, variables):
+                return rows_result(_DATA)
 
         chart_no_subtitle = self._chart(
             "table",
@@ -1810,7 +1824,7 @@ class TestAspectRatioDrivenSizing:
         resolved_table = resolve(table_v2, _DATA, chart_style_context=_ctx)
         artifact = render_resolved_chart(
             resolved_table,
-            _DATA,
+            rows_result(_DATA),
             _resolved,
             width=560.0,
             height=height_with_subtitle,

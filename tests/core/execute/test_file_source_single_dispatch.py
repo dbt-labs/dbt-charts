@@ -102,4 +102,4 @@ def test_executor_honors_the_row_ceiling_on_a_file_source(
     rows = executor.execute_query("q")
 
     assert [r["id"] for r in rows] == [1]
-    assert "q" in executor.truncations()
+    assert "q" in executor.ledger.truncations

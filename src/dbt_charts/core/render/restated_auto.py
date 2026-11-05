@@ -7,7 +7,6 @@ through the same runtime entry point the render uses.
 
 from __future__ import annotations
 
-import copy
 import dataclasses
 from collections.abc import Callable, Mapping
 from typing import Any, TypeAlias
@@ -21,7 +20,10 @@ from dbt_charts.core.compile.models.chart.resolved._base import (
 )
 from dbt_charts.core.compile.models.primitives import LinkOpen
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.compile.models.variable.authored import Variable
+from dbt_charts.core.compile.models.variable.authored import (
+    SingleRowBoolProbe,
+    Variable,
+)
 from dbt_charts.core.compile.normalize.variables import infer_variable_input
 from dbt_charts.core.compile.restated import (
     auto_restated,
@@ -34,8 +36,10 @@ from dbt_charts.core.compile.restated import (
 )
 from dbt_charts.core.diagnostics import WARN_RESTATED_FORMAT, Diagnostic
 from dbt_charts.core.diagnostics.execution import ExecutionError
+from dbt_charts.core.execute.cache_backend import ResultRows
+from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider, chart_rows
 from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_inputs
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.query_results import UncollectedQueryError
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 from dbt_charts.core.render.variables_resolve import resolve_controls
 from dbt_charts.core.text.case import field_title
@@ -48,9 +52,9 @@ Artifact: TypeAlias = (
 
 def _resolver(
     scope: Board,
-    data: list[Row],
+    data: ResultRows,
     width: float,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     filter_variables: frozenset[str],
     link_open: LinkOpen,
@@ -58,10 +62,10 @@ def _resolver(
     def resolve(candidate: Chart) -> tuple[ResolvedChart, Artifact]:
         resolved = resolve_chart_with_runtime_inputs(
             candidate,
-            data,
+            data.rows,
             scope.chart_style_context,
             width,
-            executor,
+            results,
             variables,
             filter_variables=filter_variables,
             link_open=link_open,
@@ -116,7 +120,7 @@ def _declared_format_warnings(
 def auto_restated_warnings(
     board: Board,
     widths: Mapping[str, float],
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
 ) -> list[Diagnostic]:
     """Warnings for every active-layout chart; ``widths`` maps chart id to its slot."""
@@ -129,17 +133,13 @@ def auto_restated_warnings(
         width = widths.get(chart.id)
         if width is None:
             continue
-        data = (
-            executor.execute_query(chart.query_name, variables)
-            if chart.query_name
-            else []
-        )
+        data = chart_rows(chart, results, variables)
         if chart.query_name and chart.query_name not in declared_seen:
             declared_seen.add(chart.query_name)
-            warnings.extend(_declared_format_warnings(chart, scope, data))
+            warnings.extend(_declared_format_warnings(chart, scope, data.rows))
 
         resolve = _resolver(
-            scope, data, width, executor, variables, filter_variables, board.links.open
+            scope, data, width, results, variables, filter_variables, board.links.open
         )
         warnings.extend(
             auto_restated(
@@ -149,14 +149,91 @@ def auto_restated_warnings(
     return warnings
 
 
+@dataclasses.dataclass(frozen=True)
+class ExtraQueries:
+    """The queries the restated checks need beyond the render's own.
+
+    ``definitions`` are probe queries the board does not define; ``calls`` pair
+    the names to run with the variable values to run them under.
+    """
+
+    definitions: dict[str, SqlQuery]
+    calls: list[tuple[frozenset[str], VariableValues]]
+
+
+def _probe_name(name: str) -> str:
+    return f"_restated_distinct_{name}"
+
+
+def _static_options_probe(name: str, board: Board) -> tuple[SqlQuery, str, str] | None:
+    """``SELECT DISTINCT`` of the column variable *name* filters, with its table and column."""
+    sql_queries = [q for q in board.queries.values() if isinstance(q, SqlQuery)]
+    found = filtered_column(name, sql_queries)
+    if found is None:
+        return None
+    query, table, column = found
+    probe = SqlQuery(
+        sql=f"SELECT DISTINCT {column} FROM {table} ORDER BY {column}",
+        source=query.source,
+        dialect=query.dialect,
+        cache=query.cache,
+    )
+    return probe, table, column
+
+
+def _is_static(var: Variable) -> bool:
+    return var.options is not None and bool(var.options.static)
+
+
+def plan_extra(board: Board, variables: VariableValues) -> ExtraQueries:
+    """Every query ``auto_restated_variable_warnings`` reads that render did not collect.
+
+    Planned from the board alone, so the render collects them with its own
+    queries: a ``static`` options probe under *variables*, and each control's
+    option and ``enabled`` queries under *variables* without that control.
+    """
+    definitions: dict[str, SqlQuery] = {}
+    calls: list[tuple[frozenset[str], VariableValues]] = []
+    for name, var in board.variables.items():
+        if not var.authored_fields:
+            continue
+        if _is_static(var) and (probe := _static_options_probe(name, board)):
+            probe_name = _probe_name(name)
+            definitions[probe_name] = probe[0]
+            calls.append((frozenset({probe_name}), variables))
+        names = {
+            q
+            for q in (
+                None if _is_static(var) else var.get_option_query(),
+                var.enabled.query
+                if isinstance(var.enabled, SingleRowBoolProbe)
+                else None,
+            )
+            if q
+        }
+        if names:
+            calls.append(
+                (
+                    frozenset(names),
+                    {k: v for k, v in variables.items() if k != name},
+                )
+            )
+    for item in board.layout.items:
+        if item.board is not None and item.source_path:
+            nested = plan_extra(item.board, variables)
+            definitions |= nested.definitions
+            calls += nested.calls
+    return ExtraQueries(definitions, calls)
+
+
 def _control_signature(
-    name: str, scope: Board, executor: Executor, values: VariableValues
+    name: str, scope: Board, results: ResolveDataProvider, values: VariableValues
 ) -> Callable[[Variable], Artifact]:
     def settle(var: Variable) -> Artifact:
         (control,) = resolve_controls(
             {name: var.model_copy(update={"visible": True})},
             {key: value for key, value in values.items() if key != name},
-            executor,
+            results,
             scope.resolved_style.variables,
         )
         return tuple(
@@ -173,29 +250,18 @@ def _static_options_warnings(
     prefix: str,
     var: Variable,
     board: Board,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
 ) -> list[Diagnostic]:
     """``options.static`` against ``SELECT DISTINCT`` of the column the variable filters."""
-    sql_queries = [q for q in board.queries.values() if isinstance(q, SqlQuery)]
-    found = filtered_column(name, sql_queries)
+    found = _static_options_probe(name, board)
     if found is None:
         return []
-    query, table, column = found
-    probe = f"_restated_distinct_{name}"
-    # The probe lives in a private copy: the board's registry stays as compiled.
-    prober = copy.copy(executor)
-    prober.query_registry = {
-        **executor.query_registry,
-        probe: SqlQuery(
-            sql=f"SELECT DISTINCT {column} FROM {table} ORDER BY {column}",
-            source=query.source,
-            dialect=query.dialect,
-            cache=query.cache,
-        ),
-    }
+    _, table, column = found
     try:
-        rows = prober.execute_query(probe, variables)
+        rows = results.execute_query(_probe_name(name), variables)
+    except UncollectedQueryError:
+        raise  # plan_extra and this walk disagree: a bug, not a failed probe
     except ExecutionError:
         return []  # advice only: a failing probe must not fail the render
     return static_options_restated(
@@ -204,7 +270,7 @@ def _static_options_warnings(
 
 
 def auto_restated_variable_warnings(
-    board: Board, executor: Executor, variables: VariableValues, prefix: str
+    board: Board, results: ResolveDataProvider, variables: VariableValues, prefix: str
 ) -> list[Diagnostic]:
     """Warnings for every board's authored variable settings the data already settles."""
     warnings: list[Diagnostic] = []
@@ -213,18 +279,18 @@ def auto_restated_variable_warnings(
             continue
         if var.options is not None and var.options.static:
             warnings += _static_options_warnings(
-                name, prefix, var, board, executor, variables
+                name, prefix, var, board, results, variables
             )
         warnings += auto_restated_variable(
             name,
             var,
-            _control_signature(name, board, executor, variables),
+            _control_signature(name, board, results, variables),
             infer_variable_input,
             prefix,
         )
     for item in board.layout.items:
         if item.board is not None and item.source_path:
             warnings += auto_restated_variable_warnings(
-                item.board, executor, variables, f"{item.source_path}."
+                item.board, results, variables, f"{item.source_path}."
             )
     return warnings

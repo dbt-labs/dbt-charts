@@ -19,6 +19,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 chart-renderer = { path = "../chart-renderer" }
+diagnostic = { path = "../diagnostic" }
 display-text = { path = "../display-text" }
 measure = { path = "../measure" }
 serde = "1"

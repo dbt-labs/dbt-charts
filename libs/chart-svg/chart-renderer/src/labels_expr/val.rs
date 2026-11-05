@@ -112,7 +112,7 @@ impl Drop for Evaluation {
 }
 
 fn over_budget() -> EvalError {
-    EvalError::Unmodeled(crate::refuse!("labels.expr using more than {V8_EVAL_BUDGET} bytes of memory in one evaluation is not supported"))
+    EvalError::Unmodeled(diagnostic::refuse!("labels.expr using more than {V8_EVAL_BUDGET} bytes of memory in one evaluation is not supported"))
 }
 
 /// Fails if `bytes` more would pass the evaluation's budget, before anything is allocated for them.

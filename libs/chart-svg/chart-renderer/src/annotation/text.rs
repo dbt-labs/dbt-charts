@@ -2,7 +2,7 @@
 
 use super::model::{FontStyle, TextStyle};
 use super::place::{TextAnchor, TextBox};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use scene::{Attrs, Bounds, Chars, Escape, Node, Role, Run, Shape};
 use measure::FontBook;
 

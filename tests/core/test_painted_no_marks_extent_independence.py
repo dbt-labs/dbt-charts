@@ -17,6 +17,8 @@ from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
+from .._results import rows_schema
+
 _BOARD = """
 queries:
   q:
@@ -51,6 +53,7 @@ def _render_blank(rows: list[dict[str, Any]]) -> list[str]:
     query_result = Mock(
         is_success=True,
         data=rows,
+        schema=rows_schema(rows),
         resolved_relations=None,
         truncated_reason=None,
     )

@@ -2,6 +2,8 @@ from types import SimpleNamespace
 
 from dbt_charts.core.compile.models.primitives import BoardLinks
 
+from .._results import rows_result
+
 """Tests for Vega-Lite chart generation.
 
 Tests the dbt_charts.core.render.vega_lite module for generating
@@ -176,7 +178,7 @@ class TestRenderChart:
             chart,
             resolve_style(get_theme_style()),
             resolve_chart_style_context(get_theme_style()),
-            data,
+            rows_result(data),
             format="json",
         )
 
@@ -217,7 +219,7 @@ class TestRenderChart:
             chart,
             resolve_style(get_theme_style()),
             resolve_chart_style_context(get_theme_style()),
-            data,
+            rows_result(data),
             format="json",
             width=800,
             height=300,
@@ -252,7 +254,7 @@ class TestRenderChart:
             chart,
             resolve_style(get_theme_style()),
             resolve_chart_style_context(get_theme_style()),
-            data,
+            rows_result(data),
             format="json",
         )
 
@@ -281,7 +283,7 @@ class TestRenderChart:
             chart,
             resolve_style(get_theme_style()),
             resolve_chart_style_context(get_theme_style()),
-            data,
+            rows_result(data),
             format="json",
         )
 
@@ -309,7 +311,7 @@ class TestRenderChart:
             chart,
             resolve_style(get_theme_style()),
             resolve_chart_style_context(get_theme_style()),
-            data,
+            rows_result(data),
             format="json",
         )
 
@@ -333,7 +335,7 @@ class TestRenderChart:
             chart,
             resolve_style(get_theme_style()),
             resolve_chart_style_context(get_theme_style()),
-            data,
+            rows_result(data),
             format="json",
         )
 
@@ -358,7 +360,7 @@ class TestRenderChart:
             chart,
             resolve_style(get_theme_style()),
             resolve_chart_style_context(get_theme_style()),
-            data,
+            rows_result(data),
             format="json",
         )
 
@@ -384,7 +386,7 @@ class TestRenderChart:
             chart,
             resolve_style(get_theme_style()),
             resolve_chart_style_context(get_theme_style()),
-            data,
+            rows_result(data),
             format="json",
         )
 
@@ -405,7 +407,7 @@ class TestRenderChart:
             chart,
             resolve_style(get_theme_style()),
             resolve_chart_style_context(get_theme_style()),
-            data,
+            rows_result(data),
             format="json",
         )
 
@@ -429,7 +431,7 @@ class TestRenderChart:
             chart,
             resolve_style(get_theme_style()),
             resolve_chart_style_context(get_theme_style()),
-            data,
+            rows_result(data),
             format="json",
         )
 
@@ -460,7 +462,7 @@ class TestRenderChart:
             chart,
             resolve_style(get_theme_style()),
             resolve_chart_style_context(get_theme_style()),
-            data,
+            rows_result(data),
             format="json",
         )
 
@@ -496,6 +498,9 @@ class TestRenderChart:
         )
         executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
         executor.execute_query.return_value = [{"month": "Jan", "revenue": 100}]
+        executor.execute_query_result.return_value = rows_result(
+            executor.execute_query.return_value
+        )
 
         from dbt_charts.core.compile.resolve.style.board import (
             resolve_style_and_context,
@@ -545,7 +550,7 @@ class TestRenderChart:
             chart,
             resolve_style(get_theme_style()),
             resolve_chart_style_context(get_theme_style()),
-            data,
+            rows_result(data),
             format="json",
         )
 
@@ -1074,7 +1079,7 @@ class TestRenderKpiSvg:
             chart,
             resolved_style=resolve_style(get_theme_style()),
             chart_style_context=resolve_chart_style_context(get_theme_style()),
-            data=[{"val": 999}],
+            data=rows_result([{"val": 999}]),
             format="svg",
             width=300,
             height=120,

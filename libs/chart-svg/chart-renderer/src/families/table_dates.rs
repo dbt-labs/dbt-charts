@@ -4,6 +4,8 @@
 //! the `%c %x %X` patterns come from the board's time locale; a directive that
 //! depends on the host time zone refuses by name.
 
+use column_types::ColumnType;
+
 use crate::time_locale::active_time_locale;
 use d3rs::calendar::{civil_from_days, days_from_civil, days_in_month, is_leap_year, weekday};
 
@@ -42,8 +44,8 @@ pub(super) fn validate_spec(spec: &str) -> Result<(), String> {
         if let Some(l) = letter.filter(|l| !"aAbBcCdDefFgGhHIjklLmMnpPqQrRsSTuUVwWxXyYzZ".contains(*l)) {
             return Err(format!(
                 "Invalid temporal format spec {}: unknown directive %{}",
-                crate::diagnostic::py_repr(&serde_json::json!(spec)),
-                crate::diagnostic::py_repr(&serde_json::json!(l.to_string())),
+                diagnostic::py_repr(&serde_json::json!(spec)),
+                diagnostic::py_repr(&serde_json::json!(l.to_string())),
             ));
         }
     }
@@ -180,15 +182,29 @@ impl Moment {
     }
 }
 
-/// `is_temporal_value` (`table_support.py`) then `format_temporal_value`'s
-/// parse: `_ISO_TEMPORAL_RE`, the `date.fromisoformat(value[:10])` calendar
-/// check, and for a timestamp `datetime.fromisoformat` (a `Z` or offset
-/// normalized to UTC). `Ok(None)` for anything else — the caller renders it
-/// verbatim, as production's string branch does. A regex-accepted timestamp
-/// that `fromisoformat` rejects (hour > 23, minute or second > 59, an offset of
-/// 24 hours or more, a result outside years 1-9999) raises in production and
-/// errs here.
-pub(super) fn parse_temporal(value: &str) -> Result<Option<Moment>, TemporalError> {
+/// A cell as a moment: `format_temporal_value`'s parse (`_ISO_TEMPORAL_RE`,
+/// the `date.fromisoformat(value[:10])` calendar check, and for a timestamp
+/// `datetime.fromisoformat`, an offset normalized to UTC). A declared date,
+/// datetime or datetime_tz column decides what its text is; a `string` column
+/// keeps shape detection, ISO text is a moment and an offset makes it an
+/// instant. Any other type holds no date, so `Ok(None)`; so is an impossible
+/// calendar day, which the caller prints verbatim. A timestamp that
+/// `fromisoformat` rejects (hour > 23, minute or second > 59, an offset of 24
+/// hours or more, a result outside years 1-9999) errs.
+pub(super) fn parse_temporal(
+    value: &str,
+    declared: &ColumnType,
+) -> Result<Option<Moment>, TemporalError> {
+    let utc = match declared {
+        ColumnType::DatetimeTz => true,
+        ColumnType::String => crate::time_zone::is_aware(value),
+        _ if declared.is_temporal() => false,
+        _ => return Ok(None),
+    };
+    Ok(parse_iso(value)?.map(|moment| Moment { utc, ..moment }))
+}
+
+pub(super) fn parse_iso(value: &str) -> Result<Option<Moment>, TemporalError> {
     let b = value.as_bytes();
     let digits =
         |r: std::ops::Range<usize>| b.get(r).is_some_and(|d| d.iter().all(u8::is_ascii_digit));
@@ -263,7 +279,6 @@ pub(super) fn parse_temporal(value: &str) -> Result<Option<Moment>, TemporalErro
             day: d.into(),
             hour: of_day / 60,
             minute: of_day % 60,
-            utc: crate::time_zone::is_aware(value),
             ..moment
         };
     }
@@ -648,8 +663,17 @@ mod tests {
         assert!(err.contains("%x"), "{err}");
     }
 
+    /// The declared type a timestamp's text implies: an offset makes it an instant.
+    fn declared(s: &str) -> ColumnType {
+        match s.len() {
+            10 => ColumnType::Date,
+            _ if s.ends_with('Z') || s[11..].contains(['+', '-']) => ColumnType::DatetimeTz,
+            _ => ColumnType::Datetime,
+        }
+    }
+
     fn moment(s: &str) -> Moment {
-        parse_temporal(s)
+        parse_temporal(s, &declared(s))
             .unwrap()
             .unwrap_or_else(|| panic!("{s} is not temporal"))
     }
@@ -682,12 +706,14 @@ mod tests {
     #[test]
     fn an_aware_cell_prints_in_the_board_zone_and_a_naive_one_as_written() {
         let _zone = crate::time_zone::zone_scope("America/New_York");
-        let at = |s: &str| en_strftime(parse_temporal(s).unwrap().unwrap(), "%Y-%m-%d %H:%M %Z %z").unwrap();
+        let at = |s: &str, declared: ColumnType| {
+            en_strftime(parse_temporal(s, &declared).unwrap().unwrap(), "%Y-%m-%d %H:%M %Z %z").unwrap()
+        };
         // 2024-03-10 is New York's spring-forward day: 07:00Z is 03:00 EDT.
-        assert_eq!(at("2024-03-10T06:30:00Z"), "2024-03-10 01:30 EST -0500");
-        assert_eq!(at("2024-03-10T07:30:00+00:00"), "2024-03-10 03:30 EDT -0400");
-        assert_eq!(at("2024-03-10T06:30:00"), "2024-03-10 06:30  ");
-        let instant = parse_temporal("2024-03-10T07:30:00Z").unwrap().unwrap();
+        assert_eq!(at("2024-03-10T06:30:00Z", ColumnType::DatetimeTz), "2024-03-10 01:30 EST -0500");
+        assert_eq!(at("2024-03-10T07:30:00+00:00", ColumnType::DatetimeTz), "2024-03-10 03:30 EDT -0400");
+        assert_eq!(at("2024-03-10T06:30:00", ColumnType::Datetime), "2024-03-10 06:30  ");
+        let instant = parse_temporal("2024-03-10T07:30:00Z", &ColumnType::DatetimeTz).unwrap().unwrap();
         assert_eq!(en_strftime(instant, "%Q %-Q").unwrap(), "1710055800000 1710055800000");
     }
 
@@ -734,7 +760,7 @@ mod tests {
             "2024-01-01T10:30:00+0530",
             "2024-01-01T10:30:00-05:30",
         ] {
-            assert!(parse_temporal(ok).unwrap().is_some(), "{ok}");
+            assert!(parse_temporal(ok, &declared(ok)).unwrap().is_some(), "{ok}");
         }
         for bad in [
             "2024-01-01T10:30",
@@ -744,7 +770,7 @@ mod tests {
             "2024-02-30",
             "2024-01-01t10:30:00",
         ] {
-            assert!(parse_temporal(bad).unwrap().is_none(), "{bad}");
+            assert!(parse_temporal(bad, &ColumnType::Datetime).unwrap().is_none(), "{bad}");
         }
     }
 
@@ -758,8 +784,24 @@ mod tests {
             "0001-01-01T00:00:00+05:00",
             "9999-12-31T23:00:00-05:00",
         ] {
-            assert!(parse_temporal(bad).is_err(), "{bad}");
+            assert!(parse_temporal(bad, &declared(bad)).is_err(), "{bad}");
         }
+    }
+
+    /// Whether a timestamp is an instant is what its column declares, and a
+    /// text column holds no date at all.
+    #[test]
+    fn only_a_datetime_tz_column_holds_instants_and_only_a_temporal_column_holds_dates() {
+        let zone = |declared: ColumnType| {
+            let moment = parse_temporal("2024-03-05T14:30:00+00:00", &declared).unwrap().unwrap();
+            en_strftime(moment, "%z").unwrap()
+        };
+        assert_eq!(zone(ColumnType::DatetimeTz), "+0000");
+        assert_eq!(zone(ColumnType::Datetime), "");
+        assert!(parse_temporal("2024-03-05", &ColumnType::String).unwrap().is_some());
+        assert!(parse_temporal("2024-03-05", &ColumnType::Bytes).unwrap().is_none());
+        let aware = parse_temporal("2024-03-05T14:30:00+00:00", &ColumnType::String).unwrap().unwrap();
+        assert_eq!(en_strftime(aware, "%z").unwrap(), "+0000");
     }
 
     #[test]

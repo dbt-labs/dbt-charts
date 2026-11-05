@@ -13,9 +13,9 @@ use std::collections::BTreeSet;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::codes;
+use diagnostic::codes;
 use crate::common::{tag_at, CellRow, CellTag, Font};
-use crate::diagnostic::{py_repr, warn, Diagnostic};
+use diagnostic::{py_repr, warn, Diagnostic};
 use crate::layout::{IntrinsicWidth, Layout, Rect};
 use measure::{FontBook, Measure};
 use print::print;
@@ -1105,7 +1105,7 @@ mod tests {
         assert_eq!(err.params["reason"], "row value 'a lot' is not numeric");
     }
 
-    fn refusal(rows: Vec<Value>, edit: impl FnOnce(&mut Payload)) -> crate::diagnostic::Diagnostic {
+    fn refusal(rows: Vec<Value>, edit: impl FnOnce(&mut Payload)) -> diagnostic::Diagnostic {
         let mut payload = base_payload(rows);
         edit(&mut payload);
         render(&payload, &fonts()).unwrap_err()
@@ -1149,7 +1149,7 @@ mod tests {
             json!({"region": long, "revenue": 2}),
             json!({"region": "ok", "revenue": 3}),
         ]);
-        let (svg, warnings) = crate::diagnostic::collect(|| render(&payload, &fonts()));
+        let (svg, warnings) = diagnostic::collect(|| render(&payload, &fonts()));
         svg.unwrap();
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "WARN-SPARK-LABEL-TRUNCATED");
@@ -1369,7 +1369,7 @@ mod tests {
         let long = "a label far too long for the label column";
         let bound = bind(&base_payload(vec![json!({"region": long, "revenue": 1}), json!({"region": "ok", "revenue": 3})])).unwrap();
         let cell = Rect { x: 0.0, y: 0.0, width: 168.0, height: 82.0 };
-        let (laid_out, sunk) = crate::diagnostic::collect(|| layout(&bound, cell, &Measure { fonts: &fonts }).unwrap());
+        let (laid_out, sunk) = diagnostic::collect(|| layout(&bound, cell, &Measure { fonts: &fonts }).unwrap());
         assert!(sunk.is_empty());
         assert_eq!(laid_out.diagnostics.len(), 1);
         assert_eq!(laid_out.diagnostics[0].code, "WARN-SPARK-LABEL-TRUNCATED");

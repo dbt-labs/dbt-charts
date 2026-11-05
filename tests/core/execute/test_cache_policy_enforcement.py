@@ -21,6 +21,8 @@ from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure
 from dbt_charts.core.execute.cache_keys import stored_query_hash
+from dbt_charts.core.execute.lookup import lookup_and_record, query_data_ages
+from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 from ..._results import rows_result, rows_schema
@@ -599,7 +601,7 @@ class TestForceRefreshClearsEveryPolicySlot:
             # Both siblings warm their own policy slot off one execution.
             assert executor.execute_query("patient") == [{"value": 1}]
             assert executor.execute_query("impatient") == [{"value": 1}]
-            assert len(executor._cache) == 2, "two policies, two slots"
+            assert len(executor.ledger.memo) == 2, "two policies, two slots"
 
             adapter.execute.return_value.data = [{"value": 2}]
             adapter.execute.return_value.schema = rows_schema(
@@ -645,12 +647,17 @@ class TestNoStoreIsEnforcedAtTheStoreRead:
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
-            found = executor._lookup([executor._probe("q", query, key, True)], True)
+            found = lookup_and_record(
+                executor.ctx,
+                executor.ledger,
+                plan(executor.ctx, ["q"]),
+                resume_incremental=True,
+            )
             assert not found.hits, (
                 "the store read itself must refuse a disabled policy — not rely "
                 "on every caller remembering to check first"
             )
-            assert executor._cache == {}, "nothing may reach the memo either"
+            assert executor.ledger.memo == {}, "nothing may reach the memo either"
         finally:
             cache.close()
 
@@ -810,7 +817,7 @@ class TestQueryDataAgesOnFailure:
         with pytest.raises(QueryError):
             executor.execute_query("q")
 
-        names = [name for name, _da, _p in executor.query_data_ages]
+        names = [name for name, _da, _p in query_data_ages(executor.ledger)]
         assert "q" in names, (
             "a failed query must contribute a record — without it "
             "compute_snapshot_expires_at returns NEVER_EXPIRES and the board "
@@ -842,7 +849,7 @@ class TestQueryDataAgesOnFailure:
                 executor.execute_query("q")
             assert isinstance(exc_info.value.__cause__, CachedQueryFailure)
 
-            names = [name for name, _da, _p in executor.query_data_ages]
+            names = [name for name, _da, _p in query_data_ages(executor.ledger)]
             assert "q" in names, (
                 "a cached failure must also contribute a record — the board must "
                 "re-render once the failure's retry window expires"
@@ -975,8 +982,8 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
 
             data = executor.execute_query("q")
             assert data == []
-            assert executor.truncations()["q"].reason == "max_result_bytes"
-            assert executor.truncations()["q"].kept_row_count == 0
+            assert executor.ledger.truncations["q"].reason == "max_result_bytes"
+            assert executor.ledger.truncations["q"].kept_row_count == 0
 
             query = result.board.queries["q"]
             key = compute_cache_key(query, {}, result.board.sources)

@@ -1,12 +1,9 @@
-//! Port of d3-path's Path serializer — just the subset arc() emission needs.
+//! Port of d3-path's Path serializer — just the subset the generators need. A `Path` records the
+//! commands d3-path would write, as plain numbers; turning them into a string, rounding them or
+//! splitting an arc is the caller's business.
 //! Reference: https://github.com/d3/d3-path/blob/main/src/path.js
-//!
-//! One deliberate departure: `arc` records a sweep as equal pieces of at most 90 degrees, where d3
-//! writes one `A` (two for a circle). `print` rounds geometry to 0.01, which bends a near-semicircular
-//! arc whose center is ill-conditioned; the drawn circle is the same.
 
-use scene::{PathCommand, PathData};
-use std::f64::consts::{FRAC_PI_2, TAU};
+use std::f64::consts::TAU;
 
 const EPSILON: f64 = 1e-6;
 const TAU_EPSILON: f64 = TAU - EPSILON;
@@ -21,8 +18,41 @@ pub const WITH_PATH_DIGITS: u32 = 3;
 /// `v` by at most half a unit of the last digit.
 pub const PATH_COORD_TOLERANCE: f64 = 0.0005;
 
+/// One command of a path, in absolute coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Command {
+    MoveTo(f64, f64),
+    LineTo(f64, f64),
+    /// `bezierCurveTo(x1, y1, x2, y2, x, y)`.
+    BezierCurveTo(f64, f64, f64, f64, f64, f64),
+    /// d3-path's `arc(x, y, r, a0, a1, ccw)` with a positive radius and a nonzero [`arc_sweep`],
+    /// recorded as called; the `moveTo`/`lineTo` to its start precedes it as its own command.
+    /// d3 writes the sweep as one SVG `A` (two for a full circle); the center is what
+    /// lets a caller choose its own pieces.
+    Arc { x: f64, y: f64, r: f64, a0: f64, a1: f64, ccw: bool },
+    /// An SVG elliptical arc to `(x, y)`, as `d3-geo`, `d3-shape`'s `symbol` and `arcTo` write it.
+    SvgArc { rx: f64, ry: f64, rot: f64, large: bool, sweep: bool, x: f64, y: f64 },
+    ClosePath,
+}
+
+/// The angle d3-path's `arc(.., a0, a1, ccw)` sweeps: `a0` to `a1` in the given direction, a full
+/// turn when it reaches [`TAU`] within d3's epsilon, `0` when it is within d3's epsilon of nothing.
+pub fn arc_sweep(a0: f64, a1: f64, ccw: bool) -> f64 {
+    let mut da = if ccw { a0 - a1 } else { a1 - a0 };
+    // Does the angle go the wrong way? Flip the direction.
+    if da < 0.0 {
+        da = da % TAU + TAU;
+    }
+    let sweep = if da > TAU_EPSILON { TAU } else { da };
+    if sweep > EPSILON {
+        sweep
+    } else {
+        0.0
+    }
+}
+
 pub struct Path {
-    commands: Vec<PathCommand>,
+    commands: Vec<Command>,
     x0: f64,
     y0: f64,
     x1: Option<f64>,
@@ -39,19 +69,19 @@ impl Path {
         self.y0 = y;
         self.x1 = Some(x);
         self.y1 = y;
-        self.commands.push(PathCommand::M(x, y));
+        self.commands.push(Command::MoveTo(x, y));
     }
 
     pub fn line_to(&mut self, x: f64, y: f64) {
         self.x1 = Some(x);
         self.y1 = y;
-        self.commands.push(PathCommand::L(x, y));
+        self.commands.push(Command::LineTo(x, y));
     }
 
     pub fn bezier_curve_to(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, x: f64, y: f64) {
         self.x1 = Some(x);
         self.y1 = y;
-        self.commands.push(PathCommand::C(x1, y1, x2, y2, x, y));
+        self.commands.push(Command::BezierCurveTo(x1, y1, x2, y2, x, y));
     }
 
     /// d3-path's `rect(x, y, w, h)`: a closed subpath; `x1` ends back at its start.
@@ -67,67 +97,51 @@ impl Path {
         if self.x1.is_some() {
             self.x1 = Some(self.x0);
             self.y1 = self.y0;
-            self.commands.push(PathCommand::Z);
+            self.commands.push(Command::ClosePath);
         }
     }
 
-    /// d3-path's Path.arc: center-parameterized arc → SVG `A` commands.
+    /// d3-path's Path.arc: the move or line to the arc's start, then the arc itself.
     pub fn arc(&mut self, x: f64, y: f64, r: f64, a0: f64, a1: f64, ccw: bool) {
-        let dx = r * a0.cos();
-        let dy = r * a0.sin();
-        let x0 = x + dx;
-        let y0 = y + dy;
-        let cw = !ccw;
-        let mut da = if ccw { a0 - a1 } else { a1 - a0 };
+        let x0 = x + r * a0.cos();
+        let y0 = y + r * a0.sin();
 
         assert!(r >= 0.0, "negative radius: {r}");
 
         // Is this path empty? Move to (x0, y0).
         match self.x1 {
             None => {
-                self.commands.push(PathCommand::M(x0, y0));
+                self.commands.push(Command::MoveTo(x0, y0));
                 self.x1 = Some(x0);
                 self.y1 = y0;
             }
             // Or is (x0, y0) not coincident with the previous point? Line to (x0, y0).
             Some(px1) => {
                 if (px1 - x0).abs() > EPSILON || (self.y1 - y0).abs() > EPSILON {
-                    self.commands.push(PathCommand::L(x0, y0));
+                    self.commands.push(Command::LineTo(x0, y0));
                     self.x1 = Some(x0);
                     self.y1 = y0;
                 }
             }
         }
 
-        if r == 0.0 {
+        let sweep = arc_sweep(a0, a1, ccw);
+        if r == 0.0 || sweep == 0.0 {
             return;
         }
-
-        // Does the angle go the wrong way? Flip the direction.
-        if da < 0.0 {
-            da = da % TAU + TAU;
-        }
-
-        let sweep_angle = if da > TAU_EPSILON { TAU } else { da };
-        if sweep_angle > EPSILON {
-            let pieces = ((sweep_angle / FRAC_PI_2) - 1e-9).ceil().max(1.0) as usize;
-            let direction = if ccw { -1.0 } else { 1.0 };
-            for piece in 1..=pieces {
-                let (px, py) = if piece == pieces && sweep_angle == TAU {
-                    (x0, y0)
-                } else {
-                    let angle = a0 + direction * sweep_angle * piece as f64 / pieces as f64;
-                    (x + r * angle.cos(), y + r * angle.sin())
-                };
-                self.commands.push(PathCommand::A { rx: r, ry: r, rot: 0.0, large: false, sweep: cw, x: px, y: py });
-                self.x1 = Some(px);
-                self.y1 = py;
-            }
-        }
+        self.commands.push(Command::Arc { x, y, r, a0, a1, ccw });
+        let (end_x, end_y) = if sweep == TAU {
+            (x0, y0)
+        } else {
+            let end = a0 + if ccw { -sweep } else { sweep };
+            (x + r * end.cos(), y + r * end.sin())
+        };
+        self.x1 = Some(end_x);
+        self.y1 = end_y;
     }
 
-    pub fn into_path_data(self) -> PathData {
-        PathData(self.commands)
+    pub fn into_commands(self) -> Vec<Command> {
+        self.commands
     }
 }
 
@@ -139,11 +153,11 @@ impl Default for Path {
 
 /// Test support: reads a `d` string back into commands and compares outlines.
 pub mod testing {
-    use super::{PathCommand, PathData, PATH_COORD_TOLERANCE, TAU};
+    use super::{arc_sweep, Command, PATH_COORD_TOLERANCE, TAU};
 
     /// The `d` d3 prints: absolute `M L C A Z`, plus the relative `h`/`v` of d3-path's `rect`.
-    pub fn parse_d(d: &str) -> PathData {
-        let mut commands: Vec<PathCommand> = Vec::new();
+    pub fn parse_d(d: &str) -> Vec<Command> {
+        let mut commands: Vec<Command> = Vec::new();
         let mut rest = d;
         while !rest.is_empty() {
             let end = rest[1..].find(|c: char| c.is_ascii_alphabetic()).map_or(rest.len(), |i| i + 1);
@@ -151,60 +165,60 @@ pub mod testing {
             rest = tail;
             let n: Vec<f64> = segment[1..].split(',').filter(|t| !t.is_empty()).map(|t| t.parse().expect("a number")).collect();
             commands.push(match (&segment[..1], n.as_slice()) {
-                ("M", &[x, y]) => PathCommand::M(x, y),
-                ("L", &[x, y]) => PathCommand::L(x, y),
-                ("C", &[a, b, c, d, x, y]) => PathCommand::C(a, b, c, d, x, y),
+                ("M", &[x, y]) => Command::MoveTo(x, y),
+                ("L", &[x, y]) => Command::LineTo(x, y),
+                ("C", &[a, b, c, d, x, y]) => Command::BezierCurveTo(a, b, c, d, x, y),
                 ("A", &[rx, ry, rot, large, sweep, x, y]) => {
-                    PathCommand::A { rx, ry, rot, large: large == 1.0, sweep: sweep == 1.0, x, y }
+                    Command::SvgArc { rx, ry, rot, large: large == 1.0, sweep: sweep == 1.0, x, y }
                 }
-                ("Z", []) => PathCommand::Z,
+                ("Z", []) => Command::ClosePath,
                 ("h", &[dx]) => {
                     let (x, y) = end_point(&commands);
-                    PathCommand::L(x + dx, y)
+                    Command::LineTo(x + dx, y)
                 }
                 ("v", &[dy]) => {
                     let (x, y) = end_point(&commands);
-                    PathCommand::L(x, y + dy)
+                    Command::LineTo(x, y + dy)
                 }
                 other => panic!("unreadable path segment {other:?}"),
             });
         }
-        PathData(commands)
+        commands
     }
 
-    fn end_point(commands: &[PathCommand]) -> (f64, f64) {
+    fn end_point(commands: &[Command]) -> (f64, f64) {
         match commands.last().expect("a relative segment follows a command") {
-            PathCommand::M(x, y) | PathCommand::L(x, y) | PathCommand::C(.., x, y) | PathCommand::A { x, y, .. } => (*x, *y),
-            PathCommand::Z => panic!("a relative segment after Z"),
+            Command::MoveTo(x, y) | Command::LineTo(x, y) | Command::BezierCurveTo(.., x, y) | Command::SvgArc { x, y, .. } => (*x, *y),
+            Command::Arc { .. } | Command::ClosePath => panic!("a relative segment after an arc or Z"),
         }
     }
 
     /// The path's drawn outline as points about `step` apart (lines, circular arcs, curves).
-    pub fn flatten(path: &PathData, step: f64) -> Vec<(f64, f64)> {
+    pub fn flatten(path: &[Command], step: f64) -> Vec<(f64, f64)> {
         let (mut at, mut start) = ((0.0, 0.0), (0.0, 0.0));
         let mut out = Vec::new();
-        let mut segment = |out: &mut Vec<(f64, f64)>, length: f64, point: &dyn Fn(f64) -> (f64, f64)| {
+        let segment = |out: &mut Vec<(f64, f64)>, length: f64, point: &dyn Fn(f64) -> (f64, f64)| {
             let n = (length / step).ceil().max(1.0) as usize;
             out.extend((0..=n).map(|i| point(i as f64 / n as f64)));
         };
-        for command in path.commands() {
+        for command in path {
             match *command {
-                PathCommand::M(x, y) => {
+                Command::MoveTo(x, y) => {
                     at = (x, y);
                     start = at;
                     out.push(at);
                 }
-                PathCommand::L(x, y) => {
+                Command::LineTo(x, y) => {
                     let from = at;
                     segment(&mut out, (x - from.0).hypot(y - from.1), &|t| (from.0 + t * (x - from.0), from.1 + t * (y - from.1)));
                     at = (x, y);
                 }
-                PathCommand::Z => {
+                Command::ClosePath => {
                     let (from, to) = (at, start);
                     segment(&mut out, (to.0 - from.0).hypot(to.1 - from.1), &|t| (from.0 + t * (to.0 - from.0), from.1 + t * (to.1 - from.1)));
                     at = start;
                 }
-                PathCommand::C(a, b, c, d, x, y) => {
+                Command::BezierCurveTo(a, b, c, d, x, y) => {
                     let from = at;
                     let length = (a - from.0).hypot(b - from.1) + (c - a).hypot(d - b) + (x - c).hypot(y - d);
                     segment(&mut out, length, &|t| {
@@ -216,7 +230,12 @@ pub mod testing {
                     });
                     at = (x, y);
                 }
-                PathCommand::A { rx, large, sweep, x, y, .. } => {
+                Command::Arc { x, y, r, a0, a1, ccw } => {
+                    let da = arc_sweep(a0, a1, ccw) * if ccw { -1.0 } else { 1.0 };
+                    segment(&mut out, r * da.abs(), &|t| (x + r * (a0 + t * da).cos(), y + r * (a0 + t * da).sin()));
+                    at = (x + r * (a0 + da).cos(), y + r * (a0 + da).sin());
+                }
+                Command::SvgArc { rx, large, sweep, x, y, .. } => {
                     let from = at;
                     let (mx, my) = ((from.0 + x) / 2.0, (from.1 + y) / 2.0);
                     let (cx, cy) = (x - from.0, y - from.1);
@@ -256,22 +275,50 @@ pub mod testing {
         (p.0 - a.0 - t * dx).hypot(p.1 - a.1 - t * dy)
     }
 
-    fn numbers(command: &PathCommand) -> Vec<f64> {
+    fn numbers(command: &Command) -> Vec<f64> {
         match *command {
-            PathCommand::M(x, y) | PathCommand::L(x, y) => vec![x, y],
-            PathCommand::C(a, b, c, d, x, y) => vec![a, b, c, d, x, y],
-            PathCommand::A { rx, ry, rot, x, y, .. } => vec![rx, ry, rot, x, y],
-            PathCommand::Z => vec![],
+            Command::MoveTo(x, y) | Command::LineTo(x, y) => vec![x, y],
+            Command::BezierCurveTo(a, b, c, d, x, y) => vec![a, b, c, d, x, y],
+            Command::SvgArc { rx, ry, rot, x, y, .. } => vec![rx, ry, rot, x, y],
+            Command::Arc { x, y, r, a0, a1, .. } => vec![x, y, r, a0, a1],
+            Command::ClosePath => vec![],
+        }
+    }
+
+    /// Whether `got` draws the outline of `want`, the `d` d3 printed, to the precision d3 printed it:
+    /// every sample of one within two coordinate roundings' hypotenuse of the other (a relative `h`
+    /// or `v` d3 prints carries the rounding of the point it starts from).
+    pub fn outline_matches(got: &[Command], want: &str) -> Result<(), String> {
+        let want_commands = parse_d(want);
+        // Samples a few hundred to a side, so a large shape costs no more than a small one; the chord
+        // error of that spacing stays far under the tolerance.
+        let reach = flatten(&want_commands, f64::MAX).iter().fold(0.0, |m: f64, p| m.max(p.0.abs()).max(p.1.abs()));
+        let step = (reach / 200.0).max(0.05);
+        let (got_points, want_points) = (flatten(got, step), flatten(&want_commands, step));
+        let tolerance = 2.0 * PATH_COORD_TOLERANCE * 2f64.sqrt();
+        if got_points.len() < 2 && want_points.len() < 2 {
+            // A point has no segments to measure between.
+            return match (got_points.first(), want_points.first()) {
+                (Some(g), Some(w)) if (g.0 - w.0).hypot(g.1 - w.1) <= tolerance => Ok(()),
+                (None, None) => Ok(()),
+                _ => Err(format!("{got:?} vs {want}")),
+            };
+        }
+        let apart = hausdorff(&got_points, &want_points);
+        if apart <= tolerance {
+            Ok(())
+        } else {
+            Err(format!("{apart} apart: got {got:?}, want {want}"))
         }
     }
 
     /// `got` is the path d3 printed as `d`, to the precision d3 printed it.
-    pub fn assert_path(got: &PathData, d: impl AsRef<str>) {
+    pub fn assert_path(got: &[Command], d: impl AsRef<str>) {
         let want = parse_d(d.as_ref());
-        assert_eq!(got.0.len(), want.0.len(), "{got:?} vs {want:?}");
-        for (g, w) in got.0.iter().zip(&want.0) {
+        assert_eq!(got.len(), want.len(), "{got:?} vs {want:?}");
+        for (g, w) in got.iter().zip(&want) {
             assert_eq!(std::mem::discriminant(g), std::mem::discriminant(w), "{got:?} vs {want:?}");
-            if let (PathCommand::A { large: gl, sweep: gs, .. }, PathCommand::A { large: wl, sweep: ws, .. }) = (g, w) {
+            if let (Command::SvgArc { large: gl, sweep: gs, .. }, Command::SvgArc { large: wl, sweep: ws, .. }) = (g, w) {
                 assert_eq!((gl, gs), (wl, ws), "{got:?} vs {want:?}");
             }
             for (a, b) in numbers(g).into_iter().zip(numbers(w)) {
@@ -296,86 +343,43 @@ mod tests {
         let mut path = Path::new();
         path.move_to(3.061665, -148.91853);
         path.line_to(0.0004, 12.5);
+        assert_eq!(path.into_commands(), [Command::MoveTo(3.061665, -148.91853), Command::LineTo(0.0004, 12.5)]);
+    }
+
+    #[test]
+    fn an_arc_is_recorded_as_called_after_its_start() {
+        let mut path = Path::new();
+        path.arc(1.0, 2.0, 10.0, 0.0, PI, true);
         assert_eq!(
-            path.into_path_data().commands(),
-            [PathCommand::M(3.061665, -148.91853), PathCommand::L(0.0004, 12.5)]
+            path.into_commands(),
+            [Command::MoveTo(11.0, 2.0), Command::Arc { x: 1.0, y: 2.0, r: 10.0, a0: 0.0, a1: PI, ccw: true }]
         );
     }
 
-    /// Every circular arc's midpoint as an SVG renderer reads the command, for a path whose
-    /// `A`s are all `large = false`.
-    fn arc_midpoints(path: &PathData) -> Vec<(f64, f64, f64)> {
-        let mut at = (0.0, 0.0);
-        let mut out = Vec::new();
-        for command in path.commands() {
-            match *command {
-                PathCommand::M(x, y) | PathCommand::L(x, y) => at = (x, y),
-                PathCommand::A { rx, large, sweep, x, y, .. } => {
-                    assert!(!large, "a piece of at most 90 degrees is never large");
-                    let (mx, my) = ((at.0 + x) / 2.0, (at.1 + y) / 2.0);
-                    let (cx, cy) = (x - at.0, y - at.1);
-                    let chord = cx.hypot(cy);
-                    let h = (rx * rx - chord * chord / 4.0).max(0.0).sqrt();
-                    let (nx, ny) = (-cy / chord, cx / chord);
-                    let cross = |c: (f64, f64)| (at.0 - c.0) * (y - c.1) - (at.1 - c.1) * (x - c.0);
-                    let candidates = [(mx + h * nx, my + h * ny), (mx - h * nx, my - h * ny)];
-                    let center = *candidates.iter().find(|c| (cross(**c) > 0.0) == sweep).unwrap();
-                    let (dx, dy) = (mx - center.0, my - center.1);
-                    let d = dx.hypot(dy);
-                    out.push((center.0 + rx * dx / d, center.1 + rx * dy / d, rx));
-                    at = (x, y);
-                }
-                _ => {}
-            }
-        }
-        out
-    }
-
-    /// `print` writes geometry to 0.01, so an arc whose chord nearly equals its diameter must
-    /// not depend on its endpoints' last digits: its center sits `sqrt(r^2 - (chord/2)^2)` from the
-    /// chord, and a hundredth of endpoint error moves that by far more than a hundredth.
     #[test]
-    fn a_near_semicircle_survives_rounding_its_endpoints_to_a_hundredth() {
-        let r = 140.4;
-        let (a0, a1) = (-PI / 2.0 + 0.0218, PI / 2.0 - 0.0218);
-        let mut path = Path::new();
-        path.arc(0.0, 0.0, r, a0, a1, false);
-        let rounded = testing::parse_d(&print::path_d(&path.into_path_data()));
-        for (mx, my, rx) in arc_midpoints(&rounded) {
-            let off = mx.hypot(my) - rx;
-            assert!(off.abs() <= 0.01, "an arc midpoint sits {off} from the circle");
-        }
-    }
-
-    #[test]
-    fn a_sweep_records_in_equal_pieces_of_at_most_ninety_degrees() {
-        let pieces = |a1: f64, ccw: bool| {
+    fn a_degenerate_arc_records_only_its_start() {
+        for (r, a1) in [(0.0, PI), (10.0, 1e-9)] {
             let mut path = Path::new();
-            path.arc(0.0, 0.0, 10.0, 0.0, a1, ccw);
-            path.into_path_data().0.iter().filter(|c| matches!(c, PathCommand::A { .. })).count()
-        };
-        assert_eq!(pieces(PI / 2.0, false), 1);
-        assert_eq!(pieces(PI / 2.0 + 0.01, false), 2);
-        assert_eq!(pieces(PI, false), 2);
-        assert_eq!(pieces(-PI, true), 2);
-        assert_eq!(pieces(TAU, false), 4);
+            path.arc(0.0, 0.0, r, 0.0, a1, false);
+            assert_eq!(path.into_commands(), [Command::MoveTo(r, 0.0)], "r {r}, a1 {a1}");
+        }
     }
 
     #[test]
-    fn a_full_circle_is_four_quarters_and_a_short_one_is_small() {
-        let mut full = Path::new();
-        full.arc(0.0, 0.0, 10.0, 0.0, TAU, false);
-        let full = full.into_path_data();
-        let [PathCommand::M(..), PathCommand::A { large: false, sweep: true, .. }, PathCommand::A { .. }, PathCommand::A { .. }, PathCommand::A { x, y, .. }] =
-            full.commands()
-        else {
-            panic!("a circle is a move and four quarter arcs")
-        };
-        assert!((x - 10.0).abs() < 1e-9 && y.abs() < 1e-9, "the last quarter closes on the start");
-        let mut short = Path::new();
-        short.arc(0.0, 0.0, 10.0, 0.0, -1.0, true);
-        let [PathCommand::M(..), PathCommand::A { large: false, sweep: false, .. }] = short.into_path_data().commands() else {
-            panic!("a short counterclockwise arc is a move and one small arc")
-        };
+    fn a_second_arc_starting_where_the_first_ended_adds_no_line() {
+        let mut path = Path::new();
+        path.arc(0.0, 0.0, 10.0, 0.0, PI, false);
+        path.arc(0.0, 0.0, 10.0, PI, TAU, false);
+        let commands = path.into_commands();
+        assert!(!commands.iter().any(|c| matches!(c, Command::LineTo(..))), "{commands:?}");
+    }
+
+    #[test]
+    fn a_sweep_is_the_directed_angle_and_a_full_turn_past_tau() {
+        assert_eq!(arc_sweep(0.0, PI, false), PI);
+        assert_eq!(arc_sweep(0.0, -PI, true), PI);
+        assert_eq!(arc_sweep(0.0, -PI / 2.0, false), 1.5 * PI);
+        assert_eq!(arc_sweep(0.0, 7.0, false), TAU);
+        assert_eq!(arc_sweep(0.0, 1e-9, false), 0.0);
     }
 }

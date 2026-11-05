@@ -1,7 +1,7 @@
 """The data seam the post-resolve render path depends on.
 
 ``render_board_svg`` and everything below it need only three things from the
-execution layer: fetch a query's rows, ask when the cache entries backing them
+execution layer: fetch a query's rows and their declared types, ask when the cache entries backing them
 were written, and ask when this render happened. ``Executor`` provides both (and satisfies this Protocol
 structurally, with no changes of its own), but it is not the only possible
 provider: replaying a recorded board from a serialized artifact has rows on
@@ -14,16 +14,10 @@ boundary ``core/AGENTS.md`` commits to — render as a pure function of
 ``(Resolved*, data)`` plus foreign-format translation.
 
 **Deliberately absent**, because the post-resolve path does not use them:
-
-- ``adapter_registry`` — only the *resolve* path reaches for it
-  (``render/chart/automatic_link.py``, ``render/layout_sizing.py::_require_resolved``).
-  Auto-link bakes its result into ``resolved.link`` at resolve time, so a
-  replayed board already carries its links. Adding it here would oblige every
-  provider to own a live warehouse connection, defeating the point.
-- ``board`` — the one read (``executor.board.variables`` in
-  ``execute/chart_resolution.py``) is resolve-path only.
-- ``execute_chart`` / ``lookup`` — the resolve path, the terminal and
-  data-format renderers, and the ``render()`` orchestrator's cache pre-pass.
+``adapter_registry``, ``board`` and the other resolve-time reads. The resolve
+path takes ``ResolveDataProvider``, which adds them; ``Executor`` and the
+collected ``QueryResults`` both satisfy it. ``render()`` collects its queries up
+front and reads ``QueryResults``, which never executes a query.
 
 Keep this Protocol minimal. Widening it to accommodate a new render-time reach
 into the execution layer is the signal that the reach itself belongs earlier, on
@@ -35,11 +29,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
-from dbt_charts.core.execute.cache_backend import CacheRows
+from dbt_charts.core.execute.cache_backend import CacheRows, ResultRows
 
 if TYPE_CHECKING:
-    from dbt_charts.core.compile.models.board.normalized import VariableValues
+    from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
+    from dbt_charts.core.compile.models.chart.normalized import Chart
     from dbt_charts.core.compile.template.listings import ListingCall, TextListings
+    from dbt_charts.core.compile.template.parameterized import DateRangeFilter
+    from dbt_charts.core.diagnostics.base import DbtChartsError
+    from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 
 
 # Not @runtime_checkable: `cache_hit_ats` is a property, so this is a data
@@ -60,6 +58,14 @@ class ChartDataProvider(Protocol):
         accept more than the Protocol promises. Declaring only what the seam uses
         keeps a provider from modeling cache control it has no concept of.
         """
+        ...
+
+    def execute_query_result(
+        self, query_name: str, variables: VariableValues
+    ) -> ResultRows:
+        """:meth:`execute_query` with the declared type of each column: what the
+        engine draws from: a declared non-string kind decides, a string column
+        keeps shape detection."""
         ...
 
     def text_listings(
@@ -86,3 +92,32 @@ class ChartDataProvider(Protocol):
         equal without stripping timestamps first.
         """
         ...
+
+
+class ResolveDataProvider(ChartDataProvider, Protocol):
+    """A ``ChartDataProvider`` plus the resolve-time context the board resolve
+    path reads: the board's link settings and the adapters auto-link asks for
+    schema and foreign keys. ``Executor`` and ``QueryResults`` both satisfy it."""
+
+    @property
+    def board(self) -> Board: ...
+
+    @property
+    def adapter_registry(self) -> AdapterRegistry: ...
+
+    @property
+    def column_format_errors(self) -> dict[str, DbtChartsError]: ...
+
+    def render_with_range_filters(
+        self, query_name: str, variables: VariableValues
+    ) -> tuple[str, str | None, list[DateRangeFilter]] | None: ...
+
+
+def chart_rows(
+    chart: Chart, provider: ChartDataProvider, variables: VariableValues
+) -> ResultRows:
+    """The typed rows behind *chart*; a chart with no query (blank, callout) has
+    none."""
+    if chart.query_name is None:
+        return ResultRows([], {})
+    return provider.execute_query_result(chart.query_name, variables)

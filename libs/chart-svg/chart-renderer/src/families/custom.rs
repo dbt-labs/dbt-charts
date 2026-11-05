@@ -30,10 +30,10 @@ use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Map, Value as Json};
 
-use crate::codes;
+use diagnostic::codes;
 use crate::common::{format_kpi_parts, Font, FormatSlot, PartsOptions, TitleStyle};
 use crate::frame::{ChartFrame, FrameTitle};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::href;
 use scene::{Attrs, Chars, Child, Element, Escape, Node, Role, Shape};
 use measure::FontBook;
@@ -134,7 +134,7 @@ struct CustomStyle {
     tree: Json,
 }
 
-fn diagnostic(code: &crate::diagnostic::Code, chart_id: &str, reason: String) -> Diagnostic {
+fn diagnostic(code: &diagnostic::Code, chart_id: &str, reason: String) -> Diagnostic {
     Diagnostic::new(
         code,
         [("chart_id", json!(chart_id)), ("reason", json!(reason))],
@@ -1224,7 +1224,7 @@ mod tests {
     fn a_cut_title_warns_and_a_fitting_one_does_not() {
         let codes = |title: &str| {
             let p = payload("<rect/>", |r| r["title"] = json!(title));
-            let (_, warned) = crate::diagnostic::collect(|| render(&p, &test_fonts()).unwrap());
+            let (_, warned) = diagnostic::collect(|| render(&p, &test_fonts()).unwrap());
             warned.iter().map(|d| d.code).collect::<Vec<_>>()
         };
         assert_eq!(codes(&"Quarterly Revenue Growth ".repeat(12)), ["WARN-CHART-TITLE-TRUNCATED"]);
@@ -1796,7 +1796,7 @@ mod tests {
         );
         for name in ["circle", "cross", "diamond", "square", "star", "triangle", "wye", "plus", "times", "triangle2", "asterisk", "square2", "diamond2"] {
             let drawn = template_svg(&format!("<path d=\"{{{{ d3.symbol('{name}', 50) }}}}\"/>"));
-            let want = format!("<path d=\"{}\"/>", print::path_d(&d3rs::symbol::SymbolType::from_name(name).unwrap().draw(50.0)));
+            let want = format!("<path d=\"{}\"/>", print::path_d(&crate::scene_path::scene_path(&d3rs::symbol::SymbolType::from_name(name).unwrap().draw(50.0))));
             assert!(drawn.contains(&want), "{name}: {drawn}");
         }
         for (name, first, len) in [

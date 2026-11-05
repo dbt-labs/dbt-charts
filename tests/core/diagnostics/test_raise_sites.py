@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 import types
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -245,7 +246,7 @@ class TestRenderKpiFormatKindMismatchCarriesCode:
             support=KpiSupportConfig(value="renewed_on"),
             style=KpiChartStylePatch.model_validate({"support": {"format": "percent"}}),
         )
-        data = [{"revenue": 1_500_000, "renewed_on": "2026-11-15"}]
+        data = [{"revenue": 1_500_000, "renewed_on": date(2026, 11, 15)}]
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
 
         with pytest.raises(ChartDataError) as exc_info:

@@ -1038,7 +1038,7 @@ def normalize_board(
 
     # Pull synthetic queries (from promote_inline_option_queries and
     # promote_column_option_queries) into local_queries so that Board.queries
-    # contains them.  The executor's get_query checks board.queries first; having
+    # contains them.  The plan stage's get_query checks board.queries first; having
     # them here means tests and callers do not need to pass a separate query_registry.
     for var in local_variables.values():
         q = var.get_option_query()

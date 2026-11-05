@@ -9,6 +9,8 @@ base64 = "0.22"
 d3rs = { path = "../d3rs" }
 mdsvg = { path = "../mdsvg" }
 display-text = { path = "../display-text" }
+diagnostic = { path = "../diagnostic" }
+column-types = { path = "../column-types" }
 dbt-charts-color = { path = "../color" }
 measure = { path = "../measure" }
 print = { path = "../print" }
@@ -35,3 +37,6 @@ fancy-regex = "0.19.2"
 # from the host, so every host prints the same wall clock.
 jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bundle-always"] }
 libm = "0.2.16"
+
+[dev-dependencies]
+diagnostic = { path = "../diagnostic", features = ["test-support"] }

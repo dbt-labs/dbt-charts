@@ -180,8 +180,8 @@ def test_a_german_board_resolves_german_theme_text_from_its_regional() -> None:
 
 def test_placeholder_data_is_translated() -> None:
     with language_scope("de"):
-        bar = generate_placeholder_data("bar")
-        table = generate_placeholder_data("table")
+        bar = generate_placeholder_data("bar").rows
+        table = generate_placeholder_data("table").rows
     assert next(iter(bar[0].values())) == "Kategorie A"
     assert table[0]["name"] == "Beispielelement 1"
     assert table[1]["status"] == "Ausstehend"
@@ -356,9 +356,9 @@ rows:
 
 def test_placeholder_names_read_in_the_board_language() -> None:
     with language_scope("de"):
-        pie = generate_placeholder_data("pie")
-        boxplot = generate_placeholder_data("boxplot")
-        heatmap = generate_placeholder_data("heatmap")
+        pie = generate_placeholder_data("pie").rows
+        boxplot = generate_placeholder_data("boxplot").rows
+        heatmap = generate_placeholder_data("heatmap").rows
     assert pie[0]["category"] == "Segment A"
     assert boxplot[0]["category"] == "Gruppe A"
     assert (heatmap[0]["y"], heatmap[0]["x"]) == ("Zeile A", "Sp. 1")

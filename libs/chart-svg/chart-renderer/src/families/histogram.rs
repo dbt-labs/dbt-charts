@@ -128,7 +128,7 @@ use serde::Deserialize;
 
 use crate::common::{AxisStyle, Font, TitleStyle};
 use d3rs::bin::{vega_constant_extent, Thresholds};
-use crate::diagnostic::{warn, Diagnostic};
+use diagnostic::{warn, Diagnostic};
 use crate::layout::Rect;
 use measure::{FontBook, Measure};
 use print::print;
@@ -1212,7 +1212,7 @@ mod tests {
         let fonts = test_fonts();
         let measure = measure::Measure { fonts: &fonts };
         let cell = crate::layout::Rect { x: 0.0, y: 0.0, width: 420.0, height: 260.0 };
-        let (laid, sunk) = crate::diagnostic::collect(|| layout::layout(&bound, cell, &measure));
+        let (laid, sunk) = diagnostic::collect(|| layout::layout(&bound, cell, &measure));
         let laid = laid.expect("histogram lays out");
         assert!(sunk.is_empty(), "{sunk:?}");
         let codes: Vec<_> = laid.diagnostics.iter().map(|d| d.code).collect();
@@ -1232,7 +1232,7 @@ mod tests {
         let fonts = test_fonts();
         let cell = crate::layout::Rect { x: 0.0, y: 0.0, width: payload.width, height: payload.height };
         let laid = layout::layout(&bound, cell, &measure::Measure { fonts: &fonts }).unwrap();
-        let (svg, sunk) = crate::diagnostic::collect(|| render(&payload, &fonts));
+        let (svg, sunk) = diagnostic::collect(|| render(&payload, &fonts));
         assert_eq!(svg.unwrap(), print::print(&laid.nodes));
         assert_eq!(sunk, laid.diagnostics);
     }

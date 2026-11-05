@@ -12,7 +12,7 @@ It injects a HeightProvider callback into the pure layout algorithms in
 render/sizing.py.
 
 Entry Point:
-    - calculate_data_aware_layout(board, executor, variables, render_first)
+    - calculate_data_aware_layout(board, results, variables, render_first)
       Called from renderer.py after query pre-execution.
 """
 
@@ -60,6 +60,8 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_LINK_SCHEME_UNSAFE_AT_RENDER
 from dbt_charts.core.diagnostics.execution import ExecutionError
+from dbt_charts.core.execute.cache_backend import ResultRows
+from dbt_charts.core.execute.chart_data_provider import chart_rows
 from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_inputs
 from dbt_charts.core.render.chart.spec_builders import additive_padding
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
@@ -88,15 +90,16 @@ from dbt_charts.core.render.title_band import (
     failed_title_text,
     row_title_shifts,
 )
-from dbt_charts.core.utils import Rows
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.primitives import PieMode, ResolvedFontStyle
     from dbt_charts.core.compile.models.style.context import ChartStyleContext
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
     from dbt_charts.core.compile.resolve import AutomaticLinkCandidate
-    from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
-    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.execute.chart_data_provider import (
+        ChartDataProvider,
+        ResolveDataProvider,
+    )
 
 _log = logging.getLogger(__name__)
 _FIXED_ASPECT_PIE_TYPES = frozenset({"pie", "donut"})
@@ -199,7 +202,7 @@ class SizingRenderCtx:
     # chart has no resolved variant at any width and must be drawn as an error
     # tile instead.
     resolve_errors: dict[str, ChartResolveFailure] = field(default_factory=dict)
-    executor: Executor | None = None
+    results: ResolveDataProvider | None = None
     variables: dict[str, Any] = field(default_factory=dict)
     # ``variables`` over the board's declared defaults: what ``visible:`` and the
     # active tab are decided against.
@@ -243,7 +246,7 @@ def _nested_render_ctx(
         natural_heights=render_ctx.natural_heights,
         resolved_style=nested_board.resolved_style,
         chart_style_context=nested_board.chart_style_context,
-        executor=render_ctx.executor,
+        results=render_ctx.results,
         variables=render_ctx.variables,
         variable_values=render_ctx.variable_values,
     )
@@ -251,7 +254,7 @@ def _nested_render_ctx(
 
 def _resolve_with_runtime_inputs(
     chart: Chart,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: dict[str, Any],  # type-state: explicit_any — runtime variable values
     width: float,
     chart_style_context: ChartStyleContext,
@@ -275,14 +278,14 @@ def _resolve_with_runtime_inputs(
     )
 
     qn = chart.query_name
-    data = executor.execute_query(qn, variables) if qn else []
+    data = results.execute_query(qn, variables) if qn else []
 
-    links = executor.board.links
+    links = results.board.links
     automatic_link_candidate: AutomaticLinkCandidate = None
     if should_synthesize_automatic_link(chart, data, links.auto):
         synthesized = synthesize_automatic_link(
             chart,
-            executor,
+            results,
             exclude_x=automatic_link_excludes_x(chart, data),
         )
         if synthesized:
@@ -301,13 +304,13 @@ def _resolve_with_runtime_inputs(
         assert chart_query is not None
         table_column_links = fk_column_links_from_executor(
             chart_query,
-            executor.adapter_registry,
+            results.adapter_registry,
         )
         if table_column_links:
             table_column_rows = fetch_column_rows_for_link(
-                executor.adapter_registry,
+                results.adapter_registry,
                 chart_query,
-                board=executor.board,
+                board=results.board,
             )
 
     return resolve_chart_with_runtime_inputs(
@@ -315,7 +318,7 @@ def _resolve_with_runtime_inputs(
         data,
         chart_style_context,
         width,
-        executor,
+        results,
         variables,
         automatic_link_candidate=automatic_link_candidate,
         table_column_links=table_column_links,
@@ -330,7 +333,7 @@ def _resolve_with_runtime_inputs(
 def _require_resolved(
     render_ctx: SizingRenderCtx,
     chart: Chart,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: dict[str, Any],
     width: float,
     resolved_style: ResolvedStyle,
@@ -397,7 +400,7 @@ def _require_resolved(
     try:
         resolved = _resolve_with_runtime_inputs(
             chart,
-            executor,
+            results,
             variables,
             width,
             chart_style_context,
@@ -424,8 +427,8 @@ def _require_resolved(
 def _get_table_height_from_data(
     chart: TableChart,
     resolved: ResolvedTableChart,
-    executor: Executor,
-    variables: dict[str, Any] | None,
+    results: ResolveDataProvider,
+    variables: VariableValues,
     card_padding: float,
     board_style: ResolvedStyle,
     width: float | None = None,
@@ -445,7 +448,7 @@ def _get_table_height_from_data(
     )
     padding = additive_padding(card_padding, resolved.layout_padding)
     try:
-        data = executor.execute_chart(chart, variables)
+        data = chart_rows(chart, results, variables)
         _, natural_height = render_native(
             resolved,
             data,
@@ -464,7 +467,7 @@ def _get_table_height_from_data(
 
 def _make_chart_width_measurer(
     render_ctx: SizingRenderCtx,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: dict[str, Any],  # type-state: explicit_any — runtime variable values
 ) -> ChartWidth:
     """A ``ChartWidth`` that answers an unpinned table's measured column width.
@@ -492,11 +495,11 @@ def _make_chart_width_measurer(
             resolved = render_ctx.pre_resolved.get(chart.id)
             if resolved is None:
                 resolved = _resolve_with_runtime_inputs(
-                    chart, executor, variables, estimate, ctx
+                    chart, results, variables, estimate, ctx
                 )
             assert isinstance(resolved, ResolvedTableChart)
             natural = measure_table_natural_width(
-                resolved, executor.execute_chart(chart, variables), resolved_style
+                resolved, chart_rows(chart, results, variables), resolved_style
             )
         except DbtChartsError as exc:
             _log.debug("Table width measurement failed for %r: %s", chart.id, exc)
@@ -512,9 +515,10 @@ def _make_chart_width_measurer(
 
 
 def build_chart_datasets(
-    resolved: ResolvedChart, executor: ChartDataProvider, variables: dict[str, Any]
-) -> dict[str | None, list[dict[str, Any]]]:
-    """Execute every query this chart references and map query_name -> rows.
+    resolved: ResolvedChart, results: ChartDataProvider, variables: VariableValues
+) -> dict[str | None, ResultRows]:
+    """Execute every query this chart references and map query_name -> rows and
+    their declared column types.
 
     Always includes the base chart's own query (``resolved.query_name``,
     when set) — every chart, not just layered ones, resolves its rows from
@@ -524,7 +528,7 @@ def build_chart_datasets(
     different tables) — layers with no override share the base chart's own
     ``query_name`` (baked at resolve time, see ``_resolve_one_layer``), so
     every layer key is already present via the base entry; the loop below
-    only adds genuinely distinct override queries. The executor already ran
+    only adds genuinely distinct override queries. The results provider already ran
     every one of these during the board's pre-execution pass
     (``collect_all_query_names``), so every lookup here is a cache hit, never
     a new query execution.
@@ -533,11 +537,11 @@ def build_chart_datasets(
         LayeredResolvedChart,
     )
 
-    datasets: dict[str | None, list[dict[str, Any]]] = {
+    datasets: dict[str | None, ResultRows] = {
         resolved.query_name: (
-            executor.execute_query(resolved.query_name, variables)
+            results.execute_query_result(resolved.query_name, variables)
             if resolved.query_name is not None
-            else []
+            else ResultRows([], {})
         )
     }
     # Only families that carry chart.layers (`.layers` is declared per-family,
@@ -547,7 +551,7 @@ def build_chart_datasets(
         return datasets
     for layer in resolved.layers:
         if layer.query_name is not None and layer.query_name not in datasets:
-            datasets[layer.query_name] = executor.execute_query(
+            datasets[layer.query_name] = results.execute_query_result(
                 layer.query_name, variables
             )
     return datasets
@@ -565,7 +569,7 @@ def _reset_pie_modes(layout: Layout) -> None:
 def stored_pie_mode(
     item: LayoutItem,
     resolved: ResolvedChart,
-    rows: Rows,
+    result: ResultRows,
     resolved_style: ResolvedStyle,
 ) -> PieMode | None:
     """The mode of a pie placed in ``item``: decided on the first ask of a sizing
@@ -575,12 +579,12 @@ def stored_pie_mode(
     if not isinstance(resolved, ResolvedPieChart):
         return None
     if item.pie_mode is None:
-        item.pie_mode = sized_pie_mode(resolved, rows, resolved_style)
+        item.pie_mode = sized_pie_mode(resolved, result, resolved_style)
     return item.pie_mode
 
 
 def _record_pie_modes_in_tree(
-    layout: Layout, render_ctx: SizingRenderCtx, executor: Executor
+    layout: Layout, render_ctx: SizingRenderCtx, results: ResolveDataProvider
 ) -> None:
     """Record the mode of every placed pie the measuring passes did not ask about.
 
@@ -593,7 +597,7 @@ def _record_pie_modes_in_tree(
     for item in active_layout_items(layout, render_ctx.variable_values):
         if item.board is not None:
             _record_pie_modes_in_tree(
-                item.board.layout, _nested_render_ctx(render_ctx, item.board), executor
+                item.board.layout, _nested_render_ctx(render_ctx, item.board), results
             )
             continue
         if item.chart is None or item.pie_mode is not None or item.width <= 0:
@@ -601,7 +605,7 @@ def _record_pie_modes_in_tree(
         resolved = _require_resolved(
             render_ctx,
             item.chart,
-            executor,
+            results,
             render_ctx.variables,
             item.width,
             render_ctx.resolved_style,
@@ -613,7 +617,7 @@ def _record_pie_modes_in_tree(
             stored_pie_mode(
                 item,
                 resolved,
-                build_chart_datasets(resolved, executor, render_ctx.variables)[
+                build_chart_datasets(resolved, results, render_ctx.variables)[
                     resolved.query_name
                 ],
                 render_ctx.resolved_style,
@@ -630,7 +634,7 @@ def _record_pie_modes_in_tree(
 
 def _render_chart_to_svg(
     resolved: ResolvedChart,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: dict[str, Any],
     width: float,
     *,
@@ -644,7 +648,7 @@ def _render_chart_to_svg(
     """Render a pre-resolved chart to SVG, returning (svg, width, height).
 
     Uses the single already-resolved ResolvedChart — no re-resolution.
-    The executor's query cache makes data fetch free (no re-execution).
+    The results's query cache makes data fetch free (no re-execution).
     ``item`` is the layout item the chart is placed in; a pie reads (or, on
     first ask, records) its sized mode there.
     """
@@ -652,7 +656,7 @@ def _render_chart_to_svg(
     from dbt_charts.core.render.converters.chart import render_chart_artifact
     from dbt_charts.core.render.svg_utils import extract_svg_dimensions
 
-    datasets = build_chart_datasets(resolved, executor, variables)
+    datasets = build_chart_datasets(resolved, results, variables)
     data = datasets[resolved.query_name]
     artifact = render_resolved_chart(
         resolved,
@@ -677,7 +681,7 @@ def _render_chart_to_svg(
 
 def _make_data_aware_height_provider(
     render_ctx: SizingRenderCtx,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: dict[str, Any],
     card_padding: float,
     style_contexts: dict[int, ChartStyleContext],
@@ -685,7 +689,7 @@ def _make_data_aware_height_provider(
     """Create a HeightProvider that uses render-first sizing for Vega charts.
 
     For Vega-Lite charts: renders via vl-convert, caches SVG, returns actual height.
-    For tables: uses actual row counts from executor.
+    For tables: uses actual row counts from results.
     For everything else: delegates to the static compile-time calculator.
 
     ``style_contexts`` maps ``id(resolved_style)`` to the chart_style_context
@@ -697,7 +701,7 @@ def _make_data_aware_height_provider(
     instead of silently baking the root board's.
 
     Render-first Vega sizing (vl-convert renders) only fires when
-    render_ctx.executor is not None. When render_ctx.executor is None
+    render_ctx.results is not None. When render_ctx.results is None
     (render_first=False), the provider falls back to static aspect-ratio
     estimates for Vega charts while still sizing tables from row counts.
     """
@@ -763,7 +767,7 @@ def _make_data_aware_height_provider(
                 resolved_table = _require_resolved(
                     render_ctx,
                     item.chart,
-                    executor,
+                    results,
                     render_ctx.variables,
                     width,
                     resolved_style,
@@ -779,7 +783,7 @@ def _make_data_aware_height_provider(
                 table_height = _get_table_height_from_data(
                     item.chart,
                     resolved_table,
-                    executor,
+                    results,
                     variables,
                     card_padding=card_pad,
                     board_style=resolved_style,
@@ -797,7 +801,7 @@ def _make_data_aware_height_provider(
                 resolved_callout = _require_resolved(
                     render_ctx,
                     item.chart,
-                    executor,
+                    results,
                     render_ctx.variables,
                     width,
                     resolved_style,
@@ -808,7 +812,7 @@ def _make_data_aware_height_provider(
                 try:
                     callout_svg, natural_height = render_native(
                         resolved_callout,
-                        [],
+                        ResultRows([], {}),
                         width=width,
                         height=0.0,
                         padding=None,
@@ -833,7 +837,7 @@ def _make_data_aware_height_provider(
                 resolved_spark_bar = _require_resolved(
                     render_ctx,
                     item.chart,
-                    executor,
+                    results,
                     render_ctx.variables,
                     width,
                     resolved_style,
@@ -852,7 +856,7 @@ def _make_data_aware_height_provider(
                 try:
                     _chart_svg, _, actual_height = _render_chart_to_svg(
                         resolved_spark_bar,
-                        executor,
+                        results,
                         variables,
                         width,
                         height=None,
@@ -868,7 +872,7 @@ def _make_data_aware_height_provider(
                 resolved_custom = _require_resolved(
                     render_ctx,
                     item.chart,
-                    executor,
+                    results,
                     render_ctx.variables,
                     width,
                     resolved_style,
@@ -891,7 +895,7 @@ def _make_data_aware_height_provider(
             # Vega padding, so the returned SVG height already includes the inset.
             # Do NOT add 2*card_pad here — it would double-count the padding.
             if (
-                render_ctx.executor is not None
+                render_ctx.results is not None
                 and item.chart.type not in NON_ASPECT_RATIO_TYPES
                 and item.chart.type not in _GEO_TYPES
             ):
@@ -903,7 +907,7 @@ def _make_data_aware_height_provider(
                 resolved_chart = _require_resolved(
                     render_ctx,
                     item.chart,
-                    executor,
+                    results,
                     render_ctx.variables,
                     render_inner_width,
                     resolved_style,
@@ -953,7 +957,7 @@ def _make_data_aware_height_provider(
                     try:
                         chart_svg, _, actual_height = _render_chart_to_svg(
                             resolved_chart,
-                            render_ctx.executor,
+                            render_ctx.results,
                             render_ctx.variables,
                             render_inner_width,
                             height=slot_height,
@@ -1033,7 +1037,7 @@ def _make_data_aware_height_provider(
             resolved_fallback = _require_resolved(
                 render_ctx,
                 item.chart,
-                executor,
+                results,
                 render_ctx.variables,
                 width,
                 resolved_style,
@@ -1134,10 +1138,10 @@ def _align_cols_heights(
     """
     card_pad = float(render_ctx.resolved_style.frame.card_padding)
 
-    if render_ctx.executor is None:
+    if render_ctx.results is None:
         return
 
-    executor = render_ctx.executor
+    results = render_ctx.results
 
     for item in items:
         if item.chart is None or item.chart.type in NON_ASPECT_RATIO_TYPES:
@@ -1161,7 +1165,7 @@ def _align_cols_heights(
         resolved_chart = _require_resolved(
             render_ctx,
             item.chart,
-            executor,
+            results,
             render_ctx.variables,
             slot_width,
             render_ctx.resolved_style,
@@ -1174,7 +1178,7 @@ def _align_cols_heights(
         try:
             chart_svg, _, actual_height = _render_chart_to_svg(
                 resolved_chart,
-                executor,
+                results,
                 render_ctx.variables,
                 slot_width,
                 height=effective_target,
@@ -1230,7 +1234,7 @@ def _fix_slot_heights_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> No
     (chart_id, width, item.height, title_shift), so the render pass makes no
     fresh engine call.
     """
-    if render_ctx.executor is None:
+    if render_ctx.results is None:
         return
 
     card_pad = float(render_ctx.resolved_style.frame.card_padding)
@@ -1262,7 +1266,7 @@ def _fix_slot_heights_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> No
         resolved_chart = _require_resolved(
             render_ctx,
             item.chart,
-            render_ctx.executor,
+            render_ctx.results,
             render_ctx.variables,
             slot_width,
             render_ctx.resolved_style,
@@ -1275,7 +1279,7 @@ def _fix_slot_heights_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> No
         try:
             chart_svg, _, actual_height = _render_chart_to_svg(
                 resolved_chart,
-                render_ctx.executor,
+                render_ctx.results,
                 render_ctx.variables,
                 slot_width,
                 height=item.height,
@@ -1300,7 +1304,7 @@ def _fix_slot_heights_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> No
 def _ensure_resolved_variants_in_tree(
     layout: Layout,
     render_ctx: SizingRenderCtx,
-    executor: Executor,
+    results: ResolveDataProvider,
 ) -> None:
     """Resolve every final layout placement at its assigned slot width.
 
@@ -1312,12 +1316,12 @@ def _ensure_resolved_variants_in_tree(
     for item in active_layout_items(layout, render_ctx.variable_values):
         if item.board is not None:
             nested_ctx = _nested_render_ctx(render_ctx, item.board)
-            _ensure_resolved_variants_in_tree(item.board.layout, nested_ctx, executor)
+            _ensure_resolved_variants_in_tree(item.board.layout, nested_ctx, results)
         elif item.chart is not None:
             _require_resolved(
                 render_ctx,
                 item.chart,
-                executor,
+                results,
                 render_ctx.variables,
                 item.width,
                 render_ctx.resolved_style,
@@ -1328,7 +1332,7 @@ def _ensure_resolved_variants_in_tree(
 def _title_band_targets(
     item: LayoutItem,
     render_ctx: SizingRenderCtx,
-    executor: Executor,
+    results: ResolveDataProvider,
     variable_values: VariableValues,
 ) -> list[tuple[LayoutItem, TitleMetrics]]:
     """The layout items that draw a cols cell's titles, with their title geometry.
@@ -1346,7 +1350,7 @@ def _title_band_targets(
         resolved = _require_resolved(
             render_ctx,
             item.chart,
-            executor,
+            results,
             render_ctx.variables,
             item.width,
             render_ctx.resolved_style,
@@ -1381,7 +1385,7 @@ def _title_band_targets(
             pie_mode = stored_pie_mode(
                 item,
                 resolved,
-                build_chart_datasets(resolved, executor, render_ctx.variables)[
+                build_chart_datasets(resolved, results, render_ctx.variables)[
                     resolved.query_name
                 ],
                 render_ctx.resolved_style,
@@ -1438,7 +1442,7 @@ def _title_band_targets(
             (target, TitleMetrics(metrics.ascent + wrapper_top, metrics.tail))
             for inner in wrapped
             for target, metrics in _title_band_targets(
-                inner, nested_ctx, executor, variable_values
+                inner, nested_ctx, results, variable_values
             )
         ]
     inline_band = should_use_title_inline_band(
@@ -1463,7 +1467,7 @@ def _title_band_targets(
 def _assign_title_shifts_in_tree(
     layout: Layout,
     render_ctx: SizingRenderCtx,
-    executor: Executor,
+    results: ResolveDataProvider,
     variable_values: VariableValues,
 ) -> None:
     """Give every cols row's titled cells a shared first baseline and body top.
@@ -1478,14 +1482,14 @@ def _assign_title_shifts_in_tree(
             _assign_title_shifts_in_tree(
                 item.board.layout,
                 _nested_render_ctx(render_ctx, item.board),
-                executor,
+                results,
                 variable_values,
             )
     if layout.type == "cols":
         cells = [
             cell
             for item in active_layout_items(layout, variable_values)
-            for cell in _title_band_targets(item, render_ctx, executor, variable_values)
+            for cell in _title_band_targets(item, render_ctx, results, variable_values)
         ]
         shifts = row_title_shifts([metrics for _, metrics in cells])
         for (target, _), shift in zip(cells, shifts, strict=True):
@@ -1561,7 +1565,7 @@ def _snapshot_authored_slot_heights(
 
 def calculate_data_aware_layout(
     board: Board,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: dict[str, Any] | None = None,
     render_first: bool = True,
     *,
@@ -1573,14 +1577,14 @@ def calculate_data_aware_layout(
 ) -> tuple[Board, RenderCache]:
     """Calculate layout dimensions using actual query data for table sizing.
 
-    Uses the executor to get actual row counts for table charts and renders
+    Uses the results to get actual row counts for table charts and renders
     Vega-Lite charts to get true heights.
 
-    Must be called after query results are cached on the executor.
+    Must be called after query results are cached on the results.
 
     Args:
         board: Board with layout structure
-        executor: Executor with cached query results
+        results: ResolveDataProvider with cached query results
         variables: Variable values for query execution
         render_first: When True, Vega-Lite charts are rendered during sizing to
             get actual heights (render-first sizing). Set False for non-SVG
@@ -1624,11 +1628,11 @@ def calculate_data_aware_layout(
     # overrides (e.g. `{}` for "no overrides") still gets the declared
     # defaults for everything else this pass measures.
     variable_values = {**board.variable_defaults, **effective_vars}
-    # executor=None disables render-first Vega sizing.
+    # render_ctx.results=None disables render-first Vega sizing.
     render_ctx = SizingRenderCtx(
         resolved_style=board.resolved_style,
         chart_style_context=board.chart_style_context,
-        executor=executor if render_first else None,
+        results=results if render_first else None,
         variables=effective_vars,
         variable_values=variable_values,
         pre_resolved=pre_resolved,
@@ -1638,7 +1642,7 @@ def calculate_data_aware_layout(
     container_width = board_container_width(
         board if hug_board is ... else hug_board,
         variable_values,
-        _make_chart_width_measurer(render_ctx, executor, effective_vars),
+        _make_chart_width_measurer(render_ctx, results, effective_vars),
         item_is_drawn,
     )
     content_width = max(container_width - 2 * float(frame.margin), 0.0)
@@ -1652,7 +1656,7 @@ def calculate_data_aware_layout(
     # Build a data-aware height provider
     height_provider = _make_data_aware_height_provider(
         render_ctx,
-        executor,
+        results,
         effective_vars,
         card_padding=card_padding,
         style_contexts=_style_contexts_by_resolved_style_id(board),
@@ -1700,7 +1704,7 @@ def calculate_data_aware_layout(
         resolved_style=board.resolved_style,
     )
 
-    _record_pie_modes_in_tree(board.layout, render_ctx, executor)
+    _record_pie_modes_in_tree(board.layout, render_ctx, results)
 
     # Slot-height fix: render each measured chart at its assigned slot height
     # (the sizing provider ran before item.height was set, and measures rather
@@ -1717,12 +1721,12 @@ def calculate_data_aware_layout(
         variable_values,
     )
 
-    _assign_title_shifts_in_tree(board.layout, render_ctx, executor, variable_values)
+    _assign_title_shifts_in_tree(board.layout, render_ctx, results, variable_values)
 
     # Cols alignment: walk tree, re-render shorter Vega items at aligned height
     if render_ctx.render_cache:
         _align_all_cols_in_tree(board.layout, render_ctx)
 
-    _ensure_resolved_variants_in_tree(board.layout, render_ctx, executor)
+    _ensure_resolved_variants_in_tree(board.layout, render_ctx, results)
 
     return board, render_ctx.render_cache

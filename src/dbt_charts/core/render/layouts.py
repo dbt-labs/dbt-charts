@@ -100,7 +100,7 @@ def _bg_rect(
 
 def render_rows_layout(
     items: tuple[ResolvedLayoutItem, ...],
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     variables: VariableValues,
     available_width: float,
     available_height: float,
@@ -121,7 +121,7 @@ def render_rows_layout(
 
     Args:
         items: Layout items to render
-        executor: ChartDataProvider for query execution
+        results: rows by query name
         variables: Variable values for queries
         available_width: Available container width
         available_height: Available container height
@@ -146,7 +146,7 @@ def render_rows_layout(
 
         item_svg, actual_item_height = render_layout_item(
             item,
-            executor,
+            results,
             variables,
             card_gap=card_gap,
             available_width=item_width,
@@ -173,7 +173,7 @@ def render_rows_layout(
 
 def render_cols_layout(
     items: tuple[ResolvedLayoutItem, ...],
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     variables: VariableValues,
     available_width: float,
     available_height: float,
@@ -193,7 +193,7 @@ def render_cols_layout(
 
     Args:
         items: Layout items to render (with pre-calculated dimensions from normalizer)
-        executor: ChartDataProvider for query execution
+        results: rows by query name
         variables: Variable values for queries
         available_width: Available container width
         available_height: Available container height (upper bound)
@@ -218,7 +218,7 @@ def render_cols_layout(
 
         item_svg, actual_item_height = render_layout_item(
             item,
-            executor,
+            results,
             variables,
             card_gap=card_gap,
             available_width=item_w,
@@ -244,7 +244,7 @@ def render_cols_layout(
 
 def render_grid_layout(
     items: tuple[ResolvedLayoutItem, ...],
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     variables: VariableValues,
     available_width: float,
     available_height: float,
@@ -264,7 +264,7 @@ def render_grid_layout(
 
     Args:
         items: Layout items with grid positions (x, y, width, height)
-        executor: ChartDataProvider for query execution
+        results: rows by query name
         variables: Variable values for queries
         available_width: Available container width
         available_height: Available container height
@@ -291,7 +291,7 @@ def render_grid_layout(
 
         item_svg, actual_item_height = render_layout_item(
             item,
-            executor,
+            results,
             variables,
             card_gap=card_gap,
             available_width=item_w,
@@ -352,7 +352,7 @@ def _fit_label(
 
 def render_tabs_layout(
     items: tuple[ResolvedLayoutItem, ...],
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     variables: VariableValues,
     available_width: float,
     available_height: float,
@@ -376,7 +376,7 @@ def render_tabs_layout(
 
     Args:
         items: Layout items (one per tab)
-        executor: ChartDataProvider for query execution
+        results: rows by query name
         variables: Variable values for queries
         available_width: Available container width
         available_height: Available container height
@@ -413,7 +413,7 @@ def render_tabs_layout(
     active_item = items[active_tab]
     item_svg, actual_item_height = render_layout_item(
         active_item,
-        executor,
+        results,
         variables,
         card_gap=0.0,
         available_width=available_width - content_x,

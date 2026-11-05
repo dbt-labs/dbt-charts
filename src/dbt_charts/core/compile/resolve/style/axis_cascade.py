@@ -42,6 +42,7 @@ from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedAxisElementStyle,
     ResolvedAxisGridStyle,
     ResolvedAxisGridThresholdStyle,
+    ResolvedAxisGridTornBaselineStyle,
     ResolvedAxisLabelOverlapConfig,
     ResolvedAxisLineStyle,
     ResolvedAxisStyle,
@@ -430,6 +431,13 @@ def build_resolved_axis(
         width=settled(_threshold.width),
         visible=settled(_threshold.visible),
     )
+    _torn = settled(axis.grid.torn_baseline)
+    grid_torn_baseline = ResolvedAxisGridTornBaselineStyle(
+        enabled=settled(_torn.enabled),
+        amplitude=settled(_torn.amplitude),
+        wavelength=settled(_torn.wavelength),
+        sharpness=settled(_torn.sharpness),
+    )
 
     # label passthrough: x-axis adds tilt_increments/values/time_unit/clock from DimensionLabelStyle.
     label_kwargs = {f: getattr(axis.labels, f) for f in _LABEL_PASSTHROUGH}
@@ -772,6 +780,7 @@ def build_resolved_axis(
             color=settled(axis.grid.color),
             dash=axis.grid.dash,
             threshold=grid_threshold,
+            torn_baseline=grid_torn_baseline,
         ),
         line=ResolvedAxisLineStyle(
             visible=settled(axis.line.visible),

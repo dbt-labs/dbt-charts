@@ -15,6 +15,7 @@ use d3rs::geojson::GeoJson;
 use minijinja::value::{Object, ObjectRepr, Rest, Value, ValueKind};
 use minijinja::{Error, State};
 
+use crate::scene_path::scene_path;
 use super::custom::invalid;
 use super::custom_d3::{bind, extent, finite, floats, items, non_negative_or, pair};
 use super::geo::vega::{VegaConstructor, VegaProjection, VEGA_PROJECTIONS};
@@ -428,7 +429,7 @@ impl Object for Path {
         let [object] = bind(SITE, ["object"], 1, args)?.map(|v| v.expect("required"));
         let object = geojson(SITE, "object", &object)?;
         let drawn = self.generator().path(&object).map_err(|e| invalid(format!("{SITE}: {e}")))?;
-        Ok(drawn.map_or(Value::from(()), |path| Value::from(print::path_d(&path))))
+        Ok(drawn.map_or(Value::from(()), |path| Value::from(print::path_d(&scene_path(&path)))))
     }
 
     fn call_method(self: &Arc<Self>, _state: &State<'_, '_>, method: &str, args: &[Value]) -> Result<Value, Error> {

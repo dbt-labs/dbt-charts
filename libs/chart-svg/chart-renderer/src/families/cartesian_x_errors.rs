@@ -4,15 +4,16 @@
 
 use std::borrow::Cow;
 
+use column_types::ColumnTypes;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use super::temporal::{floor_to_bucket_start, infer_vega_type, is_time_format, normalize_labeled_temporal, TimeUnit, VegaType};
 use d3rs::calendar::{civil_from_days, days_from_civil, days_in_month, is_leap_year};
 use super::x_type::{parse_date, py_cell_key, resolve_cartesian_x_type, resolve_filled_x, scaffold_rows, Grain, XAxis, XResolution};
-use crate::codes;
+use diagnostic::codes;
 use crate::common::{AxisStyle, PyKey};
-use crate::diagnostic::{py_repr, Diagnostic};
+use diagnostic::{py_repr, Diagnostic};
 
 type Row = Map<String, Value>;
 
@@ -442,16 +443,16 @@ fn band_step_of(facts: &Facts) -> bool {
 
 /// Whether the x axis resolves a band scale (nominal or ordinal) once the chart's own curve has
 /// had its say: the verdict `step_band.is_band_step` reads for the base and for every layer.
-pub fn x_is_band(resolved: &Value, rows: &[Row]) -> Result<bool, Diagnostic> {
-    Ok(matches!(base_x_type(resolved, rows)?, Some(VegaType::Nominal | VegaType::Ordinal)))
+pub fn x_is_band(resolved: &Value, types: &ColumnTypes, rows: &[Row]) -> Result<bool, Diagnostic> {
+    Ok(matches!(base_x_type(resolved, types, rows)?, Some(VegaType::Nominal | VegaType::Ordinal)))
 }
 
 /// The base's x encoding type, `None` when the chart has no x.
-pub fn base_x_type(resolved: &Value, rows: &[Row]) -> Result<Option<VegaType>, Diagnostic> {
+pub fn base_x_type(resolved: &Value, types: &ColumnTypes, rows: &[Row]) -> Result<Option<VegaType>, Diagnostic> {
     let facts: Facts = Deserialize::deserialize(resolved).map_err(|e| format!("x axis facts: {e}"))?;
     let Some(field) = facts.x.as_deref() else { return Ok(None) };
-    let rows = normalize_labeled_temporal(rows, field)?;
-    let filled = resolve_filled_x(&rows, field, &x_axis_of(&facts), &facts.chart_type, band_step_of(&facts), &panel_fields_of(&facts))?;
+    let rows = normalize_labeled_temporal(types, rows, field)?;
+    let filled = resolve_filled_x(types, &rows, field, &x_axis_of(&facts), &facts.chart_type, band_step_of(&facts), &panel_fields_of(&facts))?;
     Ok(Some(filled.resolution.vl_type))
 }
 
@@ -464,28 +465,28 @@ fn continuous_of<'a>(axis: &'a AxisStyle, key: &str) -> Option<&'a Value> {
 }
 
 /// Raises the first x-axis ERR production raises for a bar, line or area.
-pub fn check(resolved: &Value, rows: &[Row]) -> Result<(), Diagnostic> {
+pub fn check(resolved: &Value, types: &ColumnTypes, rows: &[Row]) -> Result<(), Diagnostic> {
     let facts: Facts = Deserialize::deserialize(resolved).map_err(|e| format!("x axis facts: {e}"))?;
     let Some(field) = facts.x.as_deref() else { return Ok(()) };
     let axis = &facts.style.axis_x;
     if facts.chart_type == "heatmap" {
-        return heatmap(&facts, field, rows);
+        return heatmap(&facts, types, field, rows);
     }
     if facts.chart_type == "scatter" {
-        scatter_y(&facts, rows)?;
-        if infer_vega_type(rows, field) == VegaType::Quantitative {
+        scatter_y(&facts, types, rows)?;
+        if infer_vega_type(types, rows, field)? == VegaType::Quantitative {
             return Ok(());
         }
     }
     // Bar and the other cartesian emitters rewrite a labeled or year-shaped x
     // to ISO dates before anything below reads it.
-    let rows = normalize_labeled_temporal(rows, field)?;
+    let rows = normalize_labeled_temporal(types, rows, field)?;
     let x_axis = x_axis_of(&facts);
     let panel_fields = panel_fields_of(&facts);
     if facts.chart_type == "bar" && facts.orientation.as_deref() == Some("horizontal") {
         // A horizontal bar's category never resolves a continuous scale, so the
         // scaffold is built whenever the grain is bucketed.
-        let resolution = resolve_cartesian_x_type(&rows, field, &x_axis, "bar", false, &panel_fields)?;
+        let resolution = resolve_cartesian_x_type(types, &rows, field, &x_axis, "bar", false, &panel_fields)?;
         let resolution = XResolution { vl_type: VegaType::Ordinal, ..resolution };
         gap_fill(&facts, field, &rows, &x_axis, &resolution)?;
         // The bars are drawn from the filled rows, so the format gate reads them.
@@ -518,9 +519,9 @@ pub fn check(resolved: &Value, rows: &[Row]) -> Result<(), Diagnostic> {
     let mark = facts.chart_type.as_str();
     let mut scaffold = Vec::new();
     let resolution = if mark == "scatter" {
-        resolve_cartesian_x_type(&rows, field, &x_axis, mark, band_step_of(&facts), &panel_fields)?
+        resolve_cartesian_x_type(types, &rows, field, &x_axis, mark, band_step_of(&facts), &panel_fields)?
     } else {
-        let x = resolve_filled_x(&rows, field, &x_axis, mark, band_step_of(&facts), &panel_fields)?;
+        let x = resolve_filled_x(types, &rows, field, &x_axis, mark, band_step_of(&facts), &panel_fields)?;
         if let Some(tu) = x.filled {
             gap_fill_collision(&facts, field, &rows, Grain::Calendar(tu))?;
         }
@@ -579,11 +580,19 @@ fn gap_fill(facts: &Facts, field: &str, rows: &[Row], axis: &XAxis, resolution: 
 pub(super) const HEATMAP_FORMAT_REMEDY: &str = "Remove the format \u{2014} a heatmap has no measure axis. Both axes are grid dimensions and the value lives on the color channel, which carries no label format of its own.";
 
 /// A scatter's y format gate: a categorical y (a dot plot) has no measure ticks to format.
-fn scatter_y(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
+fn scatter_y(facts: &Facts, types: &ColumnTypes, rows: &[Row]) -> Result<(), Diagnostic> {
     let (Some(y), Some(axis_y)) = (facts.y.as_ref().and_then(Value::as_str), facts.style.axis_y.as_ref()) else {
         return Ok(());
     };
-    let y_type = infer_vega_type(rows, y);
+    // A wide fold's y is the synthetic value field: it lives on the folded rows only.
+    let folded;
+    let (types, rows) = if facts.wide_measures.is_empty() {
+        (types, rows)
+    } else {
+        folded = crate::common::fold_wide(types, rows, &facts.wide_measures, facts.color.as_deref())?;
+        (&folded.0, folded.1.as_slice())
+    };
+    let y_type = infer_vega_type(types, rows, y)?;
     let remedy = "A categorical y (dot plot) has no measure ticks to format \u{2014} the measure is axis_x here. Author the number format on style.axis_x.labels.format, or remove it.";
     let categorical = matches!(y_type, VegaType::Nominal | VegaType::Ordinal);
     gate_label_format(axis_y.labels.format.as_ref(), "axis_y.labels.format", y, y_type, rows, categorical.then_some(remedy))
@@ -591,7 +600,7 @@ fn scatter_y(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
 
 /// A heatmap's x and y are grid dimensions: nominal bands that still run the
 /// authored-axis gates `build_cartesian_x_encoding` and the y gate apply.
-fn heatmap(facts: &Facts, field: &str, raw_rows: &[Row]) -> Result<(), Diagnostic> {
+fn heatmap(facts: &Facts, types: &ColumnTypes, field: &str, raw_rows: &[Row]) -> Result<(), Diagnostic> {
     let axis = &facts.style.axis_x;
     let multi_measure = facts.y.as_ref().is_some_and(Value::is_array);
     // Only the single-measure branch canonicalizes its x rows.
@@ -599,7 +608,7 @@ fn heatmap(facts: &Facts, field: &str, raw_rows: &[Row]) -> Result<(), Diagnosti
     let rows: &[Row] = if multi_measure {
         raw_rows
     } else {
-        normalized = normalize_labeled_temporal(raw_rows, field)?;
+        normalized = normalize_labeled_temporal(types, raw_rows, field)?;
         &normalized
     };
     if !multi_measure {

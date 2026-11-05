@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+from datetime import date
 
 import pytest
 
@@ -643,9 +644,9 @@ class TestDateCellsUseLanePositions:
         # the date "29 Jul 2026" measures ~60–70px at 14px font, but the
         # column will be ~600px wide at width=1200 / 2 columns.
         data = [
-            {"Region": "North", "Last Close": "29 Jul 2026"},
-            {"Region": "South", "Last Close": "2 Jul 2026"},
-            {"Region": "East", "Last Close": "15 Jun 2026"},
+            {"Region": "North", "Last Close": date(2026, 7, 29)},
+            {"Region": "South", "Last Close": date(2026, 7, 2)},
+            {"Region": "East", "Last Close": date(2026, 6, 15)},
         ]
         custom_board = _style()
         # Every "Last Close" value is a short-month date string, so resolve
@@ -698,8 +699,8 @@ class TestDateCellsUseLanePositions:
 
         chart = make_chart("table", x=None, y=None)
         data = [
-            {"Region": "N", "Last Close": "29 Jul 2026"},
-            {"Region": "S", "Last Close": "2 Jul 2026"},
+            {"Region": "N", "Last Close": date(2026, 7, 29)},
+            {"Region": "S", "Last Close": date(2026, 7, 2)},
         ]
         custom_board = _style()
         # Every "Last Close" value is a short-month date string — resolve
@@ -737,50 +738,6 @@ class TestDateCellsUseLanePositions:
             f"column's half-width. Offset={offset:.1f}px."
         )
 
-    def test_mixed_numeric_and_date_column_shares_number_x(self, make_chart):
-        """A column that holds both numeric and date-like values should
-        still produce a consistent value-block: every cell anchors at the
-        same number_x.
-        """
-        from ._engine_render import render_table_svg
-
-        chart = make_chart("table", x=None, y=None)
-        # "2024" parses as date-like (year pattern); pair it with a real
-        # numeric to exercise the mixed path.
-        data = [
-            {"Label": "A", "Year/Count": 1234},
-            {"Label": "B", "Year/Count": "2024"},
-            {"Label": "C", "Year/Count": 567},
-        ]
-        custom_board = _style()
-        chart = resolve(chart, data, chart_style_context=custom_board)
-        svg = render_table_svg(
-            chart,
-            data,
-            width=1200,
-            board_style=_BOARD_STYLE,
-        )
-
-        # Numeric cells use a <tspan> at number_x; the date cell uses
-        # <text x="..."> at the same x after the fix.
-        date_cell = _find_text_x(svg, "2024")
-        assert date_cell is not None
-        date_x = date_cell[0]
-
-        # Find all unique end-anchored tspan x values; one will be the
-        # column's number_x (shared by 1234 and 567).
-        end_tspan_xs = sorted(
-            {
-                float(m.group(1))
-                for m in re.finditer(r'<tspan\s+x="([\d.]+)"\s+text-anchor="end"', svg)
-            }
-        )
-        assert any(abs(date_x - x) < 0.5 for x in end_tspan_xs), (
-            f"Date cell x ({date_x}) should match one of the numeric "
-            f"tspan number_x values {end_tspan_xs} — confirms the column "
-            f"shares one value-block midpoint across numeric and date cells."
-        )
-
     def test_explicit_align_left_wins_on_uniformly_date_like_column(
         self, make_chart
     ) -> None:
@@ -793,9 +750,9 @@ class TestDateCellsUseLanePositions:
         from ._engine_render import render_table_svg
 
         data = [
-            {"Region": "A", "Last Close": "9 May 2026"},
-            {"Region": "B", "Last Close": "1 Jun 2026"},
-            {"Region": "C", "Last Close": "15 Jul 2026"},
+            {"Region": "A", "Last Close": date(2026, 5, 9)},
+            {"Region": "B", "Last Close": date(2026, 6, 1)},
+            {"Region": "C", "Last Close": date(2026, 7, 15)},
         ]
         chart = make_chart(
             "table",
@@ -837,9 +794,9 @@ class TestDateCellsUseLanePositions:
         from ._engine_render import render_table_svg
 
         data = [
-            {"Region": "A", "Last Close": "9 May 2026"},
-            {"Region": "B", "Last Close": "1 Jun 2026"},
-            {"Region": "C", "Last Close": "15 Jul 2026"},
+            {"Region": "A", "Last Close": date(2026, 5, 9)},
+            {"Region": "B", "Last Close": date(2026, 6, 1)},
+            {"Region": "C", "Last Close": date(2026, 7, 15)},
         ]
         chart = make_chart(
             "table",
@@ -1085,8 +1042,8 @@ class TestPivotedDateLeafColumnAlignment:
         from ._engine_render import render_table_svg
 
         pre_pivot_data = [
-            {"region": "US", "month": "Jan", "last_close": "15 Jan 2024"},
-            {"region": "EU", "month": "Jan", "last_close": "3 Jan 2024"},
+            {"region": "US", "month": "Jan", "last_close": date(2024, 1, 15)},
+            {"region": "EU", "month": "Jan", "last_close": date(2024, 1, 3)},
         ]
         chart = TableChart(
             id="pivoted_dates",
@@ -1121,13 +1078,13 @@ class TestPivotedDateLeafColumnAlignment:
             {
                 "region": "US",
                 "month": "Jan",
-                "last_close": "15 Jan 2024",
+                "last_close": date(2024, 1, 15),
                 "amount": 100,
             },
             {
                 "region": "EU",
                 "month": "Jan",
-                "last_close": "3 Jan 2024",
+                "last_close": date(2024, 1, 3),
                 "amount": 150,
             },
         ]

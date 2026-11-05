@@ -10,17 +10,16 @@
 //! - https://github.com/d3/d3-shape/blob/main/src/curve/natural.js
 //! - https://github.com/d3/d3-shape/blob/main/src/curve/cardinal.js
 
-use crate::path::Path;
-use scene::PathData;
+use crate::path::{Command, Path};
 
 /// `linkHorizontal()({source, target})` (link.js over curve/bump.js's
 /// `bumpX`): a cubic from `source` to `target` whose tangents are horizontal.
-pub fn link_horizontal((sx, sy): (f64, f64), (tx, ty): (f64, f64)) -> PathData {
+pub fn link_horizontal((sx, sy): (f64, f64), (tx, ty): (f64, f64)) -> Vec<Command> {
     let mut path = Path::new();
     path.move_to(sx, sy);
     let xm = (sx + tx) / 2.0;
     path.bezier_curve_to(xm, sy, xm, ty, tx, ty);
-    path.into_path_data()
+    path.into_commands()
 }
 
 /// The curve a line/area mark interpolates with — production compiles
@@ -92,12 +91,12 @@ enum Edge {
 /// nothing (Vega's own SVG for three isolated points:
 /// `M40,133.333ZM200,133.333ZM360,133.333Z`). A longer run stays open; an
 /// empty run draws nothing, and so does empty input.
-pub fn line_path(runs: &[Vec<(f64, f64)>], curve: Curve) -> PathData {
+pub fn line_path(runs: &[Vec<(f64, f64)>], curve: Curve) -> Vec<Command> {
     let mut path = Path::new();
     for run in runs {
         append_edge(&mut path, run, curve, Edge::Bare);
     }
-    path.into_path_data()
+    path.into_commands()
 }
 
 /// Build an SVG path string for a filled area under `curve`, flat bottom at
@@ -109,7 +108,7 @@ pub fn line_path(runs: &[Vec<(f64, f64)>], curve: Curve) -> PathData {
 /// replays its two edges — through the SAME curve on both, so a curved area
 /// has a curved baseline too. A single-point run is therefore
 /// `M x,top L x,bottom Z`.
-pub fn area_path(runs: &[Vec<(f64, f64)>], bottom_y: f64, curve: Curve) -> PathData {
+pub fn area_path(runs: &[Vec<(f64, f64)>], bottom_y: f64, curve: Curve) -> Vec<Command> {
     let runs3: Vec<Vec<(f64, f64, f64)>> =
         runs.iter().map(|run| run.iter().map(|&(x, y)| (x, y, bottom_y)).collect()).collect();
     stacked_area_path(&runs3, curve)
@@ -122,7 +121,7 @@ pub fn area_path(runs: &[Vec<(f64, f64)>], bottom_y: f64, curve: Curve) -> PathD
 /// walks its top edge left-to-right, then its own bottom edge (not a flat
 /// line) back right-to-left, then closes — [`area_path`] is this function
 /// at one flat `bottom` for every point.
-pub fn stacked_area_path(runs: &[Vec<(f64, f64, f64)>], curve: Curve) -> PathData {
+pub fn stacked_area_path(runs: &[Vec<(f64, f64, f64)>], curve: Curve) -> Vec<Command> {
     let mut path = Path::new();
     for run in runs {
         let top: Vec<(f64, f64)> = run.iter().map(|&(x, top, _)| (x, top)).collect();
@@ -130,12 +129,12 @@ pub fn stacked_area_path(runs: &[Vec<(f64, f64, f64)>], curve: Curve) -> PathDat
         let bottom: Vec<(f64, f64)> = run.iter().rev().map(|&(x, _, bottom)| (x, bottom)).collect();
         append_edge(&mut path, &bottom, curve.toggled_for_area_bottom(), Edge::AreaBottom);
     }
-    path.into_path_data()
+    path.into_commands()
 }
 
 /// [`stacked_area_path`] for a horizontal area (Vega's `x`/`x2` over a `y` dimension): each
 /// run is `(y, top_x, bottom_x)`, its top edge walked in dimension order, then the bottom edge back.
-pub fn stacked_area_path_horizontal(runs: &[Vec<(f64, f64, f64)>], curve: Curve) -> PathData {
+pub fn stacked_area_path_horizontal(runs: &[Vec<(f64, f64, f64)>], curve: Curve) -> Vec<Command> {
     let mut path = Path::new();
     for run in runs {
         let top: Vec<(f64, f64)> = run.iter().map(|&(y, top, _)| (top, y)).collect();
@@ -143,7 +142,7 @@ pub fn stacked_area_path_horizontal(runs: &[Vec<(f64, f64, f64)>], curve: Curve)
         let bottom: Vec<(f64, f64)> = run.iter().rev().map(|&(y, _, bottom)| (bottom, y)).collect();
         append_edge(&mut path, &bottom, curve.toggled_for_area_bottom(), Edge::AreaBottom);
     }
-    path.into_path_data()
+    path.into_commands()
 }
 
 /// Run one `lineStart … point* … lineEnd` cycle of `curve` over `points`.
@@ -481,7 +480,7 @@ fn js_min(a: f64, b: f64) -> f64 {
 mod tests {
     use super::*;
     use crate::path::testing::assert_path;
-    use scene::PathCommand;
+    use crate::path::Command;
 
     /// One defined run — the shape both generators take.
     fn one_run(points: &[(f64, f64)]) -> Vec<Vec<(f64, f64)>> {
@@ -597,18 +596,15 @@ mod tests {
     /// equality.
     #[test]
     fn monotone_y_is_monotone_x_reflected() {
-        let swap_pairs = |path: PathData| -> PathData {
-            PathData(
-                path.0
-                    .into_iter()
-                    .map(|command| match command {
-                        PathCommand::M(x, y) => PathCommand::M(y, x),
-                        PathCommand::L(x, y) => PathCommand::L(y, x),
-                        PathCommand::C(a, b, c, d, x, y) => PathCommand::C(b, a, d, c, y, x),
-                        other => other,
-                    })
-                    .collect(),
-            )
+        let swap_pairs = |path: Vec<Command>| -> Vec<Command> {
+            path.into_iter()
+                .map(|command| match command {
+                    Command::MoveTo(x, y) => Command::MoveTo(y, x),
+                    Command::LineTo(x, y) => Command::LineTo(y, x),
+                    Command::BezierCurveTo(a, b, c, d, x, y) => Command::BezierCurveTo(b, a, d, c, y, x),
+                    other => other,
+                })
+                .collect()
         };
         let swapped: Vec<(f64, f64)> = MONO_PTS.iter().map(|&(x, y)| (y, x)).collect();
         assert_eq!(
@@ -761,16 +757,16 @@ mod tests {
     /// and end on the last vertex.
     #[test]
     fn basis_starts_with_a_knot_line_and_ends_on_the_last_vertex() {
-        let d = line_path(&one_run(&SPLINE_PTS), Curve::Basis).0;
-        assert!(matches!(d[..], [PathCommand::M(..), PathCommand::L(..), PathCommand::C(..), .., PathCommand::L(2.0, 0.0)]), "{d:?}");
-        let PathCommand::L(x, y) = d[1] else { unreachable!() };
+        let d = line_path(&one_run(&SPLINE_PTS), Curve::Basis);
+        assert!(matches!(d[..], [Command::MoveTo(..), Command::LineTo(..), Command::BezierCurveTo(..), .., Command::LineTo(2.0, 0.0)]), "{d:?}");
+        let Command::LineTo(x, y) = d[1] else { unreachable!() };
         assert!((x - 1.0 / 6.0).abs() < 1e-9 && (y - 1.0 / 3.0).abs() < 1e-9, "{d:?}");
     }
 
     /// `cardinal` starts with a flat control at the first vertex.
     #[test]
     fn cardinal_starts_with_its_first_vertex_as_control_point() {
-        let d = line_path(&one_run(&SPLINE_PTS), Curve::Cardinal).0;
-        assert!(matches!(d[..], [PathCommand::M(0.0, 0.0), PathCommand::C(0.0, 0.0, ..), ..]), "{d:?}");
+        let d = line_path(&one_run(&SPLINE_PTS), Curve::Cardinal);
+        assert!(matches!(d[..], [Command::MoveTo(0.0, 0.0), Command::BezierCurveTo(0.0, 0.0, ..), ..]), "{d:?}");
     }
 }

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from dbt_charts.core.execute.cache_backend import ResultRows
 from dbt_charts.core.execute.executor import utc_now
 
 if TYPE_CHECKING:
@@ -28,7 +29,7 @@ from dbt_charts.core.diagnostics import (
     ERR_RESOLVED_PIE_DATA_MISMATCH,
     ERR_RESOLVED_PIE_WIDTH_MISMATCH,
 )
-from dbt_charts.core.render.chart.artifacts import ChartRenderData, RenderArtifact
+from dbt_charts.core.render.chart.artifacts import RenderArtifact
 from dbt_charts.core.render.chart.serialization import build_dbt_charts_json
 from dbt_charts.core.render.converters.chart import render_chart_artifact
 from dbt_charts.core.render.errors import RenderError
@@ -37,13 +38,13 @@ from dbt_charts.core.render.pie_layout import sized_pie_mode
 
 def render_resolved_chart(
     resolved: ResolvedChart,
-    render_data: ChartRenderData,
+    render_data: ResultRows,
     resolved_style: ResolvedStyle,
     *,
     width: float | None = None,
     height: float | None = None,
     is_placeholder: bool = False,
-    datasets: dict[str | None, ChartRenderData] | None = None,
+    datasets: dict[str | None, ResultRows] | None = None,
     padding: dict[str, int | float] | None = None,
     title_shift: TitleShift = NO_TITLE_SHIFT,
     measuring: bool = False,
@@ -79,7 +80,7 @@ def render_resolved_chart(
         # Labels, label ink and the attached table's rows were frozen against
         # the rows the pie resolved with.
         if (
-            pie_presentation_fingerprint(render_data)
+            pie_presentation_fingerprint(render_data.rows)
             != resolved.presentation_fingerprint
         ):
             raise RenderError.from_code(
@@ -102,9 +103,7 @@ def render_resolved_chart(
     session = BoardRenderSession(resolved_style)
     # The chart's own rows are always in the map; `datasets` carries a layered
     # chart's per-layer queries.
-    full_datasets: dict[str | None, ChartRenderData] = (
-        dict(datasets) if datasets else {}
-    )
+    full_datasets: dict[str | None, ResultRows] = dict(datasets) if datasets else {}
     if resolved.query_name not in full_datasets:
         full_datasets[resolved.query_name] = render_data
     svg = session.render_svg_family(
@@ -130,12 +129,12 @@ def render_chart(
     chart: Chart,
     resolved_style: ResolvedStyle,
     chart_style_context: ChartStyleContext,
-    data: list[dict[str, Any]],
+    data: ResultRows,
     format: str = "json",
     width: float | None = None,
     height: float | None = None,
     is_placeholder: bool = False,
-    datasets: dict[str | None, list[dict[str, Any]]] | None = None,
+    datasets: dict[str | None, ResultRows] | None = None,
     padding: dict[str, Any] | None = None,
     clock: Callable[[], datetime] = utc_now,
 ) -> str:
@@ -146,14 +145,14 @@ def render_chart(
     if format == "json":
         artifact: RenderArtifact = RenderArtifact(
             kind="json",
-            payload=build_dbt_charts_json(chart, data, width=width, height=height),
+            payload=build_dbt_charts_json(chart, data.rows, width=width, height=height),
         )
         return render_chart_artifact(artifact, format)
 
-    render_data: ChartRenderData = data
+    render_data = data
     # A custom template names its own columns; generic placeholder rows would
     # fail its column params, so it draws a blank chart's empty rows instead.
-    if is_placeholder and not data and chart.type != "custom":
+    if is_placeholder and not data.rows and chart.type != "custom":
         from dbt_charts.core.render.placeholder import generate_placeholder_data
 
         render_data = generate_placeholder_data(chart.type, chart)
@@ -170,13 +169,17 @@ def render_chart(
     )
     resolved = resolve(
         chart,
-        render_data,
+        render_data.rows,
         chart_style_context=chart_style_context,
         width=resolved_width,
         datasets=(
             ...
             if datasets is None
-            else {name: rows for name, rows in datasets.items() if name is not None}
+            else {
+                name: result.rows
+                for name, result in datasets.items()
+                if name is not None
+            }
         ),
         display_text="raw",
         rendered_at=clock(),

@@ -13,22 +13,29 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.models.board.normalized import Board, Layout, LayoutItem
 from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.execution import ExecutionError
+from dbt_charts.core.execute.cache_backend import ResultRows
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.data_format import render_board_data
 from dbt_charts.core.render.errors import RenderError
 
+from ..._results import rows_schema
 from .._board_utils import _default_chart_style_context, _default_resolved_style
 
 
-def _make_executor(data: list[dict[str, Any]]) -> MagicMock:
+def _make_executor(
+    data: list[dict[str, Any]], schema: dict[str, ColumnType] | None = None
+) -> MagicMock:
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
-    executor.execute_chart.return_value = data
+    executor.execute_query_result.return_value = ResultRows(
+        data, rows_schema(data) if schema is None else schema
+    )
     executor.render_with_range_filters.return_value = None
     return executor
 
@@ -188,7 +195,7 @@ def test_errored_chart_is_keyed_by_slug_carrying_its_error(
     board = _make_board([make_chart("bar", id="revenue_bar", x="month", y="revenue")])
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
-    executor.execute_chart.side_effect = ExecutionError("boom")
+    executor.execute_query_result.side_effect = ExecutionError("boom")
     result = _render(board, executor)
 
     assert "revenue_bar" in result["charts"]
@@ -325,7 +332,9 @@ def test_exotic_warehouse_scalars_pin_the_data_format_wire_shape(
         }
     ]
     board = _make_board([make_chart("table", id="tbl", query_name="q")])
-    row = _render(board, _make_executor(data))["queries"]["q"]["rows"][0]
+    # These scalars have no literal column type; the wire shape is what is pinned.
+    schema = {name: ColumnType(kind="string") for name in data[0]}
+    row = _render(board, _make_executor(data, schema))["queries"]["q"]["rows"][0]
 
     assert row["started_at"] == "09:30:00"
     assert row["duration"] == "PT1H15M"

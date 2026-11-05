@@ -15,6 +15,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
+from ...._results import rows_result
+
 _STYLE, _CTX = resolve_style_and_context(get_theme_style("stark"))
 
 _ROWS: list[dict[str, Any]] = [
@@ -52,6 +54,6 @@ def test_an_all_null_layer_color_is_refused_by_name(make_chart: Any) -> None:
     ctx = resolve_chart_style_context(get_theme_style("stark"))
     resolved = resolve(chart, rows, chart_style_context=ctx)
     with pytest.raises(ChartDataError) as err:
-        render_resolved_chart(resolved, rows, _STYLE, width=400)
+        render_resolved_chart(resolved, rows_result(rows), _STYLE, width=400)
     assert err.value.code is not None
     assert err.value.code.code == "ERR-LAYER-COLOR-ALL-NULL"

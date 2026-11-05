@@ -22,6 +22,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.render.chart.vega_lite import render_chart
 
+from .._results import rows_result
+
 _BOARD_CONTEXT = resolve_chart_style_context(get_theme_style())
 
 
@@ -209,7 +211,7 @@ def test_render_bar_with_support_table_produces_svg_with_row_labels():
         chart,
         resolve_style(get_theme_style()),
         resolve_chart_style_context(get_theme_style()),
-        _SAMPLE_DATA,
+        rows_result(_SAMPLE_DATA),
         format="svg",
         width=600,
         height=320,
@@ -235,7 +237,7 @@ def test_render_bar_support_table_missing_cell_and_default_label_in_svg():
         chart,
         resolve_style(get_theme_style()),
         resolve_chart_style_context(get_theme_style()),
-        data,
+        rows_result(data),
         format="svg",
         width=600,
         height=320,
@@ -262,7 +264,7 @@ def test_line_temporal_x_support_table_no_crash_through_vl_convert():
         chart,
         resolve_style(get_theme_style()),
         resolve_chart_style_context(get_theme_style()),
-        _TEMPORAL_DATA,
+        rows_result(_TEMPORAL_DATA),
         format="svg",
         width=600,
         height=320,
@@ -280,7 +282,7 @@ def test_area_temporal_x_support_table_no_crash_through_vl_convert():
         chart,
         resolve_style(get_theme_style()),
         resolve_chart_style_context(get_theme_style()),
-        _TEMPORAL_DATA,
+        rows_result(_TEMPORAL_DATA),
         format="svg",
         width=600,
         height=320,

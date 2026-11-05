@@ -16,6 +16,7 @@
 //! `step` with `loopbacks`, and a label that would overlap another label or
 //! a node.
 
+use crate::scene_path::scene_path;
 use display_text::language::tr;
 use std::collections::HashMap;
 
@@ -187,7 +188,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         g.fit(x0, y0, x1, y1);
         Laid {
             nodes: g.nodes.iter().map(|n| ([n.x0, n.x1, n.y0, n.y1], n.column)).collect(),
-            links: (0..g.links.len()).map(|l| (g.link_area(l, hw(g.links[l].width)), g.links[l].circular)).collect(),
+            links: (0..g.links.len()).map(|l| (scene_path(&g.link_area(l, hw(g.links[l].width))), g.links[l].circular)).collect(),
         }
     } else {
         let fixed_layers: Option<Vec<usize>> = r.step.as_ref().map(|_| {
@@ -217,7 +218,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
                 .iter()
                 .map(|l| {
                     let (sx, tx) = (g.nodes[l.source].x1, g.nodes[l.target].x0);
-                    (ribbon_area(sx, l.y0, tx, l.y1, hw(l.width)), false)
+                    (scene_path(&ribbon_area(sx, l.y0, tx, l.y1, hw(l.width))), false)
                 })
                 .collect(),
         }

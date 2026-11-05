@@ -1,0 +1,14 @@
+[package]
+name = "diagnostic"
+version = "0.0.1"
+edition = "2021"
+description = "Structured diagnostics: a registered code plus the params Python formats its message from. No message text in Rust."
+
+[features]
+# `PartialEq<&str>`, `contains` and `starts_with` on `Diagnostic`, for unit tests that compare a refusal by its text.
+test-support = []
+
+[dependencies]
+d3rs = { path = "../d3rs" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }

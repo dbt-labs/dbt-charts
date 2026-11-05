@@ -44,7 +44,7 @@ fn registered<R>(name: &str, read: impl FnOnce(&mut Scale) -> Res<R>) -> Res<Opt
 }
 
 fn unregistered_channel(name: &str) -> EvalError {
-    EvalError::Unmodeled(crate::refuse!("labels.expr reading the {name:?} scale, which this renderer does not register for the chart, is not supported"))
+    EvalError::Unmodeled(diagnostic::refuse!("labels.expr reading the {name:?} scale, which this renderer does not register for the chart, is not supported"))
 }
 
 fn with_named(vals: &[Val], name_at: usize, group_at: usize, missing: Val, read: impl FnOnce(&mut Scale) -> Res<Val>) -> Res<Val> {
@@ -66,7 +66,7 @@ fn with_referenced<R>(vals: &[Val], read: impl FnOnce(&mut Scale) -> R) -> Res<R
 
 /// A dataset Vega-Lite's compiler mints, whose contents this engine does not carry.
 fn derived_dataset(name: &str) -> EvalError {
-    EvalError::Unmodeled(crate::refuse!("labels.expr reading the dataset {name:?}, which Vega-Lite derives from the chart, is not supported"))
+    EvalError::Unmodeled(diagnostic::refuse!("labels.expr reading the dataset {name:?}, which Vega-Lite derives from the chart, is not supported"))
 }
 
 /// The tuples of the dataset `name`: `[]` for one that does not exist, an error for one Vega-Lite's compiler mints
@@ -370,7 +370,7 @@ fn selection_resolve(vals: &[Val]) -> Res<Val> {
     if store(arg(vals, 0))?.is_empty() {
         return Ok(Val::Object(Vec::new()));
     }
-    Err(EvalError::Unmodeled(crate::refuse!("labels.expr resolving a selection over the chart's source rows is not supported")))
+    Err(EvalError::Unmodeled(diagnostic::refuse!("labels.expr resolving a selection over the chart's source rows is not supported")))
 }
 
 /// `vlSelectionTuples(items, base)`: one selection tuple per scenegraph item, over `base`.
@@ -426,7 +426,7 @@ fn is_scene(scene: &Val) -> bool {
 
 /// The scenegraph items an `intersect` walks: the marks the chart has drawn.
 fn marks_drawn() -> EvalError {
-    EvalError::Unmodeled(crate::refuse!("labels.expr intersecting the marks the chart has drawn is not supported"))
+    EvalError::Unmodeled(diagnostic::refuse!("labels.expr intersecting the marks the chart has drawn is not supported"))
 }
 
 /// `intersect(box, opt, group)`: the scenegraph items inside the box.

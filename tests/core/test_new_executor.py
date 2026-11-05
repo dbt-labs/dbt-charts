@@ -472,8 +472,8 @@ rows:
         # policy: freshness is per-reader, and the slot is warmed from the
         # shared persistent entry, so keying it on content alone would let one
         # query's policy answer a same-SQL sibling's read.
-        assert list(executor._cache) == [memo_key(query, content_key)]
-        assert executor._cache[memo_key(query, content_key)].rows == [{"id": 1}]
+        assert list(executor.ledger.memo) == [memo_key(query, content_key)]
+        assert executor.ledger.memo[memo_key(query, content_key)].rows == [{"id": 1}]
         # The persistent key stays content-only — a ttl edit must not
         # cold-start the stored entry.
         assert len(content_key) == 3
@@ -533,7 +533,7 @@ rows:
         assert executor.execute_query("q_a") == rows_by_source["source_a"]
         assert executor.execute_query("q_b") == rows_by_source["source_b"]
         assert mock_registry.execute.call_count == 2
-        assert len(executor._cache) == 2
+        assert len(executor.ledger.memo) == 2
 
     def test_cache_correctly_uses_new_key_format(self):
         """Test that the cache actually uses the new key format correctly.

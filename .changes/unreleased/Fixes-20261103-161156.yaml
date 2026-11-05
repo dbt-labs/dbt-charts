@@ -1,0 +1,3 @@
+kind: Fixes
+body: A dbt package's boards now run from its integration_tests project with --dbt-project-dir, using that project's profile.
+time: 2026-11-03T16:11:56.898891-08:00

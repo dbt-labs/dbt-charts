@@ -24,6 +24,7 @@ from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 from dbt_charts.core.execute.backends.base import BackendRegistry
 from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.source_resolver import SourceResolver
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
@@ -158,8 +159,8 @@ def test_a_resolver_failure_is_that_querys_error_and_is_recorded(
     with pytest.raises(QueryError):
         executor.execute_query("plain")
 
-    assert [name for name, *_ in executor._query_data_ages] == ["plain"]
-    assert cache.get(*executor.cache_key("plain"), ttl=None) is not None
+    assert [name for name, *_ in executor.ledger.ages] == ["plain"]
+    assert cache.get(*plan(executor.ctx, ["plain"])[0].cache_key, ttl=None) is not None
 
 
 def test_a_cached_query_is_served_without_resolving(
@@ -208,13 +209,13 @@ def test_a_dbt_jinja_query_with_an_unresolvable_source_fails_as_that_query(
         result_cache=cache,
     )
 
-    key = executor.cache_key("plain")
+    key = plan(executor.ctx, ["plain"])[0].cache_key
     with pytest.raises(QueryError):
         executor.execute_query("plain")
 
-    assert [name for name, *_ in executor._query_data_ages] == ["plain"]
+    assert [name for name, *_ in executor.ledger.ages] == ["plain"]
     assert "plain" not in executor.lookup(["plain"]).hits
-    assert key == executor.cache_key("plain")
+    assert key == plan(executor.ctx, ["plain"])[0].cache_key
 
 
 def test_an_unreadable_manifest_does_not_escape_the_cache_key(
@@ -232,5 +233,8 @@ def test_an_unreadable_manifest_does_not_escape_the_cache_key(
         result_cache=TrivialDuckDBCache(db_path=tmp_path / "c.duckdb"),
     )
 
-    assert executor.cache_key("plain") == executor.cache_key("plain")
+    assert (
+        plan(executor.ctx, ["plain"])[0].cache_key
+        == plan(executor.ctx, ["plain"])[0].cache_key
+    )
     assert "plain" not in executor.lookup(["plain"]).hits

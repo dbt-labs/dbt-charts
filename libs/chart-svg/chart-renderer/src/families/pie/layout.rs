@@ -4,6 +4,7 @@
 //! Python SVG composer. A pie has no height of its own and hugs nothing; only an attached
 //! table makes the canvas differ from the cell.
 
+use crate::scene_path::scene_path;
 use d3rs::arc::Arc;
 use d3rs::pie::pie;
 use measure::{baseline_shift, Measure};
@@ -15,7 +16,7 @@ use super::bind::{Align, Attached, Bound, LegendPlan, Placement, SliceLabel, Whe
 use super::{Parts, Resolved, WheelError, ALL_PARTS, BARE};
 use crate::common::{Font, MeasuredAs, TitleStyle};
 use crate::contract::{self, ItemRole, Reads};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::legend::{
     drawn_symbol_legend, legend_edge_origin, legend_from_widths, legend_origin, legend_slide, limit_legend_text,
     LegendEntry, LegendSymbol, VegaLegend, VEGA_LEGEND_OFFSET,
@@ -47,9 +48,9 @@ pub fn height_for_width(bound: &Bound, width: f64, measure: &Measure) -> Result<
 /// One pie in `cell`. An attached table makes the canvas taller or shorter than the cell: the
 /// wheel renders at the theme's view height and the canvas takes its size from its children.
 pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Diagnostic> {
-    let (composed, diagnostics) = crate::diagnostic::collect(|| compose(bound, cell, measure));
+    let (composed, diagnostics) = diagnostic::collect(|| compose(bound, cell, measure));
     // A layout that fails has no `Layout` to carry what it found: those WARNs reach the sink.
-    let composed = composed.inspect_err(|_| diagnostics.iter().cloned().for_each(crate::diagnostic::warn))?;
+    let composed = composed.inspect_err(|_| diagnostics.iter().cloned().for_each(diagnostic::warn))?;
     Ok(Layout {
         insets: composed.canvas.insets_of(&composed.data_box),
         data_box: composed.data_box,
@@ -193,7 +194,7 @@ fn attached_wheel<'a>(
     let gap = attached.gap;
     let table_laid = crate::families::table::layout::lay_out(&attached.table, attached.table_width, None, measure)?;
     if report {
-        table_laid.diagnostics.into_iter().for_each(crate::diagnostic::warn);
+        table_laid.diagnostics.into_iter().for_each(diagnostic::warn);
     }
     let Some(table_extent) = scene::root_extent(&table_laid.nodes) else {
         return Err("pie: the attached table lays out one root card".to_string().into());
@@ -631,8 +632,8 @@ fn wheel(
     let inner = radius * r.style.inner_radius;
     if let (Some(text), Some((value_w, _, _))) = (&wheel.center, &total_ink) {
         if inner > 0.0 && *value_w > 2.0 * inner {
-            crate::diagnostic::warn(crate::diagnostic::Diagnostic::new(
-                &crate::codes::WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS,
+            diagnostic::warn(diagnostic::Diagnostic::new(
+                &diagnostic::codes::WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS,
                 [
                     ("chart_id", serde_json::json!(r.id)),
                     ("formatted_value", serde_json::json!(text)),
@@ -691,6 +692,7 @@ fn wheel(
             pad_angle: slice.pad_angle,
         }
         .path();
+        let path = scene_path(&path);
         let bound_slice = &wheel.slices[slice.index];
         let anchor = r.selection.mark(r.link_open.anchor(bound_slice.href.as_deref()));
         // The wedge's short side: its radial depth, or its arc at the mid radius.

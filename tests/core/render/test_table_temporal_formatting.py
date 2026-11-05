@@ -472,8 +472,8 @@ class TestTimeFormatOnLegitimateDateColumnBoardLevel:
 
     def test_timestamp_string_column_under_date_short_renders(self) -> None:
         data: list[dict[str, object]] = [
-            {"value": "2024-03-15 09:30:00"},
-            {"value": "2024-03-16 10:00:00"},
+            {"value": datetime.datetime(2024, 3, 15, 9, 30)},
+            {"value": datetime.datetime(2024, 3, 16, 10, 0)},
         ]
         svg = _render_table_svg(data, "date_short")
         assert "15 Mar 2024" in svg

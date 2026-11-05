@@ -24,6 +24,8 @@ from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.render import render
 
+from .._results import rows_result
+
 BOARD = """
 queries:
   flows:
@@ -695,7 +697,9 @@ class TestSizing:
         resolved_style, context = resolve_style_and_context(get_theme_style())
         chart = board.charts["flow"]
         resolved = resolve(chart, [], context, width=600)
-        artifact = render_resolved_chart(resolved, [], resolved_style, width=600)
+        artifact = render_resolved_chart(
+            resolved, rows_result([]), resolved_style, width=600
+        )
         assert isinstance(artifact.payload, str)
         match = re.search(r'height="([\d.]+)"', artifact.payload)
         assert match is not None
@@ -874,7 +878,7 @@ class TestQuerylessChart:
             result.board.charts["flow"],
             style,
             context,
-            data=[],
+            data=rows_result([]),
             format="svg",
             width=300,
             is_placeholder=True,

@@ -1,7 +1,7 @@
 //! The horizontal bar panel: categories down the band axis, the value along the linear one.
 
 use crate::common::{VALUE_AXIS_BREATHING_ROOM, axis_title_text, distinct_values, row_num, row_str};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::axis_caption::{category_axis_caption, date_value_caption, value_axis_caption};
 use crate::families::cartesian::{BandScale, vl_default_tick_count};
 use d3rs::scale::{Band, Continuous};
@@ -15,7 +15,8 @@ use crate::families::{facet_compose, multiples, span, support_table_columns, sup
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::layout::Rect;
 use crate::time_axis::TimeAxis;
-use crate::{Padding, Payload, codes, vega_fit};
+use crate::{Padding, Payload, vega_fit};
+use diagnostic::codes;
 
 use measure::FontBook;
 use scene::{Attrs, Node, Role};
@@ -285,7 +286,7 @@ pub(super) fn render_horizontal_panel(
     // (`x_values_are_standard_dates`): a standard-date x with no detected
     // bucket still headers through the continuous-date fallback.
     let x_is_standard_date =
-        crate::families::temporal::x_values_are_standard_dates(&horizontal_domain_strs);
+        crate::families::temporal::x_is_standard_date(&r.column_types, &r.x, &horizontal_domain_strs)?;
     // The categories' instants: a horizontal bar has no chart axis, and its layers' categories are in the domain.
     let cat_axis = TimeAxis::over(&cat_domain);
     let tooltip_tu = detect_time_unit(&cat_axis.dates(&cat_domain));
@@ -512,7 +513,7 @@ pub(super) fn render_horizontal_panel(
     // text) to reserve the value-label overhang before the plot width is
     // known.
     let data_map = build_data_map(rows, cat_field, val_field, color_field, r.y_start.is_none())?;
-    let extras = Extras::build(rows, cat_field, color_field, r.y_start.is_none(), &r.tooltip)?;
+    let extras = Extras::build(rows, cat_field, color_field, r.y_start.is_none(), &r.tooltip, &r.column_types)?;
     // A horizontal band category is a nominal field, so a date prints verbatim.
     let link = r.datum_link(cat_field, crate::href::LinkText::Raw);
     // Under a layer, a date x that is not authored `temporal` leaves the base's own marks unlinked.
@@ -807,7 +808,7 @@ pub(super) fn render_horizontal_panel(
         let distinct = n_categories;
         let min_height = derived;
         if distinct > 0 && min_height > authored {
-            crate::diagnostic::warn(Diagnostic::new(
+            diagnostic::warn(Diagnostic::new(
                 &codes::WARN_LAYOUT_MIN_EXCEEDS_HEIGHT,
                 [
                     ("authored_height", json!(authored)),

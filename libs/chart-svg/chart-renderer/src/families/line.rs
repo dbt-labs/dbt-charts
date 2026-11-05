@@ -137,7 +137,7 @@
 //! An authored bucketed `time_unit` on nominal strings is an `Err`-only
 //! over-refusal: production draws a band step there.
 
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use std::collections::{HashMap, HashSet};
 
 use crate::families::axis_caption::AxisCaption;
@@ -169,7 +169,7 @@ use scene::{Attrs, Node, Role};
 use crate::vega_fit;
 use measure::{FontBook, Measure};
 use print::print;
-use crate::diagnostic::warn;
+use diagnostic::warn;
 use crate::layout::Rect;
 use crate::Payload;
 
@@ -1276,7 +1276,7 @@ fn render_facet(mut bound: bind::Bound, fonts: &FontBook) -> Result<String, Diag
     // the only area-specific refusal this arm still needs, and it's already
     // generic.
     let fam = if draw_areas { "area" } else { "line" };
-    let facet_x_scale = match crate::families::temporal::infer_vega_type(&payload.rows, &bound.r.x) {
+    let facet_x_scale = match crate::families::temporal::infer_vega_type(&payload.schema.rows, &payload.rows, &bound.r.x)? {
         VegaType::Nominal | VegaType::Ordinal => crate::ViewScale::Discrete,
         VegaType::Quantitative | VegaType::Temporal => crate::ViewScale::Continuous,
     };
@@ -1395,7 +1395,7 @@ fn render_facet(mut bound: bind::Bound, fonts: &FontBook) -> Result<String, Diag
                 // Production's own compile fails on a pinned layer inside small
                 // multiples (vl-convert: unrecognized scale `child_layer_0_y`).
                 if YSides::of(&bound.overlays).is_some() {
-                    return Err(crate::refuse!("{fam}: multiples with a dual-axis layer not supported").into());
+                    return Err(diagnostic::refuse!("{fam}: multiples with a dual-axis layer not supported").into());
                 }
                 let layout::Fitted { plot, geometry: geom, cuts, .. } =
                     layout::fit(&bound, payload, &panel.rows, (pw, ph), None, fonts, Some(&facet_opts), true)?;
@@ -1695,7 +1695,7 @@ fn description_color_title(fam: &str, color_field: &str, legend: &crate::familie
 #[cfg(test)]
 mod tests {
     use super::{render_with_layout, shape, FacetPanelOpts, LineXAxisBody, Shape};
-    use crate::diagnostic::Diagnostic;
+    use diagnostic::Diagnostic;
     use crate::families::cartesian::cascade_rail_anchors;
     use crate::common::VALUE_AXIS_BREATHING_ROOM;
     use measure::FontBook;
@@ -1823,7 +1823,7 @@ mod tests {
         payload_json["resolved"]["title"] = serde_json::Value::Null;
         payload_json["resolved"]["subtitle"] = serde_json::Value::Null;
         let h = payload_json["height"].as_f64().unwrap();
-        let svg = render(&Payload::deserialize(&payload_json).unwrap(), &test_fonts())
+        let svg = render(&<Payload as serde::Deserialize>::deserialize(&payload_json).unwrap(), &test_fonts())
             .expect("a bottom strip renders");
         let (_, canvas_h) = canvas_dims(&svg);
         assert!(canvas_h >= h + 20.0 + 30.0, "axis gap and strip are added under the declared height: {canvas_h} vs {h}");
@@ -1851,7 +1851,7 @@ mod tests {
         for (row, name) in p["rows"].as_array_mut().unwrap().iter_mut().zip(["North", "South", "East"]) {
             row["week"] = serde_json::json!(name);
         }
-        let flat = render(&Payload::deserialize(&p).unwrap(), &test_fonts()).unwrap();
+        let flat = render(&<Payload as serde::Deserialize>::deserialize(&p).unwrap(), &test_fonts()).unwrap();
         assert!(!flat.contains("rotate(45)"), "{flat}");
         p["resolved"]["style"]["axis_x"]["labels"]["angle"] = serde_json::json!(45.0);
         let tilted = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).unwrap();
@@ -2196,7 +2196,7 @@ mod tests {
     }
 
     /// The wide rail payload with a trend on `revenue`, its text at `position`.
-    fn rail_with_trend(position: Value) -> Result<String, crate::diagnostic::Diagnostic> {
+    fn rail_with_trend(position: Value) -> Result<String, diagnostic::Diagnostic> {
         let mut trend = annotation(12, Value::Null, Value::Null);
         trend["series"] = Value::Null;
         trend["text"] = "trend".into();
@@ -3317,10 +3317,9 @@ mod tests {
             // (biweekly Mondays, gap 14 days) resolves `yearweek` in
             // production's `detect_time_unit` (exact days +
             // `statistics.median`) and in this port's weekly rung, and
-            // `curve: step` flips it `ordinal` and sorts. The
-            // step-under-sort refusal keys on the x being neither
-            // quantitative nor a plain category (a standard ISO date is
-            // production-temporal), not on the detected grain.
+            // `curve: step` flips it `ordinal` and sorts, unlike the
+            // ungridded and authored-temporal ISO dates above, whose
+            // plain step ignores the sort.
             ShapeCase {
                 name: "biweekly_iso_dates_step",
                 values: [s("2024-02-19"), s("2024-03-04"), s("2024-03-18")],
@@ -3769,7 +3768,7 @@ mod tests {
         assert!(svg.contains("4,000"), "the niced domain re-admits the baked 4,000 rung: {svg}");
     }
 
-    fn render_layered(edit: impl FnOnce(&mut serde_json::Value)) -> Result<String, crate::diagnostic::Diagnostic> {
+    fn render_layered(edit: impl FnOnce(&mut serde_json::Value)) -> Result<String, diagnostic::Diagnostic> {
         let mut p = layered_line_payload_with_cross_query_layer();
         edit(&mut p);
         render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts())
@@ -5111,6 +5110,7 @@ mod tests {
             {"month": "2026-01-01", "alpha": 10.0, "zeta": 5.0},
             {"month": "2026-01-08", "alpha": 20.0, "zeta": 15.0},
         ]);
+        crate::payload_schema::test_declare(&mut p, &[("mid", "float")]);
         let payload: Payload = serde_json::from_value(p).unwrap();
         let svg = render(&payload, &test_fonts()).expect("renders");
         assert!(
@@ -5380,6 +5380,7 @@ mod tests {
         for row in p["rows"].as_array_mut().unwrap() {
             row["hardware"] = json!(null);
         }
+        crate::payload_schema::test_declare(&mut p, &[("hardware", "float")]);
         p["resolved"]["legend"]["visible"] = json!(true);
         p["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false});
         let svg = render_wide_stacked(p).expect("renders");
@@ -6636,7 +6637,7 @@ mod tests {
         p["resolved"]["palette"] = json!(["#1f77b4"]);
         p["resolved"]["style"]["dashes"] = json!([[12.0, 16.0], [2.0, 6.0], [4.0, 4.0], []]);
         p["resolved"]["legend"]["visible"] = json!(false);
-        let svg = render(&Payload::deserialize(&p).unwrap(), &test_fonts()).expect("renders");
+        let svg = render(&<Payload as serde::Deserialize>::deserialize(&p).unwrap(), &test_fonts()).expect("renders");
         // (first vertex y, dash) per stroked path, split by ink and halo.
         let strokes = |stroke: &str| -> Vec<(i64, Option<String>)> {
             let mut v: Vec<(i64, Option<String>)> = svg
@@ -6662,7 +6663,7 @@ mod tests {
         assert!(!svg.contains("#ccc"), "{svg}");
         // The legend draws each series' dash on a long stroke sample.
         p["resolved"]["legend"]["visible"] = json!(true);
-        let svg = render(&Payload::deserialize(&p).unwrap(), &test_fonts()).expect("renders");
+        let svg = render(&<Payload as serde::Deserialize>::deserialize(&p).unwrap(), &test_fonts()).expect("renders");
         assert!(svg.contains("d=\"M-22.36,0L22.36,0\"") && svg.contains("stroke-linecap=\"round\" stroke-dasharray=\"12,16\""), "{svg}");
         // An area chart never binds dashes (`emitters/area.py` has no
         // strokeDash path), whatever its style carries.
@@ -6746,7 +6747,7 @@ mod tests {
         axis["tilt_increments"] = serde_json::json!([0.0, -30.0, -45.0, -60.0, -90.0]);
         axis["min_gap"] = serde_json::json!(4.0);
         let _locale = crate::time_locale::en_us_scope();
-        let svg = render(&Payload::deserialize(&p).unwrap(), &test_fonts()).expect("renders");
+        let svg = render(&<Payload as serde::Deserialize>::deserialize(&p).unwrap(), &test_fonts()).expect("renders");
         assert!(svg.contains("rotate("), "{svg}");
         p["resolved"]["style"]["axis_x"]["labels"]["overlap"] = serde_json::json!({"skip": true, "tilt": false});
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
@@ -7974,7 +7975,7 @@ mod tests {
     }
 
     /// A rail line over irregular dates, its x domain authored to January through July.
-    fn narrowed_domain_rail_svg() -> (String, Vec<crate::diagnostic::Diagnostic>) {
+    fn narrowed_domain_rail_svg() -> (String, Vec<diagnostic::Diagnostic>) {
         use serde_json::json;
         let mut p = make_rail_strip_payload();
         p["width"] = json!(700.0);
@@ -7986,7 +7987,7 @@ mod tests {
             .collect();
         p["rows"] = json!(rows);
         p["resolved"]["style"]["axis_x"]["scale"] = json!({"continuous": {"domain": ["2026-01-01", "2026-07-01"]}});
-        crate::diagnostic::collect(|| render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders"))
+        diagnostic::collect(|| render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders"))
     }
 
     /// A growth series opens small, so its first cell declares the unit and is the
@@ -8007,7 +8008,7 @@ mod tests {
                 })
                 .collect();
             p["rows"] = json!(rows);
-            let (svg, warnings) = crate::diagnostic::collect(|| render(&serde_json::from_value::<Payload>(p).unwrap(), &fonts).expect("renders"));
+            let (svg, warnings) = diagnostic::collect(|| render(&serde_json::from_value::<Payload>(p).unwrap(), &fonts).expect("renders"));
             let edges = crate::families::support_table_strip::strip_edges(&svg, &fonts, TEST_FONT);
             assert!(!edges.cells.is_empty() && edges.cells.iter().all(|row| row.len() >= 2), "width {width}: the strip is hidden: {warnings:?}");
             assert!(warnings.iter().all(|d| d.code != "WARN-SUPPORT-TABLE-CELL-OVERFLOW"), "width {width}: {warnings:?}");
@@ -9349,7 +9350,7 @@ mod tests {
         let payload: Payload = serde_json::from_value(json).unwrap();
         let err = render(&payload, &test_fonts()).unwrap_err();
         assert!(
-            err.contains(crate::codes::ERR_STEP_BAND_MULTI_SERIES.id),
+            err.contains(diagnostic::codes::ERR_STEP_BAND_MULTI_SERIES.id),
             "names the multi-series band-step refusal: {err}"
         );
     }
@@ -11137,7 +11138,7 @@ mod tests {
         p["rows"] = weekly_sundays;
         p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
         p["resolved"]["style"]["axis_x"]["labels"]["align"] = json!("left");
-        let baseline = Payload::deserialize(&p).unwrap();
+        let baseline = <Payload as serde::Deserialize>::deserialize(&p).unwrap();
         let baseline_svg = render(&baseline, &test_fonts()).expect("renders");
         let (baseline_gx, _, baseline_end) = plot_origin_and_line_end(&baseline_svg);
 
@@ -12579,7 +12580,7 @@ mod tests {
 
     /// The rail renders for `names` (series ending 150, 60, then 100) at 600px wide,
     /// returning its SVG and the diagnostics.
-    fn rail_cascade_render(names: &[&str]) -> (String, Vec<crate::diagnostic::Diagnostic>) {
+    fn rail_cascade_render(names: &[&str]) -> (String, Vec<diagnostic::Diagnostic>) {
         use serde_json::json;
         let mut p = make_multi_series_line_payload_with_bottom_legend();
         let ends = [150.0, 60.0, 100.0];
@@ -12594,7 +12595,7 @@ mod tests {
         p["resolved"]["legend"]["visible"] = json!(false);
         p["resolved"]["style"]["endpoint_labels"]["visible"] = json!(true);
         let (svg, warnings) =
-            crate::diagnostic::collect(|| render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()));
+            diagnostic::collect(|| render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()));
         (svg.expect("renders"), warnings)
     }
 
@@ -12855,7 +12856,7 @@ mod tests {
         p["resolved"]["legend"]["visible"] = json!(false);
         p["resolved"]["style"]["endpoint_labels"]["visible"] = json!(true);
         let (svg, warnings) =
-            crate::diagnostic::collect(|| render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders"));
+            diagnostic::collect(|| render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders"));
         let codes: Vec<&str> = warnings.iter().map(|w| w.code).collect();
         assert!(codes.contains(&"WARN-RAIL-VALUE-DROPPED"), "the value drops for lack of room: {codes:?}");
         assert!(!codes.contains(&"WARN-SERIES-LABEL-TRUNCATED"), "nothing is cut: {codes:?}");
@@ -12885,7 +12886,7 @@ mod tests {
         p["resolved"]["legend"]["visible"] = json!(false);
         p["resolved"]["style"]["endpoint_labels"]["visible"] = json!(true);
         let (svg, warnings) =
-            crate::diagnostic::collect(|| render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders"));
+            diagnostic::collect(|| render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders"));
         assert!(svg.contains("<tspan>200,000</tspan>") && svg.contains("dy=\"13\">Electronics</tspan>"), "{svg}");
         assert!(warnings.iter().all(|w| w.code != "WARN-RAIL-VALUE-DROPPED"), "wrapping is not dropping: {warnings:?}");
     }
@@ -14520,6 +14521,7 @@ mod tests {
             {"week": 2022.0, "signups": 170.0},
             {"week": 2023.0, "signups": 160.0},
         ]);
+        crate::payload_schema::test_declare(&mut p, &[("week", "decimal")]);
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts())
             .expect("renders");
         let path = svg
@@ -14742,6 +14744,7 @@ mod tests {
             {"week": 2020.0, "signups": 150.0},
             {"week": 2021.0, "signups": 130.0},
         ]);
+        crate::payload_schema::test_declare(&mut p, &[("week", "decimal")]);
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts())
             .expect("renders");
         text_tag(&svg, "2019");
@@ -16763,7 +16766,7 @@ mod tests {
             fit_payload(|j| {
                 j["resolved"]["style"]["axis_y"]["grid"]["visible"] = json!(true);
                 j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"] =
-                    json!({"visible": true, "amplitude": 4.0, "wavelength": 14.0, "sharpness": 0.0});
+                    json!({"enabled": true, "amplitude": 4.0, "wavelength": 14.0, "sharpness": 0.0});
                 mutate(j);
             })
         }
@@ -16874,7 +16877,7 @@ mod tests {
         #[test]
         fn visible_false_draws_no_tear() {
             let svg = render(
-                &torn_payload(|j| j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["visible"] = json!(false)),
+                &torn_payload(|j| j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["enabled"] = json!(false)),
                 &test_fonts(),
             )
             .expect("renders");
@@ -17119,7 +17122,7 @@ mod tests {
             // Regular 100 px columns at wavelength 100: a tick `lead` px from an
             // end leaves a stretch that is a fraction of a period, so it either
             // carries a tooth of at least period/√2 or no stop at all.
-            let tear = crate::common::TornBaseline { visible: true, amplitude: 4.0, wavelength: 100.0, sharpness: 1.0 };
+            let tear = crate::common::TornBaseline { enabled: true, amplitude: 4.0, wavelength: 100.0, sharpness: 1.0 };
             for lead in [5.0, 30.0, 51.0, 56.0, 60.0, 69.0, 71.0, 120.0] {
                 let ticks = [lead, lead + 100.0, lead + 200.0];
                 let x2 = ticks[2] + lead;
@@ -17140,7 +17143,7 @@ mod tests {
                 json!({"visible": true, "threshold": null, "width": 1.0, "color": "#EDEFF2", "opacity": 1.0});
             j["resolved"]["style"]["axis_y"]["grid"] = json!({
                 "visible": true, "threshold": null, "width": 1.0, "color": "#D0D3D9", "opacity": 1.0,
-                "torn_baseline": {"visible": true, "amplitude": 4.0, "wavelength": 170.0, "sharpness": 1.0}
+                "torn_baseline": {"enabled": true, "amplitude": 4.0, "wavelength": 170.0, "sharpness": 1.0}
             });
             j["resolved"]["style"]["axis_y"]["scale"] = json!({"continuous": {"domain": [50.0, 200.0]}});
             let svg = render(&serde_json::from_value(j).unwrap(), &test_fonts()).expect("renders");
@@ -17178,7 +17181,7 @@ mod tests {
         #[test]
         fn x_gridlines_run_to_the_edge_without_a_tear() {
             let svg = render(
-                &torn_grid_payload(|j| j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["visible"] = json!(false)),
+                &torn_grid_payload(|j| j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["enabled"] = json!(false)),
                 &test_fonts(),
             )
             .expect("renders");
@@ -17217,7 +17220,7 @@ mod tests {
                 &torn_payload(|j| {
                     x_grid(j, "visible", json!(true));
                     x_grid(j, "color", json!(null));
-                    j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["visible"] = json!(false);
+                    j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["enabled"] = json!(false);
                 }),
                 &test_fonts(),
             )
@@ -17401,7 +17404,7 @@ mod tests {
             let fonts = test_fonts();
             let measure = measure::Measure { fonts: &fonts };
             let cell = crate::layout::Rect { x: 0.0, y: 0.0, width: 420.0, height: 260.0 };
-            let (laid, sunk) = crate::diagnostic::collect(|| super::layout::layout(&bound, cell, &measure));
+            let (laid, sunk) = diagnostic::collect(|| super::layout::layout(&bound, cell, &measure));
             let laid = laid.expect("line lays out");
             assert!(sunk.is_empty(), "{sunk:?}");
             assert!(!laid.diagnostics.is_empty(), "the cut title warns");
@@ -17439,7 +17442,7 @@ mod tests {
             let fonts = test_fonts();
             let cell = crate::layout::Rect { x: 0.0, y: 0.0, width: payload.width, height: payload.height };
             let laid = super::layout::layout(&bound, cell, &measure::Measure { fonts: &fonts }).unwrap();
-            let (svg, sunk) = crate::diagnostic::collect(|| render_inner(&payload, &fonts, draw_areas));
+            let (svg, sunk) = diagnostic::collect(|| render_inner(&payload, &fonts, draw_areas));
             assert_eq!(svg.unwrap(), print::print(&laid.nodes));
             assert_eq!(sunk, laid.diagnostics);
         }
@@ -17551,7 +17554,7 @@ mod tests {
         json["resolved"]["title"] = serde_json::json!("T ".repeat(300));
         json["resolved"]["annotations"] = Value::Array(vec![annotation(0, value(serde_json::json!(2020.5)), Value::Null)]);
         let payload: Payload = serde_json::from_value(json).unwrap();
-        let (rendered, sunk) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
+        let (rendered, sunk) = diagnostic::collect(|| render(&payload, &test_fonts()));
         assert_eq!(rendered.unwrap_err().code, "ERR-ANNOTATION-PAYLOAD");
         let codes: Vec<_> = sunk.iter().map(|d| d.code).collect();
         assert_eq!(codes, ["WARN-CHART-TITLE-TRUNCATED"]);

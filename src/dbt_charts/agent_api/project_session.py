@@ -379,16 +379,18 @@ class ProjectSession:
         """Run SQL validation against the project's source dialects.
 
         ``dialect`` wins; otherwise the project source named by ``source``
-        supplies its own sqlglot dialect. A source that is unnamed, unknown
-        here, or of a type with no sqlglot dialect (file sources,
-        ``dbt_profile``) lints with sqlglot's generic dialect.
+        supplies its own sqlglot dialect, a ``dbt_profile`` source's from its
+        resolved profile. A source that is unnamed, unknown here, or a file
+        source lints with sqlglot's generic dialect.
 
-        Stateless — requires no adapter or warehouse connection.
+        Requires no adapter or warehouse connection.
+
+        Raises:
+            DbtChartsError: When a ``dbt_profile`` source's profile does not
+                resolve.
         """
-        from dbt_charts.core.compile.sql_guard import dialect_for_source
-
         if dialect is None:
-            dialect = dialect_for_source(source, self.project.sources.sources)
+            dialect = _query.source_sql_dialect(source, self.project)
         compile_errors = semantic_diagnostics(self.project, sql, source, dialect)
         if return_suppressed:
             active, suppressed = _core_validate_query(

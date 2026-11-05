@@ -7,7 +7,7 @@ use super::bind::coerce_numeric_cell;
 use super::bind::column_font_lanes;
 use super::bind::glyph_possible;
 use super::bind::glyph_run;
-use super::bind::is_date_like_cell;
+use super::bind::is_date_text;
 use super::bind::iso_day;
 use super::bind::is_magnitude_suffix;
 use super::bind::is_numeric_cell;
@@ -16,7 +16,6 @@ use super::bind::is_summary_role;
 use super::bind::is_swatch;
 use super::bind::measured_cell_text;
 use super::anchor_variant;
-use super::bind::numeric_value;
 use super::bind::parse_spark_thresholds;
 use super::bind::resolve_cell_glyph;
 use super::bind::resolve_cell_link;
@@ -78,15 +77,16 @@ use super::SWATCH_CELL_DEMAND;
 use super::SWATCH_SIZE;
 use super::VALID_FONT_WEIGHTS;
 use super::width::natural_width;
-use crate::codes;
+use column_types::ColumnType;
+use diagnostic::codes;
 use crate::common::card_box;
 use crate::common::css_color;
 use crate::common::Divider;
 use crate::common::Font;
 use crate::common::SUFFIX_GAP;
 use crate::common::TAB_STYLE;
-use crate::diagnostic::py_str;
-use crate::diagnostic::Diagnostic;
+use diagnostic::py_str;
+use diagnostic::Diagnostic;
 use crate::layout::Insets;
 use crate::layout::IntrinsicWidth;
 use crate::layout::Layout;
@@ -1480,6 +1480,36 @@ pub(super) fn render_spark_line(
     tree.finish()
 }
 
+/// `ERR-TABLE-SPARK-COLUMN-TYPE` for a `columns`, `line` or `area` spark drawn
+/// from a column the source declares as other than an array of numbers. A
+/// `line` or `area` reads a lone number as a one-point series; `json` cells
+/// are judged one by one.
+fn check_spark_column_type(
+    column: &str,
+    spark_type: &str,
+    declared: &ColumnType,
+) -> Result<(), Diagnostic> {
+    let number = |kind: &ColumnType| {
+        matches!(kind, ColumnType::Integer | ColumnType::Float | ColumnType::Decimal | ColumnType::Json)
+    };
+    let holds = match declared {
+        ColumnType::Json => true,
+        ColumnType::List(element) => number(element),
+        lone => matches!(spark_type, "line" | "area") && number(lone),
+    };
+    if !matches!(spark_type, "columns" | "line" | "area") || holds {
+        return Ok(());
+    }
+    Err(Diagnostic::new(
+        &codes::ERR_TABLE_SPARK_COLUMN_TYPE,
+        [
+            ("column", json!(column)),
+            ("spark_type", json!(spark_type)),
+            ("declared", json!(declared.to_string())),
+        ],
+    ))
+}
+
 /// A spark cell's sizing: `padding = 8`;
 /// `spark_width`/`spark_height` default to `int(cell_width - 2*padding)` /
 /// `int(row_height - padding)` (production's `int()` truncates, matching
@@ -1912,7 +1942,7 @@ impl TableBody<'_> {
                 let start = pool_page_rows.map_or(0, |p| (pool_first_page - 1) * p);
                 (start..page_n_shown)
                     .find(|&ri| {
-                        numeric_value(rows[ri].get(col.name.as_str())).is_some_and(|v| v != 0.0)
+                        coerce_numeric_cell(rows[ri].get(col.name.as_str())).is_some_and(|v| v != 0.0)
                     })
                     .unwrap_or(start)
             })
@@ -2241,6 +2271,9 @@ impl TableBody<'_> {
                                 has_negative: signed_columns.contains(col.name.as_str()),
                                 negative_tone: tones.map(|t| t.negative.as_str()),
                             };
+                            if value.as_array().is_none_or(|items| !items.is_empty()) {
+                                check_spark_column_type(col.name.as_str(), &spark.spark_type, &col.kind)?;
+                            }
                             if let Some((content, spark_w, spark_h)) = render_spark_cell(
                                 col.name.as_str(),
                                 value,
@@ -2432,7 +2465,7 @@ impl TableBody<'_> {
                     );
                 } else if (col.is_numeric || col.is_date)
                     && !plain_in_date_lane
-                    && !is_date_like_cell(cell_raw)
+                    && !is_date_text(&col.kind, cell_raw)
                     && is_numeric_cell(col, cell_raw)
                 {
                     // The thumbnail redraw reads the raw number off the cell.
@@ -2517,7 +2550,7 @@ impl TableBody<'_> {
                     // A date-like cell leaves the lane branch for the cutting text
                     // branch, so a date wider than its column is cut, not spilled.
                     let number_text = if col.is_date
-                        && !(is_numeric_cell(col, cell_raw) && !is_date_like_cell(cell_raw))
+                        && !(is_numeric_cell(col, cell_raw) && !is_date_text(&col.kind, cell_raw))
                     {
                         self.cut_cell(ci, &cell.text, cell_style.glyph.as_deref())?
                     } else {
@@ -2550,7 +2583,7 @@ impl TableBody<'_> {
                         Some("center") => (cx + col_ws[ci] / 2.0, "middle"),
                         align
                             if in_lane
-                                && (align == Some("right") || is_date_like_cell(cell_raw)) =>
+                                && (align == Some("right") || is_date_text(&col.kind, cell_raw)) =>
                         {
                             (number_xs[ci], "end")
                         }
@@ -3783,8 +3816,8 @@ pub(crate) fn lay_out(
             // right-aligned date column), sizes the lane; a sentinel beside
             // magnitudes does not.
             let raw_lane = rows[ri].get(col.name.as_str());
-            let is_magnitude = numeric_value(raw_lane).is_some() && is_numeric_cell(col, raw_lane);
-            let is_date_cell = is_date_like_cell(raw_lane)
+            let is_magnitude = coerce_numeric_cell(raw_lane).is_some() && is_numeric_cell(col, raw_lane);
+            let is_date_cell = is_date_text(&col.kind, raw_lane)
                 || (col.is_date
                     && col.cfg.align.as_deref() == Some("right")
                     && matches!(raw_lane, Some(Value::String(s)) if !s.trim().is_empty()));
@@ -3792,7 +3825,7 @@ pub(crate) fn lay_out(
                 continue;
             }
             let unsigned = c.text.trim_start_matches('-');
-            let lane_font = if is_plain_date_lane_cell(col, rows[ri].get(col.name.as_str())) {
+            let lane_font = if is_plain_date_lane_cell(col, raw_lane) {
                 measure_family
             } else {
                 tab_measure_family
@@ -3801,7 +3834,7 @@ pub(crate) fn lay_out(
             // A date cell is wrapped/truncated to its column when painted, so
             // its lane width is clamped to the content area.
             let raw_cell = rows[ri].get(col.name.as_str());
-            let numeric_lane_cell = is_numeric_cell(col, raw_cell) && !is_date_like_cell(raw_cell);
+            let numeric_lane_cell = is_numeric_cell(col, raw_cell) && !is_date_text(&col.kind, raw_cell);
             max_num_w = max_num_w.max(if col.is_date && !numeric_lane_cell {
                 measured.min(col_ws[ci] - 2.0 * pad)
             } else {

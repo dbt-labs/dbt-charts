@@ -19,6 +19,7 @@ from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 from dbt_charts.core.render.controls import controls_stylesheet
 
+from ..._results import rows_schema
 from .._pooled_table import visible_svg
 
 _BOARD_YAML = """\
@@ -45,6 +46,7 @@ def _make_executor(board: object, query_registry: object, rows: list[dict[str, s
     ok = Mock()
     ok.is_success = True
     ok.data = rows
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()

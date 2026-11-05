@@ -18,6 +18,8 @@ from dbt_charts.core.compile import compile
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
+from ..._results import rows_schema
+
 _CODE = "WARN-QUERY-RESULT-TRUNCATED"
 
 _BOARD_YAML = """\
@@ -41,6 +43,7 @@ def _make_executor(board: object, query_registry: object, truncated_reason: str 
     ok = Mock()
     ok.is_success = True
     ok.data = [{"x": 1}, {"x": 2}, {"x": 3}]
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = truncated_reason
     mock_registry = Mock()
@@ -332,7 +335,7 @@ rows:
             )
             written_rows = executor1.execute_query("q")
             assert len(written_rows) == 10
-            assert executor1.truncations() == {}
+            assert executor1.ledger.truncations == {}
 
             # A tighter ceiling takes effect (e.g. a later deployment change).
             # The warm read must re-slice to the new ceiling, not serve the
@@ -350,6 +353,6 @@ rows:
                 "warm read must re-enforce the current ceiling, not serve "
                 f"the full cached rowset — got {len(warm_rows)} rows"
             )
-            assert "q" in executor2.truncations()
+            assert "q" in executor2.ledger.truncations
         finally:
             cache.close()

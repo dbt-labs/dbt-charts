@@ -6,8 +6,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::Plane;
-use crate::codes;
-use crate::diagnostic::Diagnostic;
+use diagnostic::codes;
+use diagnostic::Diagnostic;
 use crate::time_axis::date_text_day;
 
 /// A number, or an ISO date (`YYYY-MM-DD[THH:MM[:SS]]`). Dates are never numbers.

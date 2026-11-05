@@ -100,7 +100,7 @@ Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min
 - `time_unit` (auto|year|yearquarter|yearmonth|yearweek|yearmonthdate|monthofyear|dayofweek|dayofmonth|dayofyear|hourofday|none): Time-unit bucketing for temporal x-axes; None or 'auto' auto-detects from data
 Also exist: `grid`, `line`, `ticks`, `labels`, `title`, `scale`, `position`, `fill`, `fiscal_year_start_month`.
 
-`axis_x.grid, axis_y.grid`: `visible`, `opacity`, `width`, `color`, `dash`, `threshold`.
+`axis_x.grid, axis_y.grid`: `visible`, `opacity`, `width`, `color`, `dash`, `threshold`, `torn_baseline`.
 
 `axis_x.ticks`: `visible`, `color`, `length`, `width`, `offset`, `count`, `step`, `time_unit`.
 

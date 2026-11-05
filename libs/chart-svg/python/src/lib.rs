@@ -2,7 +2,7 @@
 //! `dbt_charts._engine`. Build/distribution notes:
 //! `libs/chart-svg/docs/laws-compile.md`'s Wheel section.
 
-use chart_renderer::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use chart_renderer::families::table::width::{measure_natural_width, MeasurePayload};
 use chart_renderer::{render_measured, Payload};
 use measure::FontBook;

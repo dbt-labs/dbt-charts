@@ -13,12 +13,15 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import Mock
 
+from ..._results import rows_schema
+
 
 def _mock_adapter(rows: list[dict[str, Any]]) -> Mock:
     """Adapter registry mock that returns ``rows`` for every query."""
     ok = Mock()
     ok.is_success = True
     ok.data = rows
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = None
     registry = Mock()

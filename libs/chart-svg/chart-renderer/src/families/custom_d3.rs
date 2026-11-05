@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use d3rs::scale::{Band, Continuous, Transform};
 use d3rs::shape::Curve;
+use crate::scene_path::scene_path;
 use scene::{PathCommand, PathData};
 use d3rs::format::{tick_format, spec_width};
 use minijinja::value::{Kwargs, Object, ObjectRepr, Rest, Value, ValueKind};
@@ -568,7 +569,7 @@ fn line(args: &[Value]) -> Result<Value, Error> {
     let [pts, curve_name] = bind(SITE, ["points", "curve"], 1, args)?;
     let pts = points(SITE, &pts.expect("required"))?;
     let curve = curve(SITE, curve_name.as_ref())?;
-    path_text(SITE, &d3rs::shape::line_path(&[pts], curve))
+    path_text(SITE, &scene_path(&d3rs::shape::line_path(&[pts], curve)))
 }
 
 fn area(args: &[Value]) -> Result<Value, Error> {
@@ -577,7 +578,7 @@ fn area(args: &[Value]) -> Result<Value, Error> {
     let pts = points(SITE, &pts.expect("required"))?;
     let y0 = finite(SITE, "y0", &y0.expect("required"))?;
     let curve = curve(SITE, curve_name.as_ref())?;
-    path_text(SITE, &d3rs::shape::area_path(&[pts], y0, curve))
+    path_text(SITE, &scene_path(&d3rs::shape::area_path(&[pts], y0, curve)))
 }
 
 fn arc(args: &[Value]) -> Result<Value, Error> {
@@ -605,7 +606,7 @@ fn arc(args: &[Value]) -> Result<Value, Error> {
         end_angle: required("end_angle", end)?,
         pad_angle: non_negative_or(SITE, "pad_angle", pad.as_ref(), 0.0)?,
     };
-    path_text(SITE, &arc.path())
+    path_text(SITE, &scene_path(&arc.path()))
 }
 
 fn pie(args: &[Value]) -> Result<Value, Error> {

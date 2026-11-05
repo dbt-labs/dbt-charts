@@ -9,6 +9,8 @@ from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.render.chart.vega_lite import render_chart
 
+from ...._results import rows_result
+
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
 
@@ -25,7 +27,7 @@ def test_horizontal_bar_svg_includes_every_category_label(make_chart) -> None:
         chart,
         _BOARD_STYLE,
         _BOARD_CTX,
-        data,
+        rows_result(data),
         format="svg",
         width=400,
         height=300,

@@ -9,7 +9,6 @@ than emit sites.
 
 RETIRED_WARNING_CODES: frozenset[str] = frozenset(
     {
-        "WARN-ADJACENT-TEXT-ROWS",
         "WARN-FANOUT-RISK",
         "WARN-H1-BODY-NO-TITLE",
         "WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER",

@@ -24,6 +24,7 @@ from dbt_charts.core.render.chart.series_label_truncation import (
 from dbt_charts.core.render.warnings import series_label_truncated as detector
 from dbt_charts.core.render.warnings.base import WarningContext
 
+from ..._results import rows_schema
 from ...core._board_utils import make_test_resolved_board, make_test_resolved_chart
 
 _LONG = "Enterprise Cloud Data Integration Platform — North America Region West"
@@ -158,6 +159,7 @@ def test_render_dashboard_fires_the_warning_for_a_long_color_column(
             {"month": month, "revenue": value, "segment": segment}
             for month, value in (("2024-01-01", 10), ("2024-02-01", 20))
         ]
+        ok.schema = rows_schema(ok.data)
         ok.resolved_relations = None
         ok.truncated_reason = None
         registry = Mock()

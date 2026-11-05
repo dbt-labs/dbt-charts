@@ -196,7 +196,7 @@ class TestPreExecutionCacheHits:
 
         # Pre-execution: run all queries including options queries
         all_names = collect_all_query_names(result.board)
-        executor.run_misses(executor.lookup(all_names), None, 8)
+        executor.run_misses(executor.lookup(all_names), 8)
 
         calls_after_pre_exec = registry.execute.call_count
         assert calls_after_pre_exec >= 1  # at least one query was pre-executed
@@ -218,12 +218,12 @@ class TestPreExecutionCacheHits:
         )
 
         all_names = collect_all_query_names(result.board)
-        executor.run_misses(executor.lookup(all_names), None, 8)
+        executor.run_misses(executor.lookup(all_names), 8)
 
         calls_after_first = registry.execute.call_count
 
         # Second pre-execution: column-option queries must be cache hits
-        executor.run_misses(executor.lookup(all_names), None, 8)
+        executor.run_misses(executor.lookup(all_names), 8)
 
         assert registry.execute.call_count == calls_after_first
 

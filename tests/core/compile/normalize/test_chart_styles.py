@@ -18,6 +18,7 @@ from dbt_charts.core.compile.normalize.chart_focus import (
     focus_on_chart,
     focus_on_item,
 )
+from dbt_charts.core.compile.normalize.chart_styles import board_chart_tiers
 from dbt_charts.core.compile.resolve.chart._kwargs import board_family_style
 from dbt_charts.core.compile.resolve.chart._palette import _with_color_tokens
 from dbt_charts.core.compile.resolve.style import board as style_board, chart_context
@@ -417,3 +418,123 @@ def test_context_without_a_memo_stays_without_one_through_scales() -> None:
     owned = chart_context.with_chart_memo(shared)
     carried = chart_context.context_with_category_colors(owned, ())
     assert carried.__dict__["_chart_memo"] is not owned.__dict__["_chart_memo"]
+
+
+def test_board_tiers_carry_the_theme_axis_and_category_pins() -> None:
+    board = _board(
+        f"""\
+title: T
+style:
+  charts:
+    axis_quantitative:
+      labels:
+        visible: false
+    category_colors:
+      m:
+        values:
+          a: '#112233'
+rows:
+  - c
+charts:
+  c:
+    type: bar
+    x: m
+    y: r
+    {_QUERY}
+"""
+    )
+    tiers = board_chart_tiers(board.chart_style_context)
+    assert tiers.axis_quantitative.labels.visible is False
+    assert tiers.axis_band.labels.visible is not False
+    assert tiers.category_color_pins["m"].values == {"a": "#112233"}
+
+
+def test_table_style_records_whether_the_chart_pins_its_width() -> None:
+    board = _board(
+        f"""\
+title: T
+rows:
+  - pinned
+  - free
+charts:
+  pinned:
+    type: table
+    {_QUERY}
+    style:
+      preferred_width: 640
+  free:
+    type: table
+    {_QUERY}
+"""
+    )
+    pinned, free = board.chart_styles["pinned"], board.chart_styles["free"]
+    assert pinned.type == "table" and free.type == "table"
+    assert pinned.width_pinned is True
+    assert free.width_pinned is False
+
+
+def test_a_board_level_table_width_leaves_the_table_unpinned() -> None:
+    board = _board(
+        f"""\
+title: T
+style:
+  charts:
+    table:
+      preferred_width: 640
+rows:
+  - t
+charts:
+  t:
+    type: table
+    {_QUERY}
+"""
+    )
+    style = board.chart_styles["t"]
+    assert style.type == "table"
+    assert style.width_pinned is False
+
+
+def test_style_carries_the_charts_own_color_gradient_and_only_that() -> None:
+    board = _board(
+        f"""\
+title: T
+style:
+  charts:
+    bar:
+      color:
+        gradient: {{palette: viridis}}
+rows:
+  - graded
+  - plain
+  - geo
+charts:
+  graded:
+    type: bar
+    x: m
+    y: r
+    color: r
+    {_QUERY}
+    style:
+      color:
+        gradient: {{palette: [white, blue]}}
+  plain:
+    type: bar
+    x: m
+    y: r
+    {_QUERY}
+  geo:
+    type: geoshape
+    geo: m
+    color: r
+    {_QUERY}
+    style:
+      color:
+        gradient: {{palette: viridis}}
+"""
+    )
+    graded, plain = board.chart_styles["graded"], board.chart_styles["plain"]
+    assert graded.gradient is not None and graded.gradient.palette == ["white", "blue"]
+    # The board's theme gradient is not the chart's own channel upgrade.
+    assert plain.gradient is None
+    # Geo channels only consume the field name: Python ignores the gradient there.
+    assert board.chart_styles["geo"].gradient is None

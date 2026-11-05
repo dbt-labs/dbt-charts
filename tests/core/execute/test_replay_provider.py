@@ -13,12 +13,14 @@ from dbt_charts.core.execute.replay_provider import (
     VariableMismatchError,
 )
 
+from ..._results import rows_result
+
 _RECORDED_AT = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 
 
 def _provider(**kwargs: object) -> ReplayDataProvider:
     defaults: dict[str, object] = {
-        "rows_by_query": {"sales": [{"month": "Jan", "revenue": 100}]},
+        "results_by_query": {"sales": rows_result([{"month": "Jan", "revenue": 100}])},
         "recorded_at": _RECORDED_AT,
     }
     defaults.update(kwargs)

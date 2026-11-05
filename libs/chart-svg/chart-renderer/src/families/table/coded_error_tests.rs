@@ -377,7 +377,7 @@ fn a_pivot_cell_filled_twice_under_a_boolean_column() {
 
 fn pivoted(rows: Vec<Value>) -> Result<PivotResult, Diagnostic> {
     let data: Vec<_> = rows.into_iter().map(|r| r.as_object().expect("a row object").clone()).collect();
-    pivot_table_data(&data, &[], &["k".into()], &["c".into()], &["v".into()], None)
+    pivot_table_data(&data, &crate::payload_schema::test_schema_of(&data), &[], &["k".into()], &["c".into()], &["v".into()], None)
 }
 
 fn pivot_raised(rows: Vec<Value>) -> Diagnostic {
@@ -451,4 +451,81 @@ fn an_empty_pivot_with_row_numbers_draws_the_empty_state() {
         json!({"font": {"size": 14.0, "color": "#626366"}});
     let svg = render(&payload, &test_fonts()).expect("the empty state, not a refusal");
     assert!(svg.contains(">\u{2014}</text>"), "{svg}");
+}
+
+fn declare_column(payload: &mut Payload, column: &str, kind: Value) {
+    payload.schema.rows = serde_json::from_value({
+        let mut types = crate::payload_schema::test_schema_json(&payload.rows);
+        types[column] = kind;
+        types
+    })
+    .expect("declared kinds");
+}
+
+fn declared(kind: &str, element: Option<&str>) -> Value {
+    let element = element.map(|e| json!({"kind": e, "element": null, "fields": null}));
+    json!({"kind": kind, "element": element, "fields": null})
+}
+
+fn spark_table(spark: &str, cell: Value, kind: Value) -> Payload {
+    let columns = json!({"name": {"label": "Name"}, "trend": {"spark": {"type": spark}}});
+    let mut payload = table(columns, vec![json!({"name": "a", "trend": cell})]);
+    declare_column(&mut payload, "trend", kind);
+    payload
+}
+
+/// A spark that needs an array, on a column the source declared as text: the
+/// data shape is wrong, not the engine.
+#[test]
+fn a_spark_on_a_column_declared_text_is_a_data_shape_error() {
+    for spark in ["columns", "line", "area"] {
+        let payload = spark_table(spark, json!("[1.5, 2.0]"), declared("string", None));
+        assert_eq!(
+            raised(&payload),
+            Diagnostic::new(
+                &codes::ERR_TABLE_SPARK_COLUMN_TYPE,
+                [("column", json!("trend")), ("spark_type", json!(spark)), ("declared", json!("string"))],
+            )
+        );
+    }
+}
+
+/// The declared element type decides too: text elements are never read as numbers.
+#[test]
+fn a_spark_on_a_list_of_text_is_a_data_shape_error() {
+    let payload = spark_table("columns", json!(["1", "2"]), json!({"kind": "list", "element": declared("string", None), "fields": null}));
+    assert_eq!(raised(&payload).params["declared"], json!("list<string>"));
+}
+
+/// A table that mixes a list column with scalar sparks draws all of them.
+#[test]
+fn a_table_mixing_list_and_scalar_sparks_renders() {
+    let columns = json!({"trend": {"spark": {"type": "columns"}}, "score": {"spark": {"type": "bar"}}});
+    let mut payload = table(columns, vec![json!({"trend": [1.0, 2.0], "score": 3.0})]);
+    declare_column(&mut payload, "trend", json!({"kind": "list", "element": declared("float", None), "fields": null}));
+    let svg = render(&payload, &test_fonts()).expect("list and scalar sparks draw");
+    assert!(svg.contains("<rect"), "{svg}");
+}
+
+/// A transposed table draws metric and value rows, never the query column a
+/// spark was authored on, so that column's declared type is not checked.
+#[test]
+fn a_spark_on_a_transposed_table_column_is_never_checked() {
+    let mut payload = spark_table("columns", json!("[1.5, 2.0]"), declared("string", None));
+    payload.resolved["style"]["table"]["transpose"] = json!(true);
+    render(&payload, &test_fonts()).expect("the spark is not drawn");
+}
+
+/// A spark column with no value to draw is not checked.
+#[test]
+fn a_spark_on_a_text_column_of_nulls_is_not_drawn() {
+    let payload = spark_table("columns", Value::Null, declared("string", None));
+    render(&payload, &test_fonts()).expect("no cell, no spark");
+}
+
+/// An empty array draws nothing, so its element type is not checked.
+#[test]
+fn a_spark_on_an_empty_list_is_not_checked() {
+    let payload = spark_table("line", json!([]), json!({"kind": "list", "element": declared("string", None), "fields": null}));
+    render(&payload, &test_fonts()).expect("an empty spark draws nothing");
 }

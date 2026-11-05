@@ -175,9 +175,7 @@ def render_board_from_artifact(
                     chart_id=chart.id,
                 )
     provider = ReplayDataProvider(
-        rows_by_query={
-            name: result.rows for name, result in recording.results_by_query.items()
-        },
+        results_by_query=recording.results_by_query,
         recorded_at=recording.recorded_at,
         variables=recording.variables,
     )

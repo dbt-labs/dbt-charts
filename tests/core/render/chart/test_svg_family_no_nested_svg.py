@@ -36,6 +36,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.chart.rendering import render_chart_item
 
+from ...._results import rows_result
+
 _DUMMY_QUERY = SqlQuery(sql="SELECT 1", source="test")
 _RESOLVED_STYLE = resolve_style(get_theme_style())
 _CHART_CTX = resolve_chart_style_context(get_theme_style())
@@ -47,6 +49,8 @@ def _executor(data: list[dict[str, Any]]) -> Executor:
     ex = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     ex.execute_chart.return_value = data
     ex.execute_query.return_value = data
+    ex.execute_chart_result.return_value = rows_result(data)
+    ex.execute_query_result.return_value = rows_result(data)
     return ex
 
 
@@ -133,6 +137,7 @@ def test_vega_chart_data_error_fallback_has_no_nested_svg() -> None:
     chart = _chart("line", x="x", y="y", title="Line chart that errors")
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.side_effect = ChartDataError("no data", chart_id="test_line")
+    executor.execute_query_result.side_effect = executor.execute_query.side_effect
     svg, _ = render_chart_item(
         _rc(chart),
         executor,

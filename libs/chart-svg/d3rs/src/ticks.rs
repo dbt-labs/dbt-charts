@@ -205,6 +205,8 @@ pub fn d3_nice(start: f64, stop: f64, count: usize) -> (f64, f64) {
 /// [`d3_nice`] over a count that need not be whole (a histogram's threshold count is whatever its rule returns).
 pub fn d3_nice_fractional(mut start: f64, mut stop: f64, count: f64) -> (f64, f64) {
     let mut prestep: Option<f64> = None;
+    // Uncapped like d3-array's `nice`, which d3-array's `bin` uses (the bin
+    // oracle pins it); d3-scale's `maxIter = 10` binds only near f64 overflow.
     loop {
         let step = tick_increment(start, stop, count);
         if prestep == Some(step) || step == 0.0 || !step.is_finite() {

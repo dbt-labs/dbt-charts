@@ -36,7 +36,7 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.utils import is_date_like
 
 if TYPE_CHECKING:
-    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
 
 
 # Choice variable → its option cells, as authored or queried.
@@ -96,7 +96,7 @@ def _observe(
 
 def plan_board_category_colors(
     board: Board,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     variable_options: OptionCells,
 ) -> tuple[CategoryColorScale, ...]:
@@ -137,7 +137,7 @@ def plan_board_category_colors(
         if chart.query_name is None:
             continue
         try:
-            rows = executor.execute_query(chart.query_name, variables)
+            rows = results.execute_query(chart.query_name, variables)
         except DbtChartsError:
             continue
         observed, disqualified_fields = _observe(chart, rows, frozenset(pins))

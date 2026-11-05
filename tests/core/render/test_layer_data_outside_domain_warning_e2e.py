@@ -11,6 +11,8 @@ from dbt_charts.core.compile import compile
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
+from ..._results import rows_schema
+
 _CODE = "WARN-LAYER-DATA-OUTSIDE-DOMAIN"
 
 _ROWS = [
@@ -54,6 +56,7 @@ def _warnings(board_yaml: str) -> list:
     ok = Mock()
     ok.is_success = True
     ok.data = _ROWS
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = None
     registry = Mock()

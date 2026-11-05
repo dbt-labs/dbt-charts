@@ -17,6 +17,7 @@ from dbt_charts.core.execute.adapters.adapter_registry import (
     build_adapter_registry,
 )
 from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.lookup import warehouse_cache_hit_ats
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 
@@ -109,7 +110,7 @@ def test_unchanged_database_file_hits_and_is_not_a_warehouse_hit(
     executor = _executor(project, cache)
     assert "q" in executor.lookup(["q"]).hits
     assert executor.cache_hit_ats
-    assert executor.warehouse_cache_hit_ats == []
+    assert warehouse_cache_hit_ats(executor.ledger) == []
 
 
 def test_duckdb_with_external_access_stays_a_warehouse_hit(tmp_path: Path) -> None:
@@ -122,7 +123,7 @@ def test_duckdb_with_external_access_stays_a_warehouse_hit(tmp_path: Path) -> No
 
     executor = _executor(project, cache, LOCAL_AUTHORING_REGISTRY_KWARGS)
     executor.execute_query("q")
-    assert executor.warehouse_cache_hit_ats == executor.cache_hit_ats != []
+    assert warehouse_cache_hit_ats(executor.ledger) == executor.cache_hit_ats != []
 
 
 def test_duckdb_source_with_attach_stays_unversioned(tmp_path: Path) -> None:

@@ -22,13 +22,14 @@ from dbt_charts.core.render.board_to_dict import (
 )
 from dbt_charts.core.render.errors import RenderError
 
+from ..._results import rows_result
 from .._board_utils import _default_chart_style_context, _default_resolved_style
 
 
 def _make_executor(data: list[dict[str, Any]]) -> MagicMock:
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
-    executor.execute_chart.return_value = data
+    executor.execute_query_result.return_value = rows_result(data)
     executor.render_with_range_filters.return_value = None
     return executor
 
@@ -159,7 +160,7 @@ def test_render_chart_item_error_diagnostic_carries_authored_path(
     chart = make_chart("bar", x="month", y="revenue")
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
-    executor.execute_chart.side_effect = ExecutionError("timeout")
+    executor.execute_query_result.side_effect = ExecutionError("timeout")
     collector: list[Any] = []
 
     _render_chart_item(

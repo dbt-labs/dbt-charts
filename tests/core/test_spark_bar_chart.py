@@ -14,6 +14,8 @@ import pytest
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 
+from .._results import rows_result
+
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.config import get_theme_style
@@ -300,7 +302,9 @@ class TestSparkBarRenderChart:
             {"value": "B", "frequency": 50},
         ]
 
-        svg = render_chart(chart, _BOARD_STYLE, _BOARD_CTX, data, format="svg")
+        svg = render_chart(
+            chart, _BOARD_STYLE, _BOARD_CTX, rows_result(data), format="svg"
+        )
 
         assert svg.startswith("<svg")
         assert "<rect" in svg
@@ -317,7 +321,7 @@ class TestSparkBarRenderChart:
         ]
 
         rs, ctx = resolve_style_and_context(get_theme_style())
-        json_str = render_chart(chart, rs, ctx, data, format="json")
+        json_str = render_chart(chart, rs, ctx, rows_result(data), format="json")
 
         result = json.loads(json_str)
         assert result["type"] == "spark_bar"
@@ -329,7 +333,7 @@ class TestSparkBarPlaceholder:
 
     def test_placeholder_data_spark_bar(self) -> None:
         """Placeholder data is generated for spark_bar charts."""
-        data = generate_placeholder_data("spark_bar")
+        data = generate_placeholder_data("spark_bar").rows
 
         assert len(data) > 0
         # Should have value and frequency fields
@@ -408,19 +412,25 @@ class TestSparkBarNonNumericValue:
         assert "<rect" in svg
 
     def test_mixed_numeric_and_text_x_raises_chart_data_error(self, make_chart) -> None:
-        """A value column that is numeric for some rows and text for others is
-        a genuine data-shape bug (not sparse NULLs) — it must raise
-        ChartDataError naming the offending value, not crash inside
-        ``float()`` as a bare, unclassified ValueError."""
+        """A value column declared integer that holds a text cell is a genuine
+        data-shape bug (not sparse NULLs): it raises ChartDataError naming the
+        offending value, not a bare ValueError from ``float()``."""
+        from dbt_charts.core.column_types import ColumnType
         from dbt_charts.core.diagnostics.chart_data import ChartDataError
         from dbt_charts.core.diagnostics.codes_render import (
-            ERR_SPARK_BAR_VALUE_NOT_NUMERIC,
+            ERR_CHART_CELL_TYPE_MISMATCH,
         )
+        from dbt_charts.core.execute.cache_backend import ResultRows
+        from dbt_charts.core.render.engine import render_native
 
         data = [
             {"value": "A", "count": 100},
             {"value": "B", "count": "N/A"},
         ]
+        declared = {
+            "value": ColumnType(kind="string"),
+            "count": ColumnType(kind="integer"),
+        }
         chart = resolve(
             make_chart("spark_bar", x="count", y="value"),
             data,
@@ -428,9 +438,16 @@ class TestSparkBarNonNumericValue:
         )
 
         with pytest.raises(ChartDataError) as exc_info:
-            render_spark_bar_svg(chart, data, board_style=_BOARD_STYLE)
+            render_native(
+                chart,
+                ResultRows(data, declared),
+                width=200,
+                height=0.0,
+                padding=None,
+                board_style=_BOARD_STYLE,
+            )
 
-        assert exc_info.value.code is ERR_SPARK_BAR_VALUE_NOT_NUMERIC
+        assert exc_info.value.code is ERR_CHART_CELL_TYPE_MISMATCH
         assert "count" in str(exc_info.value)
         assert "N/A" in str(exc_info.value)
 

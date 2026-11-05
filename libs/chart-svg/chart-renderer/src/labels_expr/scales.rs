@@ -243,7 +243,7 @@ impl Scale {
         let (Some(&u), Some(&v)) = (d.first(), d.last()) else { return Ok(None) };
         let count_n = if count.is_nan() { 10.0 } else { count };
         if count_n > MAX_TICKS {
-            return Err(EvalError::Unmodeled(crate::refuse!("labels.expr asking a scale for more than {MAX_TICKS} ticks is not supported")));
+            return Err(EvalError::Unmodeled(diagnostic::refuse!("labels.expr asking a scale for more than {MAX_TICKS} ticks is not supported")));
         }
         Ok(match self.kind {
             Kind::Linear | Kind::Log | Kind::Pow(_) | Kind::Symlog(_) => {

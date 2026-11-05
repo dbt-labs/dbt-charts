@@ -21,6 +21,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
+from ...._results import rows_result
+
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
 
@@ -100,7 +102,7 @@ def resolve_area_chart(make_chart, seed_with_area_endpoint_labels):
 
 
 def _render_area(rc, data: list[dict[str, Any]]) -> dict[str, Any]:
-    artifact = render_resolved_chart(rc, data, _BOARD_STYLE, width=400)
+    artifact = render_resolved_chart(rc, rows_result(data), _BOARD_STYLE, width=400)
     assert artifact.kind == "vega_spec"
     return artifact.payload
 
@@ -142,7 +144,7 @@ def test_wide_area_truncation_names_the_y_key_not_the_fold_column(make_chart):
     resolved = resolve(chart, rows, chart_style_context=board_ctx)
 
     with collect_series_label_truncations() as truncations:
-        render_resolved_chart(resolved, rows, board_style, width=400)
+        render_resolved_chart(resolved, rows_result(rows), board_style, width=400)
 
     records = [r for r in truncations[resolved.id] if r.fate == "truncated"]
     assert [r.authored_field for r in records] == ["y"]

@@ -5,12 +5,13 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
+use column_types::ColumnType;
 use serde_json::Value;
 
 use super::{x_time_axis, color_extent, drawn_at, quantitative_color, rows_at, size_scale_domain, validate_scatter_layers, ScatterResolved, Shape};
 use crate::common::color_domain_of;
 use crate::common::row_str;
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::layers::OverlayLayer;
 use crate::families::temporal::{infer_vega_type, VegaType};
 use crate::time_axis::TimeAxis;
@@ -107,22 +108,23 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
         r.link_color = Some(r.color.clone().unwrap_or_else(|| crate::common::WIDE_KEY_FIELD.to_string()));
         r.link_y = r.wide_measures[0].clone();
         r.color = Some(crate::common::WIDE_LABEL_FIELD.to_string());
-        prepared = Cow::Owned(payload.with_inputs(payload.resolved.clone(), folded));
+        prepared = Cow::Owned(payload.with_inputs(payload.resolved.clone(), folded).with_row_types(crate::common::unfold_wide_types(&payload.schema.rows, &r.wide_measures)?));
     }
     // A labeled bucket or a year-shaped x reads as its ISO start, as line rewrites the column: a year is a
     // time axis, never a number line joined to zero.
-    if r.link_x_labeled || crate::common::is_year_shaped(&prepared.rows, &r.x) {
-        let rows = crate::families::temporal::normalize_labeled_temporal(&prepared.rows, &r.x)?.into_owned();
-        prepared = Cow::Owned(prepared.with_inputs(prepared.resolved.clone(), rows));
+    if r.link_x_labeled || crate::common::is_year_shaped(&prepared.schema.rows, &prepared.rows, &r.x)? {
+        let rows = crate::families::temporal::normalize_labeled_temporal(&prepared.schema.rows, &prepared.rows, &r.x)?.into_owned();
+        let row_types = prepared.schema.rows.clone().with(&r.x, ColumnType::Date);
+        prepared = Cow::Owned(prepared.with_inputs(prepared.resolved.clone(), rows).with_row_types(row_types));
     }
 
     // A column types the way production's `infer_vega_type_from_data` reads
     // it: its first ten cells decide, so a quantitative column drops a later
     // string row (`kept_reading`) and anything else is a nominal band, whose
     // domain order comes from `common::vega_ascending_sort`.
-    let column_is_measure = |field: &str| infer_vega_type(&prepared.rows, field) == VegaType::Quantitative;
-    let x_numeric = column_is_measure(&r.x);
-    let y_numeric = column_is_measure(&r.y);
+    let column_is_measure = |field: &str| infer_vega_type(&prepared.schema.rows, &prepared.rows, field).map(|t| t == VegaType::Quantitative);
+    let x_numeric = column_is_measure(&r.x)?;
+    let y_numeric = column_is_measure(&r.y)?;
     let x_nominal = !x_numeric;
     // A column of ISO dates types `temporal` (a UTC time scale), not a
     // category band (`type_inference.py`'s strict `all_temporal` gate). A
@@ -138,8 +140,8 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
             .filter(|v| !v.is_empty() && seen.insert(v.clone()))
             .collect();
         let refs: Vec<&str> = distinct.iter().map(String::as_str).collect();
-        if crate::families::temporal::x_values_are_standard_dates(&refs)
-            || crate::families::temporal::x_values_are_temporal_candidates(&refs)
+        if crate::families::temporal::x_is_standard_date(&prepared.schema.rows, &r.x, &refs)?
+            || crate::families::temporal::x_is_temporal_candidate(&prepared.schema.rows, &r.x, &refs)?
                 && crate::families::temporal::detect_time_unit(&crate::time_axis::Dates::read(&distinct)).is_some()
         {
             (true, false)

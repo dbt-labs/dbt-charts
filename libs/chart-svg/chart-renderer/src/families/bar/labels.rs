@@ -431,7 +431,7 @@ pub(super) struct LabelBuild<'a> {
 fn chronological_axis(b: &LabelBuild) -> Result<Option<Vec<String>>, String> {
     let dates: Vec<&str> = b.cat_domain.iter().map(String::as_str).collect();
     let mut chronological = b.cat_domain.to_vec();
-    if crate::families::temporal::x_values_are_standard_dates(&dates) {
+    if crate::families::temporal::x_is_standard_date(&b.r.column_types, b.cat_field, &dates)? {
         let mut axis = crate::time_axis::TimeAxis::new(Default::default(), HashMap::new());
         for date in &dates {
             axis.add(date).map_err(|e| e.diagnostic(&b.r.id, b.cat_field, "bar").to_string())?;
@@ -439,7 +439,7 @@ fn chronological_axis(b: &LabelBuild) -> Result<Option<Vec<String>>, String> {
         axis.sort_by_instant(&mut chronological);
         return Ok(Some(chronological));
     }
-    if crate::common::is_year_shaped(b.rows, b.cat_field) {
+    if crate::common::is_year_shaped(&b.r.column_types, b.rows, b.cat_field)? {
         // A year-shaped integer axis is a time axis: its years order numerically.
         let mut years = chronological
             .iter()

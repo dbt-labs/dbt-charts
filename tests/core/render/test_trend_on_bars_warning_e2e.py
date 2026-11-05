@@ -8,6 +8,8 @@ from dbt_charts.core.compile import compile
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
+from ..._results import rows_schema
+
 _CODE = "WARN-TREND-ON-BARS"
 
 _ROWS = [
@@ -44,6 +46,7 @@ def _warnings(chart_type: str) -> list[str]:
     ok = Mock()
     ok.is_success = True
     ok.data = _ROWS
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()

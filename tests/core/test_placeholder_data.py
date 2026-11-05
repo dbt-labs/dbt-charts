@@ -18,7 +18,7 @@ class TestGeneratePlaceholderData:
 
     def test_bar_chart_placeholder(self):
         """Bar charts should get categorical + numeric placeholder data."""
-        data = generate_placeholder_data("bar")
+        data = generate_placeholder_data("bar").rows
         assert len(data) >= 3
         assert all("category" in row for row in data)
         assert all("value" in row for row in data)
@@ -28,7 +28,7 @@ class TestGeneratePlaceholderData:
 
     def test_line_chart_placeholder(self):
         """Line charts should get time series-like placeholder data."""
-        data = generate_placeholder_data("line")
+        data = generate_placeholder_data("line").rows
         assert len(data) >= 5
         # Should have x (time-like) and y (numeric) fields
         first_row = data[0]
@@ -37,7 +37,7 @@ class TestGeneratePlaceholderData:
 
     def test_area_chart_placeholder(self):
         """Area charts should get time series-like placeholder data."""
-        data = generate_placeholder_data("area")
+        data = generate_placeholder_data("area").rows
         assert len(data) >= 5
         # Similar to line chart
         first_row = data[0]
@@ -45,7 +45,7 @@ class TestGeneratePlaceholderData:
 
     def test_scatter_chart_placeholder(self):
         """Scatter plots should get two numeric columns."""
-        data = generate_placeholder_data("scatter")
+        data = generate_placeholder_data("scatter").rows
         assert len(data) >= 5
         first_row = data[0]
         # Should have x and y numeric values
@@ -56,7 +56,7 @@ class TestGeneratePlaceholderData:
 
     def test_circle_chart_placeholder(self):
         """Circle charts (like scatter) should get two numeric columns."""
-        data = generate_placeholder_data("circle")
+        data = generate_placeholder_data("circle").rows
         assert len(data) >= 5
         first_row = data[0]
         assert "x" in first_row
@@ -64,7 +64,7 @@ class TestGeneratePlaceholderData:
 
     def test_pie_chart_placeholder(self):
         """Pie charts should get categorical + numeric placeholder data."""
-        data = generate_placeholder_data("pie")
+        data = generate_placeholder_data("pie").rows
         assert len(data) >= 3
         first_row = data[0]
         assert "category" in first_row
@@ -72,7 +72,7 @@ class TestGeneratePlaceholderData:
 
     def test_heatmap_placeholder(self):
         """Heatmap should get x, y, and value columns."""
-        data = generate_placeholder_data("heatmap")
+        data = generate_placeholder_data("heatmap").rows
         assert len(data) >= 9  # At least 3x3 grid
         first_row = data[0]
         assert "x" in first_row
@@ -81,7 +81,7 @@ class TestGeneratePlaceholderData:
 
     def test_table_placeholder(self):
         """Tables should get multi-column placeholder data."""
-        data = generate_placeholder_data("table")
+        data = generate_placeholder_data("table").rows
         assert len(data) >= 3
         first_row = data[0]
         # Should have multiple columns like a typical table
@@ -89,7 +89,7 @@ class TestGeneratePlaceholderData:
 
     def test_kpi_placeholder(self):
         """KPI charts should get a single value."""
-        data = generate_placeholder_data("kpi")
+        data = generate_placeholder_data("kpi").rows
         assert len(data) >= 1
         first_row = data[0]
         assert "value" in first_row
@@ -97,7 +97,7 @@ class TestGeneratePlaceholderData:
 
     def test_histogram_placeholder(self):
         """Histogram should get numeric values for binning."""
-        data = generate_placeholder_data("histogram")
+        data = generate_placeholder_data("histogram").rows
         assert len(data) >= 20  # Need enough data points for binning
         first_row = data[0]
         assert "value" in first_row
@@ -105,7 +105,7 @@ class TestGeneratePlaceholderData:
 
     def test_boxplot_placeholder(self):
         """Boxplot should get numeric values with categories."""
-        data = generate_placeholder_data("boxplot")
+        data = generate_placeholder_data("boxplot").rows
         assert len(data) >= 15
         first_row = data[0]
         assert "category" in first_row
@@ -113,7 +113,7 @@ class TestGeneratePlaceholderData:
 
     def test_unknown_chart_type_falls_back_to_bar(self):
         """Unknown chart types should fall back to bar chart data."""
-        data = generate_placeholder_data("unknown_type")
+        data = generate_placeholder_data("unknown_type").rows
         assert len(data) >= 3
         assert "category" in data[0]
         assert "value" in data[0]
@@ -121,21 +121,21 @@ class TestGeneratePlaceholderData:
     def test_none_chart_type_falls_back_to_bar(self):
         """None chart type should fall back to bar chart data."""
         # Using type: ignore because we're testing edge case with invalid input
-        data = generate_placeholder_data(None)  # type: ignore[arg-type]
+        data = generate_placeholder_data(None).rows  # type: ignore[arg-type]
         assert len(data) >= 3
         assert "category" in data[0]
         assert "value" in data[0]
 
     def test_empty_string_chart_type_falls_back_to_bar(self):
         """Empty string chart type should fall back to bar chart data."""
-        data = generate_placeholder_data("")
+        data = generate_placeholder_data("").rows
         assert len(data) >= 3
         assert "category" in data[0]
         assert "value" in data[0]
 
     def test_whitespace_only_chart_type_falls_back_to_bar(self):
         """Whitespace-only chart type should fall back to bar chart data."""
-        data = generate_placeholder_data("   ")
+        data = generate_placeholder_data("   ").rows
         assert len(data) >= 3
         assert "category" in data[0]
         assert "value" in data[0]
@@ -143,26 +143,26 @@ class TestGeneratePlaceholderData:
     def test_case_insensitive_chart_type(self):
         """Chart type matching should be case-insensitive."""
         # Test uppercase
-        data_upper = generate_placeholder_data("BAR")
+        data_upper = generate_placeholder_data("BAR").rows
         assert len(data_upper) >= 3
         assert "category" in data_upper[0]
 
         # Test mixed case
-        data_mixed = generate_placeholder_data("LiNe")
+        data_mixed = generate_placeholder_data("LiNe").rows
         assert len(data_mixed) >= 5
         first_row = data_mixed[0]
         assert "month" in first_row or "x" in first_row
 
     def test_placeholder_data_is_reproducible(self):
         """Placeholder data should be consistent (not random each call)."""
-        data1 = generate_placeholder_data("bar")
-        data2 = generate_placeholder_data("bar")
+        data1 = generate_placeholder_data("bar").rows
+        data2 = generate_placeholder_data("bar").rows
         assert data1 == data2
 
     def test_chart_config_influences_placeholder(self, make_chart):
         """Placeholder should use chart's x/y field names if provided."""
         chart = make_chart("bar", x="month", y="revenue")
-        data = generate_placeholder_data("bar", chart=chart)
+        data = generate_placeholder_data("bar", chart=chart).rows
         # Should use the field names from chart config
         assert len(data) >= 3
         first_row = data[0]

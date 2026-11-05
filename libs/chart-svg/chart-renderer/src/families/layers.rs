@@ -15,6 +15,7 @@
 //! a scale of its own (`ScaledLayer`, `LayerAxis`) is also shared: both
 //! families measure, fit and paint its independent axis through this module.
 
+use crate::scene_path::scene_path;
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -22,7 +23,7 @@ use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::common::{row_num, row_str, FormatSlot, MarkLabels};
 use crate::families::axis_caption::{slot_format, AxisCaption, CaptionScale, NumericScale};
 use crate::families::color_scale::ContinuousColor;
@@ -551,6 +552,25 @@ pub(crate) fn resolve_layer_rows<'a>(
         .ok_or_else(|| format!("{family}: a layer reading query {qn:?} has no dataset available"))
 }
 
+/// The declared types of the rows [`resolve_layer_rows`] returns.
+pub(crate) fn resolve_layer_types<'a>(
+    payload: &'a Payload,
+    layer_query_name: Option<&str>,
+    base_query_name: Option<&str>,
+    family: &str,
+) -> Result<&'a column_types::ColumnTypes, String> {
+    if layer_query_name == base_query_name {
+        return Ok(&payload.schema.rows);
+    }
+    let qn = layer_query_name
+        .ok_or_else(|| format!("{family}: a layer with no query name beside a base that names one"))?;
+    payload
+        .schema
+        .datasets
+        .get(qn)
+        .ok_or_else(|| format!("{family}: a layer reading query {qn:?} has no declared types"))
+}
+
 /// Vega-Lite's stack of a color-grouped layer's marks (an area's fills, a bar-type
 /// layer's segments): at each x the series present stack from zero in `baseline_first`
 /// order, rows sharing a series stacking in row order. An area's line and points stay
@@ -942,7 +962,7 @@ impl LayerScale {
     /// ordinal scale dedupes it).
     pub(crate) fn refuse_repeat(&self, label: &str) -> Result<(), Diagnostic> {
         if (self.color_split_base || self.rail_may_fire) && self.domain.iter().any(|d| d == label) {
-            return Err(Diagnostic::new(&crate::codes::ERR_LAYER_LABEL_COLLISION, [("label", Value::from(label))]));
+            return Err(Diagnostic::new(&diagnostic::codes::ERR_LAYER_LABEL_COLLISION, [("label", Value::from(label))]));
         }
         Ok(())
     }
@@ -1489,7 +1509,7 @@ pub(crate) fn line_layer_marks(
             }
         };
     if let Some(area) = &l.area_mark {
-        let d = if horizontal { d3rs::shape::stacked_area_path_horizontal(&area_runs, curve) } else { d3rs::shape::stacked_area_path(&area_runs, curve) };
+        let d = scene_path(&if horizontal { d3rs::shape::stacked_area_path_horizontal(&area_runs, curve) } else { d3rs::shape::stacked_area_path(&area_runs, curve) });
         // A clipped pile is cut at the plot rect, as Vega cuts the mark, never
         // squeezed onto the edge.
         let (plot_w, plot_h) = frame.plot;
@@ -1527,7 +1547,7 @@ pub(crate) fn line_layer_marks(
         items.sort_by(|a, b| a.0.total_cmp(&b.0));
         if let Some(&(_, _, first_href)) = items.first() {
             let run: Vec<(f64, f64, f64)> = items.iter().map(|&(x, y, _)| (x, y, y)).collect();
-            let d = d3rs::shape::stacked_area_path(&[run], curve);
+            let d = scene_path(&d3rs::shape::stacked_area_path(&[run], curve));
             let first_href = Some(first_href.to_string());
             let fill = Attrs::new()
                 .set("fill", series_color)
@@ -1543,7 +1563,7 @@ pub(crate) fn line_layer_marks(
     }
     // A disconnected plateau is its own path, never joined to its neighbors.
     for (run, run_href) in runs.iter().zip(&run_hrefs) {
-        let d = d3rs::shape::line_path(std::slice::from_ref(run), curve);
+        let d = scene_path(&d3rs::shape::line_path(std::slice::from_ref(run), curve));
         let stroke = Attrs::new()
             .set("fill", "none")
             .set("stroke", line_color)

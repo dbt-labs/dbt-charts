@@ -72,7 +72,7 @@ class TestMaxWorkersResolution:
         board, executor = board_and_executor
         captured = []
 
-        def fake_parallel(_, found, variables, max_workers):
+        def fake_parallel(_, found, max_workers):
             captured.append(max_workers)
             return {}
 
@@ -86,7 +86,7 @@ class TestMaxWorkersResolution:
         monkeypatch.setenv("DCT_MAX_WORKERS", "12")
         captured = []
 
-        def fake_parallel(_, found, variables, max_workers):
+        def fake_parallel(_, found, max_workers):
             captured.append(max_workers)
             return {}
 
@@ -102,7 +102,7 @@ class TestMaxWorkersResolution:
         monkeypatch.delenv("DCT_MAX_WORKERS", raising=False)
         captured = []
 
-        def fake_parallel(_, found, variables, max_workers):
+        def fake_parallel(_, found, max_workers):
             captured.append(max_workers)
             return {}
 
@@ -117,7 +117,7 @@ class TestMaxWorkersResolution:
         monkeypatch.setenv("DCT_MAX_WORKERS", "12")
         captured = []
 
-        def fake_parallel(_, found, variables, max_workers):
+        def fake_parallel(_, found, max_workers):
             captured.append(max_workers)
             return {}
 

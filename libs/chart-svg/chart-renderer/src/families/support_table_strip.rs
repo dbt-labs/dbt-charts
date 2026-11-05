@@ -31,9 +31,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
-use crate::codes;
+use diagnostic::codes;
 use crate::families::temporal::TimeUnit;
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::common::{row_str, slug_to_display, Divider, FormatSlot, GappedDivider, Font, SignPlacement};
 use crate::number_locale::active_number_locale;
 use measure::FontBook;
@@ -329,25 +329,13 @@ pub enum CellValue {
     Text(String),
 }
 
-/// Python's `float(raw)`: a JSON number as-is, a bool as 0 or 1, a string
-/// parsed with the whitespace and digit-separating underscores `float()`
-/// accepts. `None` for anything else, so the caller can tell "no value" (skip)
-/// from "value that failed to coerce" (error). `_numeric_column` and
-/// `_aggregate_by_x` both call `float()`, so a numeric-looking text cell
-/// counts toward a column's measured width.
+/// A JSON number as-is, a bool as 0 or 1. A string is text whatever it reads
+/// like, so `None`: the caller can tell "no value" (skip) from "value that
+/// failed to coerce" (error).
 fn coerce_numeric(v: &Value) -> Option<f64> {
     match v {
         Value::Number(_) => v.as_f64(),
         Value::Bool(b) => Some(f64::from(u8::from(*b))),
-        Value::String(s) => {
-            let text = s.trim();
-            let separated = text.as_bytes().windows(3).all(|w| w[1] != b'_' || (w[0].is_ascii_digit() && w[2].is_ascii_digit()));
-            let edge = text.starts_with('_') || text.ends_with('_');
-            if edge || !separated {
-                return None;
-            }
-            text.replace('_', "").parse::<f64>().ok()
-        }
         _ => None,
     }
 }
@@ -1415,7 +1403,7 @@ fn narrowest_gap<'a>(rows: impl IntoIterator<Item = &'a ComposedRow>, kept: &[us
 /// `WARN-SUPPORT-TABLE-CELL-OVERFLOW`: the cells a strip paints run together
 /// even after it skipped what it could.
 fn warn_cell_overflow(chart_id: &str, clearance: f64, gap: f64) {
-    crate::diagnostic::warn(Diagnostic::new(
+    diagnostic::warn(Diagnostic::new(
         &codes::WARN_SUPPORT_TABLE_CELL_OVERFLOW,
         [
             ("chart_id", serde_json::json!(chart_id)),
@@ -1497,7 +1485,7 @@ pub fn gutter_holds(chart_id: &str, rows: &[ComposedRow], reserved_left: f64, pl
     } else {
         return true;
     };
-    crate::diagnostic::warn(Diagnostic::new(
+    diagnostic::warn(Diagnostic::new(
         &codes::WARN_SUPPORT_TABLE_CELL_OVERFLOW,
         [("chart_id", serde_json::json!(chart_id)), ("detail", serde_json::json!(detail))],
     ));
@@ -2822,15 +2810,14 @@ mod tests {
         assert_eq!(strip_rows[1].painted(), vec![(10.0, "2".to_string())]);
     }
 
-    /// `float(raw)` accepts surrounding whitespace and single underscores
-    /// between digits, and a bool is 0 or 1; a column measures a text cell
-    /// that parses.
+    /// A bool is 0 or 1; a string is text whatever it reads like.
     #[test]
-    fn coerce_numeric_reads_what_python_float_reads() {
-        for (raw, want) in [("1e20", Some(1e20)), (" 12 ", Some(12.0)), ("1_0", Some(10.0)), ("1__0", None), ("_1", None), ("n/a", None), ("", None)] {
-            assert_eq!(coerce_numeric(&Value::String(raw.to_string())), want, "{raw:?}");
+    fn coerce_numeric_reads_numbers_and_bools_never_text() {
+        for raw in ["1e20", " 12 ", "1_0", "n/a", ""] {
+            assert_eq!(coerce_numeric(&Value::String(raw.to_string())), None, "{raw:?}");
         }
         assert_eq!(coerce_numeric(&serde_json::json!(true)), Some(1.0));
+        assert_eq!(coerce_numeric(&serde_json::json!(5)), Some(5.0));
     }
 
     /// A bare number cell paints the way JavaScript spells it, exponent form
@@ -3474,14 +3461,14 @@ mod tests {
     #[test]
     fn a_crowded_categorical_strip_hides_whole_with_a_warning() {
         assert!(crowded_strip(90.0, false).is_some_and(|rows| rows[0].cells.len() == 12), "room to spare: every cell paints");
-        let (rows, warnings) = crate::diagnostic::collect(|| crowded_strip(12.0, false));
+        let (rows, warnings) = diagnostic::collect(|| crowded_strip(12.0, false));
         assert!(rows.is_none(), "a category never loses some of its numbers");
         assert!(warnings.iter().any(|d| d.code == "WARN-SUPPORT-TABLE-CELL-OVERFLOW"), "{warnings:?}");
     }
 
     #[test]
     fn a_crowded_date_strip_comes_back_whole_for_skipping() {
-        let (rows, warnings) = crate::diagnostic::collect(|| crowded_strip(12.0, true));
+        let (rows, warnings) = diagnostic::collect(|| crowded_strip(12.0, true));
         let mut out = rows.expect("an ordered strip is never hidden");
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(out[0].cells.len(), 12);
@@ -3495,9 +3482,9 @@ mod tests {
     fn a_strip_that_reaches_past_its_gutter_is_refused_with_a_warning() {
         let rows = vec![strip_row(30.0, &[40.0, 10.0])];
         assert_eq!(composed_left_overhang(&rows), 40.0, "the first cell ends at the plot's edge and is 40 wide");
-        let (holds, warnings) = crate::diagnostic::collect(|| gutter_holds("c", &rows, 40.0, 100.0));
+        let (holds, warnings) = diagnostic::collect(|| gutter_holds("c", &rows, 40.0, 100.0));
         assert!(holds && warnings.is_empty());
-        let (holds, warnings) = crate::diagnostic::collect(|| gutter_holds("c", &rows, 30.0, 100.0));
+        let (holds, warnings) = diagnostic::collect(|| gutter_holds("c", &rows, 30.0, 100.0));
         assert!(!holds);
         assert!(warnings.iter().any(|d| d.code == "WARN-SUPPORT-TABLE-CELL-OVERFLOW"), "{warnings:?}");
     }
@@ -3508,9 +3495,9 @@ mod tests {
         let mut rows = vec![strip_row(30.0, &[10.0, 10.0])];
         rows[0].dx = 20.0;
         let last = rows[0].cells.last().expect("a cell").x;
-        let (holds, warnings) = crate::diagnostic::collect(|| gutter_holds("c", &rows, f64::INFINITY, last));
+        let (holds, warnings) = diagnostic::collect(|| gutter_holds("c", &rows, f64::INFINITY, last));
         assert!(holds && warnings.is_empty(), "the lane overhangs but the bucket is on the plot: {warnings:?}");
-        let (holds, warnings) = crate::diagnostic::collect(|| gutter_holds("c", &rows, f64::INFINITY, last - 1.0));
+        let (holds, warnings) = diagnostic::collect(|| gutter_holds("c", &rows, f64::INFINITY, last - 1.0));
         assert!(!holds);
         assert!(format!("{warnings:?}").contains("past the plot's right edge"), "{warnings:?}");
     }
@@ -3531,7 +3518,7 @@ mod tests {
         let out = build_rows_composed("c", &config, &rows, "month", &domain, &columns, &fonts, &label_style(), true, false, None, &[], &[], None, true)
             .unwrap();
         assert!(out[0].cells[1].x > plot_w, "the last cell centers past the plot: {}", out[0].cells[1].x);
-        let (holds, warnings) = crate::diagnostic::collect(|| gutter_holds("c", &out, f64::INFINITY, plot_w));
+        let (holds, warnings) = diagnostic::collect(|| gutter_holds("c", &out, f64::INFINITY, plot_w));
         assert!(holds && warnings.is_empty(), "its bucket is on the plot: {warnings:?}");
     }
 
@@ -3719,7 +3706,7 @@ mod tests {
     }
 
     fn skipped(rows: &mut Vec<ComposedRow>, labeled: Option<&[bool]>) -> Vec<Diagnostic> {
-        crate::diagnostic::collect(|| skip_strip("c", rows, labeled, 4.0, None)).1
+        diagnostic::collect(|| skip_strip("c", rows, labeled, 4.0, None)).1
     }
 
     #[test]

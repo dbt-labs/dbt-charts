@@ -143,7 +143,7 @@ class ResolvedControl:
 def resolve_controls(
     variable_defs: dict[str, Variable],
     current_values: VariableValues,
-    executor: ChartDataProvider | None,
+    results: ChartDataProvider | None,
     variables_style: VariablesStyle,
 ) -> tuple[ResolvedControl, ...]:
     """Settle every visible variable into a control, in document order.
@@ -157,7 +157,7 @@ def resolve_controls(
         if not var_def.visible:
             continue
         option_values, option_counts = resolve_options(
-            name, var_def, executor, current_values
+            name, var_def, results, current_values
         )
         refined = _refine(var_def, option_values)
         low, high, step = _slider_bounds(var_def, refined, variables_style)
@@ -207,7 +207,7 @@ def resolve_controls(
                 slider_max=high,
                 slider_step=step,
                 can_unset=not var_def.required,
-                enabled=_is_enabled(var_def, current_values, executor),
+                enabled=_is_enabled(var_def, current_values, results),
                 preset=preset,
                 presets=(
                     variables_style.presets
@@ -231,7 +231,7 @@ def resolve_controls(
 def _is_enabled(
     var_def: Variable,
     current_values: VariableValues,
-    executor: ChartDataProvider | None,
+    results: ChartDataProvider | None,
 ) -> bool:
     """Whether this control is operable right now.
 
@@ -240,10 +240,10 @@ def _is_enabled(
     ``enabled`` moves no box, so geometry never has to know, and the render
     pass settles it before anything is drawn.
     """
-    if executor is None:
+    if results is None:
         return True
     return eval_bool_condition(
-        var_def.enabled, True, dict(current_values), executor, "Variable enabled"
+        var_def.enabled, True, dict(current_values), results, "Variable enabled"
     )
 
 
@@ -285,14 +285,14 @@ def _refine(var_def: Variable, option_values: list[str]) -> RefinedType:
 def resolve_option_values(
     name: str,
     var_def: Variable,
-    executor: ChartDataProvider | None,
+    results: ChartDataProvider | None,
     current_values: VariableValues,
 ) -> list[str]:
     """Resolve option values from a static list or a query, de-duplicated, as text."""
     return list(
         dict.fromkeys(
             str(cell)
-            for cell in resolve_option_cells(name, var_def, executor, current_values)
+            for cell in resolve_option_cells(name, var_def, results, current_values)
         )
     )
 
@@ -300,7 +300,7 @@ def resolve_option_values(
 def resolve_option_cells(
     name: str,
     var_def: Variable,
-    executor: ChartDataProvider | None,
+    results: ChartDataProvider | None,
     current_values: VariableValues,
 ) -> list[Any]:  # type-state: explicit_any — raw option cells, as authored or queried
     """Resolve option values from a static list or a query, as authored or queried.
@@ -310,8 +310,8 @@ def resolve_option_cells(
     ``options.query`` branch — no separate column-resolution path needed.
     """
     query = _option_query(var_def)
-    if query is not None and executor is not None:
-        return query_option_cells(name, query, executor, dict(current_values))
+    if query is not None and results is not None:
+        return query_option_cells(name, query, results, dict(current_values))
     if var_def.options and var_def.options.static:
         return list(var_def.options.static)
     return []
@@ -330,7 +330,7 @@ def _option_query(var_def: Variable) -> str | None:
 
 def linked_variable_options(
     board: Board | ResolvedBoard,
-    executor: ChartDataProvider | None,
+    results: ChartDataProvider | None,
     values: VariableValues,
 ) -> dict[str, LinkedOptions]:
     """The options of each choice variable a chart's link sets from its color.
@@ -361,7 +361,7 @@ def linked_variable_options(
             if name not in set_by_links:
                 continue
             options = list(
-                dict.fromkeys(resolve_option_cells(name, var, executor, values))
+                dict.fromkeys(resolve_option_cells(name, var, results, values))
             )
             if options:
                 linked[name] = {
@@ -374,7 +374,7 @@ def linked_variable_options(
 def resolve_query_options(
     name: str,
     query_ref: str,
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     variables: VariableValues,
 ) -> list[str]:
     """Resolve variable `name`'s select options from a named query, as text.
@@ -382,27 +382,27 @@ def resolve_query_options(
     See ``query_option_cells`` for the failure contract.
     """
     return [
-        str(cell) for cell in query_option_cells(name, query_ref, executor, variables)
+        str(cell) for cell in query_option_cells(name, query_ref, results, variables)
     ]
 
 
 def query_option_cells(
     name: str,
     query_ref: str,
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     variables: VariableValues,
 ) -> list[Any]:  # type-state: explicit_any — raw query cells
     """Resolve variable `name`'s select options from a named query, as queried.
 
     See ``query_option_rows`` for the failure contract.
     """
-    return _option_cells(query_option_rows(name, query_ref, executor, variables))
+    return _option_cells(query_option_rows(name, query_ref, results, variables))
 
 
 def query_option_rows(
     name: str,
     query_ref: str,
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     variables: VariableValues,
 ) -> CacheRows:
     """Run variable `name`'s options query and return its rows.
@@ -414,7 +414,7 @@ def query_option_rows(
     Args:
         name: The variable whose options these are, named in the error.
         query_ref: Query name reference (e.g., "queries.city_options" or "city_options")
-        executor: ChartDataProvider for running queries
+        results: rows by query name
         variables: Current variable values for query execution
 
     Raises:
@@ -422,7 +422,7 @@ def query_option_rows(
     """
     query_name = query_ref.replace("queries.", "")
     try:
-        return executor.execute_query(query_name, variables)
+        return results.execute_query(query_name, variables)
     except QueryError as e:
         raise QueryError.from_code(
             ERR_VARIABLE_OPTIONS_FAILED,
@@ -453,7 +453,7 @@ def _option_value_key(rows: CacheRows) -> str:
 def resolve_options(
     name: str,
     var_def: Variable,
-    executor: ChartDataProvider | None,
+    results: ChartDataProvider | None,
     current_values: VariableValues,
 ) -> tuple[list[str], tuple[int, ...]]:
     """The option values as text, de-duplicated, and each one's row count.
@@ -464,9 +464,9 @@ def resolve_options(
     variable's generated query does.
     """
     query = _option_query(var_def)
-    if query is None or executor is None:
-        return resolve_option_values(name, var_def, executor, current_values), ()
-    rows = query_option_rows(name, query, executor, dict(current_values))
+    if query is None or results is None:
+        return resolve_option_values(name, var_def, results, current_values), ()
+    rows = query_option_rows(name, query, results, dict(current_values))
     values = list(dict.fromkeys(str(cell) for cell in _option_cells(rows)))
     if not rows or OPTION_COUNT_COLUMN not in rows[0]:
         return values, ()

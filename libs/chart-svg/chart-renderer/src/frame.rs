@@ -187,7 +187,7 @@ impl FrameTitle {
     }
 
     /// [`Self::warn_truncated`]'s findings, for a layout that returns its own.
-    pub fn truncations(&self, chart_id: &str) -> Vec<crate::diagnostic::Diagnostic> {
+    pub fn truncations(&self, chart_id: &str) -> Vec<diagnostic::Diagnostic> {
         crate::common::title_truncations(
             chart_id,
             (self.text.as_deref(), self.block.title_truncated),

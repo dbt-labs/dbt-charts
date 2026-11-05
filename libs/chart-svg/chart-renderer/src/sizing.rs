@@ -62,9 +62,12 @@ use std::collections::{HashMap, HashSet};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::payload_schema::{rows_by_query, PayloadSchema};
+use column_types::{Dataset, QueryDatasets};
+
 /// Every chart's own datasets, keyed by chart id then query name — the
 /// same shape `BoardPayload.chart_datasets` carries.
-pub type ChartDatasets = HashMap<String, HashMap<String, Vec<serde_json::Map<String, Value>>>>;
+pub type ChartDatasets = HashMap<String, QueryDatasets>;
 
 /// compile/sizing.py's DEFAULT_GRID_COLUMNS.
 pub const DEFAULT_GRID_COLUMNS: i64 = 24;
@@ -458,8 +461,8 @@ pub(crate) fn is_non_aspect_ratio_type(chart_type: &str) -> bool {
 fn render_first_vega_height(
     chart_json: &Value,
     _chart_id: &str,
-    rows: &[serde_json::Map<String, Value>],
-    datasets: &HashMap<String, Vec<serde_json::Map<String, Value>>>,
+    query_name: &str,
+    datasets: &QueryDatasets,
     width: f64,
     static_estimate: f64,
     ctx: &SizingCtx,
@@ -474,7 +477,7 @@ fn render_first_vega_height(
     // back to the static estimate here is exactly the "undershoot" branch
     // `clamp_render_first_height` already takes for a real render that
     // comes back short — this chart just always takes it.
-    let Some(actual) = rendered_vega_height(chart_json, rows, datasets, width, static_estimate, ctx)? else {
+    let Some(actual) = rendered_vega_height(chart_json, query_name, datasets, width, static_estimate, ctx)? else {
         return Ok(static_estimate);
     };
     Ok(clamp_render_first_height(chart_type, actual, static_estimate))
@@ -485,13 +488,14 @@ fn render_first_vega_height(
 /// `None` when the port refuses the chart.
 fn rendered_vega_height(
     chart_json: &Value,
-    rows: &[serde_json::Map<String, Value>],
-    datasets: &HashMap<String, Vec<serde_json::Map<String, Value>>>,
+    query_name: &str,
+    datasets: &QueryDatasets,
     width: f64,
     height: f64,
     ctx: &SizingCtx,
 ) -> Result<Option<f64>, String> {
     let padding = additive_padding(chart_json, ctx.card_padding)?;
+    let rows = &datasets.get(query_name).ok_or_else(|| format!("dataset {query_name} not forwarded"))?.rows;
     // A pie is measured in the mode the size stage decided (the memo, in the
     // scope's card box), never solved again here; one it could not decide
     // paints its card, so it measures nothing.
@@ -516,7 +520,7 @@ fn rendered_vega_height(
         cell_text: Vec::new(),
         max_template_output_bytes: None,
         resolved: chart_json.clone(),
-        rows: rows.to_vec(),
+        rows: rows.clone(),
         width,
         height,
         background: Some(ctx.chart_bg.to_string()),
@@ -524,7 +528,8 @@ fn rendered_vega_height(
         padding: Some(padding),
         board_style: Some(ctx.board_style.clone()),
         language: None,
-        datasets: Some(datasets.clone()),
+        datasets: Some(rows_by_query(datasets)),
+        schema: PayloadSchema::of_datasets(datasets, query_name)?,
         geometries: None,
         // This IS production's own "static estimate, before any layout
         // decision" measurement (`layout_sizing.py`'s `item.height == 0`
@@ -589,7 +594,7 @@ pub(crate) fn clamp_render_first_height(chart_type: &str, actual: f64, static_es
 fn spark_bar_natural_height(
     chart_json: &Value,
     _chart_id: &str,
-    rows: &[serde_json::Map<String, Value>],
+    dataset: &Dataset,
     width: f64,
     inset: f64,
     ctx: &SizingCtx,
@@ -598,7 +603,7 @@ fn spark_bar_natural_height(
         cell_text: Vec::new(),
         max_template_output_bytes: None,
         resolved: chart_json.clone(),
-        rows: rows.to_vec(),
+        rows: dataset.rows.clone(),
         width,
         height: 0.0,
         background: Some(ctx.chart_bg.to_string()),
@@ -607,6 +612,7 @@ fn spark_bar_natural_height(
         board_style: Some(ctx.board_style.clone()),
         language: None,
         datasets: None,
+        schema: PayloadSchema { rows: dataset.schema.clone(), ..Default::default() },
         geometries: None,
         // spark_bar has no rail-concat law `measuring` gates — inert here.
         variables: Default::default(),
@@ -714,7 +720,7 @@ pub(crate) fn support_table_height_correction(target: f64, actual_height: f64) -
 /// error card the main pass paints).
 fn get_table_height_from_data(
     chart_json: &Value,
-    rows: &[serde_json::Map<String, Value>],
+    dataset: &Dataset,
     width: f64,
     card_padding: f64,
     ctx: &SizingCtx,
@@ -724,7 +730,7 @@ fn get_table_height_from_data(
         cell_text: Vec::new(),
         max_template_output_bytes: None,
         resolved: chart_json.clone(),
-        rows: rows.to_vec(),
+        rows: dataset.rows.clone(),
         width: (width - padding.left - padding.right).max(0.0),
         height: 0.0,
         background: Some(ctx.chart_bg.to_string()),
@@ -733,6 +739,7 @@ fn get_table_height_from_data(
         board_style: Some(ctx.board_style.clone()),
         language: None,
         datasets: None,
+        schema: PayloadSchema { rows: dataset.schema.clone(), ..Default::default() },
         geometries: None,
         // table has no rail-concat law `measuring` gates — inert here.
         variables: Default::default(),
@@ -795,7 +802,7 @@ pub enum PieDecision {
     /// The engine cannot lay this pie out (a refusal, or no room in its box): it
     /// paints its own error card with this message and every reader sizes it
     /// as a chart that errors. Never "decide again".
-    Undecidable(crate::diagnostic::Diagnostic),
+    Undecidable(diagnostic::Diagnostic),
 }
 
 /// Each placed pie's [`PieDecision`], made once and read by every sizing and
@@ -863,7 +870,7 @@ pub fn sized_pie_mode(
     let chart_id = chart_json.get("id").and_then(Value::as_str).ok_or("chart missing id")?;
     let query_name =
         chart_json.get("query_name").and_then(Value::as_str).ok_or("chart missing query_name")?;
-    let rows = datasets
+    let dataset = datasets
         .get(chart_id)
         .and_then(|by_query| by_query.get(query_name))
         .ok_or_else(|| format!("no rows forwarded for chart {chart_id}"))?;
@@ -878,7 +885,7 @@ pub fn sized_pie_mode(
         cell_text: Vec::new(),
         max_template_output_bytes: None,
         resolved: chart_json.clone(),
-        rows: rows.clone(),
+        rows: dataset.rows.clone(),
         width,
         height,
         background: None,
@@ -887,6 +894,7 @@ pub fn sized_pie_mode(
         board_style: Some(board_style.clone()),
         language: None,
         datasets: None,
+        schema: PayloadSchema { rows: dataset.schema.clone(), ..Default::default() },
         variables: Default::default(),
         variable_options: Default::default(),
         filter_variables: Default::default(),
@@ -950,6 +958,7 @@ pub fn resolve_chart_item_height(
             board_style: Some(ctx.board_style.clone()),
             language: None,
             datasets: None,
+            schema: PayloadSchema::default(),
             geometries: None,
             // callout has no rail-concat law `measuring` gates — inert here.
             variables: Default::default(),
@@ -997,27 +1006,27 @@ pub fn resolve_chart_item_height(
         .chart_datasets
         .get(chart_id)
         .ok_or_else(|| format!("no datasets forwarded for chart {chart_id}"))?;
-    let rows = datasets
+    let dataset = datasets
         .get(query_name)
         .ok_or_else(|| format!("chart {chart_id}: dataset {query_name} not forwarded"))?;
 
     if chart_type == "table" {
         // A table the engine cannot draw is sized as any chart the main pass
         // draws an error card for (`_unresolved_height`).
-        return match get_table_height_from_data(chart_json, rows, width, card_padding, ctx)? {
+        return match get_table_height_from_data(chart_json, dataset, width, card_padding, ctx)? {
             Some(height) => Ok(height + inset),
             None => unresolved_height("table", None, None, None, None, None, width, card_padding, ctx.defaults),
         };
     }
     if chart_type == "spark_bar" {
-        return spark_bar_natural_height(chart_json, chart_id, rows, width, inset, ctx);
+        return spark_bar_natural_height(chart_json, chart_id, dataset, width, inset, ctx);
     }
 
     let static_estimate = static_slot_estimate(chart_json, authored_height, width, card_padding, ctx.defaults)?;
     render_first_vega_height(
         chart_json,
         chart_id,
-        rows,
+        query_name,
         datasets,
         width,
         static_estimate,
@@ -1738,10 +1747,7 @@ fn facet_height_at(chart_json: &Value, width: f64, height: f64, ctx: &SizingCtx)
         .chart_datasets
         .get(chart_id)
         .ok_or_else(|| format!("no datasets forwarded for chart {chart_id}"))?;
-    let rows = datasets
-        .get(query_name)
-        .ok_or_else(|| format!("chart {chart_id}: dataset {query_name} not forwarded"))?;
-    Ok(rendered_vega_height(chart_json, rows, datasets, width, height, ctx)?.unwrap_or(height))
+    Ok(rendered_vega_height(chart_json, query_name, datasets, width, height, ctx)?.unwrap_or(height))
 }
 
 /// render/sizing.py::_measure_cols_layout_height +

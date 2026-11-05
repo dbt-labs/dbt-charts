@@ -11,7 +11,7 @@ use crate::geo::projection::identity::Identity;
 use crate::geo::projection::Projection;
 use crate::geo::stream::{geo_stream, GeoStream};
 use crate::geojson::GeoJson;
-use scene::PathData;
+use crate::path::Command;
 
 /// What `geoPath(projection)` streams an object through.
 pub trait PathProjection {
@@ -130,7 +130,7 @@ impl<P: PathProjection> GeoPath<P> {
     }
 
     /// `path(object)`: the path's commands, `None` where d3 returns null (nothing drawn).
-    pub fn path(&self, object: &GeoJson) -> Result<Option<PathData>, String> {
+    pub fn path(&self, object: &GeoJson) -> Result<Option<Vec<Command>>, String> {
         let mut sink = PathCommands::new(self.digits, self.radius(object));
         self.projection.stream_object(object, &mut sink)?;
         Ok(sink.result())

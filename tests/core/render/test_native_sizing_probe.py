@@ -17,6 +17,7 @@ from dbt_charts.core.render.engine import render_native
 from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.svg_utils import extract_svg_dimensions
 
+from ..._results import rows_result
 from .._svg_render import SAMPLE_BOARD_YAML, render_board_to_svg
 
 _ROWS = [{"cat": f"c{i}", "val": i + 1} for i in range(5)]
@@ -38,7 +39,7 @@ def test_a_measuring_render_reports_the_height_it_drew() -> None:
     chart, board_style = _bar()
     svg, natural_height = render_native(
         chart,
-        _ROWS,
+        rows_result(_ROWS),
         width=600,
         height=300,
         padding=None,
@@ -52,7 +53,7 @@ def test_a_render_at_the_settled_slot_reports_no_natural_height() -> None:
     chart, board_style = _bar()
     _, natural_height = render_native(
         chart,
-        _ROWS,
+        rows_result(_ROWS),
         width=600,
         height=300,
         padding=None,

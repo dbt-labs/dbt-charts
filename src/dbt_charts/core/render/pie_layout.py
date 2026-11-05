@@ -11,11 +11,10 @@ this module computes.
 
 from __future__ import annotations
 
-from typing import Any
-
 from dbt_charts.core.compile.models.chart.resolved import ResolvedPieChart
 from dbt_charts.core.compile.models.primitives import PieMode
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
+from dbt_charts.core.execute.cache_backend import ResultRows
 from dbt_charts.core.render.chart.spec_builders import additive_padding
 from dbt_charts.core.render.engine import decide_pie_mode
 from dbt_charts.core.render.sizing import pie_content_height
@@ -47,14 +46,14 @@ def pie_box(
 
 def sized_pie_mode(
     chart: ResolvedPieChart,
-    rows: list[dict[str, Any]],  # type-state: explicit_any — query rows
+    result: ResultRows,
     resolved_style: ResolvedStyle,
 ) -> PieMode:
     """The mode the size stage decides for ``chart`` in its own box."""
     width, height, padding = pie_box(chart, resolved_style)
     return decide_pie_mode(
         chart,
-        rows,
+        result,
         width=width,
         height=height,
         padding=padding,

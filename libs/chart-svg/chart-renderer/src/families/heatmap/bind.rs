@@ -3,16 +3,17 @@
 //! fill, description and link. It measures nothing and holds no size but the slot height
 //! the payload carries.
 
+use column_types::{ColumnType, ColumnTypes};
 use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
     bind_cells, color_categories, date_color, date_color_extent, date_legend_ticks,
     drop_invalid_color_rows, legend_date_label, legend_labels, tooltip_value_title, Cell, CellFill, CellMarks, CellPaint,
-    CategoryScale, ColorKind, GradientColors, HeaderFmt, HeatmapResolved, SYMBOL_LEGEND_TICK_COUNT,
+    CategoryScale, ColorKind, GradientColors, HeaderFmt, HeatmapResolved, SYMBOL_LEGEND_TICK_COUNT, FLAT_COLOR,
 };
 use crate::common::{dimension_sort_domain, row_str, MirrorGhost, SortAggregate};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::color_scale::ContinuousColor;
 use crate::families::heatmap_facet::{date_dimension, first_appearance};
 use crate::families::temporal::{infer_vega_type, TimeUnit, VegaType};
@@ -75,6 +76,8 @@ pub(crate) struct Prelude {
     pub(crate) x_grain: Option<TimeUnit>,
     pub(crate) y_grain: Option<TimeUnit>,
     pub(crate) kind: ColorKind,
+    /// The payload's declared types, plus the synthetic flat color column of a colorless heatmap.
+    pub(crate) types: ColumnTypes,
 }
 
 impl Prelude {
@@ -91,12 +94,17 @@ impl Prelude {
             }
             _ => false,
         };
-        let (rows, x_grain) = date_dimension(&payload.rows, &r.x, &r.style.axis_x, true)?;
-        let (rows, y_grain) = date_dimension(&rows, &r.y, &r.style.axis_y, false)?;
+        let (rows, x_grain) = date_dimension(&payload.schema.rows, &payload.rows, &r.x, &r.style.axis_x, true)?;
+        let (rows, y_grain) = date_dimension(&payload.schema.rows, &rows, &r.y, &r.style.axis_y, false)?;
         let rows = r.flatten_color(rows);
         let categorical = categorical || r.is_flat();
+        let types = if r.is_flat() {
+            payload.schema.rows.clone().with(FLAT_COLOR, ColumnType::String)
+        } else {
+            payload.schema.rows.clone()
+        };
         // A date-like column types temporal: a time-scale gradient (`DateGradient`).
-        let date_color = categorical && infer_vega_type(&rows, &r.color) == VegaType::Temporal;
+        let date_color = categorical && infer_vega_type(&types, &rows, &r.color)? == VegaType::Temporal;
         let categorical = categorical && !date_color;
         let kind = if date_color {
             ColorKind::Dates
@@ -114,14 +122,14 @@ impl Prelude {
                 _ => {}
             }
         }
-        Ok(Prelude { r, rows, x_grain, y_grain, kind })
+        Ok(Prelude { r, rows, x_grain, y_grain, kind, types })
     }
 }
 
 pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let folded = fold_wide_y(payload)?;
     let payload = folded.as_ref().unwrap_or(payload);
-    let Prelude { r, rows, x_grain, y_grain, kind } = Prelude::of(payload)?;
+    let Prelude { r, rows, x_grain, y_grain, kind, types } = Prelude::of(payload)?;
     if r.multiples.is_some() {
         return Err(Diagnostic::refused("heatmap: a multiples chart is the facet composite's, not a plot to bind"));
     }
@@ -142,10 +150,10 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let y_domain = dimension_domain(&r.y)?;
 
     let coloring = if kind == ColorKind::Dates {
-        let (min, max, aware) = date_color_extent(&rows, &r.color)?;
+        let (min, max, aware) = date_color_extent(&types, &rows, &r.color)?;
         Coloring::DateGradient { min, max, aware }
     } else if kind == ColorKind::Categories {
-        Coloring::Categories(color_categories(&r, &rows)?)
+        Coloring::Categories(color_categories(&types, &r, &rows)?)
     } else {
         let (min, max, ticks, scale) = r.style.color_gradient.ladder(&rows, &r.color, r.legend.visible)?;
         Coloring::Gradient { min, max, ticks, scale }
@@ -208,8 +216,8 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         },
         tooltip: tooltip_value_title(&r)?.zip(r.style.tooltip_format.as_ref()).filter(|_| !r.wide_native_aria),
         native_aria: r.wide_native_aria,
-        x_header: HeaderFmt::of(&rows, &r.x, ax_x)?,
-        y_header: HeaderFmt::of(&rows, &r.y, ax_y)?,
+        x_header: HeaderFmt::of(&payload.schema.rows, &rows, &r.x, ax_x)?,
+        y_header: HeaderFmt::of(&payload.schema.rows, &rows, &r.y, ax_y)?,
         link: r.datum_link((x_grain.is_some(), y_grain.is_some(), kind == ColorKind::Dates)),
         mirror: ghost.is_some(),
         ghost_titles: None,
@@ -301,5 +309,5 @@ pub(crate) fn fold_wide_y(payload: &Payload) -> Result<Option<Payload>, String> 
             "channel": "color", "mode": "series", "data_field": crate::common::WIDE_LABEL_FIELD, "quantitative_data": false
         }}),
     );
-    Ok(Some(payload.with_inputs(resolved, rows)))
+    Ok(Some(payload.with_inputs(resolved, rows).with_row_types(crate::common::unfold_wide_types(&payload.schema.rows, &measures)?)))
 }

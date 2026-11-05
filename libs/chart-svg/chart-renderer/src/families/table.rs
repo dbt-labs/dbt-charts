@@ -24,23 +24,23 @@
 //! non-numeric element, a `bar` spark column with any negative detail-row
 //! value (midline layout not ported), a header
 //! that wraps under a content-sized band, a column pairing `scale` with a
-//! static `background`/`font.color`, a timestamp in a date lane under an
-//! authored `format:`, and a strftime directive that depends on the host locale or time zone.
+//! static `background`/`font.color`, and a strftime directive that depends on the host locale or time zone.
 
 use crate::BoardStyle;
 use crate::Padding;
 use crate::Payload;
 use crate::TitleShift;
 use crate::TonesStyle;
-use crate::codes;
+use diagnostic::codes;
 use crate::common::CellRow;
 use crate::common::Divider;
 use crate::common::Font;
 use crate::common::FormatSlot;
 use crate::common::ScaleTarget;
-use crate::diagnostic::Diagnostic;
-use crate::diagnostic::warn;
+use diagnostic::Diagnostic;
+use diagnostic::warn;
 use crate::layout::Rect;
+use column_types::{ColumnType, ColumnTypes};
 use measure::FontBook;
 use measure::Measure;
 use print::print;
@@ -1041,6 +1041,9 @@ struct ColMeta {
     name: String,
     header: String,
     cfg: ColConfig,
+    /// What the source declared the column to be: the only thing that makes a
+    /// text cell a date.
+    kind: ColumnType,
     is_numeric: bool,
     // A text column that is right-aligned AND carries date-like content —
     // the "date lane" (invariant #11): rendered like a numeric column
@@ -1145,6 +1148,9 @@ struct PivotResult {
     single_measure: Option<String>,
     /// The effective measures: the authored `values`, else the inferred ones.
     values: Vec<String>,
+    /// The declared type of each column of `rows`: a row dimension keeps its
+    /// source's, a leaf holds its measure's cells.
+    types: ColumnTypes,
 }
 
 /// Painted swatch square size;
@@ -1380,6 +1386,8 @@ struct Chart {
 struct Source<'a> {
     resolved: &'a Value,
     rows: &'a [serde_json::Map<String, Value>],
+    /// The declared type of each column of `rows`.
+    types: &'a ColumnTypes,
     cell_text: &'a [CellRow],
     formats: Option<&'a serde_json::Map<String, Value>>,
     sub_unit_specs: Option<&'a BTreeMap<String, String>>,
@@ -1483,7 +1491,7 @@ pub(crate) mod tests {
 
     /// Renders and returns the SVG plus the codes of the warnings it emitted.
     pub(crate) fn render_with_warnings(payload: &Payload) -> (String, Vec<&'static str>) {
-        let (svg, warnings) = crate::diagnostic::collect(|| render(payload, &test_fonts()));
+        let (svg, warnings) = diagnostic::collect(|| render(payload, &test_fonts()));
         (svg.expect("renders"), warnings.iter().map(|w| w.code).collect())
     }
     use super::*;
@@ -1796,11 +1804,11 @@ pub(crate) mod tests {
         let payload = make_payload(columns, rows, None, 20);
         let (_svg, codes) = render_with_warnings(&payload);
         assert!(
-            codes.contains(&crate::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id),
+            codes.contains(&diagnostic::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id),
             "{codes:?}"
         );
         assert!(
-            !codes.contains(&crate::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
+            !codes.contains(&diagnostic::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
             "{codes:?}"
         );
     }
@@ -1822,11 +1830,11 @@ pub(crate) mod tests {
         let (svg, codes) = render_with_warnings(&payload);
         assert!(svg.contains(">10<") && svg.contains(">20<"), "{svg}");
         assert!(
-            !codes.contains(&crate::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id),
+            !codes.contains(&diagnostic::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id),
             "{codes:?}"
         );
         assert!(
-            !codes.contains(&crate::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
+            !codes.contains(&diagnostic::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
             "{codes:?}"
         );
     }
@@ -1883,11 +1891,11 @@ pub(crate) mod tests {
             docs_digit_left_edges("N", json!({"width": digit_w + 12.0}), "10");
         assert!((lane_left - left_x).abs() <= 2.0 * print::GEOMETRY_TOLERANCE + 1e-9, "{lane_left} vs {left_x}");
         assert!(
-            codes.contains(&crate::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
+            codes.contains(&diagnostic::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
             "{codes:?}"
         );
         assert!(
-            !codes.contains(&crate::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id),
+            !codes.contains(&diagnostic::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id),
             "{codes:?}"
         );
     }
@@ -1902,7 +1910,7 @@ pub(crate) mod tests {
             docs_digit_left_edges(header, json!({"width": header_w + 12.0}), "10");
         assert!(left_x < lane_left - 1.0, "{lane_left} vs {left_x}");
         assert!(
-            !codes.contains(&crate::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
+            !codes.contains(&diagnostic::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
             "{codes:?}"
         );
     }
@@ -1915,7 +1923,7 @@ pub(crate) mod tests {
         let (lane_left, left_x, codes) = docs_digit_left_edges("N", json!({"width": 20}), "10");
         assert!((lane_left - left_x).abs() > 1.0, "{lane_left} vs {left_x}");
         assert!(
-            !codes.contains(&crate::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
+            !codes.contains(&diagnostic::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
             "{codes:?}"
         );
     }
@@ -1956,11 +1964,11 @@ pub(crate) mod tests {
         let payload = make_payload(columns, rows, None, 20);
         let (_svg, codes) = render_with_warnings(&payload);
         assert!(
-            !codes.contains(&crate::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id),
+            !codes.contains(&diagnostic::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id),
             "{codes:?}"
         );
         assert!(
-            !codes.contains(&crate::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
+            !codes.contains(&diagnostic::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
             "{codes:?}"
         );
     }
@@ -2651,8 +2659,9 @@ pub(crate) mod tests {
         found.into_iter().map(|(_, label)| label).collect()
     }
 
-    // A pivot dimension of calendar instants reads chronologically, of numbers
-    // ascending; plain strings keep the query's order (`_order_col_tuples`).
+    // A pivot dimension of dates (declared, or a string that reads as one)
+    // reads chronologically, of numbers ascending; other strings keep the
+    // query's order (`_order_col_tuples`).
     #[test]
     fn pivot_columns_follow_a_dimensions_canonical_order() {
         let temporal = [json!("2026-03-01"), json!("2026-01-01"), json!("2026-02-01")];
@@ -4709,8 +4718,8 @@ pub(crate) mod tests {
     #[test]
     fn a_cut_title_or_subtitle_warns_title_truncated() {
         let cut = |field: &str, text: &str| {
-            crate::diagnostic::Diagnostic::new(
-                &crate::codes::WARN_CHART_TITLE_TRUNCATED,
+            diagnostic::Diagnostic::new(
+                &diagnostic::codes::WARN_CHART_TITLE_TRUNCATED,
                 [
                     ("authored_field", json!(field)),
                     ("authored_text", json!(text)),
@@ -4725,7 +4734,7 @@ pub(crate) mod tests {
             resolved["title"] = json!(title);
             resolved["subtitle"] = json!(subtitle);
             resolved["title_style"]["overflow"] = json!("truncate");
-            crate::diagnostic::collect(|| render_themed(resolved)).1
+            diagnostic::collect(|| render_themed(resolved)).1
         };
         assert_eq!(warned(&long, "short"), vec![cut("title", &long)]);
         assert_eq!(warned("Short", &long), vec![cut("subtitle", &long)]);
@@ -6935,31 +6944,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn numeric_cell_mixed_into_a_date_lane_column_renders_the_number_not_the_null_glyph() {
-        let _locale = crate::time_locale::en_us_scope();
-        // Invariant #11: a right-aligned column mixing ISO dates and numbers
-        // still enters the date lane (is_date fires when *any* cell is
-        // date-like), but a Value::Number cell in that lane must render its
-        // number, not fall through to the em-dash null sentinel — a present
-        // value silently becoming "no value" is a wrong result that looks
-        // right.
-        let rows = vec![
-            json!({"event": "Launch", "date": "2024-03-15"}),
-            json!({"event": "Fiscal year", "date": 777}),
-        ];
-        let columns = json!({
-            "event": {"label": "Event"},
-            "date": {"label": "Date", "align": "right"},
-        });
-        let payload = make_payload(columns, rows, None, 20);
-        let fonts = test_fonts();
-        let svg = render(&payload, &fonts).expect("renders");
-        assert!(svg.contains("15 Mar 2024"), "the real date still formats:\n{svg}");
-        assert!(svg.contains("777"), "the numeric cell must render its value, not the null glyph:\n{svg}");
-        assert!(!svg.contains('\u{2014}'), "no cell here should fall back to the em-dash null sentinel:\n{svg}");
-    }
-
-    #[test]
     fn null_numeric_cell_renders_the_house_null_glyph_not_a_blank_cell() {
         let rows = vec![
             json!({"company": "Acme", "growth": 0.1}),
@@ -7043,6 +7027,7 @@ pub(crate) mod tests {
                 format: Some(FormatSlot::from("currency")),
                 ..Default::default()
             },
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -7439,14 +7424,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn coerce_numeric_cell_rejects_a_non_finite_string() {
-        // utils.coerce_numeric_cell's non-finite guard: a string that
-        // parses to NaN/±Infinity still isn't a numeric cell.
-        assert_eq!(coerce_numeric_cell(Some(&json!("inf"))), None);
-        assert_eq!(coerce_numeric_cell(Some(&json!("-inf"))), None);
-        assert_eq!(coerce_numeric_cell(Some(&json!("NaN"))), None);
-        assert_eq!(coerce_numeric_cell(Some(&json!("1e999"))), None);
-        assert_eq!(coerce_numeric_cell(Some(&json!("5"))), Some(5.0));
+    fn coerce_numeric_cell_reads_numbers_never_text() {
+        assert_eq!(coerce_numeric_cell(Some(&json!(5))), Some(5.0));
+        assert_eq!(coerce_numeric_cell(Some(&json!("5"))), None);
+        assert_eq!(coerce_numeric_cell(None), None);
     }
 
 
@@ -7578,10 +7559,9 @@ mod conditional_formatting_tests {
     }
 
     #[test]
-    fn numeric_operators_coerce_a_numeric_string() {
+    fn numeric_operators_never_coerce_a_numeric_string() {
         let lte = rule(json!({"lte": 30, "glyph": "x"}));
-        assert!(match_predicate(&lte, Some(&json!("29.5"))).unwrap());
-        assert!(!match_predicate(&lte, Some(&json!("30.5"))).unwrap());
+        assert!(!match_predicate(&lte, Some(&json!("29.5"))).unwrap());
         let gt = rule(json!({"gt": 90, "glyph": "x"}));
         assert!(match_predicate(&gt, Some(&json!(91))).unwrap());
         let between = rule(json!({"between": [10, 20], "glyph": "x"}));
@@ -7968,8 +7948,8 @@ mod conditional_formatting_tests {
         let rows = vec![json!({"days": 10}), json!({"days": 20})];
         let cf = json!({"days": {"when": [{"lte": 10, "glyph": "\u{25b2}"}]}});
         let codes = align_left_codes(rows, cf);
-        assert!(codes.contains(&crate::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id), "{codes:?}");
-        assert!(!codes.contains(&crate::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id), "{codes:?}");
+        assert!(codes.contains(&diagnostic::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id), "{codes:?}");
+        assert!(!codes.contains(&diagnostic::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id), "{codes:?}");
     }
 
     /// The minus is painted inline in the left run, so `-10` beside `20`
@@ -7978,7 +7958,7 @@ mod conditional_formatting_tests {
     fn align_left_with_mixed_signs_warns_ragged() {
         let rows = vec![json!({"days": -10}), json!({"days": 20})];
         let codes = align_left_codes(rows, json!({}));
-        assert!(codes.contains(&crate::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id), "{codes:?}");
+        assert!(codes.contains(&diagnostic::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id), "{codes:?}");
     }
 
     #[test]
@@ -8555,6 +8535,7 @@ mod conditional_formatting_tests {
             name: "v".to_string(),
             header: "V".to_string(),
             cfg: ColConfig::default(),
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -8564,6 +8545,7 @@ mod conditional_formatting_tests {
             name: "v".to_string(),
             header: "V".to_string(),
             cfg: ColConfig { glyph: Some("MMMMMMMMMM".to_string()), ..Default::default() },
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -9026,6 +9008,7 @@ mod floor_source_tests {
         let mut theme = base_table_theme();
         // The columns' natural widths alone, through the measure the board hug
         // reads (`width::measure_natural_width`).
+        let maps: Vec<serde_json::Map<String, Value>> = rows.iter().map(|r| r.as_object().unwrap().clone()).collect();
         let natural_of = |columns: Value| -> f64 {
             let payload = width::MeasurePayload {
                 resolved: json!({
@@ -9037,7 +9020,8 @@ mod floor_source_tests {
                     "pivot_columns": null,
                     "conditional_formatting": null,
                 }),
-                rows: rows.iter().map(|r| r.as_object().unwrap().clone()).collect(),
+                rows: maps.clone(),
+                schema: crate::payload_schema::test_schema_of(&maps),
                 fonts_dir: None,
                 numeral_family: "Inter".into(),
                 format_locale: crate::number_locale::NumberLocale::en_us(),
@@ -9378,11 +9362,53 @@ mod date_like_tests {
         }
     }
 
+    /// A declared string prints as the text it is: numeric-looking text is
+    /// never a number, and a date shape the engine does not format stays
+    /// verbatim.
+    #[test]
+    fn a_declared_string_prints_verbatim_whatever_its_shape() {
+        let rows = vec![
+            json!({"event": "Launch", "us": "03/15/2024", "ym": "2024-03", "q": "Q1 2024", "num": "50.82"}),
+        ];
+        let columns = json!({
+            "event": {"label": "Event"},
+            "us": {"label": "US", "align": "right"},
+            "ym": {"label": "YM", "align": "right"},
+            "q": {"label": "Qtr", "align": "right"},
+            "num": {"label": "Num", "align": "right"},
+        });
+        let mut theme = base_table_theme();
+        let payload: Payload = crate::test_payload(json!({
+            "resolved": {
+                "link_open": "page",
+                "title": null,
+                "title_style": resolved_title_style(),
+                "columns": columns,
+                "style": {"table": theme, "title_font": resolved_title_font()},
+                "pivot_columns": null,
+                "conditional_formatting": null,
+            },
+            "rows": rows,
+            "width": 500.0,
+            "height": 200.0,
+            "background": "#ffffff",
+            "fonts_dir": null,
+            "padding": null,
+            "schema": {"rows": crate::payload_schema::test_types_json(&["event", "us", "ym", "q", "num"], "string"), "datasets": {}},
+        }));
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        for cell in ["03/15/2024", "2024-03", "Q1 2024", "50.82"] {
+            assert!(svg.contains(&format!(">{cell}<")), "{cell} rendered verbatim:\n{svg}");
+        }
+        assert!(!svg.contains("50.8<"), "a string is never number-formatted:\n{svg}");
+    }
+
     #[test]
     fn non_iso_date_like_cells_render_verbatim_in_a_date_lane() {
         // Production formats only true temporal values (full ISO) to the
-        // default date display; US/short/quarter/year-month shapes pass
-        // through verbatim (format_table_cell_value's str fallthrough).
+        // default date display; US/short/quarter/year-month shapes of a
+        // `string` column pass through verbatim (format_table_cell_value's
+        // str fallthrough), in a right-aligned date lane.
         let rows = vec![
             json!({"event": "Launch", "us": "03/15/2024", "ym": "2024-03", "q": "Q1 2024"}),
         ];
@@ -9393,23 +9419,23 @@ mod date_like_tests {
             "q": {"label": "Qtr", "align": "right"},
         });
         let mut theme = base_table_theme();
-        let resolved = json!({
-            "link_open": "page",
-            "title": null,
-            "title_style": resolved_title_style(),
-            "columns": columns,
-            "style": {"table": theme, "title_font": resolved_title_font()},
-            "pivot_columns": null,
-            "conditional_formatting": null,
-        });
         let payload: Payload = crate::test_payload(json!({
-            "resolved": resolved,
+            "resolved": {
+                "link_open": "page",
+                "title": null,
+                "title_style": resolved_title_style(),
+                "columns": columns,
+                "style": {"table": theme, "title_font": resolved_title_font()},
+                "pivot_columns": null,
+                "conditional_formatting": null,
+            },
             "rows": rows,
             "width": 500.0,
             "height": 200.0,
             "background": "#ffffff",
             "fonts_dir": null,
             "padding": null,
+            "schema": {"rows": crate::payload_schema::test_types_json(&["event", "us", "ym", "q"], "string"), "datasets": {}},
         }));
         let svg = render(&payload, &test_fonts()).expect("renders");
         for cell in ["03/15/2024", "2024-03", "Q1 2024"] {
@@ -9425,6 +9451,38 @@ mod date_like_tests {
             "a recognized date lane centers its header:\n{svg}"
         );
     }
+
+    #[test]
+    fn a_declared_date_column_formats_as_a_date_and_a_number_column_as_a_number() {
+        let _locale = crate::time_locale::en_us_scope();
+        let rows = vec![json!({"event": "Launch", "day": "2024-03-15", "amount": 50.82})];
+        let mut theme = base_table_theme();
+        let payload: Payload = crate::test_payload(json!({
+            "resolved": {
+                "link_open": "page",
+                "title": null,
+                "title_style": resolved_title_style(),
+                "columns": {"event": {"label": "Event"}, "day": {"label": "Day", "align": "right"}, "amount": {"label": "Amount"}},
+                "style": {"table": theme, "title_font": resolved_title_font()},
+                "pivot_columns": null,
+                "conditional_formatting": null,
+            },
+            "rows": rows,
+            "width": 500.0,
+            "height": 200.0,
+            "background": "#ffffff",
+            "fonts_dir": null,
+            "padding": null,
+            "schema": {"rows": {
+                "event": {"kind": "string", "element": null, "fields": null},
+                "day": {"kind": "date", "element": null, "fields": null},
+                "amount": {"kind": "float", "element": null, "fields": null},
+            }, "datasets": {}},
+        }));
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(svg.contains(">15 Mar 2024<"), "a declared date prints through date_short:\n{svg}");
+        assert!(svg.contains(">50.8<"), "a number prints through the number format:\n{svg}");
+    }
 }
 
 #[cfg(test)]
@@ -9434,7 +9492,6 @@ mod demand_affix_tests {
     use super::*;
     use super::layout::column_demand;
     use super::bind::format_numeric_col;
-    use super::bind::format_date_col;
     use super::bind::build_cell_data;
     use serde_json::json;
 
@@ -9442,43 +9499,6 @@ mod demand_affix_tests {
         let manifest = env!("CARGO_MANIFEST_DIR");
         let dir = format!("{manifest}/../../../src/dbt_charts/core/render/fonts");
         FontBook::load_dir(&dir).expect("test fonts load")
-    }
-
-    /// A number mixed into a date lane (invariant #11) measures with its
-    /// SI magnitude like any numeric cell — production's oracle demand for
-    /// a "Mar 1"/1240.0 column is the width of format_table_cell_value(1240,
-    /// None) == "1.24K" (the en analytic words are glued) in Inter @11 + 2*8
-    /// pad. Without the date-lane number arm recording full_suffix, the
-    /// demand under-measures by the "K" width. Pinned at the demand level directly — in a
-    /// rendered table the raw-token word floor ("1240.0") can exceed and
-    /// mask this demand, which is exactly why the width-level sweep never
-    /// caught it.
-    #[test]
-    fn date_lane_mixed_number_demand_includes_its_magnitude_suffix() {
-        let _scope = super::tests::en_us_scope();
-        let fonts = test_fonts();
-        let col = ColMeta {
-            name: "when".to_string(),
-            header: "When".to_string(),
-            cfg: ColConfig::default(),
-            is_numeric: false,
-            is_date: true,
-            is_day: false,
-            when_rules: Vec::new(),
-        };
-        let rows = vec![
-            serde_json::json!({"when": "Mar 1"}),
-            serde_json::json!({"when": 1240.0}),
-        ];
-        let maps: Vec<serde_json::Map<String, Value>> =
-            rows.into_iter().map(|r| r.as_object().unwrap().clone()).collect();
-        let cells = format_date_col(&maps, &col).expect("date lane formats");
-        let demand = column_demand(&cells, &maps, &col, &fonts, &MeasureFonts { body: "Inter", header: "Inter", numeral: "Inter" }, 11.0, 8.0).unwrap();
-        let oracle = fonts.measure("1.24K", "Inter", 11.0).unwrap() + 16.0;
-        assert!(
-            (demand - oracle).abs() < 1e-9,
-            "mixed-number demand carries its magnitude suffix: {demand} vs oracle {oracle}"
-        );
     }
 
     /// An object-form `format:`'s explicit suffix is measured with its authored space, not stripped
@@ -9494,6 +9514,7 @@ mod demand_affix_tests {
                 format: Some(FormatSlot { suffix: " d".into(), ..FormatSlot::from(",.0f") }),
                 ..ColConfig::default()
             },
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -9524,6 +9545,7 @@ mod demand_affix_tests {
                 format: Some(FormatSlot { prefix: "~ ".into(), ..FormatSlot::from(",.0f") }),
                 ..ColConfig::default()
             },
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -9555,6 +9577,7 @@ mod demand_affix_tests {
                 format: Some(FormatSlot { prefix: "~ ".into(), ..FormatSlot::from("$,.0f") }),
                 ..ColConfig::default()
             },
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -9587,6 +9610,7 @@ mod demand_affix_tests {
                 }),
                 ..ColConfig::default()
             },
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -9672,6 +9696,7 @@ mod demand_affix_tests {
                 shared_scale: Some(SharedScale { exponent: 6, mode: SuffixMode::Anchor, digit_spec: ",.2~f".into() }),
                 ..ColConfig::default()
             },
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -9786,6 +9811,7 @@ mod demand_affix_tests {
                 format: Some(FormatSlot { raw: Some("currency".into()), ..FormatSlot::from("$.3~s") }),
                 ..ColConfig::default()
             },
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -9801,6 +9827,7 @@ mod demand_affix_tests {
             name: name.to_string(),
             header: name.to_string(),
             cfg: crate::families::table::tests::col_config(config).expect("a column config"),
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -9871,6 +9898,7 @@ mod demand_affix_tests {
                 }),
                 ..ColConfig::default()
             },
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -10596,6 +10624,7 @@ mod background_and_font_family_tests {
         let render_with = |numeral: Option<&str>| {
             let mut payload = payload_with(json!({}));
             payload.rows = vec![json!({"a": "x", "b": 95}).as_object().unwrap().clone()];
+            payload.schema = crate::payload_schema::test_schema_for(&payload.rows);
             payload.resolved["columns"] = json!({"a": {"label": "A", "link_open": "page", "header_link_open": "page"}, "b": {"label": "B", "link_open": "page", "header_link_open": "page"}});
             let table = &mut payload.resolved["style"]["table"];
             table["font"]["family"] = json!("'Source Serif 4', Georgia, serif");
@@ -10753,6 +10782,7 @@ mod background_and_font_family_tests {
         payload.resolved["style"]["table"]["transpose"] = json!(true);
         payload.resolved["columns"] = json!({"col_a": {"label": "Alpha", "link_open": "page", "header_link_open": "page"}, "col_b": {"link_open": "page", "header_link_open": "page"}});
         payload.rows = vec![json!({"col_a": 10, "col_b": 20}).as_object().unwrap().clone()];
+        payload.schema = crate::payload_schema::test_schema_for(&payload.rows);
         let svg = render(&payload, &test_fonts()).unwrap();
         for text in [">Metric</text>", ">Value</text>", ">Alpha</text>", ">Col b</text>"] {
             assert!(svg.contains(text), "{text} missing:\n{svg}");
@@ -10772,6 +10802,7 @@ mod background_and_font_family_tests {
         payload.resolved["row_role"] = json!("kind");
         payload.resolved["columns"] = json!({"col_a": {"label": "Alpha", "link_open": "page", "header_link_open": "page"}});
         payload.rows = vec![json!({"col_a": 10, "kind": "total"}).as_object().unwrap().clone()];
+        payload.schema = crate::payload_schema::test_schema_for(&payload.rows);
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(svg.contains(">Alpha</text>"), "{svg}");
         payload.resolved["row_role"] = json!("nope");
@@ -10936,6 +10967,7 @@ mod header_font_tests {
             name: "quarterly".to_string(),
             header: "quarterly".to_string(),
             cfg: ColConfig::default(),
+            kind: column_types::ColumnType::Float,
             is_numeric: false,
             is_date: false,
             is_day: false,
@@ -10979,6 +11011,7 @@ mod padded_column_tests {
                 decimal_pad_table: vec!["\u{2007}\u{2007}".into(), "\u{2007}".into(), String::new(), "\u{2007}\u{2007}\u{2007}".into()],
                 ..ColConfig::default()
             },
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -11053,7 +11086,7 @@ mod pivot_shape_tests {
     #[test]
     fn a_sparse_multi_dimension_pivot_has_no_phantom_columns() {
         let pivot = pivot_table_data(
-            &quarters(),
+            &quarters(), &crate::payload_schema::test_schema_of(&quarters()),
             &[],
             &strings(&["region"]),
             &strings(&["year", "quarter"]),
@@ -11082,7 +11115,7 @@ mod pivot_shape_tests {
     #[test]
     fn a_pivot_cell_lands_under_its_leaf_and_a_missing_one_is_null() {
         let pivot = pivot_table_data(
-            &quarters(),
+            &quarters(), &crate::payload_schema::test_schema_of(&quarters()),
             &[],
             &strings(&["region"]),
             &strings(&["year", "quarter"]),
@@ -11109,7 +11142,7 @@ mod pivot_shape_tests {
             json!({"region": "US", "quarter": "Q2", "revenue": 200, "units": 5}),
         ]);
         let pivot = pivot_table_data(
-            &data,
+            &data, &crate::payload_schema::test_schema_of(&data),
             &[],
             &strings(&["region"]),
             &strings(&["quarter"]),
@@ -11139,7 +11172,7 @@ mod pivot_shape_tests {
             json!({"region": "Total", "quarter": "Q2", "revenue": 380, "role": "total"}),
         ]);
         let pivot = pivot_table_data(
-            &data,
+            &data, &crate::payload_schema::test_schema_of(&data),
             &[],
             &strings(&["region"]),
             &strings(&["quarter"]),
@@ -11157,7 +11190,8 @@ mod pivot_shape_tests {
 
     fn leaf_columns(dims: &[&str], rows: Vec<Value>) -> Vec<String> {
         let dims = strings(dims);
-        let pivot = pivot_table_data(&rows_of(rows), &[], &strings(&["r"]), &dims, &strings(&["v"]), None).unwrap();
+        let data = rows_of(rows);
+        let pivot = pivot_table_data(&data, &crate::payload_schema::test_schema_of(&data), &[], &strings(&["r"]), &dims, &strings(&["v"]), None).unwrap();
         leaves(&pivot).into_iter().map(|leaf| leaf.replace(PIVOT_LEAF_SEP, "/")).collect()
     }
 
@@ -11177,7 +11211,7 @@ mod pivot_shape_tests {
         ]);
         let cell_text = crate::common::decode_cells(&mut raw).unwrap();
         let dims = strings(&["c"]);
-        let pivot = pivot_table_data(&raw, &cell_text, &strings(&["r"]), &dims, &strings(&["v"]), None).unwrap();
+        let pivot = pivot_table_data(&raw, &crate::payload_schema::test_schema_of(&raw), &cell_text, &strings(&["r"]), &dims, &strings(&["v"]), None).unwrap();
         assert_eq!(leaves(&pivot), ["2", "NaN", "1"]);
     }
 
@@ -11192,7 +11226,7 @@ mod pivot_shape_tests {
         ]);
         let cell_text = crate::common::decode_cells(&mut raw).unwrap();
         let dims = strings(&["c"]);
-        let pivot = pivot_table_data(&raw, &cell_text, &strings(&["r"]), &dims, &strings(&["v"]), None).unwrap();
+        let pivot = pivot_table_data(&raw, &crate::payload_schema::test_schema_of(&raw), &cell_text, &strings(&["r"]), &dims, &strings(&["v"]), None).unwrap();
         assert_eq!(leaves(&pivot), ["2.50", "2023", "2024"]);
     }
 
@@ -11263,7 +11297,7 @@ mod pivot_shape_tests {
             json!({"r": "x", "year": 2024, "a": 3, "b": 4}),
         ]);
         let pivot = pivot_table_data(
-            &data,
+            &data, &crate::payload_schema::test_schema_of(&data),
             &[],
             &strings(&["r"]),
             &strings(&["year"]),
@@ -11287,7 +11321,7 @@ mod pivot_shape_tests {
             json!({"region": "EU Total", "quarter": "Q1", "revenue": 2, "role": "total"}),
         ]);
         let pivot = pivot_table_data(
-            &data,
+            &data, &crate::payload_schema::test_schema_of(&data),
             &[],
             &strings(&["region"]),
             &strings(&["quarter"]),
@@ -11400,6 +11434,7 @@ mod board_format_tests {
                     decimal_pad_table: vec!["".into(), "\u{2007}".into(), "\u{2007}\u{2007}".into(), "\u{2007}\u{2007}\u{2007}".into()],
                     ..ColConfig::default()
                 },
+                kind: column_types::ColumnType::Float,
                 is_numeric: true,
                 is_date: false,
                 is_day: false,
@@ -11419,6 +11454,14 @@ mod board_format_tests {
 #[cfg(test)]
 mod magnitude_suffix_tests {
     use super::bind::is_magnitude_suffix;
+    use crate::common::{format_kpi_parts, predefined_number_spec, FormatParts, KpiParts, PartsOptions};
+
+    /// `format_kpi_parts` of the `number` format, whole.
+    fn format_numeric_auto(v: f64) -> Result<KpiParts, String> {
+        let spec = predefined_number_spec("number").expect("`number` is a predefined format");
+        let parts = FormatParts { spec: Some(spec), raw: Some("number"), ..FormatParts::default() };
+        format_kpi_parts(v, &parts, &PartsOptions::default()).map_err(|e| e.to_string())
+    }
 
     // Oracle: `format_value(2540, "number")` under en-US is '2.54K' (the
     // analytic words are glued, `text/magnitude_words.py:40`); the lane is 'K'.
@@ -11426,7 +11469,7 @@ mod magnitude_suffix_tests {
     fn en_us_analytic_word_is_printed_glued() {
         let en = crate::number_locale::en_us_with_words(["K", "M", "B", "T"], ["k", "m", "bn", "trn"]);
         crate::number_locale::with_number_locale(&en, || {
-            let lanes = crate::common::format_numeric_auto(2540.0).unwrap();
+            let lanes = format_numeric_auto(2540.0).unwrap();
             assert_eq!((lanes.number.as_str(), lanes.suffix.as_str(), lanes.measured_suffix.as_str()), ("2.54", "K", "K"));
         });
     }
@@ -11453,13 +11496,13 @@ mod magnitude_suffix_tests {
                 assert!(is_magnitude_suffix(word), "{word:?}");
             }
             assert!(!is_magnitude_suffix("bn"), "an English narrative word is not de-DE's");
-            let lanes = crate::common::format_numeric_auto(1.5e9).unwrap();
+            let lanes = format_numeric_auto(1.5e9).unwrap();
             assert_eq!((lanes.number.as_str(), lanes.suffix.as_str(), lanes.measured_suffix.as_str()), ("1.5", "Mrd", "\u{a0}Mrd"));
         });
         let ja = crate::number_locale::en_us_with_words(["千", "百万", "十億", "兆"], ["千", "百万", "十億", "兆"]);
         crate::number_locale::with_number_locale(&ja, || {
             assert!(is_magnitude_suffix("百万"));
-            let lanes = crate::common::format_numeric_auto(2.5e6).unwrap();
+            let lanes = format_numeric_auto(2.5e6).unwrap();
             assert_eq!((lanes.number.as_str(), lanes.suffix.as_str(), lanes.measured_suffix.as_str()), ("2.5", "百万", "百万"));
             assert!(!is_magnitude_suffix("m"));
         });
@@ -11489,6 +11532,7 @@ mod shared_scale_register_tests {
             name: "amount".to_string(),
             header: "Amount".to_string(),
             cfg,
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -11577,6 +11621,7 @@ mod shared_scale_register_tests {
             name: "amount".to_string(),
             header: "Amount".to_string(),
             cfg,
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -11636,7 +11681,7 @@ mod shared_scale_register_tests {
     // (format_spec '.1%', value 27.6), as does 10.0 under `percent_whole`;
     // `percent_delta` (`+.1%`), `percent_number` and 9.99 under `percent` paint.
     // The refusal quotes the cell as `repr` of the type the table kept it: an
-    // integer cell `27`, a float `27.5`, a string cell `float()`'s `27.0`.
+    // integer cell `27`, a float `27.5`.
     #[test]
     fn a_percent_column_refuses_a_value_shaped_0_to_100() {
         crate::number_locale::with_number_locale(&crate::number_locale::fr_fr(), || {
@@ -11647,6 +11692,7 @@ mod shared_scale_register_tests {
                     name: "amount".to_string(),
                     header: "Amount".to_string(),
                     cfg,
+                    kind: column_types::ColumnType::Float,
                     is_numeric: true,
                     is_date: false,
                     is_day: false,
@@ -11660,7 +11706,6 @@ mod shared_scale_register_tests {
             assert_eq!(refusal("percent", json!(27)), r#"ERR-PERCENT-RANGE: format_spec=".1%", value=27"#);
             assert_eq!(refusal("percent", json!(-27)), r#"ERR-PERCENT-RANGE: format_spec=".1%", value=-27"#);
             assert_eq!(refusal("percent", json!(27.5)), r#"ERR-PERCENT-RANGE: format_spec=".1%", value=27.5"#);
-            assert_eq!(refusal("percent", json!("27")), r#"ERR-PERCENT-RANGE: format_spec=".1%", value=27.0"#);
             assert_eq!(lanes_of(json!("percent"), "all", &[9.99]), [lane(None, "999,0", Some("\u{202f}%"))]);
             assert_eq!(
                 lanes_of(json!("percent_delta"), "all", &[27.6]),
@@ -11702,6 +11747,7 @@ mod shared_scale_register_tests {
             name: "amount".to_string(),
             header: "Amount".to_string(),
             cfg,
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -11735,6 +11781,7 @@ mod shared_scale_register_tests {
             name: "amount".to_string(),
             header: "Amount".to_string(),
             cfg,
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -11810,6 +11857,7 @@ mod shared_scale_register_tests {
             name: "amount".to_string(),
             header: "Amount".to_string(),
             cfg,
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -11883,6 +11931,7 @@ mod notation_and_shared_scale_lane_tests {
             name: "v".to_string(),
             header: "V".to_string(),
             cfg,
+            kind: column_types::ColumnType::Float,
             is_numeric: true,
             is_date: false,
             is_day: false,
@@ -12101,10 +12150,10 @@ mod contract_tests {
         let bound = bind::bind(&payload_pinned(200.0, json!(500))).expect("binds");
         let cell = Rect { x: 0.0, y: 0.0, width: 200.0, height: 400.0 };
         let (laid_out, sunk) =
-            crate::diagnostic::collect(|| layout::layout(&bound, cell, &measure).expect("lays out"));
+            diagnostic::collect(|| layout::layout(&bound, cell, &measure).expect("lays out"));
         assert!(sunk.is_empty(), "{sunk:?}");
         let codes: Vec<&str> = laid_out.diagnostics.iter().map(|d| d.code).collect();
-        assert_eq!(codes, [crate::codes::WARN_TABLE_COLUMNS_OVERFLOW.id]);
+        assert_eq!(codes, [diagnostic::codes::WARN_TABLE_COLUMNS_OVERFLOW.id]);
     }
 
     #[test]

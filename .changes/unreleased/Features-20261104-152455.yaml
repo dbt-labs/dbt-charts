@@ -1,0 +1,3 @@
+kind: Features
+body: Set style.axis_y.grid.torn_baseline to draw a wave along a line chart's bottom edge when the y-axis excludes zero.
+time: 2026-11-04T15:24:55.274558-08:00

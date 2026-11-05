@@ -68,6 +68,7 @@ from dbt_charts.core.compile.models.style.theme.area import (
 )
 from dbt_charts.core.compile.models.style.theme.axis import (
     AxisGridThresholdStyle,
+    AxisGridTornBaselineStyle,
     AxisLabelOverlapConfig,
     AxisLabelStyle,
     AxisLineStyle,
@@ -285,6 +286,7 @@ __all__ = [
     "AreaLineStyle",
     "AreaMarkStyle",
     "AxisGridThresholdStyle",
+    "AxisGridTornBaselineStyle",
     "AxisLabelOverlapConfig",
     "AxisLabelStyle",
     "AxisLineStyle",

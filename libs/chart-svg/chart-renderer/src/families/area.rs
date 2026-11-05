@@ -7,7 +7,7 @@
 use measure::FontBook;
 use crate::Payload;
 
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
     crate::families::line::render_inner(payload, fonts, true)

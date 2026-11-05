@@ -30,6 +30,7 @@ from typing import Any
 
 import pytest
 
+from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import (
     BarChart,
@@ -52,10 +53,14 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
+    ERR_CHART_CELL_TYPE_MISMATCH,
     ERR_LABEL_FORMAT_AXIS_MISMATCH,
     ERR_TIME_FORMAT_NOT_TEMPORAL,
 )
+from dbt_charts.core.execute.cache_backend import ResultRows
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
+
+from ...._results import rows_result
 
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
@@ -72,7 +77,9 @@ def _x_format(fmt: str) -> AxisXStylePatch:
 
 def _render(chart: Chart, data: list[dict[str, Any]]) -> dict[str, Any]:
     return render_resolved_chart(
-        resolve(chart, data, chart_style_context=_BOARD_CTX), data, _BOARD_STYLE
+        resolve(chart, data, chart_style_context=_BOARD_CTX),
+        rows_result(data),
+        _BOARD_STYLE,
     ).payload
 
 
@@ -195,9 +202,9 @@ class TestNumberFormatOnCategoryAxisRaises:
         assert "legend" not in message
 
     def test_non_numeric_tail_row_still_raises(self) -> None:
-        """Vega paints a tick per domain value, not per sampled row. Ten numeric
-        rows then one string is the original NaN, and a sampled window would
-        wave it through."""
+        """A column declared float whose last cell is text is refused for the
+        contradiction, not drawn: Vega would paint a tick per domain value and
+        format the string as NaN, and a sampled window would wave it through."""
         data: list[dict[str, Any]] = [
             {"code": float(i), "revenue": float(i)} for i in range(10)
         ]
@@ -211,9 +218,17 @@ class TestNumberFormatOnCategoryAxisRaises:
                 orientation="horizontal", axis_x=_x_format("currency_whole")
             ),
         )
+        declared = {
+            "code": ColumnType(kind="float"),
+            "revenue": ColumnType(kind="float"),
+        }
         with pytest.raises(ChartDataError) as exc:
-            _render(chart, data)
-        assert exc.value.code is ERR_LABEL_FORMAT_AXIS_MISMATCH
+            render_resolved_chart(
+                resolve(chart, data, chart_style_context=_BOARD_CTX),
+                ResultRows(data, declared),
+                _BOARD_STYLE,
+            )
+        assert exc.value.code is ERR_CHART_CELL_TYPE_MISMATCH
 
     def test_scatter_axis_x_currency_raises(self) -> None:
         """Scatter forks to its own quantitative fast path before the shared

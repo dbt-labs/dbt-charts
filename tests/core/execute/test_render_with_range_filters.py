@@ -21,6 +21,7 @@ from dbt_charts.core.compile.template.parameterized import DateRangeFilter
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.date_range_axis import proven_range
+from dbt_charts.core.execute.plan import render_with_range_filters
 
 _RANGE = {"date_range": ["2026-03-01", "2026-03-31"]}
 _FILTERED = "WHERE {{ filter_date_range('created_at', date_range) }}"
@@ -113,7 +114,7 @@ def test_source_less_dbt_jinja_query_reports_its_range(
         ),
         local_project(tmp_path),
     )
-    rendered = executor.render_with_range_filters("q", _RANGE)
+    rendered = render_with_range_filters(executor.ctx, "q", _RANGE)
     assert rendered is not None
     sql, dialect, filters = rendered
     assert "main.orders" in sql
@@ -135,7 +136,7 @@ def test_declared_source_reports_its_range_without_resolving_it(
     with patch.object(
         registry, "resolve_query_source", side_effect=socket.gaierror("no dns")
     ):
-        rendered = executor.render_with_range_filters("q", _RANGE)
+        rendered = render_with_range_filters(executor.ctx, "q", _RANGE)
     assert rendered is not None
     assert rendered[2] == [
         DateRangeFilter("created_at", date(2026, 3, 1), date(2026, 3, 31))
@@ -175,7 +176,7 @@ def test_named_dbt_profile_source_reports_its_range_in_the_profile_dialect(
         local_project(tmp_path),
         {"wh": {"type": "dbt_profile"}},
     )
-    rendered = executor.render_with_range_filters("q", _RANGE)
+    rendered = render_with_range_filters(executor.ctx, "q", _RANGE)
     assert rendered is not None
     sql, dialect, filters = rendered
     assert "FROM orders WHERE" in sql
@@ -196,7 +197,7 @@ def test_a_query_that_cannot_be_rendered_here_reports_nothing(
         ),
         local_project(tmp_path),
     )
-    assert executor.render_with_range_filters("q", _RANGE) is None
+    assert render_with_range_filters(executor.ctx, "q", _RANGE) is None
 
 
 def test_a_query_without_a_range_filter_is_not_rendered(
@@ -210,7 +211,7 @@ def test_a_query_without_a_range_filter_is_not_rendered(
     with patch.object(
         executor.adapter_registry, "render_with_range_filters"
     ) as registry_render:
-        assert executor.render_with_range_filters("q", _RANGE) is None
+        assert render_with_range_filters(executor.ctx, "q", _RANGE) is None
     registry_render.assert_not_called()
 
 
@@ -226,10 +227,10 @@ def test_the_derivation_is_memoized_per_query_and_variables(
     with patch.object(
         registry, "render_with_range_filters", wraps=registry.render_with_range_filters
     ) as spy:
-        first = executor.render_with_range_filters("q", _RANGE)
-        assert executor.render_with_range_filters("q", _RANGE) == first
-        executor.render_with_range_filters(
-            "q", {"date_range": ["2026-04-01", "2026-04-30"]}
+        first = render_with_range_filters(executor.ctx, "q", _RANGE)
+        assert render_with_range_filters(executor.ctx, "q", _RANGE) == first
+        render_with_range_filters(
+            executor.ctx, "q", {"date_range": ["2026-04-01", "2026-04-30"]}
         )
     assert spy.call_count == 2
 
@@ -246,7 +247,7 @@ def test_a_dbt_project_naming_no_profile_reports_nothing(
         ),
         local_project(tmp_path),
     )
-    assert executor.render_with_range_filters("q", _RANGE) is None
+    assert render_with_range_filters(executor.ctx, "q", _RANGE) is None
 
 
 def test_a_query_written_in_another_dialect_renders_and_parses_in_it(
@@ -261,7 +262,7 @@ def test_a_query_written_in_another_dialect_renders_and_parses_in_it(
         local_project(tmp_path),
         {"wh": {"type": "duckdb", "path": ":memory:"}},
     )
-    rendered = executor.render_with_range_filters("q", _RANGE)
+    rendered = render_with_range_filters(executor.ctx, "q", _RANGE)
     assert rendered is not None
     sql, dialect, filters = rendered
     assert dialect == "bigquery"
@@ -290,8 +291,8 @@ def test_a_raw_sql_variable_on_the_dbt_path_is_bound_as_execution_binds_it(
         "dbt",
     ).replace("variables:\n", "variables:\n  extra_where:\n    input: text\n")
     executor = _executor(board, local_project(tmp_path))
-    rendered = executor.render_with_range_filters(
-        "q", {**_RANGE, "extra_where": "status = 'paid' OR 1 = 1"}
+    rendered = render_with_range_filters(
+        executor.ctx, "q", {**_RANGE, "extra_where": "status = 'paid' OR 1 = 1"}
     )
     assert rendered is not None
     sql, dialect, filters = rendered
@@ -309,4 +310,4 @@ def test_an_unknown_source_without_dbt_jinja_is_not_deferred_to_dbt(
         _board(f"SELECT created_at AS week, 1 AS n FROM orders {_FILTERED}", "nowhere"),
         local_project(tmp_path),
     )
-    assert executor.render_with_range_filters("q", _RANGE) is None
+    assert render_with_range_filters(executor.ctx, "q", _RANGE) is None

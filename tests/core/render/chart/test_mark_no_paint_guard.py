@@ -42,6 +42,7 @@ from dbt_charts.core.render.chart.mark_extents import (
 from dbt_charts.core.render.chart.rendering import render_chart_item
 
 from ...._paths import DBT_CHARTS_DIR
+from ...._results import rows_result
 
 EXAMPLES_DIR = DBT_CHARTS_DIR / "examples"
 
@@ -128,6 +129,7 @@ def test_guard_fires_and_routes_through_the_error_card() -> None:
     )
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
+    executor.execute_query_result.return_value = rows_result(data)
 
     marks_free_svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" '
@@ -208,6 +210,7 @@ def _render_chart(
     chart = make_chart(chart_type, **chart_kwargs)
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
+    executor.execute_query_result.return_value = rows_result(data)
     svg, _height = render_chart_item(
         resolve(chart, data, chart_style_context=_CHART_CTX),
         executor,

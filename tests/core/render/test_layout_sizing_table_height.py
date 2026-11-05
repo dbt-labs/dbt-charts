@@ -40,6 +40,8 @@ from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
 
+from ..._results import rows_result
+
 _BASE_QUERY = SqlQuery(sql="SELECT 1", source="test")
 _DEFAULT_RESOLVED = resolve_style(get_theme_style())
 _DEFAULT_CONTEXT = resolve_chart_style_context(get_theme_style())
@@ -65,10 +67,11 @@ def _make_table_chart(
 
 
 def _make_executor(row_count: int) -> MagicMock:
-    """Return a mock Executor that yields `row_count` rows for execute_chart."""
+    """Return a mock Executor that yields `row_count` rows for execute_query."""
     mock = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock.rendered_at = None
-    mock.execute_chart.return_value = [{"col": i} for i in range(row_count)]
+    rows = [{"col": i} for i in range(row_count)]
+    mock.execute_query_result.return_value = rows_result(rows)
     return mock
 
 
@@ -81,7 +84,7 @@ def _call_provider(
     """Call _get_table_height_from_data with the given resolved_style."""
     from dbt_charts.core.render.layout_sizing import _get_table_height_from_data
 
-    resolved = resolve(chart, executor.execute_chart(chart, {}), board_context)
+    resolved = resolve(chart, executor.execute_query("q", {}), board_context)
     assert isinstance(resolved, ResolvedTableChart)
     height = _get_table_height_from_data(
         chart,
@@ -902,7 +905,7 @@ def _drawn_height(chart: Chart, row_count: int, slot_height: float = 0.0) -> flo
     assert isinstance(resolved, ResolvedTableChart)
     svg, _ = render_native(
         resolved,
-        rows,
+        rows_result(rows),
         width=400.0,
         height=slot_height,
         padding=None,
@@ -995,7 +998,7 @@ class TestSizingProbeRecordsNoWarnings:
         ]
         executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
         executor.rendered_at = None
-        executor.execute_chart.return_value = rows
+        executor.execute_query_result.return_value = rows_result(rows)
         with collect_text_truncations() as recorded:
             _call_provider(chart, executor)
         assert recorded == {}

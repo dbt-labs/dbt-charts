@@ -23,6 +23,8 @@ from dbt_charts.core.diagnostics import (
 from dbt_charts.core.project import Project
 from dbt_charts.core.render.warnings.base import WarningContext
 
+from ..._results import rows_schema
+
 _ORPHAN_YAML = """
 source: examples_db
 queries:
@@ -63,6 +65,7 @@ class TestBoardRenderResultUnifiedWarnings:
         ok = Mock()
         ok.is_success = True
         ok.data = [{"x": 1, "y": 2}]
+        ok.schema = rows_schema(ok.data)
         ok.resolved_relations = None
         ok.truncated_reason = None
         registry = Mock()
@@ -114,6 +117,7 @@ class TestBoardRenderResultUnifiedWarnings:
         ok = Mock()
         ok.is_success = True
         ok.data = [{"x": 1, "y": 2}]
+        ok.schema = rows_schema(ok.data)
         ok.resolved_relations = None
         ok.truncated_reason = None
         registry = Mock()

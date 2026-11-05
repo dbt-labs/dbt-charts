@@ -39,8 +39,10 @@ use jiff::tz::TimeZone;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
-use crate::codes;
-use crate::diagnostic::Diagnostic;
+use column_types::ColumnTypes;
+
+use diagnostic::codes;
+use diagnostic::Diagnostic;
 
 use regex::Regex;
 
@@ -622,8 +624,10 @@ pub fn x_values_are_temporal_candidates(values: &[&str]) -> bool {
 /// cells. A field absent from the first row is nominal; an all-null sample
 /// is vacuously quantitative (`vega_infers_quantitative`). A string cell is
 /// temporal when every sampled cell is a standard date, ordinal when each is
-/// at least date-like, else nominal. Dates and strings share one wire form,
-/// so a DATE column types the way its ISO text does.
+/// at least date-like, else nominal. A declared date or timestamp column with
+/// a cell to read is temporal whatever the cells look like; one with none is
+/// vacuously quantitative, as Vega types it. A number column types by its
+/// cells, which the year-shaped rewrite may have turned into ISO dates by then.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VegaType {
     Quantitative,
@@ -651,14 +655,18 @@ pub(crate) fn has_labeled_bucket(rows: &[serde_json::Map<String, serde_json::Val
     texts.iter().zip(&dates.date).any(|(text, date)| date.is_none() && parse_bucket_string(text).is_some())
 }
 
-pub fn infer_vega_type(rows: &[serde_json::Map<String, serde_json::Value>], field: &str) -> VegaType {
+pub fn infer_vega_type(types: &ColumnTypes, rows: &[serde_json::Map<String, serde_json::Value>], field: &str) -> Result<VegaType, String> {
     use serde_json::Value;
+    let declared = types.get(field)?;
     if !rows.first().is_some_and(|row| row.contains_key(field)) {
-        return VegaType::Nominal;
+        return Ok(VegaType::Nominal);
     }
     let sample: Vec<&Value> = rows.iter().take(10).filter_map(|row| row.get(field)).filter(|v| !v.is_null()).collect();
     if sample.iter().all(|v| matches!(v, Value::Number(_) | Value::Bool(_))) {
-        return VegaType::Quantitative;
+        return Ok(VegaType::Quantitative);
+    }
+    if declared.is_temporal() {
+        return Ok(VegaType::Temporal);
     }
     let (mut all_temporal, mut all_date_like) = (true, true);
     for value in sample {
@@ -671,11 +679,11 @@ pub fn infer_vega_type(rows: &[serde_json::Map<String, serde_json::Value>], fiel
             _ => (all_temporal, all_date_like) = (false, false),
         }
     }
-    match (all_temporal, all_date_like) {
+    Ok(match (all_temporal, all_date_like) {
         (true, _) => VegaType::Temporal,
         (_, true) => VegaType::Ordinal,
         _ => VegaType::Nominal,
-    }
+    })
 }
 
 /// `infer_vega_type_from_data`'s STRICT `all_temporal` gate: every sampled
@@ -739,6 +747,23 @@ fn strip_month_abbr(s: &str) -> Option<&str> {
 
 fn all_digits(s: &str, len: usize) -> bool {
     s.len() == len && s.bytes().all(|c| c.is_ascii_digit())
+}
+
+/// [`x_values_are_standard_dates`] for the x column `field`: a declared date or timestamp is one whatever its
+/// cells; a column of any other declared type is shaped by its text as ever.
+pub fn x_is_standard_date(types: &ColumnTypes, field: &str, values: &[&str]) -> Result<bool, String> {
+    if types.get(field)?.is_temporal() {
+        return Ok(!values.is_empty());
+    }
+    Ok(x_values_are_standard_dates(values))
+}
+
+/// [`x_values_are_temporal_candidates`] for the x column `field`, as [`x_is_standard_date`].
+pub fn x_is_temporal_candidate(types: &ColumnTypes, field: &str, values: &[&str]) -> Result<bool, String> {
+    if types.get(field)?.is_temporal() {
+        return Ok(!values.is_empty());
+    }
+    Ok(x_values_are_temporal_candidates(values))
 }
 
 /// `is_date_like_string` (`type_inference.py`'s `DATE_LIKE_PATTERNS`) — the
@@ -1166,6 +1191,7 @@ pub(crate) fn parse_bucket_string(s: &str) -> Option<(i32, u32, u32)> {
 /// anything else is returned unchanged. The errors are the `ValueError`s
 /// production raises for a mixed or unrecognized column.
 pub fn normalize_labeled_temporal<'a>(
+    types: &column_types::ColumnTypes,
     rows: &'a [serde_json::Map<String, serde_json::Value>],
     field: &str,
 ) -> Result<std::borrow::Cow<'a, [serde_json::Map<String, serde_json::Value>]>, String> {
@@ -1187,7 +1213,7 @@ pub fn normalize_labeled_temporal<'a>(
     if present.is_empty() {
         return Ok(Cow::Borrowed(rows));
     }
-    if crate::common::is_year_shaped(rows, field) {
+    if crate::common::is_year_shaped(types, rows, field)? {
         return rewrite(&|cell| {
             let year = match cell {
                 Value::String(s) => s.parse::<i32>().ok(),
@@ -3575,7 +3601,7 @@ pub(crate) fn every_instants(unit: Unit, step: i64, zone: &TimeZone, lo: f64, hi
     let interval = Interval::every(unit, step as f64, zone).expect("a tick interval steps at least 1");
     // d3 keeps stepping dates JavaScript holds to year 275760; the calendar here ends at year 9999.
     let range = interval.range(ms_of(lo), ms_of(hi) + 1).map_err(|why| {
-        crate::refuse!("a tick step of {step} {unit:?} reaching past the year 9999 the calendar holds is not supported: {why}")
+        diagnostic::refuse!("a tick step of {step} {unit:?} reaching past the year 9999 the calendar holds is not supported: {why}")
     })?;
     Ok(range.into_iter().map(|at| at as f64 / MS_PER_DAY).collect())
 }
@@ -4464,6 +4490,50 @@ mod tests {
     fn detect_yearquarter() {
         let dates = ["2024-01-01", "2024-04-01", "2024-07-01", "2024-10-01"];
         assert_eq!(detect_time_unit(&on_axis(&dates)), Some(TimeUnit::YearQuarter));
+    }
+
+    // ── the declared type decides ────────────────────────────────────────
+
+    fn declared(column: &str, kind: &str) -> ColumnTypes {
+        serde_json::from_value(serde_json::json!({ column: {"kind": kind, "element": null, "fields": null} })).unwrap()
+    }
+
+    fn column(cells: &[serde_json::Value]) -> Vec<serde_json::Map<String, serde_json::Value>> {
+        cells.iter().map(|c| serde_json::json!({"x": c}).as_object().unwrap().clone()).collect()
+    }
+
+    #[test]
+    fn a_declared_date_is_temporal_whatever_its_cells_look_like() {
+        let odd = column(&["2024-01-02".into(), "soon".into()]);
+        assert_eq!(infer_vega_type(&declared("x", "date"), &odd, "x").unwrap(), VegaType::Temporal);
+        assert_eq!(infer_vega_type(&declared("x", "datetime_tz"), &odd, "x").unwrap(), VegaType::Temporal);
+        assert_eq!(infer_vega_type(&declared("x", "string"), &odd, "x").unwrap(), VegaType::Nominal);
+        let nulls = column(&[serde_json::Value::Null]);
+        assert_eq!(infer_vega_type(&declared("x", "date"), &nulls, "x").unwrap(), VegaType::Quantitative);
+    }
+
+    #[test]
+    fn a_declared_string_keeps_its_shape_detection() {
+        let buckets = column(&["2024-Q1".into(), "2024-Q2".into()]);
+        let days = column(&["2024-01-01".into(), "2024-01-02".into()]);
+        assert_eq!(infer_vega_type(&declared("x", "string"), &buckets, "x").unwrap(), VegaType::Ordinal);
+        assert_eq!(infer_vega_type(&declared("x", "string"), &days, "x").unwrap(), VegaType::Temporal);
+        assert!(!x_is_standard_date(&declared("x", "string"), "x", &["2024-Q1"]).unwrap());
+    }
+
+    #[test]
+    fn a_declared_timestamp_is_a_standard_date_whatever_its_text() {
+        assert!(x_is_standard_date(&declared("x", "datetime_tz"), "x", &["not shaped like a date"]).unwrap());
+        assert!(x_is_temporal_candidate(&declared("x", "date"), "x", &["not shaped like a date"]).unwrap());
+        assert!(!x_is_standard_date(&declared("x", "date"), "x", &[]).unwrap());
+    }
+
+    #[test]
+    fn a_field_the_schema_does_not_declare_is_an_error() {
+        let rows = vec![serde_json::json!({"y": 1}).as_object().unwrap().clone()];
+        let err = infer_vega_type(&declared("y", "integer"), &rows, "x").unwrap_err();
+        assert!(err.contains("declares no type for column \"x\""), "{err}");
+        assert!(x_is_standard_date(&declared("y", "integer"), "x", &["2024-01-01"]).is_err());
     }
 
     // ── x_values_are_temporal_candidates ─────────────────────────────────
@@ -5579,10 +5649,11 @@ mod tests {
         let x = |rows: Vec<serde_json::Map<String, serde_json::Value>>| -> Vec<String> {
             rows.iter().map(|r| r["x"].as_str().unwrap().to_string()).collect()
         };
-        assert_eq!(x(normalize_labeled_temporal(&rows(&["2024-Q1", "2024-Q2"]), "x").unwrap().into_owned()), ["2024-01-01", "2024-04-01"]);
-        assert_eq!(x(normalize_labeled_temporal(&rows(&["2019", "2020"]), "x").unwrap().into_owned()), ["2019-01-01", "2020-01-01"]);
-        assert!(normalize_labeled_temporal(&rows(&["2023-W51", "2023-W53"]), "x").is_err(), "an out-of-range ISO week raises");
-        assert!(normalize_labeled_temporal(&rows(&["2024-Q1", "2024-01-05"]), "x").is_err(), "a mix of label and date raises");
+        let types = || column_types::ColumnTypes::default().with("x", column_types::ColumnType::String);
+        assert_eq!(x(normalize_labeled_temporal(&types(), &rows(&["2024-Q1", "2024-Q2"]), "x").unwrap().into_owned()), ["2024-01-01", "2024-04-01"]);
+        assert_eq!(x(normalize_labeled_temporal(&types(), &rows(&["2019", "2020"]), "x").unwrap().into_owned()), ["2019-01-01", "2020-01-01"]);
+        assert!(normalize_labeled_temporal(&types(), &rows(&["2023-W51", "2023-W53"]), "x").is_err(), "an out-of-range ISO week raises");
+        assert!(normalize_labeled_temporal(&types(), &rows(&["2024-Q1", "2024-01-05"]), "x").is_err(), "a mix of label and date raises");
     }
 
     // ── resolve_vega_label_layout (L1-L4) ────────────────────────────────

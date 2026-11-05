@@ -26,6 +26,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
+from .._results import rows_result
 from ._engine_render import render_pie_svg
 from ._svg_render import legend_label_order, render_board_to_svg
 
@@ -35,7 +36,7 @@ def _render(make_chart, chart_type: str, style: dict, rows, **kwargs):
     context = resolve_chart_style_context(theme)
     chart = make_chart(chart_type, style=style, **kwargs)
     resolved = resolve(chart, rows, chart_style_context=context)
-    artifact = render_resolved_chart(resolved, rows, resolve_style(theme))
+    artifact = render_resolved_chart(resolved, rows_result(rows), resolve_style(theme))
     return artifact.payload
 
 

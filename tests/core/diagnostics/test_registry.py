@@ -558,3 +558,11 @@ def test_warning_code_redundant_flag_exists() -> None:
     non_redundant = [dc for dc in all_warnings if dc.code not in REDUNDANT_CODES]
     for dc in non_redundant:
         assert dc.redundant is False, f"{dc.code}.redundant should default to False"
+
+
+def test_a_retired_warning_code_is_never_also_registered() -> None:
+    """A code in both sets is suppressed by the retired check yet still emitted."""
+    from dbt_charts.core.diagnostics import REGISTRY
+    from dbt_charts.core.diagnostics.codes_retired import RETIRED_WARNING_CODES
+
+    assert RETIRED_WARNING_CODES.isdisjoint(REGISTRY.codes(level="warning"))

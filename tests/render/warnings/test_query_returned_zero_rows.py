@@ -123,7 +123,7 @@ def test_no_fire_when_zero_rows_is_explained_by_truncation() -> None:
     that is WARN_QUERY_RESULT_TRUNCATED's story to tell (kept_row_count=0),
     not this detector's: the query did not honestly return nothing, its
     result was cut down to nothing by the max_result_bytes ceiling."""
-    from dbt_charts.core.execute.executor import TruncationInfo
+    from dbt_charts.core.execute.cache_backend import TruncationInfo
 
     chart = _make_chart()
     board = make_test_resolved_board(charts={chart.id: chart})

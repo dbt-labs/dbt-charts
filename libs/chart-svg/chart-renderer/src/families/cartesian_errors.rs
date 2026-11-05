@@ -8,8 +8,10 @@ use std::collections::{BTreeMap, HashMap};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use crate::codes;
-use crate::diagnostic::{py_repr, Diagnostic};
+use column_types::ColumnTypes;
+
+use diagnostic::codes;
+use diagnostic::{py_repr, Diagnostic};
 use crate::families::multiples::{self, PartitionAxis};
 use crate::families::table::bind::coerce_numeric_cell;
 use crate::families::temporal::{infer_vega_type, VegaType};
@@ -264,11 +266,11 @@ pub fn check(payload: &Payload, chart_type: &str) -> Result<(), Diagnostic> {
         // re-slices by each row's raw panel membership (`restripe`: the x can
         // itself be the multiples field), and a panel's rows carry no partition column.
         let checked = match (chart_type, facts.x.as_deref()) {
-            ("bar", Some(x)) => super::temporal::normalize_labeled_temporal(&payload.rows, x)?,
+            ("bar", Some(x)) => super::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, x)?,
             _ => Cow::Borrowed(payload.rows.as_slice()),
         };
         if facts.panel_axes.is_empty() {
-            duplicate_rows(&facts, &checked)?;
+            duplicate_rows(&facts, &payload.schema.rows, &checked)?;
         } else {
             let indexed: Vec<Row> = payload
                 .rows
@@ -293,63 +295,63 @@ pub fn check(payload: &Payload, chart_type: &str) -> Result<(), Diagnostic> {
                         row
                     })
                     .collect();
-                duplicate_rows(&facts, &rows)?;
+                duplicate_rows(&facts, &payload.schema.rows, &rows)?;
             }
         }
-        null_series(&facts, &payload.rows)?;
+        null_series(&facts, &payload.schema.rows, &payload.rows)?;
     }
     if chart_type == "histogram" {
-        histogram(&facts, &payload.rows)?;
+        histogram(&facts, &payload.schema.rows, &payload.rows)?;
     }
     if matches!(chart_type, "bar" | "line" | "area" | "scatter" | "heatmap") {
-        super::cartesian_x_errors::check(&payload.resolved, &payload.rows)?;
+        super::cartesian_x_errors::check(&payload.resolved, &payload.schema.rows, &payload.rows)?;
     }
     layers(&facts, payload)?;
     if matches!(chart_type, "bar" | "line" | "area") {
         endpoint_rail(&facts, &payload.rows)?;
     }
     value_labels(&facts, payload)?;
-    mirror(&facts, &payload.rows)?;
+    mirror(&facts, &payload.schema.rows, &payload.rows)?;
     multiples_conflicts(&facts, payload)?;
     legend_align(&facts)
 }
 
 /// `validation.py::_plot_key_fields`: the columns one row per key must hold.
-fn plot_key_fields(facts: &Facts, rows: &[Row]) -> Vec<String> {
+fn plot_key_fields(facts: &Facts, types: &ColumnTypes, rows: &[Row]) -> Result<Vec<String>, Diagnostic> {
     let color = if facts.wide_measures.is_empty() { facts.color_field() } else { facts.color.as_deref() };
     let y_fields: Vec<&str> = if facts.wide_measures.is_empty() {
         facts.y.as_ref().and_then(Value::as_str).into_iter().collect()
     } else {
         facts.wide_measures.iter().map(String::as_str).collect()
     };
-    let Some(x_field) = facts.x.as_deref().filter(|x| !x.is_empty()) else { return Vec::new() };
+    let Some(x_field) = facts.x.as_deref().filter(|x| !x.is_empty()) else { return Ok(Vec::new()) };
     if y_fields.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let y_types: Vec<VegaType> = y_fields.iter().map(|f| infer_vega_type(rows, f)).collect();
+    let y_types: Vec<VegaType> = y_fields.iter().map(|f| infer_vega_type(types, rows, f)).collect::<Result<_, _>>()?;
     let mut fields = if facts.chart_type == "bar" {
-        let x_type = infer_vega_type(rows, x_field);
+        let x_type = infer_vega_type(types, rows, x_field)?;
         let all_quantitative = y_types.iter().all(|t| *t == VegaType::Quantitative);
         if x_type != VegaType::Quantitative && all_quantitative {
             vec![x_field.to_string()]
         } else if y_fields.len() == 1 && matches!(y_types[0], VegaType::Nominal | VegaType::Ordinal) && x_type == VegaType::Quantitative {
             vec![y_fields[0].to_string()]
         } else {
-            return Vec::new();
+            return Ok(Vec::new());
         }
     } else {
         if y_types.iter().any(|t| *t != VegaType::Quantitative) {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         vec![x_field.to_string()]
     };
     fields.extend(color.map(str::to_string));
-    fields
+    Ok(fields)
 }
 
 /// `validation.py::validate_preaggregated_data`, for one panel's rows.
-fn duplicate_rows(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
-    let fields = plot_key_fields(facts, rows);
+fn duplicate_rows(facts: &Facts, types: &ColumnTypes, rows: &[Row]) -> Result<(), Diagnostic> {
+    let fields = plot_key_fields(facts, types, rows)?;
     // `connect:` draws one vertex per row, so a shared x is a revisit, not a duplicate.
     if fields.is_empty() || facts.connect.is_some() {
         return Ok(());
@@ -387,14 +389,14 @@ fn duplicate_rows(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
 }
 
 /// `validation.py::validate_color_series`: a NULL in a categorical series column.
-fn null_series(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
+fn null_series(facts: &Facts, types: &ColumnTypes, rows: &[Row]) -> Result<(), Diagnostic> {
     let Some(channel) = facts.resolved_channels.get("color").filter(|c| c.mode == "series") else { return Ok(()) };
     if channel.data_field.as_deref().is_none_or(str::is_empty) {
         return Ok(());
     }
     let wide = !facts.wide_measures.is_empty();
     let Some(field) = (if wide { facts.color.as_deref() } else { channel.data_field.as_deref() }) else { return Ok(()) };
-    if !wide && !matches!(infer_vega_type(rows, field), VegaType::Nominal | VegaType::Ordinal) {
+    if !wide && !matches!(infer_vega_type(types, rows, field)?, VegaType::Nominal | VegaType::Ordinal) {
         return Ok(());
     }
     let null_rows = rows.iter().filter(|row| row.get(field).is_none_or(Value::is_null)).count();
@@ -448,7 +450,7 @@ fn endpoint_rail(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
 }
 
 /// `mirror_axis.py::MirrorAxisFeature.apply`.
-fn mirror(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
+fn mirror(facts: &Facts, types: &ColumnTypes, rows: &[Row]) -> Result<(), Diagnostic> {
     if !facts.mirrored() {
         return Ok(());
     }
@@ -479,21 +481,21 @@ fn mirror(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
         let code = if facts.multiples.is_some() { &codes::ERR_MULTIPLES_ENDPOINT_LABELS } else { &codes::ERR_MIRROR_ENDPOINT_LABELS };
         return Err(Diagnostic::new(code, [("chart_id", chart_id())]));
     }
-    mirror_format(facts, rows)?;
+    mirror_format(facts, types, rows)?;
     unmeasurable_align(facts)
 }
 
 /// The `mirror.format` gate: the ghost relabels the shared y scale, which
 /// is categorical on a horizontal bar, a heatmap and a dot plot, so a number
 /// format can only read numeric-looking categories.
-fn mirror_format(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
+fn mirror_format(facts: &Facts, types: &ColumnTypes, rows: &[Row]) -> Result<(), Diagnostic> {
     let Some(format) = facts.style.axis_y.mirror.as_ref().and_then(|m| m.get("format")).filter(|f| !f.is_null()) else {
         return Ok(());
     };
     let (field, vl_type) = match facts.chart_type.as_str() {
         "bar" if facts.orientation.as_deref() == Some("horizontal") => {
             let Some(x) = facts.x.as_deref() else { return Ok(()) };
-            (x, infer_vega_type(rows, x))
+            (x, infer_vega_type(types, rows, x)?)
         }
         "heatmap" => {
             let Some(y) = facts.y.as_ref().and_then(Value::as_str) else { return Ok(()) };
@@ -501,7 +503,7 @@ fn mirror_format(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
         }
         "scatter" => {
             let Some(y) = facts.y.as_ref().and_then(Value::as_str) else { return Ok(()) };
-            (y, infer_vega_type(rows, y))
+            (y, infer_vega_type(types, rows, y)?)
         }
         _ => return Ok(()),
     };
@@ -606,7 +608,7 @@ fn gapless_integer_run(values: &[Option<&Value>]) -> bool {
 }
 
 /// `bar.py::_emit_histogram` and `validation.py::validate_raw_rows_for_histogram`.
-fn histogram(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
+fn histogram(facts: &Facts, types: &ColumnTypes, rows: &[Row]) -> Result<(), Diagnostic> {
     let non_numeric = |field: &str, vl_type: &str| {
         Diagnostic::new(
             &codes::ERR_HISTOGRAM_NON_NUMERIC,
@@ -614,16 +616,17 @@ fn histogram(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
         )
     };
     let Some(x) = facts.x.as_deref() else { return Err(non_numeric("<none>", "missing")) };
-    let x_type = infer_vega_type(rows, x);
+    let x_type = infer_vega_type(types, rows, x)?;
     if x_type != VegaType::Quantitative {
         return Err(non_numeric(x, x_type.name()));
     }
     let color = facts.color_field();
-    let numeric_extra: Vec<&String> = rows[0]
-        .keys()
-        .filter(|column| column.as_str() != x && Some(column.as_str()) != color)
-        .filter(|column| infer_vega_type(rows, column) == VegaType::Quantitative)
-        .collect();
+    let mut numeric_extra: Vec<&String> = Vec::new();
+    for column in rows[0].keys().filter(|column| column.as_str() != x && Some(column.as_str()) != color) {
+        if infer_vega_type(types, rows, column)? == VegaType::Quantitative {
+            numeric_extra.push(column);
+        }
+    }
     let x_values: Vec<Option<&Value>> = rows.iter().map(|row| row.get(x)).collect();
     if numeric_extra.is_empty() || !gapless_integer_run(&x_values) {
         return Ok(());
@@ -739,8 +742,11 @@ fn layers(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
             return Err(Diagnostic::new(&codes::ERR_LAYER_AXIS_POSITION_ORIENTATION, [("chart_id", chart_id())]));
         }
         // Each layer's own branch raises in authored order; an area layer's split-base check precedes its step.
-        let split_base = !facts.wide_measures.is_empty()
-            || facts.color.as_deref().is_some_and(|c| matches!(infer_vega_type(&payload.rows, c), VegaType::Nominal | VegaType::Ordinal));
+        let color_is_category = match facts.color.as_deref() {
+            Some(c) => matches!(infer_vega_type(&payload.schema.rows, &payload.rows, c)?, VegaType::Nominal | VegaType::Ordinal),
+            None => false,
+        };
+        let split_base = !facts.wide_measures.is_empty() || color_is_category;
         for layer in &facts.layers {
             if layer.kind == "area" && split_base {
                 return Err(Diagnostic::new(&codes::ERR_LAYER_AREA_SPLIT_HORIZONTAL_BASE, [("chart_id", chart_id())]));
@@ -754,7 +760,7 @@ fn layers(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
     layer_x(facts, payload)?;
     // `apply_step_band` rejects a data-driven color field; it only runs on a band x.
     let colored_step = |l: &Layer| step_curve(l) && l.color.is_some();
-    if facts.layers.iter().any(colored_step) && super::cartesian_x_errors::x_is_band(&payload.resolved, &payload.rows)? {
+    if facts.layers.iter().any(colored_step) && super::cartesian_x_errors::x_is_band(&payload.resolved, &payload.schema.rows, &payload.rows)? {
         return Err(Diagnostic::new(&codes::ERR_STEP_BAND_MULTI_SERIES, [("chart_id", chart_id())]));
     }
     Ok(())
@@ -764,8 +770,8 @@ fn layers(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
 /// shares the base's x scale, so its type must be one that scale takes.
 fn layer_x(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
     let Some(base_field) = facts.x.as_deref().filter(|_| facts.layers.iter().any(|l| l.x.is_some())) else { return Ok(()) };
-    let Some(base_type) = super::cartesian_x_errors::base_x_type(&payload.resolved, &payload.rows)? else { return Ok(()) };
-    let base_rows = super::temporal::normalize_labeled_temporal(&payload.rows, base_field)?;
+    let Some(base_type) = super::cartesian_x_errors::base_x_type(&payload.resolved, &payload.schema.rows, &payload.rows)? else { return Ok(()) };
+    let base_rows = super::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, base_field)?;
     let mut base_values = base_rows.iter().filter_map(|row| row.get(base_field)).filter(|v| !v.is_null()).peekable();
     // Only a date-like base takes a temporal layer.
     let base_date_shaped =
@@ -777,10 +783,12 @@ fn layer_x(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
             &payload.rows
         } else {
             let dataset = super::layers::resolve_layer_rows(payload, layer.query_name.as_deref(), facts.query_name.as_deref(), &facts.chart_type)?;
-            own_rows = super::temporal::normalize_labeled_temporal(dataset, x_field)?;
+            let dataset_types = super::layers::resolve_layer_types(payload, layer.query_name.as_deref(), facts.query_name.as_deref(), &facts.chart_type)?;
+            own_rows = super::temporal::normalize_labeled_temporal(dataset_types, dataset, x_field)?;
             &own_rows
         };
-        let layer_type = infer_vega_type(rows, x_field);
+        let types = super::layers::resolve_layer_types(payload, layer.query_name.as_deref(), facts.query_name.as_deref(), &facts.chart_type)?;
+        let layer_type = infer_vega_type(types, rows, x_field)?;
         let code = if base_type == VegaType::Quantitative && rows.first().is_some_and(|row| row.contains_key(x_field)) && layer_type != VegaType::Quantitative {
             &codes::ERR_LAYER_X_NOT_QUANTITATIVE
         } else if !matches!(base_type, VegaType::Nominal | VegaType::Ordinal)

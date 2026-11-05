@@ -100,16 +100,39 @@ def test_preview_coerces_values_like_execution(
     assert any("must be numeric" in e for e in result.errors), result.errors
 
 
-def test_preview_of_a_source_without_a_knowable_dialect_uses_the_default(
-    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+def _write_profile(directory: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (directory / "profiles.yml").write_text(
+        "p:\n  target: dev\n  outputs:\n    dev:\n      type: duckdb\n"
+        "      path: x.db\n"
+    )
+    monkeypatch.setenv("DBT_PROFILES_DIR", str(directory))
+    monkeypatch.delenv("DBT_TARGET", raising=False)
+    monkeypatch.delenv("DBT_PROFILE", raising=False)
+
+
+def test_preview_of_a_dbt_profile_source_reports_the_profile_dialect(
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A `dbt_profile` source's warehouse is only known at execute; the
-    preview still renders, in the default dialect's spelling."""
+    _write_profile(tmp_path, monkeypatch)
     project = _project(tmp_path, local_project, "dbt_profile")
     result = lookup_board_query_sql("main", Path("charts/b.yml"), project=project)
     assert result.success, result.errors
-    assert result.sql is not None
+    assert result.dialect == "duckdb"
     assert "CAST(day AS DATE) BETWEEN" in result.sql
+
+
+def test_preview_of_a_dbt_profile_source_without_a_profile_fails(
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DBT_PROFILES_DIR", str(tmp_path / "missing"))
+    project = _project(tmp_path, local_project, "dbt_profile")
+    result = lookup_board_query_sql("main", Path("charts/b.yml"), project=project)
+    assert not result.success
+    assert any("profiles.yml" in e for e in result.errors), result.errors
 
 
 REF_BOARD = """
@@ -224,11 +247,15 @@ def test_preview_of_a_ref_opens_no_warehouse_connection(
 
 
 def test_preview_resolves_refs_against_the_sources_target_path(
-    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The previewed SQL targets the manifest the source's target built, not the
     default one."""
     import json
+
+    _write_profile(tmp_path, monkeypatch)
 
     (tmp_path / "charts").mkdir()
     (tmp_path / "charts" / "b.yml").write_text(

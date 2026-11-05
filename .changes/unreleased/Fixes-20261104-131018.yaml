@@ -1,0 +1,3 @@
+kind: Fixes
+body: A table spark on a text column now says the column must be an array of numbers instead of reporting an engine gap.
+time: 2026-11-04T13:10:18.349449-08:00

@@ -140,9 +140,11 @@ DimensionTicksStylePatch = build_patch_model(DimensionTicksStyle)
 AxisGridThresholdStylePatch: type  # declared for forward reference clarity
 from dbt_charts.core.compile.models.style.theme.axis import (
     AxisGridThresholdStyle,  # noqa: PLC0415, E402
+    AxisGridTornBaselineStyle,  # noqa: PLC0415, E402
 )
 
 AxisGridThresholdStylePatch = build_patch_model(AxisGridThresholdStyle)
+AxisGridTornBaselineStylePatch = build_patch_model(AxisGridTornBaselineStyle)
 BaseAxisGridStylePatch = build_patch_model(BaseAxisGridStyle)
 AxisLineStylePatch = build_patch_model(AxisLineStyle)
 AxisTitleStylePatch = build_patch_model(AxisTitleStyle)

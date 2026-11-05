@@ -1,8 +1,10 @@
-"""Lookup stage: plain-data partition of probes into hits, misses and failures."""
+"""Lookup stage: plain-data partition of planned queries into hits, misses and failures."""
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import Mock
+
+import pytest
 
 from dbt_charts.core.compile.models.cache import CachePolicy
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -13,10 +15,12 @@ from dbt_charts.core.execute.cache_backend import (
     CacheOutcome,
     QueryResultCache,
     ResultRows,
-    TruncatedReason,
+    TruncationInfo,
 )
-from dbt_charts.core.execute.lookup import Probe, lookup, memo_key
+from dbt_charts.core.execute.lookup import limit_rows, lookup, memo_key
+from dbt_charts.core.execute.plan import PlannedQuery
 
+from ..._lookup import planned_query
 from ..._results import rows_result
 
 KEY = ("s", "q", "v")
@@ -34,8 +38,10 @@ def _query(incremental: str | None = None, cache: CachePolicy = POLICY) -> SqlQu
     return SqlQuery(sql="SELECT 1", source="db", cache=cache, incremental=incremental)
 
 
-def _probe(query: SqlQuery, use_store: bool = True, tailable: bool = True) -> Probe:
-    return Probe("q", query, KEY, use_store, lambda: tailable)
+def _probe(
+    query: SqlQuery, use_store: bool = True, tailable: bool = True
+) -> PlannedQuery:
+    return planned_query("q", query, KEY, use_store, tailable=tailable)
 
 
 def _hit(rows: list[dict[str, Any]]) -> CacheHit:
@@ -44,22 +50,18 @@ def _hit(rows: list[dict[str, Any]]) -> CacheHit:
 
 
 def _run(
-    probe: Probe,
+    probe: PlannedQuery,
     cache: Mock | None = None,
     memo: dict[tuple[str, str, str, str], ResultRows] | None = None,
     errors: dict[str, Exception] | None = None,
     force_refresh: bool = False,
     resume_incremental: bool = True,
 ):
-    def enforce(r: ResultRows, name: str, seed: TruncatedReason | None) -> ResultRows:
-        return r
-
     return lookup(
         [probe],
         memo=memo or {},
         errors=errors or {},
         result_cache=cache,
-        enforce_limits=enforce,
         force_refresh=force_refresh,
         resume_incremental=resume_incremental,
     )
@@ -156,3 +158,36 @@ def test_unregistered_failure_code_reruns() -> None:
     failure = CachedQueryFailure("QueryError", "m", "ERR-GONE-XYZ", {}, "", WRITTEN)
     found = _run(_probe(_query()), FakeCache(failure))
     assert [m.name for m in found.misses] == ["q"] and not found.failures
+
+
+def test_limit_rows_returns_the_cut_and_leaves_its_input_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("dbt_charts.core.compile.config.resolve_max_rows", lambda: 2)
+    given = rows_result([{"a": 1}, {"a": 2}, {"a": 3}])
+
+    kept, truncation = limit_rows(given, "q")
+
+    assert kept.rows == [{"a": 1}, {"a": 2}]
+    assert truncation == TruncationInfo("q", 2, "max_rows")
+    assert len(given.rows) == 3
+
+
+def test_limit_rows_within_the_ceilings_reports_no_truncation() -> None:
+    kept, truncation = limit_rows(rows_result([{"a": 1}]), "q")
+    assert kept.rows == [{"a": 1}] and truncation is None
+
+
+def test_limit_rows_keeps_an_upstream_seed_reason() -> None:
+    _kept, truncation = limit_rows(rows_result([{"a": 1}]), "q", "max_rows")
+    assert truncation == TruncationInfo("q", 1, "max_rows")
+
+
+def test_store_hit_over_a_lowered_ceiling_carries_the_truncation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("dbt_charts.core.compile.config.resolve_max_rows", lambda: 1)
+    found = _run(_probe(_query()), FakeCache(_hit([{"a": 1}, {"a": 2}])))
+    hit = found.hits["q"]
+    assert hit.result.rows == [{"a": 1}]
+    assert hit.truncation == TruncationInfo("q", 1, "max_rows")

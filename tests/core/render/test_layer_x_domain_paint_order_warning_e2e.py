@@ -18,6 +18,8 @@ from dbt_charts.core.compile import compile
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
+from ..._results import rows_schema
+
 _CODE = "WARN-LAYER-X-DOMAIN-PAINT-ORDER"
 
 _BASE_ROWS = [
@@ -71,6 +73,7 @@ def _make_executor(board: object, query_registry: object, layer_rows: list[dict]
         ok = Mock()
         ok.is_success = True
         ok.data = rows_by_query[kwargs["query_name"]]
+        ok.schema = rows_schema(ok.data)
         ok.resolved_relations = None
         ok.truncated_reason = None
         return ok

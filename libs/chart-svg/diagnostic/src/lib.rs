@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::codes;
+pub mod codes;
 use d3rs::py_float::float_repr;
 
 use serde::Serialize;
@@ -82,7 +82,7 @@ macro_rules! refuse {
 }
 
 /// Unit tests compare a refusal by its text.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Diagnostic {
     pub fn contains(&self, needle: &str) -> bool {
         self.to_string().contains(needle)
@@ -93,14 +93,14 @@ impl Diagnostic {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl PartialEq<String> for Diagnostic {
     fn eq(&self, other: &String) -> bool {
         self.to_string() == *other
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl PartialEq<&str> for Diagnostic {
     fn eq(&self, other: &&str) -> bool {
         self.to_string() == *other

@@ -15,6 +15,7 @@ from dbt_charts.core.compile.config import get_default_theme_name, get_theme_sty
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.render.engine import render_callout_card
 
+from ...._results import rows_result
 from ._callout_test_helpers import callout_style_for_tone, compute_svg_text_fills
 
 
@@ -53,7 +54,7 @@ def _v2_svg(
     rs, _ = _rs_and_ctx()
     svg, _ = render_native(
         resolved,
-        [],
+        rows_result([]),
         width=resolved.style.preferred_width,
         height=0.0,
         padding=None,

@@ -1,7 +1,7 @@
 //! The vertical bar panel on a band or temporal x: columns over a category axis.
 
 use crate::common::{VALUE_AXIS_BREATHING_ROOM, axis_title_band, axis_title_text, color_domain_of, row_num, row_str};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::axis_caption::{AxisCaption, category_axis_caption, date_value_caption, value_axis_caption};
 use crate::families::cartesian::{BandScale, vl_default_tick_count};
 use d3rs::scale::{Band, Continuous};
@@ -15,7 +15,8 @@ use crate::frame::{ChartFrame, FrameTitle};
 use crate::layout::Rect;
 use crate::time_axis::{Grain as AxisGrain, TimeAxis};
 use crate::vega_fit::category_label_layout;
-use crate::{Padding, Payload, codes, vega_fit};
+use crate::{Padding, Payload, vega_fit};
+use diagnostic::codes;
 
 use measure::FontBook;
 use scene::{Attrs, Node, PathData, Role};
@@ -221,7 +222,7 @@ fn band_tick_len(ax_x: &crate::common::AxisStyle, restored: bool) -> f64 {
 /// `ERR-ANNOTATION-UNSUPPORTED` for a bar shape whose slots the annotation maps cannot follow.
 pub(super) fn annotations_unsupported(r: &BarResolved, chart_type: &str) -> Diagnostic {
     Diagnostic::new(
-        &crate::codes::ERR_ANNOTATION_UNSUPPORTED,
+        &diagnostic::codes::ERR_ANNOTATION_UNSUPPORTED,
         [("chart_id", Value::String(r.id.clone())), ("chart_type", Value::String(chart_type.into()))],
     )
 }
@@ -446,11 +447,11 @@ pub(crate) fn render_vertical_panel(
     // Production's emitter rewrites a labeled or year-shaped x to ISO dates
     // before anything reads it; a layer reading its own query is rewritten
     // the same way below.
-    let rows_normalized = crate::families::temporal::normalize_labeled_temporal(rows, &r.x)?;
+    let rows_normalized = crate::families::temporal::normalize_labeled_temporal(&r.column_types, rows, &r.x)?;
     let rows = &*rows_normalized;
     let whole_rows = facet.map_or(r.whole_rows.as_deref(), |f| Some(f.chart_rows));
     let chart_rows_normalized =
-        whole_rows.map(|whole| crate::families::temporal::normalize_labeled_temporal(whole, &r.x)).transpose()?;
+        whole_rows.map(|whole| crate::families::temporal::normalize_labeled_temporal(&r.column_types, whole, &r.x)).transpose()?;
     let value_domain_rows = facet.map_or_else(|| Some(crate::legend_view::axis_rows(r.whole_rows.as_deref(), rows)), |f| f.value_domain_rows);
     let value_axis_right_overhang = facet.map_or(0.0, |f| f.value_axis_right_overhang);
     // `independent_scale` gates two effects, each at its own read site:
@@ -502,7 +503,8 @@ pub(crate) fn render_vertical_panel(
             return Ok(Cow::Borrowed(rows));
         }
         let own_rows = resolve_layer_rows(payload, query_name, r.query_name.as_deref(), "bar")?;
-        crate::families::temporal::normalize_labeled_temporal(own_rows, x.unwrap_or(cat_field))
+        let own_types = crate::families::layers::resolve_layer_types(payload, query_name, r.query_name.as_deref(), "bar")?;
+        crate::families::temporal::normalize_labeled_temporal(own_types, own_rows, x.unwrap_or(cat_field))
     };
     let filled_x = x_resolution(r, chart_rows)?;
     let law = filled_x.resolution;
@@ -527,7 +529,7 @@ pub(crate) fn render_vertical_panel(
     // A literal `step` doubles onto band edges only where the x resolves a band
     // scale (`is_band_step`); a grained-temporal x draws d3's centered step.
     let band_x = layers.iter().any(OverlayLayer::is_step_curve)
-        && crate::families::cartesian_x_errors::x_is_band(&payload.resolved, &payload.rows)?;
+        && crate::families::cartesian_x_errors::x_is_band(&payload.resolved, &payload.schema.rows, &payload.rows)?;
     let layer_rows_store = layers
         .iter()
         .map(|l| {
@@ -792,12 +794,12 @@ pub(crate) fn render_vertical_panel(
     let authored_x: Vec<String> =
         facet.map_or(payload.rows.as_slice(), |f| f.chart_rows).iter().map(|row| row_str(row, cat_field)).collect();
     let authored_x: Vec<&str> = authored_x.iter().map(String::as_str).collect();
-    let x_standard_dates = crate::families::temporal::x_values_are_standard_dates(&authored_x);
+    let x_standard_dates = crate::families::temporal::x_is_standard_date(&r.column_types, cat_field, &authored_x)?;
     // Front-end contract only, same law as line/area's own `x_is_standard_date`
     // (`infer_vega_type_from_data`'s STRICT `all_temporal` gate): a daily-date x
     // that `detect_time_unit` doesn't bucket still headers through the
     // continuous-date fallback, never the raw ISO string.
-    let x_is_standard_date = crate::families::temporal::x_values_are_standard_dates(&domain_strs);
+    let x_is_standard_date = crate::families::temporal::x_is_standard_date(&r.column_types, cat_field, &domain_strs)?;
     // What the labels paint is keyed by the grain they resolve to
     // (`resolve_label_time_unit`), not the data's own.
     let label_unit = detected_data_tu
@@ -1411,7 +1413,7 @@ pub(crate) fn render_vertical_panel(
     let strip_axis_gap_growth = match r.effective_support_table_style.as_ref() {
         Some(style) if style.position == "bottom" => {
             let quantitative =
-                crate::families::temporal::infer_vega_type(rows, cat_field) == crate::families::temporal::VegaType::Quantitative;
+                crate::families::temporal::infer_vega_type(&r.column_types, rows, cat_field)? == crate::families::temporal::VegaType::Quantitative;
             let block = match (ax_x.labels.angle, detected_data_tu) {
                 (Some(_), _) if quantitative => cat_font_size,
                 (Some(angle), Some(data_tu)) if all_dates => {
@@ -1676,7 +1678,7 @@ pub(crate) fn render_vertical_panel(
     let stroke_w = r.style.mark.border.width.unwrap_or(0.0);
     let drawn_stroke_w = if stroke_color == "none" { 0.0 } else { stroke_w };
     let data_map = build_data_map(rows, cat_field, val_field, color_field, r.y_start.is_none())?;
-    let extras = Extras::build(rows, cat_field, color_field, r.y_start.is_none(), &r.tooltip)?;
+    let extras = Extras::build(rows, cat_field, color_field, r.y_start.is_none(), &r.tooltip, &r.column_types)?;
     let link = r.datum_link(
         cat_field,
         match (&time, x_standard_dates) {
@@ -1802,7 +1804,7 @@ pub(crate) fn render_vertical_panel(
     }
     let x_scale = XScale::of(&law);
     if column_split.is_some() && matches!(x_scale, XScale::ContinuousTemporal) {
-        crate::diagnostic::warn(Diagnostic::new(
+        diagnostic::warn(Diagnostic::new(
             &codes::WARN_BAR_GROUPED_SERIES_COINCIDE,
             [("chart_id", json!(payload.chart_id()?)), ("field", json!(cat_field))],
         ));
@@ -1937,13 +1939,13 @@ pub(crate) fn render_vertical_panel(
     })?;
     // Vega-Lite refuses an `xOffset` over a continuous x: production's own grouped bar under a strip crashes there.
     if time.as_ref().is_some_and(|t| !t.is_discrete()) && is_grouped && !is_stacked && r.support_table.is_some() {
-        return Err(crate::refuse!("bar: grouped bars on a time x axis under a support table are not supported").into());
+        return Err(diagnostic::refuse!("bar: grouped bars on a time x axis under a support table are not supported").into());
     }
     if time.as_ref().is_some_and(TimeX::bars_on_band) && r.support_table.is_some() {
-        return Err(crate::refuse!("bar: a support table under grouped value labels on a time x axis is not supported").into());
+        return Err(diagnostic::refuse!("bar: a support table under grouped value labels on a time x axis is not supported").into());
     }
     if time.as_ref().is_some_and(TimeX::bars_on_band) && !bar_layers.is_empty() {
-        return Err(crate::refuse!("bar: a bar layer over grouped value labels on a time x axis is not supported").into());
+        return Err(diagnostic::refuse!("bar: a bar layer over grouped value labels on a time x axis is not supported").into());
     }
     // A step layer's xOffset is a point scale over its band edges and the base's
     // series: it replaces a grouped base's offset band scale, so the base's bars

@@ -309,9 +309,9 @@ pub fn extra_axis_is_affordable(unnarrowed_panel_width: f64, extra_axis_px: f64)
 /// Production resolve rejects a both-edge mirror under an independent scale
 /// (`_axes.py::_apply_multiples_mirror`): each panel owns its scale, so
 /// mirroring a shared one to both edges is meaningless.
-pub fn independent_mirror_error(chart_id: &str) -> crate::diagnostic::Diagnostic {
-    crate::diagnostic::Diagnostic::new(
-        &crate::codes::ERR_MULTIPLES_INDEPENDENT_SCALE_MIRROR,
+pub fn independent_mirror_error(chart_id: &str) -> diagnostic::Diagnostic {
+    diagnostic::Diagnostic::new(
+        &diagnostic::codes::ERR_MULTIPLES_INDEPENDENT_SCALE_MIRROR,
         [("chart_id", Value::from(chart_id))],
     )
 }
@@ -321,8 +321,8 @@ pub fn independent_mirror_error(chart_id: &str) -> crate::diagnostic::Diagnostic
 /// any composite width correction.
 pub fn warn_panel_below_minimum(chart_id: &str, panel_cols: usize, panel_width: f64) {
     if panel_width < FACET_MIN_PANEL_PX {
-        crate::diagnostic::warn(crate::diagnostic::Diagnostic::new(
-            &crate::codes::WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM,
+        diagnostic::warn(diagnostic::Diagnostic::new(
+            &diagnostic::codes::WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM,
             [
                 ("chart_id", Value::from(chart_id)),
                 ("min_panel_px", Value::from(FACET_MIN_PANEL_PX)),

@@ -30,6 +30,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
+from ...._results import rows_result
+
 _BOARD_STYLE = resolve_style(get_theme_style())
 _BOARD_CTX = resolve_chart_style_context(get_theme_style())
 
@@ -121,7 +123,7 @@ def _two_series_two_row_data() -> list[dict[str, Any]]:
 
 
 def _render(rc, data: list[dict[str, Any]], width: float = 400.0) -> dict[str, Any]:
-    artifact = render_resolved_chart(rc, data, _BOARD_STYLE, width=width)
+    artifact = render_resolved_chart(rc, rows_result(data), _BOARD_STYLE, width=width)
     assert artifact.kind == "vega_spec"
     return artifact.payload
 

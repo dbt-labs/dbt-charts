@@ -97,7 +97,7 @@ def test_height_provider_uses_nested_board_resolved_style() -> None:
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = []
     render_ctx = SizingRenderCtx(
-        executor=executor,
+        results=executor,
         resolved_style=outer_rs,
         chart_style_context=outer_ctx,
         pre_resolved={"revenue": _resolved(chart, outer_ctx)},
@@ -218,7 +218,7 @@ def test_sibling_nested_boards_different_themes_get_correct_resolved_styles() ->
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = []
     render_ctx = SizingRenderCtx(
-        executor=executor,
+        results=executor,
         resolved_style=cream_rs,  # outer board is cream
         chart_style_context=cream_ctx,
         pre_resolved={
@@ -319,7 +319,7 @@ def test_height_provider_resolved_style_param_propagated_to_render(
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = []
     render_ctx = SizingRenderCtx(
-        executor=executor,
+        results=executor,
         resolved_style=outer_rs,
         chart_style_context=outer_ctx,
         pre_resolved={"metric": _resolved(chart, outer_ctx)},
@@ -397,7 +397,7 @@ def test_cols_alignment_in_nested_board_uses_that_boards_card_padding() -> None:
 
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     render_ctx = SizingRenderCtx(
-        executor=executor,
+        results=executor,
         resolved_style=outer_rs,
         chart_style_context=outer_ctx,
         pre_resolved={"revenue": _resolved(chart, outer_ctx)},

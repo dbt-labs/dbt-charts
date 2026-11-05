@@ -10,8 +10,8 @@
 
 use serde::Deserialize;
 
-use crate::codes;
-use crate::diagnostic::Diagnostic;
+use diagnostic::codes;
+use diagnostic::Diagnostic;
 use crate::common::{field_display_text, truncate_label, truncate_label_with, FieldLabels, Font, MeasuredAs};
 use crate::contract;
 use crate::pattern::library;
@@ -21,6 +21,7 @@ use measure::FontBook;
 use crate::vega_fit;
 use crate::families::scatter_shape::{self, Bounds};
 use d3rs::vega_symbol::VegaSymbol;
+use crate::scene_path::scene_path;
 
 #[derive(Deserialize)]
 pub struct LegendConfig {
@@ -1306,7 +1307,7 @@ fn symbol_node(symbol: LegendSymbol, fill: &str, (cx, cy): (f64, f64)) -> Node {
     let square = |attrs: Attrs| Node::rect(Role::Legend, (cx - 5.0, cy - 5.0, 10.0, 10.0), attrs);
     let path = |d: PathData, attrs: Attrs| Node::path(Role::Legend, d, attrs).translate(cx, cy);
     let glyph = |d: &PathData, attrs: Attrs| path(d.clone(), attrs);
-    let disc = || VegaSymbol::Circle.draw(VEGA_SYMBOL_SIZE);
+    let disc = || scene_path(&VegaSymbol::Circle.draw(VEGA_SYMBOL_SIZE));
     let dashed = |pattern: &str, attrs: Attrs| {
         attrs.set("stroke-linecap", "round").set_if(!pattern.is_empty(), "stroke-dasharray", pattern)
     };
@@ -1322,7 +1323,7 @@ fn symbol_node(symbol: LegendSymbol, fill: &str, (cx, cy): (f64, f64)) -> Node {
             path(disc(), Attrs::new().set("fill", fill).set("stroke", fill).num("stroke-width", stroke_width))
         }
         LegendSymbol::ShortStroke => {
-            path(VegaSymbol::Stroke.draw(VEGA_SYMBOL_SIZE), Attrs::new().set("fill", fill).set("stroke", fill).num("stroke-width", 1.5))
+            path(scene_path(&VegaSymbol::Stroke.draw(VEGA_SYMBOL_SIZE)), Attrs::new().set("fill", fill).set("stroke", fill).num("stroke-width", 1.5))
         }
         LegendSymbol::FadedCircle(opacity) => path(
             disc(),
@@ -1361,7 +1362,7 @@ fn symbol_node(symbol: LegendSymbol, fill: &str, (cx, cy): (f64, f64)) -> Node {
         .translate(cx - PATTERN_KEY_LEFT, cy - library::KEY_H / 2.0),
         LegendSymbol::Dash(pattern) => {
             let attrs = Attrs::new().set("fill", fill).set("stroke", fill).num("stroke-width", 1.5);
-            path(VegaSymbol::Stroke.draw(VEGA_DASH_SYMBOL_SIZE), dashed(pattern, attrs))
+            path(scene_path(&VegaSymbol::Stroke.draw(VEGA_DASH_SYMBOL_SIZE)), dashed(pattern, attrs))
         }
         LegendSymbol::DashCircle(pattern) => {
             let attrs = Attrs::new().set("fill", "none").set("stroke", fill).num("stroke-width", 1.5);
@@ -1369,7 +1370,7 @@ fn symbol_node(symbol: LegendSymbol, fill: &str, (cx, cy): (f64, f64)) -> Node {
         }
         LegendSymbol::Glyph(..) => unreachable!("a glyph symbol is laid out, never emitted here"),
         LegendSymbol::Stroke(width) => {
-            path(VegaSymbol::Stroke.draw(VEGA_STROKE_SYMBOL_SIZE), Attrs::new().set("fill", fill).set("stroke", fill).num("stroke-width", width))
+            path(scene_path(&VegaSymbol::Stroke.draw(VEGA_STROKE_SYMBOL_SIZE)), Attrs::new().set("fill", fill).set("stroke", fill).num("stroke-width", width))
         }
     }
 }

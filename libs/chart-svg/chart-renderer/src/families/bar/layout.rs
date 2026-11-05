@@ -3,9 +3,10 @@
 //! the chart's orientation and x scale pick.
 
 use crate::common::{distinct_values, row_num};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::layout::{IntrinsicWidth, Layout, Rect};
-use crate::{Padding, Payload, codes};
+use crate::{Padding, Payload};
+use diagnostic::codes;
 
 use measure::{FontBook, Measure};
 use scene::Node;
@@ -49,10 +50,10 @@ fn laid_out(bound: &Bound, cell: Rect, measure: &Measure, padding: Option<Paddin
     } else {
         Cow::Owned(Payload { width: cell.width, height: cell.height, padding: padding.or(bound.payload.padding), ..Payload::clone(&bound.payload) })
     };
-    let (drawn, diagnostics) = crate::diagnostic::collect(|| draw(bound, &payload, measure.fonts));
+    let (drawn, diagnostics) = diagnostic::collect(|| draw(bound, &payload, measure.fonts));
     // A layout that fails has no `Layout` to carry what it found: those WARNs reach the sink, as
     // they did when the render wrote to it directly.
-    let drawn = drawn.inspect_err(|_| diagnostics.iter().cloned().for_each(crate::diagnostic::warn))?;
+    let drawn = drawn.inspect_err(|_| diagnostics.iter().cloned().for_each(diagnostic::warn))?;
     Ok(Layout {
         insets: drawn.canvas.insets_of(&drawn.data_box),
         data_box: drawn.data_box,
@@ -145,7 +146,7 @@ pub(super) fn warn_band_too_narrow(chart_id: &str, extent: f64, distinct: usize,
     if bar_width >= MIN_BAND_WIDTH_PX {
         return;
     }
-    crate::diagnostic::warn(Diagnostic::new(
+    diagnostic::warn(Diagnostic::new(
         &codes::WARN_BAR_BAND_WIDTH_TOO_NARROW,
         [
             ("bar_width", json!(bar_width)),
@@ -184,7 +185,7 @@ pub(super) fn warn_continuous_bars_overlap(
     let step_px = xs.windows(2).map(|w| w[1] - w[0]).fold(f64::INFINITY, f64::min) * (usable / (last - first));
     let bar_width = ContinuousWidth::of(mark)?.at(step_px);
     if bar_width > step_px {
-        crate::diagnostic::warn(
+        diagnostic::warn(
             Diagnostic::new(
                 &codes::WARN_BAR_BAND_WIDTH_TOO_NARROW,
                 [

@@ -18,6 +18,8 @@ from dbt_charts.core.compile import compile
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
+from ..._results import rows_schema
+
 _CODE = "WARN-SERIES-LABELS-REPEAT-WORD"
 
 _ROWS = [{"month": "Jan", "documents_created": 1, "documents_completed": 2}]
@@ -46,6 +48,7 @@ def _render() -> list[object]:
     ok = Mock()
     ok.is_success = True
     ok.data = _ROWS
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()

@@ -123,8 +123,10 @@ name = "chart-renderer"
 version = "0.0.1"
 dependencies = [
  "base64",
+ "column-types",
  "d3rs",
  "dbt-charts-color",
+ "diagnostic",
  "display-text",
  "fancy-regex",
  "jiff",
@@ -151,6 +153,15 @@ name = "color_quant"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
+
+[[package]]
+name = "column-types"
+version = "0.0.1"
+dependencies = [
+ "diagnostic",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "const-oid"
@@ -211,7 +222,6 @@ dependencies = [
  "display-text",
  "jiff",
  "libm",
- "scene",
  "serde",
  "serde_json",
 ]
@@ -236,6 +246,7 @@ name = "dbt-charts-core-py"
 version = "0.0.1"
 dependencies = [
  "chart-renderer",
+ "diagnostic",
  "display-text",
  "measure",
  "pyo3",
@@ -272,6 +283,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71958f69fb2de856c5dd51ac9377e986ca1aa5919f931bf5395a807277f889a0"
 dependencies = [
  "thiserror",
+]
+
+[[package]]
+name = "diagnostic"
+version = "0.0.1"
+dependencies = [
+ "d3rs",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

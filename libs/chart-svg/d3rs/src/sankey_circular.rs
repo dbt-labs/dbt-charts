@@ -16,7 +16,7 @@
 
 use crate::js_sort::js_sort;
 use crate::sankey::Align;
-use scene::{PathCommand, PathData};
+use crate::path::Command;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopSide {
@@ -413,7 +413,7 @@ impl Graph {
     /// `circularAreaLink` for a loop — the centerline route offset by `hw`
     /// on both sides, keeping the engine's nested corner radii — and
     /// `sankey::ribbon_area` otherwise.
-    pub fn link_area(&self, l: usize, hw: f64) -> PathData {
+    pub fn link_area(&self, l: usize, hw: f64) -> Vec<Command> {
         let k = &self.links[l];
         let Some(p) = &k.circular_path else {
             let (sx, tx) = (self.nodes[k.source].x1, self.nodes[k.target].x0);
@@ -421,8 +421,8 @@ impl Graph {
         };
         let s = if k.circular_link_type == Some(LoopSide::Bottom) { 1.0 } else { -1.0 };
         let sweep = s == 1.0;
-        let line = |x: f64, y: f64| PathCommand::L(x, y);
-        let turn = |rx: f64, ry: f64, clockwise: bool, x: f64, y: f64| PathCommand::A { rx, ry, rot: 0.0, large: false, sweep: clockwise, x, y };
+        let line = |x: f64, y: f64| Command::LineTo(x, y);
+        let turn = |rx: f64, ry: f64, clockwise: bool, x: f64, y: f64| Command::SvgArc { rx, ry, rot: 0.0, large: false, sweep: clockwise, x, y };
         let (sx, sy, tx, ty) = (p.source_x, p.source_y, p.target_x, p.target_y);
         let (ri, li, rf, lf) = (p.right_inner_extent, p.left_inner_extent, p.right_full_extent, p.left_full_extent);
         let (vf, vr, vl) = (p.vertical_full_extent, p.vertical_right_inner_extent, p.vertical_left_inner_extent);
@@ -432,8 +432,8 @@ impl Graph {
             p.left_large_arc_radius,
             p.left_small_arc_radius,
         );
-        PathData(vec![
-            PathCommand::M(sx, sy - s * hw),
+        vec![
+            Command::MoveTo(sx, sy - s * hw),
             line(ri, sy - s * hw),
             turn(rr + hw, rs + hw, sweep, rf + hw, sy + s * rs),
             line(rf + hw, vr),
@@ -453,8 +453,8 @@ impl Graph {
             line(rf - hw, sy + s * rs),
             turn(rr - hw, rs - hw, !sweep, ri, sy + s * hw),
             line(sx, sy + s * hw),
-            PathCommand::Z,
-        ])
+            Command::ClosePath,
+        ]
     }
 }
 

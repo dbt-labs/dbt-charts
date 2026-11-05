@@ -1,5 +1,6 @@
 //! `Placed` items to nodes: one plane's marks (clipped); all text, connectors and enclosures (unclipped) in the foreground, above the data.
 
+use crate::scene_path::scene_path;
 use d3rs::shape::{line_path, Curve as D3Curve};
 use scene::{Attrs, Node, PathCommand, PathData, Role, Shape};
 
@@ -8,7 +9,7 @@ use super::place::{Connector, Mark, Placed};
 use super::{rule_gray, text, AnnotationCtx, DataMark, Plane};
 use crate::labels_expr::colors::Color;
 use crate::contract::{aria_attrs, ItemRole};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::vega_fit::Bounds;
 
 fn d3_curve(curve: Curve) -> D3Curve {
@@ -59,14 +60,14 @@ fn mark(m: &Mark, style: &Style) -> Node {
         }
         Mark::Polyline(points) => Node::path(
             Role::Annotation,
-            line_path(&[points.clone()], d3_curve(style.line().curve)),
+            scene_path(&line_path(&[points.clone()], d3_curve(style.line().curve))),
             stroked(Attrs::new().set("fill", "none").num("opacity", style.line().opacity), &style.line().stroke),
         ),
         Mark::Area { hi, lo } => {
             let curve = d3_curve(style.line().curve);
             let back: Vec<(f64, f64)> = lo.iter().rev().copied().collect();
-            let mut d = line_path(&[hi.clone()], curve).0;
-            let mut back_commands = line_path(&[back], curve).0.into_iter();
+            let mut d = scene_path(&line_path(&[hi.clone()], curve)).0;
+            let mut back_commands = scene_path(&line_path(&[back], curve)).0.into_iter();
             let Some(PathCommand::M(x, y)) = back_commands.next() else { panic!("an area's lower edge starts with a moveto") };
             d.push(PathCommand::L(x, y));
             d.extend(back_commands);
@@ -129,8 +130,8 @@ fn item(p: &Placed, accessible: bool, children: Vec<Node>) -> Result<Node, Diagn
 /// Records `WARN-ANNOTATION-NOTE-MOVED` for a note whose text left its side
 /// with no connector back to its anchor.
 fn warn_strayed(ctx: &AnnotationCtx, p: &Placed) {
-    crate::diagnostic::warn(Diagnostic::new(
-        &crate::codes::WARN_ANNOTATION_NOTE_MOVED,
+    diagnostic::warn(Diagnostic::new(
+        &diagnostic::codes::WARN_ANNOTATION_NOTE_MOVED,
         [("chart_id", serde_json::Value::String(ctx.chart_id.to_string())), ("index", serde_json::Value::from(p.index))],
     ));
 }

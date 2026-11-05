@@ -679,7 +679,8 @@ ERR_BINDER_UNKNOWN_RELATION = REGISTRY.register(
             "Fired when the warehouse reports that a table, view or schema the "
             "query names does not exist or is not visible to the connection. For a "
             "ref() or source() the relation may have moved since the dbt "
-            "manifest was built. On Snowflake the message adds that a missing "
+            "manifest was built; `dct doctor` warns when profiles.yml is newer "
+            "than the manifest, and `dbt parse` refreshes it. On Snowflake the message adds that a missing "
             "object and a missing grant are reported identically, so check the "
             "name and schema for a typo before asking for access."
         ),

@@ -12,7 +12,7 @@
 // NaN; `w <= 0` is not. The negated comparisons stay as written upstream.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
-use scene::{PathCommand, PathData};
+use crate::path::Command;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Align {
@@ -117,16 +117,16 @@ impl Sankey {
 /// d3's horizontal cubic, down at the target, the bottom edge back. Filling
 /// the band, unlike stroking the centerline, keeps a thick, steep link from
 /// growing horns where the stroke's offset curve folds over itself.
-pub fn ribbon_area(sx: f64, sy: f64, tx: f64, ty: f64, hw: f64) -> PathData {
+pub fn ribbon_area(sx: f64, sy: f64, tx: f64, ty: f64, hw: f64) -> Vec<Command> {
     let xm = sx + (tx - sx) * 0.5;
     let (st, sb, tt, tb) = (sy - hw, sy + hw, ty - hw, ty + hw);
-    PathData(vec![
-        PathCommand::M(sx, st),
-        PathCommand::C(xm, st, xm, tt, tx, tt),
-        PathCommand::L(tx, tb),
-        PathCommand::C(xm, tb, xm, sb, sx, sb),
-        PathCommand::Z,
-    ])
+    vec![
+        Command::MoveTo(sx, st),
+        Command::BezierCurveTo(xm, st, xm, tt, tx, tt),
+        Command::LineTo(tx, tb),
+        Command::BezierCurveTo(xm, tb, xm, sb, sx, sb),
+        Command::ClosePath,
+    ]
 }
 
 fn compute_node_values(g: &mut Graph) {

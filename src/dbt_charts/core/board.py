@@ -57,6 +57,11 @@ from dbt_charts.core.execute import ExecutionError, Executor
 from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.execute.cache_backend import QueryResultCache
 from dbt_charts.core.execute.executor import utc_now
+from dbt_charts.core.execute.lookup import (
+    cache_hit_ats,
+    query_data_ages,
+    warehouse_cache_hit_ats,
+)
 from dbt_charts.core.project import (
     CHARTS_SUBDIR,
     BoardFile,
@@ -703,9 +708,9 @@ def render_dashboard(
             *render_result.suppressed_warnings,
         ],
         url=url,
-        board_query_data_ages=executor.query_data_ages,
-        warehouse_cache_hit_ats=executor.warehouse_cache_hit_ats,
+        board_query_data_ages=query_data_ages(executor.ledger),
+        warehouse_cache_hit_ats=warehouse_cache_hit_ats(executor.ledger),
         query_ms=render_result.query_ms,
-        cache_hits=len(executor.cache_hit_ats),
+        cache_hits=len(cache_hit_ats(executor.ledger)),
         prefetch_query_names=sorted(render_result.prefetch_query_names),
     )

@@ -11,7 +11,7 @@ from dbt_charts.core.compile.models.board.normalized import (
     VariableValues,
 )
 from dbt_charts.core.diagnostics import Diagnostic
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
 from dbt_charts.core.render.board_to_dict import (
     MAX_TABLE_COLUMNS_SHOWN,
     NO_ROW_CAP,
@@ -30,7 +30,7 @@ TEXT_EXCERPT_CHARS = 2000
 
 def render_board_text(
     board: Board,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     error_collector: list[Diagnostic] | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
@@ -51,7 +51,7 @@ def render_board_text(
     """
     d = board_to_dict(
         board,
-        executor,
+        results,
         variables,
         error_collector,
         max_rows_per_query,

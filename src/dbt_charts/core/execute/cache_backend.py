@@ -68,10 +68,22 @@ from typing import (
 
 from dbt_charts.core.column_types import ColumnType
 
-# Shared with executor.TruncationInfo.reason — the set of causes a cached
-# rows entry can carry. Defined here (not imported from executor) because
-# this module must not depend on execute/executor.py's higher layer.
+# The set of causes a cached rows entry can carry.
 TruncatedReason: TypeAlias = Literal["max_rows", "max_result_bytes"]
+
+
+@dataclass(frozen=True)
+class TruncationInfo:
+    """A query's result was truncated by execution.max_rows or
+    max_result_bytes before reaching the cache. No original_row_count field:
+    the adapter's over-fetch-by-one only proves "more rows existed than the
+    ceiling," never the true total, so nothing here may claim to know it.
+    """
+
+    query_name: str
+    kept_row_count: int
+    reason: TruncatedReason
+
 
 # Canonical type for a query-result rowset: a list of column-name → value dicts.
 # Values are dynamically typed (SQL/JSON), so the leaf is Any by nature. Defined

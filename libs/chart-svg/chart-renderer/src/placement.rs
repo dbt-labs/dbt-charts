@@ -5,8 +5,8 @@
 
 use crate::common::{value_label_anchor, CaptionSpot};
 use crate::annotation::DataMark;
-use crate::codes;
-use crate::diagnostic::Diagnostic;
+use diagnostic::codes;
+use diagnostic::Diagnostic;
 use scene::{Node, Role, Shape};
 use serde_json::json;
 use crate::vega_fit::{self, Bounds};
@@ -208,7 +208,7 @@ pub(crate) fn repeats_axis(anchor: (f64, f64), text: &str, edge_x: f64, ticks: &
 pub(crate) fn warn_value_labels_thinned(chart_id: &str, dropped: usize, total: usize) -> bool {
     let fires = dropped as f64 > THINNED_SHARE * total as f64;
     if fires {
-        crate::diagnostic::warn(Diagnostic::new(
+        diagnostic::warn(Diagnostic::new(
             &codes::WARN_VALUE_LABELS_THINNED,
             [("chart_id", json!(chart_id)), ("dropped", json!(dropped)), ("total", json!(total))],
         ));
@@ -220,7 +220,7 @@ pub(crate) fn warn_value_labels_thinned(chart_id: &str, dropped: usize, total: u
 /// where a label left its default spot or several series are labeled, so a label
 /// cannot be traced to its point.
 pub(crate) fn warn_value_labels_no_markers(chart_id: &str) {
-    crate::diagnostic::warn(Diagnostic::new(&codes::WARN_VALUE_LABELS_NO_MARKERS, [("chart_id", json!(chart_id))]));
+    diagnostic::warn(Diagnostic::new(&codes::WARN_VALUE_LABELS_NO_MARKERS, [("chart_id", json!(chart_id))]));
 }
 
 /// Which of `points` keep a label: of points that read as one, the top-painted.

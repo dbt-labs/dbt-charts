@@ -309,7 +309,7 @@ const CONSTANTS: [(&str, f64); 11] = [
 ];
 
 fn too_deep<T>() -> Res<T> {
-    Err(EvalError::Unmodeled(crate::refuse!("labels.expr nested past {MAX_DEPTH} levels is not supported")))
+    Err(EvalError::Unmodeled(diagnostic::refuse!("labels.expr nested past {MAX_DEPTH} levels is not supported")))
 }
 
 /// Whether `node` is at most `budget` levels deep. Recurses no deeper than `budget`, however long a chain is.

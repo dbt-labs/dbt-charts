@@ -76,7 +76,7 @@ impl<'a> Fitter<'a> {
     pub fn at(&self, view: (f64, f64)) -> Result<Fitted, String> {
         let name = self.name;
         let mut projection = by_vega_name(&name.to_lowercase())
-            .map_err(|_| crate::refuse!("projection type {name:?} is not supported"))?;
+            .map_err(|_| diagnostic::refuse!("projection type {name:?} is not supported"))?;
         let authored = self.params.cloned().unwrap_or_default();
         let mut params: VegaParams = serde_json::from_value(Value::Object(authored))
             .map_err(|e| format!("projection {name:?} params: {e}"))?;
@@ -120,6 +120,7 @@ pub fn is_fit(params: Option<&Map<String, Value>>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scene_path::scene_path;
     use d3rs::geojson::{Feature, Geometry};
     use serde_json::json;
 
@@ -137,7 +138,7 @@ mod tests {
     /// The path of the point at longitude 0, latitude 0.
     fn origin_path(path: &GeoPath<VegaProjection>) -> String {
         let point = GeoJson::Geometry(Geometry::Point { coordinates: vec![0.0, 0.0] });
-        print::path_d(&path.path(&point).unwrap().unwrap())
+        print::path_d(&scene_path(&path.path(&point).unwrap().unwrap()))
     }
 
     fn params(value: Value) -> Map<String, Value> {
@@ -214,7 +215,7 @@ mod tests {
         let path = Fitter::new("mercator", Some(&p), vec![]).at((10.0, 10.0)).unwrap().into_path();
         let point = GeoJson::Geometry(Geometry::Point { coordinates: vec![0.0, 0.0] });
         let circle = path.path(&point).unwrap().unwrap();
-        assert!(circle.commands().iter().any(|c| matches!(c, scene::PathCommand::A { rx, ry, .. } if *rx == 2.0 && *ry == 2.0)));
+        assert!(circle.iter().any(|c| matches!(c, d3rs::path::Command::SvgArc { rx, ry, .. } if *rx == 2.0 && *ry == 2.0)));
     }
 
     #[test]

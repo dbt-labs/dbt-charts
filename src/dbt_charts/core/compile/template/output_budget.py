@@ -86,7 +86,7 @@ class _Budget:
     """Mutable draw-down counter for one open render scope.
 
     `draw_down` locks around the read-modify-write: the query executor's
-    `ThreadPoolExecutor` (`execute/parallel.py`) runs several queries'
+    `ThreadPoolExecutor` (`execute/run.py`) runs several queries'
     templates concurrently against this same instance (a budget is
     render-scoped, not per-thread), and an unlocked `self.consumed += nbytes`
     can lose an update under interleaving, undercounting the total and
@@ -202,7 +202,7 @@ def draw_down_template_output(nbytes: int) -> None:
     propagates into a worker thread only via an explicit
     `contextvars.copy_context().run(...)` at submit time; the query
     executor's `ThreadPoolExecutor.submit` already does this (see
-    `execute/parallel.py`), so a budget opened around a board render still
+    `execute/run.py`), so a budget opened around a board render still
     holds for query-template rendering that happens off the main thread.
     """
     budget = _budget.get()

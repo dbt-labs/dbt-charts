@@ -26,6 +26,8 @@ from dbt_charts.core.compile.models.board.resolved import (
 )
 from dbt_charts.core.compile.models.variable.authored import SingleRowBoolProbe
 
+from ..._results import rows_result
+
 _board_adapter = TypeAdapter(ResolvedBoard)
 _item_adapter = TypeAdapter(ResolvedLayoutItem)
 
@@ -61,7 +63,11 @@ def _compile_data_aware_board(
     executor.execute_query.side_effect = lambda name, variables: rows_by_query.get(
         name, []
     )
+    executor.execute_query_result.side_effect = lambda name, variables: rows_result(
+        rows_by_query.get(name, [])
+    )
     executor.execute_chart.return_value = []
+    executor.execute_chart_result.return_value = rows_result([])
     executor.execute_batch.return_value = {}
 
     rf, _ = build_resolved_board(board, executor, {}, render_first=False)

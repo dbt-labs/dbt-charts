@@ -1,7 +1,7 @@
 """Tests for the QUERY_RESULT_TRUNCATED render-warning detector.
 
 Detection rule: fires on any chart whose query's result was truncated by
-execution.max_rows or max_result_bytes this render (executor.truncations()).
+execution.max_rows or max_result_bytes this render (executor.ledger.truncations).
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from pydantic import TypeAdapter
 
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.diagnostics import WARN_QUERY_RESULT_TRUNCATED, Diagnostic
-from dbt_charts.core.execute.executor import TruncationInfo
+from dbt_charts.core.execute.cache_backend import TruncationInfo
 from dbt_charts.core.render.warnings import (
     WarningContext,
     query_result_truncated as detector,

@@ -15,7 +15,7 @@ use serde::Deserialize;
 pub use axis_map::{AxisMap, Site};
 pub use model::{Annotation, YAxis};
 
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::labels_expr::colors::{contrast, Color};
 use measure::FontBook;
 use crate::vega_fit::Bounds;
@@ -529,7 +529,7 @@ pub fn refuse_margin_ink(ctx: &AnnotationCtx, reserved: Reserved) -> Result<(), 
             || t.y + t.h > ctx.plot.h + EPS
         {
             return Err(Diagnostic::new(
-                &crate::codes::ERR_ANNOTATION_MARGIN_UNSUPPORTED,
+                &diagnostic::codes::ERR_ANNOTATION_MARGIN_UNSUPPORTED,
                 [
                     ("chart_id", serde_json::Value::String(ctx.chart_id.to_string())),
                     ("index", serde_json::Value::from(p.index)),
@@ -546,7 +546,7 @@ mod tests {
     use super::model::{Anchor, Scalar};
     use super::text::tests::fonts;
     use super::*;
-    use crate::diagnostic::collect;
+    use diagnostic::collect;
     use crate::time_axis::testing::day;
     use d3rs::scale::Band;
 

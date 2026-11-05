@@ -19,6 +19,7 @@ from dataclasses import asdict
 from typing import Any, Literal
 
 from dbt_charts import _engine
+from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.compile.format import (
     format_fields,
     sub_unit_spec,
@@ -65,6 +66,7 @@ from dbt_charts.core.diagnostics import REGISTRY, Diagnostic, display_message
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_CUSTOM_RENDER
 from dbt_charts.core.diagnostics.registry import ErrorCode, build_doc_url
+from dbt_charts.core.execute.cache_backend import ResultRows
 from dbt_charts.core.fonts import get_fonts_dir
 from dbt_charts.core.render.board_links import get_link_context, resolve_href
 from dbt_charts.core.render.board_variables import (
@@ -145,7 +147,7 @@ from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_SPECS,
     PREDEFINED_SUB_UNIT_FALLBACK,
 )
-from dbt_charts.core.utils import CellValue, Rows
+from dbt_charts.core.utils import CellValue
 
 JsonDict = dict[str, Any]  # type-state: explicit_any — JSON payload and engine params
 
@@ -178,48 +180,9 @@ def _encode_cells(value: _JsonValue) -> _JsonValue:
     return value
 
 
-def _cell_kind(cell: CellValue) -> str:
-    # bool before int (a subclass), datetime before date (a subclass). Anything
-    # json_default stringifies (UUID, time, bytes, ...) travels as a string cell.
-    if isinstance(cell, bool):
-        return "boolean"
-    if isinstance(cell, int):
-        return "integer"
-    if isinstance(cell, float):
-        return "float"
-    if isinstance(cell, decimal.Decimal):
-        return "decimal"
-    if isinstance(cell, datetime.datetime):
-        return "datetime"
-    if isinstance(cell, datetime.date):
-        return "date"
-    if isinstance(cell, dict | list | tuple):
-        return "nested"
-    return "string"
-
-
-def column_types(rows: Rows) -> dict[str, str]:
-    """Each column's type for the engine, which never infers it from the JSON
-    cells (a date and a string both arrive as strings): one of `string`,
-    `integer`, `float`, `decimal`, `boolean`, `date`, `datetime`, `nested`,
-    `null` for a column with no non-null cell, or `mixed` for a column whose
-    cells are of several kinds (a VALUES query can hold `1`, `1.0` and `true`).
-
-    Integers and floats in one column widen to `float`. `mixed` is reported,
-    not resolved: the engine errors if a family needs the type of such a column.
-    """
-    kinds: dict[str, set[str]] = {}
-    for row in rows:
-        for name, cell in row.items():
-            seen = kinds.setdefault(name, set())
-            if cell is not None:
-                seen.add(_cell_kind(cell))
-    types: dict[str, str] = {}
-    for name, seen in kinds.items():
-        if seen == {"integer", "float"}:
-            seen = {"float"}
-        types[name] = "mixed" if len(seen) > 1 else next(iter(seen), "null")
-    return types
+def schema_wire(schema: dict[str, ColumnType]) -> JsonDict:
+    """Each column's declared type as the engine reads it."""
+    return {name: declared.model_dump(mode="json") for name, declared in schema.items()}
 
 
 def dumps_payload(payload: JsonDict) -> str:
@@ -409,7 +372,7 @@ def chart_geometries(chart: ResolvedChart) -> dict[str, str] | None:
 
 def build_chart_payload(
     chart: ResolvedChart,
-    datasets: dict[str | None, Rows],
+    datasets: dict[str | None, ResultRows],
     *,
     width: float,
     height: float,
@@ -445,14 +408,22 @@ def build_chart_payload(
         # The bar's label prints `str(cell)`, and a datetime's differs from the
         # ISO form every other cell travels in.
         datasets = {
-            name: [
+            name: ResultRows(
+                [
+                    {
+                        k: str(v) if isinstance(v, datetime.datetime) else v
+                        for k, v in row.items()
+                    }
+                    for row in result.rows
+                ],
                 {
-                    k: str(v) if isinstance(v, datetime.datetime) else v
-                    for k, v in row.items()
-                }
-                for row in rows
-            ]
-            for name, rows in datasets.items()
+                    column: ColumnType(kind="string")
+                    if declared.kind in ("datetime", "datetime_tz")
+                    else declared
+                    for column, declared in result.schema.items()
+                },
+            )
+            for name, result in datasets.items()
         }
     if isinstance(chart, ResolvedTableChart):
         check_table_link_colors(chart)
@@ -468,12 +439,14 @@ def build_chart_payload(
             )
     return {
         "resolved": resolved,
-        "rows": datasets[chart.query_name],
-        "datasets": datasets,
+        "rows": datasets[chart.query_name].rows,
+        "datasets": {name: result.rows for name, result in datasets.items()},
         "geometries": chart_geometries(chart),
-        "column_types": {
-            "rows": column_types(datasets[chart.query_name]),
-            "datasets": {name: column_types(rows) for name, rows in datasets.items()},
+        "schema": {
+            "rows": schema_wire(datasets[chart.query_name].schema),
+            "datasets": {
+                name: schema_wire(result.schema) for name, result in datasets.items()
+            },
         },
         "variables": variables,
         "variable_options": dict(current_variable_options()),
@@ -518,15 +491,15 @@ def _chart_data_error(exc: _engine.RenderDiagnosticError) -> ChartDataError:
 
 
 def measure_table_natural_width(
-    chart: ResolvedChart, rows: Rows, board_style: ResolvedStyle
+    chart: ResolvedChart, result: ResultRows, board_style: ResolvedStyle
 ) -> float | None:
     """The width a table needs to show every column (columns and outer
     padding), or `None` with nothing to hug. Raises `ChartDataError` for a
     table the engine cannot measure."""
     payload = {
         "resolved": chart.model_dump(mode="json"),
-        "rows": rows,
-        "column_types": {"rows": column_types(rows)},
+        "rows": result.rows,
+        "schema": schema_wire(result.schema),
         "fonts_dir": str(get_fonts_dir()),
         "numeral_family": board_style.numeral_family,
         "format_locale": format_locale_wire(active_format_locale()),
@@ -755,7 +728,7 @@ _WARNING_SINKS: dict[str, Callable[[JsonDict], None]] = {
 
 def render_native(
     chart: ResolvedChart,
-    data: Rows,
+    data: ResultRows,
     *,
     width: float,
     height: float,
@@ -765,7 +738,7 @@ def render_native(
     title_shift: TitleShift = NO_TITLE_SHIFT,
     is_placeholder: bool = False,
     record_warnings: bool = True,
-    datasets: dict[str | None, Rows] | None = None,
+    datasets: dict[str | None, ResultRows] | None = None,
     measuring: bool = False,
     authored_height: float | None = None,
     pie_mode: PieMode | None = None,
@@ -830,7 +803,7 @@ _PIE_MODES: dict[str, PieMode] = {
 
 def decide_pie_mode(
     chart: ResolvedPieChart,
-    data: Rows,
+    data: ResultRows,
     *,
     width: float,
     height: float,
@@ -932,7 +905,7 @@ def render_callout_card(
                 "placard": placard,
             },
             "rows": [],
-            "column_types": {"rows": {}},
+            "schema": {"rows": {}, "datasets": {}},
             "width": width,
             "height": height,
             "background": None,

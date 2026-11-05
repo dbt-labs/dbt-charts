@@ -395,6 +395,14 @@ class ResolvedAxisGridThresholdStyle:
 
 
 @dataclasses.dataclass(frozen=True)
+class ResolvedAxisGridTornBaselineStyle:
+    enabled: bool
+    amplitude: float
+    wavelength: float
+    sharpness: float
+
+
+@dataclasses.dataclass(frozen=True)
 class ResolvedAxisGridStyle:
     """No defaults — must be explicitly constructed via resolve_style()."""
 
@@ -408,6 +416,7 @@ class ResolvedAxisGridStyle:
     # specifically. It is inert on an axis that never ticks at the
     # threshold (a band axis, or a categorical x-axis).
     threshold: ResolvedAxisGridThresholdStyle
+    torn_baseline: ResolvedAxisGridTornBaselineStyle
 
 
 @dataclasses.dataclass(frozen=True)
@@ -789,6 +798,7 @@ __all__ = [
     "ResolvedAxisElementStyle",
     "ResolvedAxisGridStyle",
     "ResolvedAxisGridThresholdStyle",
+    "ResolvedAxisGridTornBaselineStyle",
     "ResolvedAxisLineStyle",
     "ResolvedAxisStyle",
     "ResolvedAxisTicksStyle",

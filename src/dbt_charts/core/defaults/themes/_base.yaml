@@ -382,6 +382,11 @@ style:
         threshold:
           visible: true
           width: 2
+        torn_baseline:
+          enabled: false
+          amplitude: 3.5           # px, edge to crest
+          wavelength: 30           # px per full wave
+          sharpness: 1             # 0 smooth sine .. 1 sharp zigzag
       labels:
         font: label
         padding: 6

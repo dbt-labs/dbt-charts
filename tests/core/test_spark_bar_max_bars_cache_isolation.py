@@ -109,7 +109,7 @@ def test_second_placement_not_poisoned_by_first_placements_max_bars_failure() ->
     executor.rendered_at = None
     executor.execute_query.return_value = _ROWS
     render_ctx = SizingRenderCtx(
-        executor=executor,
+        results=executor,
         resolved_style=low_rs,
         chart_style_context=low_ctx,
     )

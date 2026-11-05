@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::common::{slug_to_display, TAB_FONT};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::support_table_strip::{
     build_cells, divider_line, entry_lines, label_font_resolved, link_cells, row_height, trailing_unit,
     validate_against_data, CellAria, ComposedCell, EntryLines, SupportTableConfig, SupportTableStyle,
@@ -110,8 +110,8 @@ pub fn plot_gutter(style: &SupportTableStyle, axis_label_padding: f64) -> f64 {
 pub fn warn_block_share(chart_id: &str, block_width: f64, plot_width: f64, share_warn_ratio: f64) {
     let card_width = plot_width + block_width;
     if block_width > 0.0 && plot_width > 0.0 && block_width > share_warn_ratio * card_width {
-        crate::diagnostic::warn(crate::diagnostic::Diagnostic::new(
-            &crate::codes::WARN_PLOT_WIDTH_BELOW_MINIMUM,
+        diagnostic::warn(diagnostic::Diagnostic::new(
+            &diagnostic::codes::WARN_PLOT_WIDTH_BELOW_MINIMUM,
             [
                 ("block_width", serde_json::json!(block_width)),
                 ("card_width", serde_json::json!(card_width)),
@@ -799,11 +799,10 @@ mod tests {
         assert_eq!(block.columns[0].cells[1].text, "30");
     }
 
-    /// `_entry_cell_widths` measures floats: a bare text source paints its
-    /// strings verbatim and reserves no cell width (the header still does),
-    /// while a numeric-looking string counts as the float Python parses.
+    /// A bare text source paints its strings verbatim and reserves no cell
+    /// width (the header still does), whatever the text reads like.
     #[test]
-    fn a_text_cell_paints_verbatim_and_reserves_width_only_for_a_parsed_number() {
+    fn a_text_cell_paints_verbatim_and_reserves_no_width() {
         let config = parse_config(&serde_json::json!({"entries": [{"source": "note"}]}), "bar").unwrap();
         let block = |notes: [&str; 2]| {
             let rows: Vec<serde_json::Map<String, Value>> = [("A", notes[0]), ("B", notes[1])]
@@ -820,7 +819,7 @@ mod tests {
         assert_eq!(text.columns[0].cells[0].text, "n/a");
         assert_eq!(text.columns[0].cells[1].text, "ok");
         let parsed = block([" 1e20 ", "ok"]);
-        assert!(parsed.columns[0].width > text.columns[0].width, "a parsed float reserves its `str(float)` width");
+        assert_eq!(parsed.columns[0].width, text.columns[0].width, "numeric-looking text reserves no width");
     }
 
     /// The strip's data guards run on the block too: a bare `source` over a

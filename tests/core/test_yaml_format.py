@@ -13,10 +13,12 @@ import yaml
 
 from dbt_charts.core.compile.models.board.normalized import Board, Layout, LayoutItem
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.execute.cache_backend import ResultRows
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.renderer import render
 from dbt_charts.core.render.yaml_format import render_board_yaml
 
+from .._lookup import collect_via_execute_query
 from ._board_utils import _default_chart_style_context, _default_resolved_style
 from ._svg_render import PINNED_RENDER_TIME
 
@@ -30,9 +32,10 @@ def _make_executor(data: list[dict]) -> MagicMock:
     """
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.render_with_range_filters.return_value = None
-    executor.execute_chart.return_value = data
+    executor.execute_query_result.return_value = ResultRows(data, {})
     executor.cache_hit_ats = []
     executor.rendered_at = PINNED_RENDER_TIME
+    collect_via_execute_query(executor)
     return executor
 
 
@@ -358,7 +361,7 @@ rows: [card]
         assert compiled.board is not None, [e.message for e in compiled.errors]
 
         executor = _make_executor([{"m": 1, "v": 2}])
-        executor.execute_query.return_value = [{"m": 1, "v": 2}]
+        executor.execute_query_result.return_value = ResultRows([{"m": 1, "v": 2}], {})
         result = render(compiled.board, executor, format="yaml").output
 
         recompiled = compile(result)
@@ -414,17 +417,20 @@ rows: [card]
         board = _make_board([chart1, chart2])
 
         # A callable side_effect (keyed by query_name, not call order) survives
-        # the extra execute_chart calls the svg draw pass now makes before the
+        # the extra execute_query_result calls the svg draw pass now makes before the
         # yaml data walk runs — a fixed-length side_effect list would exhaust
         # on the third call and silently fail the whole render.
-        def _pick_data(chart: Chart, *_args: object, **_kwargs: object) -> list[dict]:
-            return data1 if chart.query_name == "q1" else data2
+        def _pick_data(
+            query_name: str, *_args: object, **_kwargs: object
+        ) -> ResultRows:
+            return ResultRows(data1 if query_name == "q1" else data2, {})
 
         executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
         executor.render_with_range_filters.return_value = None
-        executor.execute_chart.side_effect = _pick_data
+        executor.execute_query_result.side_effect = _pick_data
         executor.cache_hit_ats = []
         executor.rendered_at = PINNED_RENDER_TIME
+        collect_via_execute_query(executor)
 
         result = render(board, executor, format="yaml").output
 

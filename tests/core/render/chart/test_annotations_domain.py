@@ -15,6 +15,7 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.render.chart.session import BoardRenderSession
 
+from ...._results import rows_result
 from ..._svg_render import path_vertices
 
 _MONTHS = [
@@ -50,7 +51,7 @@ def _labels(
         rendered_at=rendered_at,
     )
     svg = BoardRenderSession(style).render_svg_family(
-        resolved, rows, width=600.0, height=300.0
+        resolved, rows_result(rows), width=600.0, height=300.0
     )
     assert svg is not None
     return re.findall(r"<text[^>]*>([^<]*)</text>", svg), svg

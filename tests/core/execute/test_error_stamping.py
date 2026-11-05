@@ -72,7 +72,7 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # composition wraps them, and the cache's rows are pre-coerced to fit.
         ("arrow_ingest.py", "_kind"),
         ("arrow_ingest.py", "_decimal_shape"),
-        ("arrow_ingest.py", "_decimal_type"),
+        ("arrow_ingest.py", "decimal_precision_scale"),
         ("arrow_ingest.py", "infer_type"),
         ("arrow_ingest.py", "_unscaled"),
         # file_source_materializer.py

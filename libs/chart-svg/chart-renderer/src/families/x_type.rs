@@ -4,6 +4,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
+use column_types::ColumnTypes;
 use serde_json::{Map, Value};
 
 use crate::common::{py_scalar_key, PyKey};
@@ -130,6 +131,7 @@ pub fn scaffold_rows(rows: &[Row], x_field: &str, panel_fields: &[&str], tu: Tim
 }
 
 pub fn resolve_filled_x(
+    types: &ColumnTypes,
     rows: &[Row],
     x_field: &str,
     axis: &XAxis,
@@ -137,13 +139,13 @@ pub fn resolve_filled_x(
     band_step: bool,
     panel_fields: &[&str],
 ) -> Result<FilledX, String> {
-    let routed = resolve_cartesian_x_type(rows, x_field, axis, mark, band_step, panel_fields)?;
+    let routed = resolve_cartesian_x_type(types, rows, x_field, axis, mark, band_step, panel_fields)?;
     let Grain::Calendar(tu) = routed.fill_grain else { return Ok(FilledX { resolution: routed, filled: None, scaffold: Vec::new() }) };
     if !axis.fills_gaps(&routed) {
         return Ok(FilledX { resolution: routed, filled: None, scaffold: Vec::new() });
     }
     let scaffold = scaffold_rows(rows, x_field, panel_fields, tu, axis.fiscal_year_start_month);
-    let resolution = resolve_cartesian_x_type(&scaffold, x_field, axis, mark, band_step, panel_fields)?;
+    let resolution = resolve_cartesian_x_type(types, &scaffold, x_field, axis, mark, band_step, panel_fields)?;
     Ok(FilledX { resolution, filled: Some(tu), scaffold })
 }
 
@@ -313,6 +315,7 @@ pub(crate) fn py_cell_key(value: Option<&Value>) -> PyKey {
 /// implies, and the calendar grain. `rows` carry the x column as the emitter
 /// sees it (labeled buckets already rewritten to ISO dates).
 pub fn resolve_cartesian_x_type(
+    types: &ColumnTypes,
     rows: &[Row],
     x_field: &str,
     axis: &XAxis,
@@ -320,7 +323,7 @@ pub fn resolve_cartesian_x_type(
     band_step: bool,
     panel_fields: &[&str],
 ) -> Result<XResolution, String> {
-    let from_data = infer_vega_type(rows, x_field);
+    let from_data = infer_vega_type(types, rows, x_field)?;
     let cells: Vec<&Value> = rows.iter().filter_map(|row| row.get(x_field)).collect();
     let grain = match axis.time_unit {
         None => match from_data {
@@ -422,7 +425,7 @@ mod tests {
             .map(|d| Row::from_iter([("x".to_string(), Value::from(*d))]))
             .collect();
         let axis = XAxis { time_unit: None, authored_type: None, raw_type: None, fill: Some("null"), fiscal_year_start_month: 1 };
-        let bar = resolve_cartesian_x_type(&rows, "x", &axis, "bar", false, &[]).unwrap();
+        let bar = resolve_cartesian_x_type(&ColumnTypes::default().with("x", column_types::ColumnType::String), &rows, "x", &axis, "bar", false, &[]).unwrap();
         assert_eq!((bar.vl_type, bar.grain), (VegaType::Temporal, Grain::None));
     }
 
@@ -435,8 +438,8 @@ mod tests {
         };
         let axis = XAxis { time_unit: None, authored_type: Some("temporal"), raw_type: None, fill: Some("null"), fiscal_year_start_month: 1 };
         for mark in ["line", "area", "scatter", "bar"] {
-            let low = resolve_cartesian_x_type(&rows(&["0099-01-01", "0100-01-01"]), "x", &axis, mark, false, &[]).unwrap();
-            let high = resolve_cartesian_x_type(&rows(&["2099-01-01", "2100-01-01"]), "x", &axis, mark, false, &[]).unwrap();
+            let low = resolve_cartesian_x_type(&ColumnTypes::default().with("x", column_types::ColumnType::String), &rows(&["0099-01-01", "0100-01-01"]), "x", &axis, mark, false, &[]).unwrap();
+            let high = resolve_cartesian_x_type(&ColumnTypes::default().with("x", column_types::ColumnType::String), &rows(&["2099-01-01", "2100-01-01"]), "x", &axis, mark, false, &[]).unwrap();
             assert_eq!((low.vl_type, low.grain), (high.vl_type, high.grain), "{mark}");
         }
     }
@@ -471,7 +474,14 @@ mod tests {
                 fiscal_year_start_month: case["fiscal"].as_u64().unwrap() as u8,
             };
             let panel_fields: &[&str] = if panels.is_some() { &["p"] } else { &[] };
+            let kind = case["declared"].as_str().unwrap();
+            let types: ColumnTypes = serde_json::from_value(serde_json::json!({
+                "x": {"kind": kind, "element": null, "fields": null},
+                "p": {"kind": "string", "element": null, "fields": null},
+            }))
+            .unwrap();
             let got = resolve_cartesian_x_type(
+                &types,
                 &rows,
                 "x",
                 &axis,

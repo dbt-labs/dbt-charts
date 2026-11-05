@@ -109,13 +109,14 @@ def test_board_renders_from_an_artifact_with_no_warehouse(tmp_path: Path) -> Non
     # ── Record: the artifact, plus the rows it was rendered against ─────────
     artifact = _ADAPTER.dump_json(resolved, warnings="error")
     recording = {
-        name: executor.execute_query(name, variables) for name in resolved.queries
+        name: executor.execute_query_result(name, variables)
+        for name in resolved.queries
     }
 
     # ── Replay: nothing but the artifact and the recording ─────────────────
     replayed_board = _ADAPTER.validate_json(artifact)
     replay = ReplayDataProvider(
-        rows_by_query=recording,
+        results_by_query=recording,
         recorded_at=datetime(2026, 8, 1, tzinfo=UTC),
         variables=variables,
     )
@@ -157,13 +158,14 @@ def test_replayed_board_stamps_the_recording_time(tmp_path: Path) -> None:
     variables: dict[str, Any] = {}
     resolved, _ = build_resolved_board(result.board, executor, variables)
     recording = {
-        name: executor.execute_query(name, variables) for name in resolved.queries
+        name: executor.execute_query_result(name, variables)
+        for name in resolved.queries
     }
 
     replay_svg = render_board_svg(
         _ADAPTER.validate_json(_ADAPTER.dump_json(resolved, warnings="error")),
         ReplayDataProvider(
-            rows_by_query=recording,
+            results_by_query=recording,
             recorded_at=datetime(2019, 3, 4, 5, 6, tzinfo=UTC),
             variables=variables,
         ),
@@ -199,11 +201,12 @@ def test_replay_needs_no_adapter_registry(tmp_path: Path) -> None:
     variables: dict[str, Any] = {}
     resolved, _ = build_resolved_board(result.board, executor, variables)
     recording = {
-        name: executor.execute_query(name, variables) for name in resolved.queries
+        name: executor.execute_query_result(name, variables)
+        for name in resolved.queries
     }
 
     replay = ReplayDataProvider(
-        rows_by_query=recording,
+        results_by_query=recording,
         recorded_at=datetime(2026, 8, 1, tzinfo=UTC),
         variables=variables,
     )

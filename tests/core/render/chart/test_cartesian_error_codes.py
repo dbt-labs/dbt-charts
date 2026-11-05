@@ -9,6 +9,7 @@ import pytest
 from dbt_charts.core.diagnostics import codes_render
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 
+from ...._results import rows_result
 from ..._engine_render import render_chart_svg
 
 _LAYER_X = {
@@ -91,7 +92,7 @@ def test_a_heatmap_color_without_a_number_raises_instead_of_painting_nan() -> No
     data = [{"x": None, "grp": "a"}, {"x": None, "grp": "b"}]
     resolved = resolve(chart, data, chart_style_context=context)
     with pytest.raises(ChartDataError) as exc:
-        render_resolved_chart(resolved, data, board_style)
+        render_resolved_chart(resolved, rows_result(data), board_style)
     assert _code(exc) == "ERR-HEATMAP-COLOR-NO-VALUES"
     assert exc.value.fields == {"field": "x"}
 

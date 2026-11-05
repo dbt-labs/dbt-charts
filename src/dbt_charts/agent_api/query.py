@@ -14,8 +14,13 @@ from dbt_charts.agent_api._paths import (
 from dbt_charts.core.compile import compile_file
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, SqlQuery
+from dbt_charts.core.compile.models.source import ResolvedSourceConfig
 from dbt_charts.core.compile.normalize.queries import is_file_source_ref
-from dbt_charts.core.compile.sql_guard import source_dialect
+from dbt_charts.core.compile.sql_guard import (
+    dialect_for_source,
+    registered_source_type,
+    source_dialect,
+)
 from dbt_charts.core.compile.template.daterange import board_clock
 from dbt_charts.core.compile.template.variables import (
     check_variable_overrides,
@@ -33,6 +38,8 @@ from dbt_charts.core.diagnostics.codes_unknown import ERR_INTERNAL
 from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.adapters import AdapterRegistry
+from dbt_charts.core.execute.source_resolver import AD_HOC_QUERY_NAME
+from dbt_charts.core.execute.sql_translate import engine_dialect
 from dbt_charts.core.inspect.query_validator import QueryDiagnostic, validate_query
 from dbt_charts.core.project import InMemoryBoard, Project
 from dbt_charts.core.validate import normalize_data_for_json
@@ -181,9 +188,57 @@ class BoardQueryLookupResult(BaseModel):
     success: bool
     sql: str = ""
     source: str | None = None
+    dialect: str | None = None
     errors: list[str] = []
     error_code: str | None = None
     available_queries: list[str] = []
+
+
+def _resolve_source(
+    source: str | None,
+    board_sources: dict[str, dict[str, Any]],
+    project: Project,
+    query_name: str,
+) -> ResolvedSourceConfig | None:
+    """Resolve a source the way execution does; reads a profile, opens no connection."""
+    from dbt_charts.core.execute.adapters.adapter_registry import linked_dbt_path
+    from dbt_charts.core.execute.source_resolver import (
+        DbtContext,
+        DefaultSourceResolver,
+    )
+
+    dbt_path = linked_dbt_path(project)
+    dbt_context = (
+        DbtContext(dbt_project_path=dbt_path) if dbt_path is not None else None
+    )
+    return DefaultSourceResolver().resolve(
+        source, board_sources, project.sources, dbt_context, query_name
+    )
+
+
+def source_sql_dialect(
+    source: str | None,
+    project: Project,
+    board_sources: dict[str, dict[str, Any]] | None = None,
+    query_name: str = AD_HOC_QUERY_NAME,
+) -> str | None:
+    """The sqlglot dialect SQL on `source` runs in, or None when it has none.
+
+    A registered source's type names it directly. A `dbt_profile` source's
+    dialect lives in its profile, so it is resolved as execution resolves it
+    and a profile that does not resolve raises. A file source or an unknown
+    name has none.
+
+    Raises:
+        DbtChartsError: When a `dbt_profile` source's profile does not resolve.
+    """
+    registry = project.sources.sources
+    dialect = dialect_for_source(source, registry)
+    if dialect is not None or registered_source_type(source, registry) != "dbt_profile":
+        return dialect
+    resolved = _resolve_source(source, board_sources or {}, project, query_name)
+    assert resolved is not None
+    return engine_dialect(resolved.type, resolved)
 
 
 def lookup_board_query_sql(
@@ -206,9 +261,8 @@ def lookup_board_query_sql(
         render_parameterized_with_queries,
     )
     from dbt_charts.core.dbt_ref_check import named_source_target_path
-    from dbt_charts.core.execute.adapters.adapter_registry import linked_dbt_path
     from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
-    from dbt_charts.core.execute.executor import resolve_query_references
+    from dbt_charts.core.execute.plan import resolve_query_references
 
     loaded = _load_board_query(name, path, project)
     if isinstance(loaded, BoardFailure):
@@ -230,18 +284,12 @@ def lookup_board_query_sql(
         )
 
     # The same coercion and dialect execution uses, so the preview shows the
-    # SQL the warehouse would get. `dialect_for_source` answers None for a
-    # source whose warehouse is only knowable at execute (`dbt_profile`, a
-    # file source); this preview then falls to the default dialect rather than
-    # refusing.
+    # SQL the warehouse would get. A file source has no warehouse dialect; this
+    # preview then falls to the default dialect's spelling rather than refusing.
     from dbt_charts.core.compile.models.source import is_file_source
-    from dbt_charts.core.compile.sql_guard import dialect_for_source
     from dbt_charts.core.dialects import get_dialect
-    from dbt_charts.core.execute.executor import merge_board_variables, utc_now
-    from dbt_charts.core.execute.source_resolver import (
-        DbtContext,
-        DefaultSourceResolver,
-    )
+    from dbt_charts.core.execute.executor import utc_now
+    from dbt_charts.core.execute.plan import merge_board_variables
     from dbt_charts.core.execute.sql_literals import (
         INLINE_PLACEHOLDERS,
         inline_params_for_dialect,
@@ -249,18 +297,17 @@ def lookup_board_query_sql(
     from dbt_charts.core.execute.sql_translate import (
         dialect_differs,
         dialect_unsupported,
-        engine_dialect,
         render_in_dialect,
     )
 
-    source_type = dialect_for_source(query.source, project.sources.sources)
-    warehouse = get_dialect(source_type) if source_type else None
     dbt_refs = DbtRefResolver(project)
     target_path = named_source_target_path(
         query.source, board.sources, project.sources.sources
     )
     clock = board.clock(utc_now())
     try:
+        source_type = source_sql_dialect(query.source, project, board.sources, name)
+        warehouse = get_dialect(source_type) if source_type else None
         with board_clock(clock):
             merged_vars = merge_board_variables(board, vars or {}, clock)
             # {{ queries.X }} is expanded to text first, recursively, exactly as the
@@ -277,14 +324,8 @@ def lookup_board_query_sql(
             if query.dialect is not None:
                 # Resolved the way execution resolves it, so the preview agrees with
                 # what runs for file and dbt_profile sources.
-                dbt_path = linked_dbt_path(project)
-                dbt_context = (
-                    DbtContext(dbt_project_path=dbt_path)
-                    if dbt_path is not None
-                    else None
-                )
-                source_config = DefaultSourceResolver().resolve(
-                    query.source, board.sources, project.sources, dbt_context, name
+                source_config = _resolve_source(
+                    query.source, board.sources, project, name
                 )
                 if source_config is None:
                     raise dialect_unsupported(
@@ -321,6 +362,7 @@ def lookup_board_query_sql(
                             get_dialect(engine),
                         ),
                         source=query.source,
+                        dialect=engine,
                     )
             resolved_sql, _relations = dbt_refs.resolve(expanded_query.sql, target_path)
             # A source whose warehouse is only knowable at execute previews in the
@@ -353,7 +395,9 @@ def lookup_board_query_sql(
     sql = inline_params_for_dialect(
         composed_sql, list(rendered.params), INLINE_PLACEHOLDERS, spelling
     )
-    return BoardQueryLookupResult(success=True, sql=sql, source=query.source)
+    return BoardQueryLookupResult(
+        success=True, sql=sql, source=query.source, dialect=source_type
+    )
 
 
 class ExecuteQueryArgs(BaseModel):
@@ -669,10 +713,10 @@ def query_board(
     adapter_registry: AdapterRegistry,
 ) -> QueryBoardResult:
     """Run one named query from a compiled board and return its sample rows."""
-    from dbt_charts.core.execute.executor import (
+    from dbt_charts.core.execute.executor import utc_now
+    from dbt_charts.core.execute.plan import (
         merge_board_variables,
         resolve_query_references,
-        utc_now,
     )
 
     limit = min(limit, MAX_QUERY_LIMIT)

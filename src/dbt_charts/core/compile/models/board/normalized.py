@@ -21,7 +21,9 @@ from dbt_charts.core.compile.models.primitives import (
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
-from dbt_charts.core.compile.models.style.merged import MergedChartStyle
+from dbt_charts.core.compile.models.style.merged import (
+    MergedChartStyle,
+)
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.models.variable.authored import (
     SingleRowBoolProbe,

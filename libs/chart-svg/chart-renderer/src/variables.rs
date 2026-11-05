@@ -29,7 +29,7 @@ use serde_json::Value;
 use crate::board::{px, translate_group};
 use display_text::case::apply_case;
 use crate::conditions::eval_bool_condition;
-use crate::diagnostic::py_str;
+use diagnostic::py_str;
 use crate::time_locale::active_time_locale;
 use crate::svg::{num_full};
 use print::{xml_escape, xml_escape_attr};

@@ -8,7 +8,7 @@ use scene::{Attrs, Node, PathData, Role};
 use super::bind::{Bound, LegendPaint};
 use super::Resolved;
 use crate::common::{format_y_label, XEdge};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::axis_caption::value_axis_caption;
 use crate::families::cartesian::{vl_default_tick_count};
 use d3rs::scale::Continuous;

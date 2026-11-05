@@ -151,21 +151,20 @@ class TestRegistryInterrupt:
 
 
 def test_an_interrupted_query_is_not_cached_as_a_failure() -> None:
-    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.execute.lookup import cache_failure
 
-    executor = MagicMock()
+    ctx = MagicMock()
     query = _query("SELECT 1")
-    Executor._cache_failure(
-        executor,
-        "q",
-        query,
-        None,
-        ("s", "q", "v"),
-        QueryError.from_code(ERR_QUERY_INTERRUPTED),
-    )
-    executor._cache_outcome.assert_not_called()
+    with patch("dbt_charts.core.execute.lookup.cache_outcome") as cache_outcome:
+        cache_failure(
+            ctx,
+            "q",
+            query,
+            None,
+            ("s", "q", "v"),
+            QueryError.from_code(ERR_QUERY_INTERRUPTED),
+        )
+        cache_outcome.assert_not_called()
 
-    Executor._cache_failure(
-        executor, "q", query, None, ("s", "q", "v"), QueryError("rejected")
-    )
-    executor._cache_outcome.assert_called_once()
+        cache_failure(ctx, "q", query, None, ("s", "q", "v"), QueryError("rejected"))
+        cache_outcome.assert_called_once()

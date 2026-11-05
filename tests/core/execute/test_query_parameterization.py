@@ -9,19 +9,16 @@ Coverage:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import nanoarrow as na
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
-from dbt_charts.core.execute.arrow_ingest import rows_to_arrow
+from dbt_charts.core.execute.arrow_ingest import table
 from dbt_charts.core.execute.compose import ResolvedQuery
-
-if TYPE_CHECKING:
-    import nanoarrow as na
 
 pytestmark = pytest.mark.usefixtures("typed_via_execute")
 
@@ -45,7 +42,7 @@ class TestAdapterParamsPassthrough:
         query = SqlQuery(sql="SELECT * FROM orders WHERE region = $1", source="test_db")
 
         with patch.object(
-            adapter.backend, "execute", return_value=rows_to_arrow([])
+            adapter.backend, "execute", return_value=na.Array(table([], 0))
         ) as mock_execute:
             adapter.execute(query, variables={}, params=["North"])
 
@@ -138,7 +135,7 @@ rows:
 
         def capture_duckdb(source: object, resolved: ResolvedQuery) -> na.Array:
             captured_calls.append((resolved.sql, list(resolved.params)))
-            return rows_to_arrow([])
+            return na.Array(table([], 0))
 
         malicious = "'; DROP TABLE users; --"
 

@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use super::{validate_line_layers, LineResolved};
 use crate::common::{is_year_shaped, row_str};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::layers::OverlayLayer;
 use crate::families::multiples;
 use crate::families::temporal::{TimePart, TimeUnit, VegaType};
@@ -213,8 +213,9 @@ fn x_axis(r: &LineResolved, payload: &Payload, overlays: &[OverlayLayer], draw_a
     // The one x-type law (`x_type::resolve_cartesian_x_type`) decides the grain
     // and whether x is a category; the labeled-bucket and year rewrites run
     // ahead of it exactly as production's emitters apply them.
-    let law_rows = crate::families::temporal::normalize_labeled_temporal(&payload.rows, x_field)?;
+    let law_rows = crate::families::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, x_field)?;
     let law = crate::families::x_type::resolve_cartesian_x_type(
+        &payload.schema.rows,
         &law_rows,
         x_field,
         &crate::families::x_type::XAxis::of(&r.style.axis_x),
@@ -233,9 +234,9 @@ fn x_axis(r: &LineResolved, payload: &Payload, overlays: &[OverlayLayer], draw_a
     let rows_rewritten = law_rows.iter().zip(&payload.rows).any(|(normalized, raw)| normalized.get(x_field) != raw.get(x_field));
     // A null x on a date axis is no bucket: production's ordinal scaffold places rows
     // by their bucket and drops the rest, though the row still counts toward the y domain.
-    let is_dates = is_year_shaped(domain_rows, x_field)
+    let is_dates = is_year_shaped(&payload.schema.rows, domain_rows, x_field)?
         || law.vl_type == VegaType::Temporal
-        || matches!(crate::families::temporal::infer_vega_type(domain_rows, x_field), VegaType::Temporal | VegaType::Ordinal);
+        || matches!(crate::families::temporal::infer_vega_type(&payload.schema.rows, domain_rows, x_field)?, VegaType::Temporal | VegaType::Ordinal);
     let unit: Option<TimeUnit> = match law.grain {
         crate::families::x_type::Grain::Calendar(tu) => Some(tu),
         _ => None,
@@ -267,7 +268,8 @@ fn x_axis(r: &LineResolved, payload: &Payload, overlays: &[OverlayLayer], draw_a
     for overlay in overlays {
         let layer_x = overlay.x().unwrap_or(x_field.as_str());
         let layer_rows = crate::families::layers::resolve_layer_rows(payload, overlay.query_name(), r.query_name.as_deref(), fam)?;
-        let normalized = crate::families::temporal::normalize_labeled_temporal(layer_rows, layer_x)?;
+        let layer_types = crate::families::layers::resolve_layer_types(payload, overlay.query_name(), r.query_name.as_deref(), fam)?;
+        let normalized = crate::families::temporal::normalize_labeled_temporal(layer_types, layer_rows, layer_x)?;
         time.rewrite(
             layer_rows
                 .iter()
@@ -304,9 +306,10 @@ fn rekey_to_enclosing_buckets(r: &LineResolved, payload: &Payload, draw_areas: b
     if payload.rows.is_empty() {
         return Ok(None);
     }
-    let normalized = crate::families::temporal::normalize_labeled_temporal(&payload.rows, &r.x)?;
+    let normalized = crate::families::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, &r.x)?;
     let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
     let filled = crate::families::x_type::resolve_filled_x(
+        &payload.schema.rows,
         &normalized,
         &r.x,
         &crate::families::x_type::XAxis::of(&r.style.axis_x),
@@ -354,10 +357,11 @@ fn fill_calendar_buckets(r: &LineResolved, payload: &Payload, draw_areas: bool) 
         return Ok(None);
     }
     let axis = &r.style.axis_x;
-    let normalized = crate::families::temporal::normalize_labeled_temporal(&payload.rows, &r.x)?;
+    let normalized = crate::families::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, &r.x)?;
     let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
     let mark = if draw_areas { "area" } else { "line" };
     let filled = crate::families::x_type::resolve_filled_x(
+        &payload.schema.rows,
         &normalized,
         &r.x,
         &crate::families::x_type::XAxis::of(axis),
@@ -411,7 +415,9 @@ fn unfold_wide(r: &mut LineResolved, payload: &Payload) -> Result<WideFold, Stri
     // in `_apply_line_color_encoding`, which the folded arm never reaches
     // (`emitters/line.py:462`).
     let series = crate::common::wide_series_names(&r.wide_measures, r.color.as_deref(), &payload.rows);
-    let cloned = payload.with_inputs(payload.resolved.clone(), crate::common::unfold_wide_rows(&payload.rows, &r.wide_measures, r.color.as_deref()));
+    let cloned = payload
+        .with_inputs(payload.resolved.clone(), crate::common::unfold_wide_rows(&payload.rows, &r.wide_measures, r.color.as_deref()))
+        .with_row_types(crate::common::unfold_wide_types(&payload.schema.rows, &r.wide_measures)?);
     r.series_from_measures = r.color.is_none();
     r.prefold_rows = payload.rows.clone();
     r.link_color = Some(r.color.clone().unwrap_or_else(|| crate::common::WIDE_KEY_FIELD.to_string()));

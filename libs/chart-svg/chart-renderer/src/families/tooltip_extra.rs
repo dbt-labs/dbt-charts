@@ -3,6 +3,7 @@
 //! Python resolve decides each entry's label and format (`resolve_tooltip`);
 //! this paints a row's value with them, and refuses a value that does not fit.
 
+use column_types::ColumnTypes;
 use super::table_dates::{is_time_format, parse_temporal, strftime, TemporalError};
 use crate::common::{format_mark_label, FormatSlot};
 use crate::contract::{extra_row, SEMICOLON_ESCAPE};
@@ -21,7 +22,7 @@ pub(crate) struct TooltipField {
 }
 
 impl TooltipField {
-    fn value(&self, row: &Map<String, Value>) -> Result<String, String> {
+    fn value(&self, row: &Map<String, Value>, types: &ColumnTypes) -> Result<String, String> {
         let wrong = |e: String| format!("tooltip column {:?}: {e}", self.column);
         let cell = row.get(&self.column).ok_or_else(|| wrong("missing from the row".into()))?;
         let text = match (cell, &self.format) {
@@ -31,7 +32,7 @@ impl TooltipField {
                 let value = n.as_f64().ok_or_else(|| wrong(format!("{n} is not a finite number")))?;
                 format_mark_label(Some(format), value, format.is_house()).map_err(wrong)?
             }
-            (Value::String(text), Some(format)) if is_time_format(&format.spec) => match parse_temporal(text.trim()) {
+            (Value::String(text), Some(format)) if is_time_format(&format.spec) => match parse_temporal(text.trim(), types.get(&self.column).map_err(wrong)?) {
                 Ok(Some(moment)) => strftime(moment, &format.spec).map_err(wrong)?,
                 Ok(None) => return Err(wrong(format!("{text:?} is not a date"))),
                 Err(TemporalError::Invalid(why) | TemporalError::Unported(why)) => return Err(wrong(why)),
@@ -49,8 +50,8 @@ impl TooltipField {
 }
 
 /// The authored rows of one datum, in authored order.
-pub(crate) fn rows_for(fields: &[TooltipField], row: &Map<String, Value>) -> Result<Vec<String>, String> {
-    fields.iter().map(|field| Ok(extra_row(&field.label, &field.value(row)?))).collect()
+pub(crate) fn rows_for(fields: &[TooltipField], row: &Map<String, Value>, types: &ColumnTypes) -> Result<Vec<String>, String> {
+    fields.iter().map(|field| Ok(extra_row(&field.label, &field.value(row, types)?))).collect()
 }
 
 #[cfg(test)]
@@ -58,9 +59,22 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// The columns these tests declare as dates; every other cell is typed by its JSON kind.
+    fn types_of(row: &Map<String, Value>) -> ColumnTypes {
+        row.iter().fold(ColumnTypes::default(), |types, (name, cell)| {
+            let declared = match cell {
+                Value::Number(_) => column_types::ColumnType::Float,
+                Value::Bool(_) => column_types::ColumnType::Boolean,
+                _ if name == "closed_on" || name == "d" => column_types::ColumnType::Date,
+                _ => column_types::ColumnType::String,
+            };
+            types.with(name.clone(), declared)
+        })
+    }
+
     fn rows(fields: Value, row: Value) -> Vec<String> {
         let fields: Vec<TooltipField> = serde_json::from_value(fields).unwrap();
-        rows_for(&fields, row.as_object().unwrap()).unwrap()
+        rows_for(&fields, row.as_object().unwrap(), &types_of(row.as_object().unwrap())).unwrap()
     }
 
     #[test]
@@ -110,13 +124,13 @@ mod tests {
     fn a_number_format_the_engine_rejects_refuses_by_name() {
         let fields: Vec<TooltipField> =
             serde_json::from_value(json!([{"column": "n", "label": "N", "format": "not-a-real-spec"}])).unwrap();
-        let err = rows_for(&fields, json!({"n": 1}).as_object().unwrap()).unwrap_err();
+        let err = rows_for(&fields, json!({"n": 1}).as_object().unwrap(), &column_types::ColumnTypes::default().with("n", column_types::ColumnType::Integer)).unwrap_err();
         assert!(err.contains("tooltip column \"n\""), "{err}");
     }
 
     fn err(fields: Value, row: Value) -> String {
         let fields: Vec<TooltipField> = serde_json::from_value(fields).unwrap();
-        rows_for(&fields, row.as_object().unwrap()).unwrap_err()
+        rows_for(&fields, row.as_object().unwrap(), &types_of(row.as_object().unwrap())).unwrap_err()
     }
 
     /// A `;` in a value would split the row when the runtime splits the label.

@@ -15,6 +15,8 @@ from dbt_charts.core.compile import CompileResult, compile
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import RenderResult, render
 
+from .._results import rows_schema
+
 _ROWS = [{"m": f"2026-0{i}-01", "v": v} for i, v in enumerate([5, 9, 4, 12, 8], 1)]
 _MULTI_ROWS = [
     {"m": r["m"], "v": r["v"] + off, "s": s}
@@ -47,6 +49,7 @@ def _run(result: CompileResult, rows: list[dict[str, object]]) -> RenderResult:
     ok = Mock()
     ok.is_success = True
     ok.data = rows
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = None
     registry = Mock()

@@ -14,8 +14,8 @@ from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.sql_guard import dialect_for_source, sqlglot_dialect
 from dbt_charts.core.dbt_ref_check import named_source_target_path
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
 from dbt_charts.core.execute.dbt_jinja import has_dbt_jinja
-from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.text.predefined_formats import ALL_PREDEFINED_NAMES, GRAIN_NAMES
 
 
@@ -35,7 +35,7 @@ def reads_dbt_node(query: SqlQuery) -> bool:
 
 
 def with_dbt_column_formats(
-    board: Board, executor: Executor, variables: VariableValues
+    board: Board, results: ResolveDataProvider, variables: VariableValues
 ) -> Board:
     """The board with each dbt-reading chart query's ``formats:`` widened by lineage.
 
@@ -63,7 +63,7 @@ def with_dbt_column_formats(
                     derived[chart.query_name] = _derive(
                         chart.query_name,
                         chart.query,
-                        executor,
+                        results,
                         variables,
                         known_format_names(board.chart_style_context),
                     )
@@ -92,7 +92,7 @@ def with_dbt_column_formats(
     return widen(board)
 
 
-def raise_column_format_error(chart: Chart, executor: Executor) -> None:
+def raise_column_format_error(chart: Chart, results: ResolveDataProvider) -> None:
     """Raise the lineage failure recorded for the chart's query, if any.
 
     Called where a chart resolves, so a bad ``meta.format`` fails the charts
@@ -102,15 +102,15 @@ def raise_column_format_error(chart: Chart, executor: Executor) -> None:
         isinstance(chart, _BaseChartFields)
         and isinstance(chart.query, SqlQuery)
         and reads_dbt_node(chart.query)
-        and chart.query_name in executor.column_format_errors
+        and chart.query_name in results.column_format_errors
     ):
-        raise executor.column_format_errors[chart.query_name]
+        raise results.column_format_errors[chart.query_name]
 
 
 def _derive(
     query_name: str,
     query: SqlQuery,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     known: Container[str],
 ) -> dict[str, str] | None:
@@ -122,14 +122,14 @@ def _derive(
     try:
         target_path = named_source_target_path(
             query.source,
-            executor.board.sources,
-            executor.adapter_registry.project.sources.sources,
+            results.board.sources,
+            results.adapter_registry.project.sources.sources,
         )
-        base_formats = executor.adapter_registry.dbt_refs.column_formats(target_path)
+        base_formats = results.adapter_registry.dbt_refs.column_formats(target_path)
         if not base_formats:
             return {}
         dialect = sqlglot_dialect(query.dialect) or sqlglot_dialect(
-            dialect_for_source(query.source, executor.board.sources)
+            dialect_for_source(query.source, results.board.sources)
         )
         found = lineage_column_formats(
             query.sql,
@@ -140,10 +140,10 @@ def _derive(
             exclude={col.lower() for col in authored},
         )
     except DbtChartsError as exc:
-        executor.column_format_errors[query_name] = exc
+        results.column_format_errors[query_name] = exc
         return None
     try:
-        rows = executor.execute_query(query_name, variables)
+        rows = results.execute_query(query_name, variables)
     except DbtChartsError:
         # The chart reports its own failed query when it resolves.
         return found

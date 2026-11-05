@@ -73,7 +73,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
 )
 from dbt_charts.core.compile.models.primitives import PieMode
 from dbt_charts.core.diagnostics.registry import WarningCode
-from dbt_charts.core.execute.executor import TruncationInfo
+from dbt_charts.core.execute.cache_backend import TruncationInfo
 from dbt_charts.core.render.chart.annotation_nothing_drawn import NothingDrawn
 from dbt_charts.core.render.chart.axis_label_collision import AxisLabelCollision
 from dbt_charts.core.render.chart.endpoint_label_overflow import (
@@ -179,7 +179,7 @@ class WarningContext(BaseModel):
     # the hole it drew. Sparse.
     pie_total_overflows: dict[str, PieTotalOverflow] = {}
     # chart id → the query-result truncation record (execution.max_rows /
-    # max_result_bytes) for that chart's query, from Executor.truncations().
+    # max_result_bytes) for that chart's query, from the render ledger.
     # Sparse — only charts whose query was actually truncated appear.
     chart_truncations: dict[str, TruncationInfo] = {}
     # query name → truncation record for queries that were truncated but whose

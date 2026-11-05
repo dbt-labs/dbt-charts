@@ -100,7 +100,7 @@ fn corner_tangents(x0: f64, y0: f64, x1: f64, y1: f64, r1: f64, rc: f64, cw: boo
 }
 
 impl Arc {
-    pub fn path(&self) -> scene::PathData {
+    pub fn path(&self) -> Vec<crate::path::Command> {
         let mut ctx = Path::new();
         let mut r0 = self.inner_radius;
         let mut r1 = self.outer_radius;
@@ -310,7 +310,7 @@ impl Arc {
         }
 
         ctx.close_path();
-        ctx.into_path_data()
+        ctx.into_commands()
     }
 
 }

@@ -249,7 +249,7 @@ def test_a_redefined_grain_name_paints_in_a_table_and_a_kpi(
     board = _board(
         chart,
         style='style:\n  formats:\n    date_month: "%b %Y"',
-        rows='[["2024-01-15", 5]]',
+        rows="[[2024-01-15, 5]]",
     ).replace("[a, secs]", "[d, v]")
     result = _render(board, tmp_path)
     assert _codes(result) == []

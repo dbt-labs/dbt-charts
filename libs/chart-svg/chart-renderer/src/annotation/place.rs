@@ -6,7 +6,7 @@ use super::axis_map::{AxisMap, Site};
 use super::model::{Align, Anchor, Annotation, Connector as ConnectorKind, Curve, Edge, Enclose, Kind, Position, Style, YAxis};
 use super::text::{self, Block};
 use super::{AnnotationCtx, Orientation, Plane};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::placement::{best_spot, overlap, EPS};
 use crate::vega_fit::Bounds;
 
@@ -810,7 +810,7 @@ mod tests {
     use crate::annotation::model::tests::contract;
     use crate::annotation::text::tests::fonts;
     use crate::annotation::{DataMark, PlotRect, Reach};
-    use crate::diagnostic::collect;
+    use diagnostic::collect;
     use crate::vega_fit::Bounds;
     use crate::time_axis::testing::day;
     use measure::FontBook;

@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Discriminator, Field
 
+from dbt_charts.core.compile.models.primitives import ScaleTargetConfig
 from dbt_charts.core.compile.models.style.authored import (
     AxisXStylePatch,
     AxisYStylePatch,
@@ -20,7 +21,11 @@ from dbt_charts.core.compile.models.style.authored import (
 from dbt_charts.core.compile.models.style.resolved._base import ResolvedLegendStyle
 from dbt_charts.core.compile.models.style.theme import (
     AreaChartStyle,
+    AxisXStyle,
+    AxisYStyle,
+    BandAxisStyle,
     BarChartStyle,
+    BaseAxisStyle,
     CalloutChartStyle,
     ChartTitleStyle,
     GeoshapeChartStyle,
@@ -30,11 +35,37 @@ from dbt_charts.core.compile.models.style.theme import (
     LineChartStyle,
     PieChartStyle,
     PointMapChartStyle,
+    QuantitativeAxisStyle,
     ScatterChartStyle,
     SparkBarChartStyle,
     SupportTableStyle,
     TableChartStyle,
 )
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    CategoryColorBinding,
+)
+
+
+class BoardChartTiers(BaseModel):
+    """Board-wide chart inputs that sit beside each chart's merged style.
+
+    The theme's axis tiers are the lowest layers of the axis cascade, which
+    picks a tier by channel type once the data is known; the pins are the
+    author's value-to-color assignments.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    category_color_pins: dict[str, CategoryColorBinding] = Field(
+        description="Colors pinned to category values, by data field."
+    )
+    axis: BaseAxisStyle = Field(description="Style of every axis.")
+    axis_x: AxisXStyle = Field(description="Style of the x axis.")
+    axis_y: AxisYStyle = Field(description="Style of the y axis.")
+    axis_quantitative: QuantitativeAxisStyle = Field(
+        description="Style of numeric axes."
+    )
+    axis_band: BandAxisStyle = Field(description="Style of category axes.")
 
 
 class _MergedChartStyle(BaseModel):
@@ -56,6 +87,10 @@ class _MergedChartStyle(BaseModel):
     title: ChartTitleStyle = Field(description="How the chart's title looks.")
     pagination: PaginationConfig | None = Field(
         description="How many table rows show per page."
+    )
+    # None: the chart's own style sets no gradient.
+    gradient: ScaleTargetConfig | None = Field(
+        description="Continuous scale the chart's own style.color sets for its color field."
     )
     # The axis patches are the chart's own overrides, which the axis cascade
     # layers last; None means the chart authors none.
@@ -122,6 +157,9 @@ class MergedTableStyle(_MergedChartStyle):
     support_table: SupportTableStyle = Field(
         description="Look of the table that sits beside a chart."
     )
+    width_pinned: bool = Field(
+        description="Whether the table's own style fixes its preferred width."
+    )
 
 
 class MergedGeoshapeStyle(_MergedChartStyle):
@@ -166,4 +204,4 @@ MergedChartStyle = Annotated[
     Discriminator("type"),
 ]
 
-__all__ = ["MergedChartStyle"]
+__all__ = ["BoardChartTiers", "MergedChartStyle"]

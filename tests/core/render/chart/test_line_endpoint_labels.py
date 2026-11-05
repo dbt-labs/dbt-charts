@@ -23,6 +23,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
+from ...._results import rows_result
+
 _BOARD_STYLE = resolve_style(get_theme_style())
 
 
@@ -84,7 +86,7 @@ def label_pane(make_chart, model_copy_at):
     )
     board_style = resolve_chart_style_context(seed)
     resolved_chart = resolve(chart, data, chart_style_context=board_style)
-    artifact = render_resolved_chart(resolved_chart, data, _BOARD_STYLE)
+    artifact = render_resolved_chart(resolved_chart, rows_result(data), _BOARD_STYLE)
     assert artifact.kind == "vega_spec"
     spec = artifact.payload
 

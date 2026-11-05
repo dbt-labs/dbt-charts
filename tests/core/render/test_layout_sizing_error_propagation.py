@@ -156,7 +156,7 @@ class TestSizingProviderErrorPropagation:
             )
 
             render_ctx = SizingRenderCtx(
-                executor=executor,
+                results=executor,
                 resolved_style=resolved,
                 chart_style_context=board_ctx,
                 pre_resolved={chart.id: mock_resolved},
@@ -224,7 +224,7 @@ class TestSizingProviderErrorPropagation:
             )
 
             render_ctx = SizingRenderCtx(
-                executor=executor,
+                results=executor,
                 resolved_style=resolved,
                 chart_style_context=board_ctx,
             )
@@ -307,7 +307,7 @@ class TestAlignColsErrorPropagation:
             )
 
             render_ctx = SizingRenderCtx(
-                executor=executor,
+                results=executor,
                 resolved_style=resolved,
                 chart_style_context=board_ctx,
                 render_cache={

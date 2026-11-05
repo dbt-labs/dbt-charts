@@ -2,13 +2,14 @@
 //! fields mirror the corresponding Resolved* pydantic models; each family
 //! deserializes only the slice it consumes), measured layout constants
 //! (AXIS_FREE_EDGE_PAD, VALUE_AXIS_BREATHING_ROOM), and the tabular-numeric
-//! machinery (TAB_FONT/TAB_STYLE/SUFFIX_GAP, format_numeric_auto).
+//! machinery (TAB_FONT/TAB_STYLE/SUFFIX_GAP).
 
 use std::borrow::Cow;
 
-use crate::codes;
+use column_types::{ColumnType, ColumnTypes};
+use diagnostic::codes;
 use d3rs::stack::{stack, Offset, Order};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::number_locale::active_number_locale;
 use print::xml_escape_attr;
 use measure::FontBook;
@@ -200,19 +201,6 @@ const TEXT_FORMATS: [&str; 2] = ["email", "url"];
 
 pub(crate) fn is_text_format(spec: &str) -> bool {
     TEXT_FORMATS.contains(&spec)
-}
-
-/// Auto-format a raw numeric value the way production's default table-cell
-/// path does for an unformatted column (`format_table_cell_value` →
-/// `default_number_format()`, the `number` member): d3 SI notation with an
-/// analytic-register suffix split out for separate styling, and plain digits
-/// below 1: `format_kpi_parts` of the `number` format, whole: the lanes (word
-/// stripped of its gap) and the string `format_value` prints (`measured_*`,
-/// word behind the gap it carries). Shared by table.rs's date lane.
-pub(crate) fn format_numeric_auto(v: f64) -> Result<KpiParts, String> {
-    let number_spec = predefined_number_spec("number").expect("`number` is a predefined format");
-    let parts = FormatParts { spec: Some(number_spec), raw: Some("number"), ..FormatParts::default() };
-    format_kpi_parts(v, &parts, &PartsOptions::default()).map_err(|e| format!("numeric auto-format {v}: {e}"))
 }
 
 /// What the wire tagged on one cell: the Python `str()` of the value, and the
@@ -2586,13 +2574,13 @@ pub struct AxisGrid {
     pub torn_baseline: Option<TornBaseline>,
 }
 
-/// RJ Andrews' "tear up your baseline": on a line chart whose y domain
-/// excludes zero, the edge nearest the off-screen zero is drawn as a wave
-/// so it cannot be read as a floor at zero. Every other family, and the
-/// x-axis, ignores it.
+/// RJ Andrews' "tear up your baseline": when a value domain excludes zero,
+/// the edge nearest the off-screen zero is drawn as a wave so it cannot be
+/// read as a floor at zero. Line charts draw it on the y-axis and ranged
+/// bars on their value axis; every other family ignores it.
 #[derive(Deserialize, Clone)]
 pub struct TornBaseline {
-    pub visible: bool,
+    pub enabled: bool,
     /// Crest height above the edge, in px.
     pub amplitude: f64,
     /// One full wave, in px.
@@ -3432,7 +3420,7 @@ pub fn warn_title_truncations(
     subtitle: (Option<&str>, bool),
 ) {
     for diagnostic in title_truncations(chart_id, title, subtitle) {
-        crate::diagnostic::warn(diagnostic);
+        diagnostic::warn(diagnostic);
     }
 }
 
@@ -3536,7 +3524,7 @@ pub fn warn_value_labels_crowd(
         offend(widest, tightest);
     }
     if let Some((label_width, slot_width)) = worst {
-        crate::diagnostic::warn(
+        diagnostic::warn(
             Diagnostic::new(
                 &codes::WARN_VALUE_LABELS_CROWD_WIDTH,
                 [
@@ -3851,11 +3839,10 @@ pub fn title_node(text: &str, style: Option<&TitleStyle>, x: f64, y: f64, stamp_
     Node::text(Role::Title, (x, baseline), Attrs::new().vega("font-family", family).num("font-size", size).quick_some("font-style", f.and_then(|f| f.style.as_deref())).set("font-weight", weight).set("fill", color).set_if(stamp_kind, "data-authored-kind", "title"), text)
 }
 
-/// Numeric value from a row column, tolerating strings.
+/// Numeric value from a row column; text reads as none, however it looks.
 pub fn row_num(row: &serde_json::Map<String, Value>, field: &str) -> Option<f64> {
     match row.get(field)? {
         Value::Number(n) => n.as_f64(),
-        Value::String(s) => s.trim().parse().ok(),
         _ => None,
     }
 }
@@ -3981,7 +3968,11 @@ pub fn last_nonnull_value(
 /// date-like STRUCTURAL shape at all — `x_values_are_temporal_candidates`
 /// alone does not catch it. This predicate is the missing precondition a
 /// categorical-x gate (line/area's authored-sort gate) needs alongside it.
-pub fn is_year_shaped(rows: &[serde_json::Map<String, Value>], field: &str) -> bool {
+pub fn is_year_shaped(types: &ColumnTypes, rows: &[serde_json::Map<String, Value>], field: &str) -> Result<bool, String> {
+    // A declared float is a measure, never a year.
+    if *types.get(field)? == ColumnType::Float {
+        return Ok(false);
+    }
     const YEAR_MIN: f64 = 1700.0;
     const YEAR_MAX: f64 = 2100.0;
     let mut any = false;
@@ -4003,15 +3994,23 @@ pub fn is_year_shaped(rows: &[serde_json::Map<String, Value>], field: &str) -> b
             _ => false,
         };
         if !ok {
-            return false;
+            return Ok(false);
         }
     }
-    any
+    Ok(any)
 }
 
 #[cfg(test)]
 mod is_year_shaped_tests {
     use super::*;
+
+    fn declared(kind: ColumnType) -> ColumnTypes {
+        ColumnTypes::default().with("year", kind.clone()).with("code", kind)
+    }
+
+    fn year_shaped(kind: ColumnType, rows: &[serde_json::Map<String, Value>], field: &str) -> bool {
+        is_year_shaped(&declared(kind), rows, field).expect("declared")
+    }
 
     fn rows(field: &str, values: &[Value]) -> Vec<serde_json::Map<String, Value>> {
         values
@@ -4029,9 +4028,9 @@ mod is_year_shaped_tests {
     #[test]
     fn the_1700_2100_range_is_inclusive_at_both_ends() {
         let r = rows("year", &[Value::String("1700".into()), Value::String("2100".into())]);
-        assert!(is_year_shaped(&r, "year"));
+        assert!(year_shaped(ColumnType::String, &r, "year"));
         let r = rows("year", &[serde_json::json!(1700), serde_json::json!(2100)]);
-        assert!(is_year_shaped(&r, "year"));
+        assert!(year_shaped(ColumnType::Integer, &r, "year"));
     }
 
     /// One value just outside either bound fails the WHOLE domain, string or
@@ -4040,11 +4039,11 @@ mod is_year_shaped_tests {
     #[test]
     fn a_value_one_outside_either_bound_fails_the_whole_domain() {
         let r = rows("year", &[Value::String("1699".into()), Value::String("2000".into())]);
-        assert!(!is_year_shaped(&r, "year"));
+        assert!(!year_shaped(ColumnType::String, &r, "year"));
         let r = rows("year", &[Value::String("2000".into()), Value::String("2101".into())]);
-        assert!(!is_year_shaped(&r, "year"));
+        assert!(!year_shaped(ColumnType::String, &r, "year"));
         let r = rows("year", &[serde_json::json!(1699), serde_json::json!(2000)]);
-        assert!(!is_year_shaped(&r, "year"));
+        assert!(!year_shaped(ColumnType::Integer, &r, "year"));
     }
 
     /// A non-year 4-digit number outside `[1700, 2100]` — e.g. a product
@@ -4052,9 +4051,17 @@ mod is_year_shaped_tests {
     #[test]
     fn a_non_year_4_digit_number_is_not_year_shaped() {
         let r = rows("code", &[Value::String("1234".into()), Value::String("5678".into())]);
-        assert!(!is_year_shaped(&r, "code"));
+        assert!(!year_shaped(ColumnType::String, &r, "code"));
         let r = rows("code", &[serde_json::json!(1234), serde_json::json!(5678)]);
-        assert!(!is_year_shaped(&r, "code"));
+        assert!(!year_shaped(ColumnType::Integer, &r, "code"));
+    }
+
+    /// A declared float is a measure, not a year; a declared decimal is one.
+    #[test]
+    fn a_declared_float_is_never_year_shaped() {
+        let r = rows("year", &[serde_json::json!(2020.0), serde_json::json!(2021.0)]);
+        assert!(!year_shaped(ColumnType::Float, &r, "year"));
+        assert!(year_shaped(ColumnType::Decimal, &r, "year"));
     }
 }
 
@@ -4165,7 +4172,7 @@ pub fn wrapped_axis_title(
     fonts: &measure::FontBook,
 ) -> Result<String, String> {
     let (title, cut) = axis_title_lines(chart_id, authored_field, text, font, extent, panels, fonts)?;
-    cut.into_iter().for_each(crate::diagnostic::warn);
+    cut.into_iter().for_each(diagnostic::warn);
     Ok(title)
 }
 
@@ -4865,6 +4872,37 @@ pub fn unfold_wide_rows(
         }
     }
     out
+}
+
+/// The declared types of `unfold_wide_rows`' output: every source column rides
+/// along, the label and key fields are text, and the value field takes the
+/// measures' own type (numbers of differing kinds fold to `float`).
+pub fn unfold_wide_types(types: &ColumnTypes, measures: &[String]) -> Result<ColumnTypes, String> {
+    let mut declared = measures.iter().map(|m| types.get(m)).collect::<Result<Vec<_>, _>>()?;
+    declared.dedup();
+    let value = match declared.as_slice() {
+        [only] => (*only).clone(),
+        many if many.iter().all(|t| t.is_number()) => ColumnType::Float,
+        many => return Err(format!("wide measures {measures:?} mix the types {many:?}")),
+    };
+    Ok(types
+        .clone()
+        .with(WIDE_LABEL_FIELD, ColumnType::String)
+        .with(WIDE_KEY_FIELD, ColumnType::String)
+        .with(WIDE_VALUE_FIELD, value))
+}
+
+/// A scatter's wide fold as the validators and `bind` see it: rows folded in sorted measure order,
+/// with the types that declare the fold's synthesized fields.
+pub fn fold_wide(
+    types: &ColumnTypes,
+    rows: &[serde_json::Map<String, Value>],
+    measures: &[String],
+    dimension: Option<&str>,
+) -> Result<(ColumnTypes, Vec<serde_json::Map<String, Value>>), String> {
+    let mut order = measures.to_vec();
+    order.sort();
+    Ok((unfold_wide_types(types, measures)?, unfold_wide_rows(rows, &order, dimension)))
 }
 
 /// Distinct non-null values of `dimension`, in first-seen order, deduped by

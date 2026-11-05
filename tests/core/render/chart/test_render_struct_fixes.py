@@ -20,6 +20,8 @@ from dbt_charts.core.compile.models.chart.resolved import (
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 
+from ...._results import rows_result
+
 
 def _default_legend():
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
@@ -237,7 +239,7 @@ def test_horizontal_stacked_bar_endpoint_labels_renders_at_slot_width(
         chart,
         board_style,
         chart_style_context,
-        data,
+        rows_result(data),
         format="svg",
         width=slot_width,
     )

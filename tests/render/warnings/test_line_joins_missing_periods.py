@@ -20,6 +20,7 @@ from dbt_charts.core.render.warnings import (
     line_joins_missing_periods as detector,
 )
 
+from ..._results import rows_schema
 from ...core._board_utils import (
     make_test_resolved_board,
     make_test_resolved_chart,
@@ -181,6 +182,7 @@ def test_the_warning_surfaces_from_render() -> None:
     ok = Mock()
     ok.is_success = True
     ok.data = _months(1, 2, 3, 6, 7)
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = None
     registry = Mock()

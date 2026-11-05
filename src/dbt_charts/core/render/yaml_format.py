@@ -13,7 +13,7 @@ from dbt_charts.core.compile.models.board.normalized import (
     VariableValues,
 )
 from dbt_charts.core.diagnostics import Diagnostic
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
 from dbt_charts.core.render.board_to_dict import (
     NO_ROW_CAP,
     board_to_dict,
@@ -103,7 +103,7 @@ def _board_to_yaml_dict(
 
 def render_board_yaml(
     board: Board,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     error_collector: list[Diagnostic] | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
@@ -117,7 +117,7 @@ def render_board_yaml(
     header so the document is explicitly partial, never silently so.
     """
     board_dict = board_to_dict(
-        board, executor, variables, error_collector, max_rows_per_query
+        board, results, variables, error_collector, max_rows_per_query
     )
     truncation_notes: list[str] = []
     yaml_dict = _board_to_yaml_dict(board_dict, truncation_notes)

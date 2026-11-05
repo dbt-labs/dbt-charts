@@ -15,7 +15,7 @@ use crate::families::subday::SubdaySource;
 use crate::families::support_table_strip::{first_bucket_of_each_label, Align, Column};
 use crate::families::temporal::{complete_ordinal_rows, floor_to_bucket_start, next_bucket, normalize_labeled_temporal, TimePart, TimeUnit};
 use d3rs::calendar::{civil_from_days, days_from_civil};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::time_axis::{TimeAxis, Unreadable};
 use crate::families::x_type::{Grain, XResolution};
 use crate::labels_expr::Expr;
@@ -212,7 +212,7 @@ fn plot_rows(
 ) -> Result<(Vec<Row>, Vec<String>, Vec<String>, Vec<String>), Diagnostic> {
     let ax_x = &r.style.axis_x;
     let unreadable = |e: Unreadable| e.diagnostic(&r.id, &r.x, "bar");
-    let normalized = normalize_labeled_temporal(rows, &r.x)?;
+    let normalized = normalize_labeled_temporal(&r.column_types, rows, &r.x)?;
     let folds = axis.grain().part.is_some();
     let mut dated: Vec<Row> = Vec::with_capacity(normalized.len());
     let mut originals: Vec<String> = Vec::with_capacity(normalized.len());

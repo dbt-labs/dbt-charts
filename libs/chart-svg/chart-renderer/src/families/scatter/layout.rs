@@ -11,7 +11,7 @@ use super::bind::Bound;
 use super::{BarX, LogX, NominalRound, PlainXPaint, FacetX, LayeredLegend, LegendStack, LinearX, LogAxis, NO_EXTENT, PlainXAxis, PointDatum, RULE_POINT_SIZE, RuleFires, ScatterPanelOpts, XFrame, XLayers, YScale, category_text, color_legend_glyph_names, color_legend_layout, column_extent, date_axis, finite_frac, kept_reading, legend_entry_order, legend_gradient_id, linear_x_scale, log_x_axis, x_edge_pad, needs_band, plain_x_axis, point_glyph, point_scale_domain, point_x_padding, point_x_scale, quantitative_color, reads_chart_rows, rows_at, rule_aria, rule_point, shape_legend_fill, shape_merges_into_color, shape_scale_domain, size_area, size_legend, size_legend_nodes, unfilled_stroke, visible_tick_labels, x_has_nan_years, y_when_x_invalid};
 use crate::{Padding, Payload};
 use crate::common::{AxisStyle, format_y_label, row_num, row_str, symbol_radius};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::{facet_compose, legend, multiples};
 use crate::families::axis_caption::{AxisCaption, CaptionScale, NumericScale, vega_axis_format};
 use crate::families::color_scale::{ContinuousColor, GradientAt};
@@ -58,7 +58,7 @@ fn laid_out(bound: &Bound, cell: Rect, measure: &Measure, padding: Option<Paddin
     } else {
         Cow::Owned(Payload { width: cell.width, height: cell.height, padding: padding.or(bound.payload.padding), ..Payload::clone(&bound.payload) })
     };
-    let (fitted, diagnostics) = crate::diagnostic::collect(|| fit(bound, &payload, measure.fonts, None, None));
+    let (fitted, diagnostics) = diagnostic::collect(|| fit(bound, &payload, measure.fonts, None, None));
     let fitted = fitted?;
     Ok(Layout {
         insets: fitted.canvas.insets_of(&fitted.data_box),
@@ -392,6 +392,7 @@ pub(super) fn fit(
     } else if x_dates {
         let axis = date_axis(
             r,
+            &payload.schema.rows,
             time,
             &shown_drawn,
             &XLayers::of(r, overlays, &layer_domain_rows),
@@ -1054,7 +1055,7 @@ pub(super) fn fit(
         r.color.as_deref().and_then(|cf| crate::common::category_scale_for(&r.category_colors, cf));
     // `_dot_plot_roles`: one category axis, one measure axis, a color split.
     let dot_plot = r.color.is_some()
-        && match (infer_vega_type(&payload.rows, &r.x), infer_vega_type(&payload.rows, &r.y)) {
+        && match (infer_vega_type(&payload.schema.rows, &payload.rows, &r.x)?, infer_vega_type(&payload.schema.rows, &payload.rows, &r.y)?) {
             (VegaType::Nominal, VegaType::Quantitative) | (VegaType::Quantitative, VegaType::Nominal) => true,
             _ => false,
         };
@@ -1859,6 +1860,7 @@ pub(super) fn fit(
     let x_law = if x_dates {
         let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
         Some(crate::families::x_type::resolve_cartesian_x_type(
+            &payload.schema.rows,
             &payload.rows,
             &r.x,
             &crate::families::x_type::XAxis::of(&r.style.axis_x),
@@ -2024,7 +2026,7 @@ pub(super) fn fit(
         } else {
             (channel_ink.clone(), None)
         };
-        let extra = crate::families::tooltip_extra::rows_for(&r.tooltip, row)?;
+        let extra = crate::families::tooltip_extra::rows_for(&r.tooltip, row, &bound.payload.schema.rows)?;
         let aria = if tooltip_labels && dot_plot {
             let (category_field, measure_field, value_title) =
                 if y_nominal { (&r.y, &r.x, &x_axis_title) } else { (&r.x, &r.y, &y_axis_title) };

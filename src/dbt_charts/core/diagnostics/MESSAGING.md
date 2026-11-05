@@ -98,5 +98,5 @@ audience:
    `uv run python libs/chart-svg/src/chart_svg_dev/gen_diagnostic_codes.py`.
    `test_generated_codes_are_up_to_date` in
    `libs/chart-svg/tests/test_diagnostic_codes.py` fails while
-   `libs/chart-svg/chart-renderer/src/codes.rs` and
+   `libs/chart-svg/diagnostic/src/codes.rs` and
    `libs/chart-svg/compile/src/codes.rs` are stale.

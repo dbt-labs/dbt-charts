@@ -2,7 +2,7 @@
 
 use crate::common::{AxisStyle, FormatSlot, axis_title_text, row_num, row_str};
 use crate::contract::Reads;
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::bar_hover_band::HoverBand;
 use crate::families::cartesian::BandScale;
 use crate::families::layers::{BarLayerMark, LayerClaim, LayerStack, OverlayBarLayer, OverlayLayer, layer_color_of, layer_color_promoted, layer_color_text, layer_color_values, layer_series_text, row_order_stack};

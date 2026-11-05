@@ -2,7 +2,7 @@
 //! holds what the data decides); `layout` fits that to a cell and returns
 //! nodes, the box the data occupies, and the findings it raised.
 
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use scene::Node;
 
 /// An axis-aligned box in canvas pixels.

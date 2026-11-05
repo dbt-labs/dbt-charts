@@ -13,6 +13,8 @@ import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
 
+from ...._results import rows_result
+
 # --- Decimal-point alignment on a plain trim-`f` column ---
 
 
@@ -75,7 +77,7 @@ def test_raw_spec_does_not_paint_anchored_unit_in_svg():
         chart,
         resolve_style(get_theme_style()),
         resolve_chart_style_context(get_theme_style()),
-        data,
+        rows_result(data),
         format="svg",
         width=600,
         height=320,
@@ -127,7 +129,7 @@ def _render_share_strip(
         chart,
         resolve_style(get_theme_style()),
         resolve_chart_style_context(get_theme_style()),
-        data,
+        rows_result(data),
         format="svg",
         width=600,
         height=320,
@@ -194,7 +196,7 @@ def _render_per_series_label(orientation: str, stack: str | None) -> str:
             chart,
             resolve_style(get_theme_style()),
             resolve_chart_style_context(get_theme_style()),
-            data,
+            rows_result(data),
             format="svg",
             width=600,
             height=320,
@@ -267,7 +269,7 @@ def test_by_measure_label_is_never_rejected(orientation):
             chart,
             resolve_style(get_theme_style()),
             resolve_chart_style_context(get_theme_style()),
-            data,
+            rows_result(data),
             format="svg",
             width=600,
             height=320,

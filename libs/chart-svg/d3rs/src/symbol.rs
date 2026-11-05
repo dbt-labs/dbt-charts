@@ -4,8 +4,7 @@
 
 use std::f64::consts::{PI, TAU};
 
-use crate::path::Path;
-use scene::PathData;
+use crate::path::{Command, Path};
 
 /// d3's `symbolsFill` (circle to wye) and `symbolsStroke` (the rest, drawn
 /// with a 1.5px round-capped stroke), in d3's order.
@@ -48,7 +47,7 @@ impl SymbolType {
     }
 
     /// `symbol(type, size)()`: the path data.
-    pub fn draw(self, size: f64) -> PathData {
+    pub fn draw(self, size: f64) -> Vec<Command> {
         let mut path = Path::new();
         let sqrt3 = 3f64.sqrt();
         match self {
@@ -185,6 +184,6 @@ impl SymbolType {
                 path.close_path();
             }
         }
-        path.into_path_data()
+        path.into_commands()
     }
 }

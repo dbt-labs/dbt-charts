@@ -30,7 +30,7 @@ def _bar(
     )
     svg, _ = render_tabs_layout(
         items=(item,) * len(titles),
-        executor=None,
+        results=None,
         variables={},
         available_width=800.0,
         available_height=300.0,

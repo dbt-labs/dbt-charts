@@ -14,7 +14,7 @@ use super::{
     LINE_HEIGHT_RATIO, MAX_MESSAGE_LINES, MIN_HEIGHT, MIN_WIDTH,
 };
 use crate::common::Font;
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::layout::{Layout, Rect};
 use measure::font_files::{font_path, mono_font_path};
 use measure::fonts::cached_measurer;

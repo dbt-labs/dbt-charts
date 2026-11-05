@@ -1,0 +1,3 @@
+kind: Features
+body: '`dct validate` warns again when a `rows:` list stacks long `text:` blocks, because each block can take its own column grid.'
+time: 2026-10-30T22:52:30.800931-07:00

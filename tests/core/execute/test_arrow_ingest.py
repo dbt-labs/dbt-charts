@@ -12,9 +12,25 @@ from typing import Any
 from uuid import UUID
 
 import duckdb
+import nanoarrow as na
 import pytest
 
-from dbt_charts.core.execute.arrow_ingest import ingest, insert_rows, rows_to_arrow
+from dbt_charts.core.execute.arrow_ingest import (
+    encode,
+    infer_type,
+    ingest,
+    insert_rows,
+    table,
+)
+
+
+def rows_to_arrow(rows: list[dict[str, Any]]) -> na.Array:
+    names = list(rows[0]) if rows else []
+    columns = []
+    for name in names:
+        values = [row.get(name) for row in rows]
+        columns.append((name, encode(values, infer_type(values))))
+    return na.Array(table(columns, len(rows)))
 
 
 def _load(rows: list[dict[str, Any]]) -> duckdb.DuckDBPyConnection:
@@ -194,9 +210,10 @@ def test_runtime_paths_do_not_import_pyarrow(tmp_path: Path) -> None:
             CsvSourceConfig, JsonSourceConfig, ParquetSourceConfig,
         )
         from dbt_charts.core.column_types import ColumnType
+        import nanoarrow as na
         from dbt_charts.core.execute.adapters.base import RowFetchLimit
+        from dbt_charts.core.execute.arrow_ingest import encode, infer_type, table
         from dbt_charts.core.execute.cache_backend import ResultRows
-        from dbt_charts.core.execute.arrow_ingest import rows_to_arrow
         from dbt_charts.core.execute.cache_composition import compose_over_named_rows
         from dbt_charts.core.execute.file_source_materializer import (
             FileSourceMaterializer,
@@ -224,11 +241,16 @@ def test_runtime_paths_do_not_import_pyarrow(tmp_path: Path) -> None:
         assert cache.get("s", "q", "v").rows == rows.rows
 
         assert compose_over_named_rows(
-            "SELECT sum(a) AS n FROM up", {{"up": [{{"a": 1}}, {{"a": 2}}]}}, []
+            "SELECT sum(a) AS n FROM up",
+            {{"up": [{{"a": 1}}, {{"a": 2}}]}},
+            [],
+            {{"up": {{"a": ColumnType(kind="integer")}}}},
         )[0] == [{{"n": 3}}]
 
         limit = RowFetchLimit(fetch_limit=10, effective_limit=9, ceiling_binding=False)
-        result = arrow_to_query_result(rows_to_arrow([{{"n": Decimal("4")}}]), limit)
+        values = [Decimal("4")]
+        column = encode(values, infer_type(values))
+        result = arrow_to_query_result(na.Array(table([("n", column)], 1)), limit)
         assert result.data == [{{"n": 4}}], result.data
         assert "pyarrow" not in sys.modules
         """

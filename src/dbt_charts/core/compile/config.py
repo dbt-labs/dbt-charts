@@ -971,9 +971,11 @@ def _project_sources_config(
     # tach-ignore(pre-existing compile->project coupling — accepted debt)
     from dbt_charts.core.project_roots import implicit_dbt_source
 
+    # The linked dbt project's profile is the one that connects.
+    dbt_project = project.manifest_project()
     dbt_project_yaml = (
-        project.read_text("dbt_project.yml")
-        if project.exists("dbt_project.yml")
+        dbt_project.read_text("dbt_project.yml")
+        if dbt_project.exists("dbt_project.yml")
         else None
     )
     implicit = implicit_dbt_source(sources, dbt_project_yaml)

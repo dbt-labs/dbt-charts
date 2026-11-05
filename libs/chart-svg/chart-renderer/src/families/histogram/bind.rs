@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use super::{histogram_bins_by, Bin, Resolved};
 use crate::common::{axis_title_text, format_y_label, row_num, MirrorGhost};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::color_scale::ContinuousColor;
 use crate::families::legend;
 use crate::families::temporal::{infer_vega_type, VegaType};
@@ -113,7 +113,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
 
     let binned_rows: Vec<&serde_json::Map<String, Value>> =
         payload.rows.iter().filter(|row| row_num(row, &r.x).is_some()).collect();
-    let (stack_color, row_series) = match stack_color(&r, &payload.rows, &binned_rows)? {
+    let (stack_color, row_series) = match stack_color(&payload.schema.rows, &r, &payload.rows, &binned_rows)? {
         Some((color, row_series)) => (Some(color), row_series),
         None => (None, vec![Some(0); binned_rows.len()]),
     };
@@ -332,6 +332,7 @@ struct StackColor {
 /// distinct value; an ordinal (date-like text) one a `blues` ramp over its
 /// sorted values. Vega-Lite stacks those last three in descending value order.
 fn stack_color(
+    types: &column_types::ColumnTypes,
     r: &Resolved,
     rows: &[serde_json::Map<String, Value>],
     binned_rows: &[&serde_json::Map<String, Value>],
@@ -392,7 +393,7 @@ fn stack_color(
     let extent = |values: &[Option<f64>]| {
         values.iter().flatten().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &v| (lo.min(v), hi.max(v)))
     };
-    let vega_type = if channel.mode == "gradient" { VegaType::Quantitative } else { infer_vega_type(rows, cf) };
+    let vega_type = if channel.mode == "gradient" { VegaType::Quantitative } else { infer_vega_type(types, rows, cf)? };
     let color = match vega_type {
         VegaType::Quantitative if channel.mode == "gradient" => {
             let scale = channel.scale.as_ref().ok_or("histogram: a gradient color channel carries no scale (resolver required)")?;
@@ -415,7 +416,7 @@ fn stack_color(
                 })
                 .collect::<Vec<Option<f64>>>();
             let (lo, hi) = extent(&values);
-            let aware = crate::families::heatmap::date_column_aware(rows, cf);
+            let aware = crate::families::heatmap::date_column_aware(types, rows, cf)?;
             let label = |day: f64| crate::families::heatmap::legend_date_label(day, aware);
             let (dated, row_series) = continuous(values, ContinuousColor::dates(&d3rs::vega_schemes::BLUES, lo, hi, aware), &label)?;
             (StackColor { dated: true, ..dated }, row_series)

@@ -21,10 +21,11 @@ if TYPE_CHECKING:
     )
     from dbt_charts.agent_api.validate_query import QueryDiagnostic
 
-from dbt_charts.agent_api import Project
+from dbt_charts.agent_api import DbtChartsError, Project
 from dbt_charts.agent_api._paths import BOARD_CANDIDATE_SUFFIXES
 from dbt_charts.agent_api.query_csv import BOARD_QUERY_HINT, SQL_QUERY_HINT, with_csv
 from dbt_charts.cli._console import dct_console
+from dbt_charts.cli._error_format import print_error
 from dbt_charts.cli._json_output import print_json_result
 from dbt_charts.cli._project import with_project
 
@@ -360,15 +361,19 @@ def query_command(
 
         # raw-SQL validate-only — no named-query lookup needed.
         if not mode_is_named:
-            if show_suppressed:
-                active, suppressed = project_session.validate_query(
-                    sql_text, dialect=dialect, source=source, return_suppressed=True
-                )
-            else:
-                active = project_session.validate_query(
-                    sql_text, dialect=dialect, source=source
-                )
-                suppressed = None
+            try:
+                if show_suppressed:
+                    active, suppressed = project_session.validate_query(
+                        sql_text, dialect=dialect, source=source, return_suppressed=True
+                    )
+                else:
+                    active = project_session.validate_query(
+                        sql_text, dialect=dialect, source=source
+                    )
+                    suppressed = None
+            except DbtChartsError as exc:
+                print_error(str(exc))
+                raise typer.Exit(1) from exc
             _print_validate_result(active, suppressed, json_output=json_output)
             return
 
@@ -381,13 +386,13 @@ def query_command(
         if show_suppressed:
             active, suppressed = project_session.validate_query(
                 lr.sql,
-                dialect=dialect,
+                dialect=dialect or lr.dialect,
                 source=lr.source,
                 return_suppressed=True,
             )
         else:
             active = project_session.validate_query(
-                lr.sql, dialect=dialect, source=lr.source
+                lr.sql, dialect=dialect or lr.dialect, source=lr.source
             )
             suppressed = None
         _print_validate_result(active, suppressed, json_output=json_output)

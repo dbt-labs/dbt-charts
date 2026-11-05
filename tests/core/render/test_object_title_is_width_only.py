@@ -31,6 +31,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style_and_context,
 )
 
+from ..._results import rows_result
 from .._engine_render import render_table_svg
 
 
@@ -175,7 +176,7 @@ class TestRendererTitleParityAcrossObjectTypes:
             _make_chart("bar", title),
             board_rs,
             board_ctx,
-            self._data,
+            rows_result(self._data),
             format="svg",
             width=outer_width,
         )

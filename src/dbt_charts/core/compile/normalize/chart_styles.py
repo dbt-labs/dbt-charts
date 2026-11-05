@@ -11,9 +11,19 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from dbt_charts.core.compile.models.board.normalized import Board
+from dbt_charts.core.compile.models.chart.authored import GEO_CHART_TYPES
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.primitives import ScaleTargetConfig
+from dbt_charts.core.compile.models.style.authored import (
+    CalloutChartStylePatch,
+    KpiChartStylePatch,
+    SparkBarChartStylePatch,
+)
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
-from dbt_charts.core.compile.models.style.merged import MergedChartStyle
+from dbt_charts.core.compile.models.style.merged import (
+    BoardChartTiers,
+    MergedChartStyle,
+)
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     _FAMILY_SLOT,
     board_family_style,
@@ -26,12 +36,34 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 )
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.palette import UnknownColorError
+from dbt_charts.core.compile.sizing import table_width_is_pinned
 
 _MERGED_STYLE = TypeAdapter(MergedChartStyle)
 
 # Resolvers of these families read the per-chart context's slot; every other
 # family's resolver merges the chart-local patch onto the board's slot itself.
 _FROM_CHART_CONTEXT = frozenset({"bar", "line", "area", "kpi"})
+
+
+def _color_gradient(chart: Chart) -> ScaleTargetConfig | None:
+    """The gradient the chart's own `style.color` sets, as `normalize_chart_channels`
+    reads it. Geo charts ignore it: their channel only names the field. A family
+    without a `color` style (kpi, callout, spark_bar) sets none."""
+    style = chart.style
+    if (
+        style is None
+        or chart.type in GEO_CHART_TYPES
+        or isinstance(
+            style, KpiChartStylePatch | CalloutChartStylePatch | SparkBarChartStylePatch
+        )
+    ):
+        return None
+    color = style.color
+    if color is None or color.gradient is None:
+        return None
+    return ScaleTargetConfig.model_validate(
+        color.gradient.model_dump(exclude_none=True)
+    )
 
 
 def merged_chart_style(
@@ -59,6 +91,7 @@ def merged_chart_style(
         "legend": context.legend,
         "title": context.title,
         "pagination": context.pagination,
+        "gradient": _color_gradient(chart),
         "axis": context.axis_overrides_global,
         "axis_x": context.axis_overrides_x,
         "axis_y": context.axis_overrides_y,
@@ -78,6 +111,7 @@ def merged_chart_style(
         fields["family"] = getattr(context, _FAMILY_SLOT[chart.type])
     if chart.type == "table":
         fields["support_table"] = context.support_table
+        fields["width_pinned"] = table_width_is_pinned(chart)
     return _MERGED_STYLE.validate_python(fields)
 
 
@@ -103,6 +137,18 @@ def attach_chart_styles(board: Board) -> None:
         except UnknownColorError:
             continue
     board.chart_styles = styles
+
+
+def board_chart_tiers(context: ChartStyleContext) -> BoardChartTiers:
+    """The board-wide chart inputs the engine reads beside ``chart_styles``."""
+    return BoardChartTiers(
+        category_color_pins=context.category_color_pins,
+        axis=context.axis,
+        axis_x=context.axis_x,
+        axis_y=context.axis_y,
+        axis_quantitative=context.axis_quantitative,
+        axis_band=context.axis_band,
+    )
 
 
 def attach_chart_styles_tree(board: Board) -> None:

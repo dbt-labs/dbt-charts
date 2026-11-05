@@ -409,7 +409,7 @@ def _render_variables_band(
     variable_defs: "dict[str, Variable]",
     current_values: VariableValues,
     width: float,
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     resolved_style: "ResolvedStyle",
     align: StripAlign,
     variables_path: str,
@@ -427,7 +427,7 @@ def _render_variables_band(
     disagree about which board a control belongs to.
     """
     controls = resolve_controls(
-        variable_defs, current_values, executor, resolved_style.variables
+        variable_defs, current_values, results, resolved_style.variables
     )
     return render_variables_strip_svg(
         controls, width, resolved_style, align, variables_path=variables_path
@@ -439,7 +439,7 @@ def _render_title_variables_inline_band(
     variables: VariableValues,
     layout_content_width: float,
     card_pad: float,
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     text_align: Literal["left", "center", "right"],
     title_authored_attrs: str,
     variables_path: str,
@@ -536,7 +536,7 @@ def _render_title_variables_inline_band(
         board.visible_variables,
         variables,
         vars_w,
-        executor,
+        results,
         board.style,
         "end",
         variables_path=variables_path,
@@ -877,7 +877,7 @@ def _build_board_content_items(
 
 def _render_layout(
     board: ResolvedBoard,
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     variables: VariableValues,
     layout_content_width: float,
     layout_content_height: float,
@@ -927,7 +927,7 @@ def _render_layout(
     if layout.type == "cols":
         result = render_cols_layout(
             items,
-            executor,
+            results,
             variables,
             layout_content_width,
             layout_content_height,
@@ -942,7 +942,7 @@ def _render_layout(
     elif layout.type == "grid":
         result = render_grid_layout(
             items,
-            executor,
+            results,
             variables,
             layout_content_width,
             layout_content_height,
@@ -957,7 +957,7 @@ def _render_layout(
     elif layout.type == "tabs":
         result = render_tabs_layout(
             items,
-            executor,
+            results,
             variables,
             layout_content_width,
             layout_content_height,
@@ -976,7 +976,7 @@ def _render_layout(
         # Default to rows (handles "rows" and any unknown type)
         result = render_rows_layout(
             items,
-            executor,
+            results,
             variables,
             layout_content_width,
             layout_content_height,
@@ -1059,7 +1059,7 @@ def _dedupe_repeated_style_rules(svg: str) -> str:
 
 def render_board_svg(
     board: ResolvedBoard,
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     variables: VariableValues,
     background: str | None,
     grid: bool = False,
@@ -1077,11 +1077,11 @@ def render_board_svg(
             board.regional.zone,
             language=board.regional.resolved_language,
         ),
-        board_clock(board.clock(executor.rendered_at)),
+        board_clock(board.clock(results.rendered_at)),
     ):
         return _render_board_svg(
             board,
-            executor,
+            results,
             variables,
             background,
             grid,
@@ -1094,7 +1094,7 @@ def render_board_svg(
 
 def _render_board_svg(
     board: ResolvedBoard,
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     variables: VariableValues,
     background: str | None,
     grid: bool,
@@ -1110,7 +1110,7 @@ def _render_board_svg(
 
     Args:
         board: ResolvedBoard with board config already baked in — no config lookup here.
-        executor: ChartDataProvider for query execution
+        results: rows by query name
         variables: Variable values for queries
         background: Background color or pattern URL
         grid: Whether to show grid overlay pattern
@@ -1189,7 +1189,7 @@ def _render_board_svg(
 
     text_align = resolved_style.text.align
 
-    with board_data_provider(executor):
+    with board_data_provider(results):
         inline_header_svg = ""
         inline_header_height = 0.0
         title_svg = ""
@@ -1205,7 +1205,7 @@ def _render_board_svg(
                     variables,
                     layout_content_width,
                     card_pad,
-                    executor,
+                    results,
                     text_align=text_align,
                     title_authored_attrs=authored_attrs("title", "title"),
                     variables_path="variables",
@@ -1290,7 +1290,7 @@ def _render_board_svg(
             board.visible_variables,
             variables,
             band_width,
-            executor,
+            results,
             resolved_style,
             band_align,
             variables_path="variables",
@@ -1333,12 +1333,12 @@ def _render_board_svg(
     # rather than at each caller.
     with (
         board_variables(variables),
-        variable_options(linked_variable_options(board, executor, variables)),
-        board_data_provider(executor),
+        variable_options(linked_variable_options(board, results, variables)),
+        board_data_provider(results),
     ):
         layout_content, actual_layout_height = _render_layout(
             board,
-            executor,
+            results,
             variables,
             layout_content_width,
             layout_content_height,
@@ -1450,7 +1450,7 @@ def _render_board_svg(
         ),
     )
 
-    render_time_utc = executor.rendered_at.astimezone(UTC)
+    render_time_utc = results.rendered_at.astimezone(UTC)
     render_timestamp_iso = render_time_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
     footer_x = total_width - page_padding
     footer_y = total_height - footer_style.y_offset
@@ -1478,7 +1478,7 @@ def _render_board_svg(
         # export can't know the viewer's zone, and the render process's own zone
         # is an accidental deployment artifact. min() shows the stalest cached
         # query so the board never reads fresher than it is.
-        cache_hit_ats = executor.cache_hit_ats
+        cache_hit_ats = results.cache_hit_ats
         data_as_of = min(cache_hit_ats) if cache_hit_ats else render_time_utc
         display_timestamp = portable_strftime(
             data_as_of.astimezone(board.regional.zone), timestamp_style.format
@@ -1542,7 +1542,7 @@ def _render_board_svg(
 
 def render_nested_board(
     board: ResolvedBoard,
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     variables: VariableValues,
     available_width: float,
     available_height: float,
@@ -1558,7 +1558,7 @@ def render_nested_board(
 
     Args:
         board: ResolvedBoard for the nested board (board config fields are None).
-        executor: ChartDataProvider for query execution
+        results: rows by query name
         variables: Variable values for queries
         available_width: Width in pixels for the board
         card_gap: Gap between cards (inter-item spacing)
@@ -1613,7 +1613,7 @@ def render_nested_board(
             variables,
             layout_content_width,
             card_pad,
-            executor,
+            results,
             text_align=text_align,
             # The board's own header handle wraps this band and covers its heading.
             # An imported board has no handle at all, so the band's kind-only leaf
@@ -1691,7 +1691,7 @@ def render_nested_board(
             board.visible_variables,
             variables,
             band_width,
-            executor,
+            results,
             resolved_style,
             band_align,
             variables_path=_nested_variables_path(source_path),
@@ -1704,7 +1704,7 @@ def render_nested_board(
     authored_bg = resolved_style.background
     layout_content, actual_layout_height = _render_layout(
         board,
-        executor,
+        results,
         variables,
         layout_content_width,
         layout_content_height,

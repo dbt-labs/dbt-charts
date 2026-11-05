@@ -83,7 +83,7 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.chart.normalized import Chart
     from dbt_charts.core.compile.models.query.normalized import AnyQuery
     from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
 
 # Per-render-pass set of declared variable names (from board.variable_registry).
 # Cells whose column is in this set emit ?col=value filter links.
@@ -506,7 +506,7 @@ def resolve_column_set_link(
     return f"/data/{source}/{schema}/{table}/?{params}"
 
 
-def _table_row_detail_link(chart_query: AnyQuery, executor: Executor) -> str:
+def _table_row_detail_link(chart_query: AnyQuery, results: ResolveDataProvider) -> str:
     """Synthesize a table's own-row detail link, or ``""`` if none can be
     safely resolved.
 
@@ -515,11 +515,11 @@ def _table_row_detail_link(chart_query: AnyQuery, executor: Executor) -> str:
     ``resolve_column_set_link``: per-column FK-drill links are injected
     separately so the table root link stays own-table only.
     """
-    _loc = _loc_for_query(chart_query, executor.adapter_registry)
+    _loc = _loc_for_query(chart_query, results.adapter_registry)
     if not _loc:
         return ""
     column_rows_for_link = fetch_column_rows_for_link(
-        executor.adapter_registry, chart_query, board=executor.board
+        results.adapter_registry, chart_query, board=results.board
     )
     from dbt_charts.core.compile.models.query.normalized import (  # noqa: PLC0415
         is_sql_query,
@@ -572,7 +572,7 @@ def _table_row_detail_link(chart_query: AnyQuery, executor: Executor) -> str:
 
 def synthesize_automatic_link(
     chart: Chart,
-    executor: Executor,
+    results: ResolveDataProvider,
     exclude_x: bool = False,
 ) -> str:
     """Synthesize an auto-link template for a chart mark or table row.
@@ -605,7 +605,7 @@ def synthesize_automatic_link(
         return ""
 
     if chart.type == "table":
-        return _table_row_detail_link(_chart_query, executor)
+        return _table_row_detail_link(_chart_query, results)
 
     # Non-table chart: non-measure dimension channels are the mark's identity.
     # x and color are family-specific fields not present on all Chart members.
@@ -629,8 +629,8 @@ def synthesize_automatic_link(
 
     _src, _schema, _table = _loc
     _schema_qry = SchemaQuery(source=_src, schema=_schema, table=_table)
-    _schema_result = executor.adapter_registry.execute(
-        _schema_qry, variables=None, board=executor.board
+    _schema_result = results.adapter_registry.execute(
+        _schema_qry, variables=None, board=results.board
     )
     _actual_cols: set[str] = (
         {r["name"] for r in _schema_result.data if "name" in r}
@@ -642,7 +642,7 @@ def synthesize_automatic_link(
     if not dim_cols:
         return ""
 
-    _fk_edges = fetch_fk_edges(executor.adapter_registry, _loc[2])
+    _fk_edges = fetch_fk_edges(results.adapter_registry, _loc[2])
 
     return resolve_column_set_link(
         channel_cols=dim_cols,

@@ -577,7 +577,7 @@ const COMPILED_SIZE_LIMIT: usize = 16 << 20;
 /// `new RegExp(source, flags)`.
 pub fn compile(source: &str, flags: &str) -> Result<JsRegex, CompileError> {
     if super::val::utf16_len(source) > MAX_PATTERN_UNITS {
-        return Err(CompileError::Unmodeled(EvalError::Unmodeled(crate::refuse!("labels.expr compiling a regular expression longer than {MAX_PATTERN_UNITS} characters is not supported"))));
+        return Err(CompileError::Unmodeled(EvalError::Unmodeled(diagnostic::refuse!("labels.expr compiling a regular expression longer than {MAX_PATTERN_UNITS} characters is not supported"))));
     }
     // Compiling builds the program and its tables: about a kilobyte for each byte of the pattern.
     super::val::charge(source.len().saturating_mul(1024)).map_err(CompileError::Unmodeled)?;
@@ -602,7 +602,7 @@ pub fn compile(source: &str, flags: &str) -> Result<JsRegex, CompileError> {
     };
     let body = t.pattern(0).map_err(|failure| match failure {
         Failure::Syntax(message) => CompileError::Syntax(message),
-        Failure::TooDeep => CompileError::Unmodeled(EvalError::Unmodeled(crate::refuse!("labels.expr compiling a regular expression with groups nested past {MAX_GROUP_DEPTH} levels is not supported"))),
+        Failure::TooDeep => CompileError::Unmodeled(EvalError::Unmodeled(diagnostic::refuse!("labels.expr compiling a regular expression with groups nested past {MAX_GROUP_DEPTH} levels is not supported"))),
     })?;
     let ignore_case = t.ignore_case;
     let pattern = if ignore_case { format!("(?i){body}") } else { body };
@@ -613,7 +613,7 @@ pub fn compile(source: &str, flags: &str) -> Result<JsRegex, CompileError> {
         .build()
         .map_err(|e| match e {
             // The translated pattern is valid by construction, so the engine fails to build it only for its size.
-            fancy_regex::Error::CompileError(_) => CompileError::Unmodeled(EvalError::Unmodeled(crate::refuse!("labels.expr compiling a regular expression whose compiled program passes {COMPILED_SIZE_LIMIT} bytes is not supported"))),
+            fancy_regex::Error::CompileError(_) => CompileError::Unmodeled(EvalError::Unmodeled(diagnostic::refuse!("labels.expr compiling a regular expression whose compiled program passes {COMPILED_SIZE_LIMIT} bytes is not supported"))),
             other => CompileError::Syntax(format!("Invalid regular expression: /{source}/: {other}")),
         })?;
     Ok(JsRegex { re, global: flags.contains('g'), sticky: flags.contains('y'), unicode, names })
@@ -639,7 +639,7 @@ impl JsRegex {
         let found = self
             .re
             .captures_from_pos(text, from)
-            .map_err(|_| EvalError::Unmodeled(crate::refuse!("labels.expr matching a regular expression that backtracks past {BACKTRACK_LIMIT} steps is not supported")))?;
+            .map_err(|_| EvalError::Unmodeled(diagnostic::refuse!("labels.expr matching a regular expression that backtracks past {BACKTRACK_LIMIT} steps is not supported")))?;
         let Some(caps) = found else { return Ok(None) };
         let Some(whole) = caps.get(0) else { return Ok(None) };
         if self.sticky && whole.start() != from {

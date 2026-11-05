@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct query --validate now lints SQL on a dbt profile source in that warehouse's dialect, so BigQuery project IDs with hyphens no longer raise false parse errors.
+time: 2026-11-03T17:21:05.918297-08:00

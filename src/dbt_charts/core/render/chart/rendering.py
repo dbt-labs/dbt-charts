@@ -43,6 +43,7 @@ from dbt_charts.core.compile.models.primitives import PieMode, ResolvedFontStyle
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.execute.cache_backend import ResultRows
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 from dbt_charts.core.render.board_variables import held_legend_view
 from dbt_charts.core.render.chart.spec_builders import additive_padding
@@ -107,7 +108,7 @@ def _ensure_resolved_board(board: Board | ResolvedBoard) -> ResolvedBoard:
 
 def render_layout_item(
     item: ResolvedLayoutItem,
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     variables: VariableValues,
     card_gap: float,
     available_width: float,
@@ -128,7 +129,7 @@ def render_layout_item(
 
     Args:
         item: Layout item to render
-        executor: ChartDataProvider for query execution
+        results: rows by query name
         variables: Variable values for queries
         available_width: Width in pixels for the item
         available_height: Height in pixels for the item
@@ -138,7 +139,7 @@ def render_layout_item(
         (svg_string, actual_height) — actual_height is the true rendered height.
     """
     # Evaluate visible expression before doing any work — hidden items cost nothing.
-    if not evaluate_visible(item.visible, variables, executor):
+    if not evaluate_visible(item.visible, variables, results):
         return "", 0.0
 
     # Use calculated dimensions if available, otherwise use passed dimensions
@@ -173,7 +174,7 @@ def render_layout_item(
             )
             content_svg, board_actual_height = render_nested_board(
                 _ensure_resolved_board(item.board),
-                executor,
+                results,
                 variables,
                 width,
                 content_height,
@@ -222,7 +223,7 @@ def render_layout_item(
             chart_padding = item.chart.layout_padding
             chart_svg, chart_actual_height = render_chart_item(
                 item.chart,
-                executor,
+                results,
                 variables,
                 width,
                 height,
@@ -242,7 +243,7 @@ def render_layout_item(
 
             rendered, actual_height = render_nested_board(
                 _ensure_resolved_board(item.board),
-                executor,
+                results,
                 variables,
                 width,
                 available_height=height,
@@ -467,7 +468,7 @@ def _render_chart_resolve_failure(
 
 def render_chart_item(
     chart: ResolvedChart,
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     variables: VariableValues,
     available_width: float,
     available_height: float = 300.0,
@@ -483,7 +484,7 @@ def render_chart_item(
 
     Args:
         chart: ResolvedChart to render.
-        executor: ChartDataProvider for query execution
+        results: rows by query name
         variables: Variable values for queries
         available_width: Width in pixels for the chart — the padded (outer)
             box; also what the tagged authoring group's own size becomes.
@@ -533,7 +534,7 @@ def render_chart_item(
         # Vega-family already receives the outer width as ``width``.
         svg, actual_height = _render_chart_item_inner(
             chart,
-            executor,
+            results,
             variables,
             slot_width,
             slot_height,
@@ -579,7 +580,7 @@ def render_chart_item(
 
 def _render_chart_item_inner(
     chart: ResolvedChart,
-    executor: ChartDataProvider,
+    results: ChartDataProvider,
     variables: VariableValues,
     available_width: float,
     available_height: float,
@@ -628,12 +629,12 @@ def _render_chart_item_inner(
         # persistent store — see Executor.execute_query), so these are the
         # same rows the chart was resolved against.
         v2_data = (
-            build_chart_datasets(chart, executor, variables)[chart.query_name]
+            build_chart_datasets(chart, results, variables)[chart.query_name]
             if paints_marks
-            else []
+            else ResultRows([], {})
         )
     else:
-        datasets = build_chart_datasets(chart, executor, variables)
+        datasets = build_chart_datasets(chart, results, variables)
         v2_data = datasets[chart.query_name]
         artifact = render_resolved_chart(
             chart,
@@ -649,7 +650,7 @@ def _render_chart_item_inner(
         )
         chart_svg = render_chart_artifact(artifact, "svg")
 
-    if paints_marks and v2_data:
+    if paints_marks and v2_data.rows:
         from dbt_charts.core.diagnostics.codes_render import ERR_CHART_PAINTED_NO_MARKS
         from dbt_charts.core.render.chart.mark_extents import (
             all_marks_degenerate,
@@ -659,13 +660,13 @@ def _render_chart_item_inner(
         # All-zero measure data is a faithful blank render — the engine painted
         # exactly what the data said — not a defect. Only fire when the rows
         # carried a measure value that should have painted.
-        if chart_has_nonzero_measure(chart, v2_data) and all_marks_degenerate(
+        if chart_has_nonzero_measure(chart, v2_data.rows) and all_marks_degenerate(
             chart_svg
         ):
             raise RenderError.from_code(
                 ERR_CHART_PAINTED_NO_MARKS,
                 chart_id=chart.id,
-                row_count=len(v2_data),
+                row_count=len(v2_data.rows),
                 card_width=f"{available_width:g}",
             )
 

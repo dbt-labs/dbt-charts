@@ -16,6 +16,8 @@ from dbt_charts.core.compile import compile
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
+from ..._results import rows_schema
+
 _CODE = "WARN-LAYOUT-MIN-EXCEEDS-HEIGHT"
 
 
@@ -29,6 +31,7 @@ def _make_executor(
     ok = Mock()
     ok.is_success = True
     ok.data = rows
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()

@@ -2,8 +2,8 @@
 
 Stage: EXECUTE
 
-The one home for building Arrow from Python rows: the result cache and cache
-composition hand row dicts to DuckDB through it, and the Trino driver builds its
+The one home for building Arrow from Python rows: the result cache and file
+sources hand row dicts to DuckDB through it, and the Trino driver builds its
 batches with it. nanoarrow builds int, float, bool, string and binary arrays
 from Python lists itself; every other type here is built as its storage type
 (int32 days, int64 microseconds, 16-byte little-endian unscaled decimals) and
@@ -122,7 +122,8 @@ def _decimal_shape(values: list[Decimal], strip_zeros: bool) -> tuple[int, int]:
     return integer_digits + scale, scale
 
 
-def _decimal_type(values: list[Decimal]) -> na.Schema:
+def decimal_precision_scale(values: list[Decimal]) -> tuple[int, int]:
+    """(precision, scale) of the narrowest DECIMAL holding every value exactly."""
     precision, scale = _decimal_shape(values, strip_zeros=False)
     if precision > _MAX_DECIMAL_PRECISION:
         # The column keeps the scale the values carry unless that is too wide:
@@ -134,7 +135,35 @@ def _decimal_type(values: list[Decimal]) -> na.Schema:
             f"Decimal needs precision {precision}, more than the "
             f"{_MAX_DECIMAL_PRECISION} the query engine's DECIMAL holds"
         )
-    return na.decimal128(precision, scale)
+    return precision, scale
+
+
+_ARROW_TYPES: dict[str, na.Schema] = {
+    "null": na.null(),
+    "bool": na.bool_(),
+    "int": na.int64(),
+    "float": na.float64(),
+    "str": na.string(),
+    "json": na.string(),
+    "uuid": na.string(),
+    "bytes": na.binary(),
+    "date": na.date32(),
+    "datetime": na.timestamp("us"),
+    "datetime_tz": na.timestamp("us", "UTC"),
+    "time": na.time64("us"),
+    "timedelta": na.duration("us"),
+}
+
+
+def arrow_type(
+    kind: str,
+    present: list[Any],  # type-state: explicit_any — the non-null Python cell values
+) -> na.Schema:
+    """The Arrow type of a column of Python *kind* (``_kind``). A decimal's
+    precision and scale come from *present*."""
+    if kind == "decimal":
+        return na.decimal128(*decimal_precision_scale(present))
+    return _ARROW_TYPES[kind]
 
 
 def infer_type(
@@ -156,23 +185,7 @@ def infer_type(
     if len(kinds) > 1:
         raise TypeError(f"column mixes {', '.join(sorted(kinds))}")
     kind = kinds.pop() if kinds else "null"
-    if kind == "decimal":
-        return _decimal_type(present)
-    return {
-        "null": na.null(),
-        "bool": na.bool_(),
-        "int": na.int64(),
-        "float": na.float64(),
-        "str": na.string(),
-        "json": na.string(),
-        "uuid": na.string(),
-        "bytes": na.binary(),
-        "date": na.date32(),
-        "datetime": na.timestamp("us"),
-        "datetime_tz": na.timestamp("us", "UTC"),
-        "time": na.time64("us"),
-        "timedelta": na.duration("us"),
-    }[kind]
+    return arrow_type(kind, present)
 
 
 def _micros(value: datetime) -> int:
@@ -275,24 +288,6 @@ def table(columns: Sequence[tuple[str, CArray]], length: int) -> CArray:
     return na.c_array_from_buffers(
         schema, length, [None], children=[array for _, array in columns]
     )
-
-
-def rows_to_arrow(
-    rows: Sequence[Mapping[str, Any]],  # type-state: explicit_any — row dict values
-) -> na.Array:
-    """Build an Arrow table from row dicts; columns are the first row's keys.
-
-    A column's type is inferred from all its non-null values (see
-    :func:`infer_type`).
-
-    Raises:
-        TypeError: A column mixes kinds.
-    """
-    names = list(rows[0]) if rows else []
-    columns = [
-        (name, _encode_inferred([row.get(name) for row in rows])) for name in names
-    ]
-    return na.Array(table(columns, len(rows)))
 
 
 def insert_rows(

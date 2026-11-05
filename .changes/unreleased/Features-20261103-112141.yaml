@@ -1,0 +1,3 @@
+kind: Features
+body: Charts take date, time, and number column types from the warehouse's declared result schema instead of guessing them from the values.
+time: 2026-11-03T11:21:41.17848-08:00

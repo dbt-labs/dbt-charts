@@ -5,8 +5,8 @@
 //! types, compute their own margins (by measuring label text with FontBook), and
 //! call the scale structs to place marks and axis decorations.
 
-use crate::codes;
-use crate::diagnostic::Diagnostic;
+use diagnostic::codes;
+use diagnostic::Diagnostic;
 use d3rs::scale::Band;
 use scene::{Attrs, Chars, Escape, Node, Role, Run, Shape};
 use serde_json::json;
@@ -647,12 +647,12 @@ pub(crate) fn warn_rail_values_dropped(chart_id: &str, authored_field: &str, nam
         return;
     }
     let many = names.len() != 1;
-    let quoted: Vec<String> = names.iter().map(|n| crate::diagnostic::py_repr(&json!(n))).collect();
+    let quoted: Vec<String> = names.iter().map(|n| diagnostic::py_repr(&json!(n))).collect();
     let labels = match quoted.split_at_checked(3) {
         Some((head, rest)) if !rest.is_empty() => format!("{} and {} more", head.join(", "), rest.len()),
         _ => quoted.join(", "),
     };
-    crate::diagnostic::warn(
+    diagnostic::warn(
         Diagnostic::new(
             &codes::WARN_RAIL_VALUE_DROPPED,
             [
@@ -692,7 +692,7 @@ fn rail_cap(chart_w: f64) -> f64 {
 /// `WARN-AXIS-LABEL-COLLISION`: every enabled skip/tilt strategy was tried
 /// and the `label_count` labels measured still collide on the x axis.
 pub(crate) fn warn_axis_label_collision(chart_id: &str, field: &str, label_count: usize) {
-    crate::diagnostic::warn(Diagnostic::new(
+    diagnostic::warn(Diagnostic::new(
         &codes::WARN_AXIS_LABEL_COLLISION,
         [("chart_id", json!(chart_id)), ("field", json!(field)), ("label_count", json!(label_count))],
     ));
@@ -702,11 +702,11 @@ pub(crate) fn warn_axis_label_collision(chart_id: &str, field: &str, label_count
 /// the base states no order to place, so the shared domain stays in paint order.
 pub(crate) fn warn_x_domain_paint_order(chart_id: &str, x_field: &str, layer_only: &[serde_json::Value]) {
     const SAMPLE: usize = 3;
-    let mut sample: Vec<String> = layer_only.iter().take(SAMPLE).map(crate::diagnostic::py_repr).collect();
+    let mut sample: Vec<String> = layer_only.iter().take(SAMPLE).map(diagnostic::py_repr).collect();
     if layer_only.len() > SAMPLE {
         sample.push("…".to_string());
     }
-    crate::diagnostic::warn(
+    diagnostic::warn(
         Diagnostic::new(
             &codes::WARN_LAYER_X_DOMAIN_PAINT_ORDER,
             [
@@ -730,12 +730,12 @@ pub(crate) fn warn_rail_labels_cut(chart_id: &str, authored_field: &str, series:
     let mut cut: Vec<&str> = series.iter().map(String::as_str).collect();
     cut.sort_unstable();
     let many = cut.len() != 1;
-    let quoted: Vec<String> = cut.iter().map(|n| crate::diagnostic::py_repr(&json!(n))).collect();
+    let quoted: Vec<String> = cut.iter().map(|n| diagnostic::py_repr(&json!(n))).collect();
     let labels = match quoted.split_at_checked(3) {
         Some((head, rest)) if !rest.is_empty() => format!("{} and {} more", head.join(", "), rest.len()),
         _ => quoted.join(", "),
     };
-    crate::diagnostic::warn(
+    diagnostic::warn(
         Diagnostic::new(
             &codes::WARN_SERIES_LABEL_TRUNCATED,
             [
@@ -900,14 +900,14 @@ pub(crate) fn recascade_rail_anchors(
         // Tied anchors spread across a cascade domain with no span still tie, so no
         // slope is measurable from them either.
         RailRoom::Unsloped => {
-            crate::diagnostic::warn(
+            diagnostic::warn(
                 Diagnostic::new(&codes::WARN_ENDPOINT_LABEL_RAIL_TIED, [("chart_id", json!(chart_id)), ("series_count", json!(n))])
                     .with_sink_param("gap_px", json!(pixel_gap)),
             );
             Ok(spread_evenly(anchors, y_domain_min, y_domain_max))
         }
         RailRoom::Overflow => {
-            crate::diagnostic::warn(Diagnostic::new(
+            diagnostic::warn(Diagnostic::new(
                 &codes::WARN_ENDPOINT_LABEL_GAP_OVERFLOW,
                 [("chart_id", json!(chart_id)), ("gap_px", json!(pixel_gap)), ("series_count", json!(n))],
             ));
@@ -915,7 +915,7 @@ pub(crate) fn recascade_rail_anchors(
         }
         RailRoom::Packed(placed, dropped) => {
             if !dropped.is_empty() {
-                crate::diagnostic::warn(
+                diagnostic::warn(
                     Diagnostic::new(
                         &codes::WARN_ENDPOINT_LABEL_RAIL_OVERFLOW,
                         [
@@ -1083,7 +1083,7 @@ mod rail_cascade_tests {
 #[cfg(test)]
 mod recascade_tests {
     use super::recascade_rail_anchors;
-    use crate::diagnostic::collect;
+    use diagnostic::collect;
     use serde_json::json;
 
     #[test]

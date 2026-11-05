@@ -24,6 +24,7 @@ from dbt_charts.core.render.chart.text_truncation import (
 from dbt_charts.core.render.warnings import axis_title_truncated as detector
 from dbt_charts.core.render.warnings.base import WarningContext
 
+from ..._results import rows_schema
 from ...core._board_utils import make_test_resolved_board, make_test_resolved_chart
 
 # A title long enough to exceed two wrapped lines at a narrow extent.
@@ -177,6 +178,7 @@ def test_render_dashboard_fires_warning_for_truncated_axis_title(
     ok = Mock()
     ok.is_success = True
     ok.data = [{"month": "Jan", "revenue": 5}]
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = None
     registry = Mock()
@@ -304,6 +306,7 @@ def test_truncated_titles_warn_once_per_chart_and_field(
     ok = Mock()
     ok.is_success = True
     ok.data = [{"month": "Jan", "revenue": 5}]
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = None
     registry = Mock()

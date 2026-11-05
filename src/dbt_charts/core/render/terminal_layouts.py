@@ -18,7 +18,7 @@ from dbt_charts.core.compile.models.board.normalized import (
     LayoutItem,
     VariableValues,
 )
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
 from dbt_charts.core.render.terminal_text import (
     pad_visible,
     truncate_visible,
@@ -45,7 +45,7 @@ def _cols_should_stack_vertically(items: list[LayoutItem], col_width: int) -> bo
 
 def render_rows_layout_terminal(
     items: list[LayoutItem],
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     available_width: int,
     available_height: int,
@@ -58,7 +58,7 @@ def render_rows_layout_terminal(
 
     Args:
         items: Layout items to render
-        executor: Executor for query execution
+        results: ResolveDataProvider for query execution
         variables: Variable values for queries
         available_width: Available terminal width in characters
         available_height: Available terminal height in characters
@@ -78,7 +78,7 @@ def render_rows_layout_terminal(
     for item in items:
         item_output = render_layout_item_terminal(
             item,
-            executor,
+            results,
             variables,
             available_width,
             available_height,
@@ -95,7 +95,7 @@ def render_rows_layout_terminal(
 
 def render_cols_layout_terminal(
     items: list[LayoutItem],
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     available_width: int,
     available_height: int,
@@ -111,7 +111,7 @@ def render_cols_layout_terminal(
 
     Args:
         items: Layout items to render
-        executor: Executor for query execution
+        results: ResolveDataProvider for query execution
         variables: Variable values for queries
         available_width: Available terminal width in characters
         available_height: Available terminal height in characters
@@ -135,7 +135,7 @@ def render_cols_layout_terminal(
     if _cols_should_stack_vertically(items, col_width):
         return render_rows_layout_terminal(
             items,
-            executor,
+            results,
             variables,
             available_width,
             available_height,
@@ -150,7 +150,7 @@ def render_cols_layout_terminal(
     for item in items:
         item_output = render_layout_item_terminal(
             item,
-            executor,
+            results,
             variables,
             col_width,
             available_height,
@@ -180,7 +180,7 @@ def render_cols_layout_terminal(
 
 def render_grid_layout_terminal(
     items: list[LayoutItem],
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     available_width: int,
     available_height: int,
@@ -194,7 +194,7 @@ def render_grid_layout_terminal(
 
     Args:
         items: Layout items to render
-        executor: Executor for query execution
+        results: ResolveDataProvider for query execution
         variables: Variable values for queries
         available_width: Available terminal width in characters
         available_height: Available terminal height in characters
@@ -236,7 +236,7 @@ def render_grid_layout_terminal(
         for item in row_items:
             item_output = render_layout_item_terminal(
                 item,
-                executor,
+                results,
                 variables,
                 cell_width,
                 available_height,
@@ -270,7 +270,7 @@ def render_grid_layout_terminal(
 
 def render_tabs_layout_terminal(
     items: list[LayoutItem],
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     available_width: int,
     available_height: int,
@@ -288,7 +288,7 @@ def render_tabs_layout_terminal(
 
     Args:
         items: Layout items (one per tab)
-        executor: Executor for query execution
+        results: ResolveDataProvider for query execution
         variables: Variable values for queries
         available_width: Available terminal width in characters
         available_height: Available terminal height in characters
@@ -323,7 +323,7 @@ def render_tabs_layout_terminal(
         # Render tab content
         item_output = render_layout_item_terminal(
             item,
-            executor,
+            results,
             variables,
             available_width - 4,
             available_height,

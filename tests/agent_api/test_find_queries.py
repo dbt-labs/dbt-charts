@@ -25,6 +25,7 @@ from dbt_charts.core.constants.find_queries import (
 )
 from dbt_charts.core.execute.adapters import AdapterRegistry, build_adapter_registry
 from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 from .._results import rows_result
@@ -115,11 +116,13 @@ def put(
         loaded = load_board(Path(f"{board}.yml"), project)
         assert not isinstance(loaded, BoardFailure)
         variables = {"region": region} if region is not None else {}
-        key = Executor(
+        executor = Executor(
             loaded.board,
             adapter_registry=registry,
             query_registry=loaded.query_registry,
-        ).cache_key(query, variables)
+        )
+        [planned] = plan(executor.ctx, [query], variables)
+        key = planned.cache_key
         slug, name = writer or (board, query)
         cache.put(
             *key,

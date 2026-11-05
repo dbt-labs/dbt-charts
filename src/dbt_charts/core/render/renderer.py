@@ -62,11 +62,15 @@ from dbt_charts.core.compile.template.variables import (
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.suppression import partition as _partition_warnings
+from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
 from dbt_charts.core.execute.collect import (
     collect_all_query_names,
     collect_layout_chart_query_names,
 )
 from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.plan import get_query
+from dbt_charts.core.execute.query_results import QueryResults
+from dbt_charts.core.execute.run import Failed
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
 from dbt_charts.core.render.board_variables import (
     board_variables,
@@ -145,8 +149,10 @@ from dbt_charts.core.render.font_selection import collect_painted_italic_familie
 from dbt_charts.core.render.layout_sizing import RenderCache, build_chart_datasets
 from dbt_charts.core.render.render_result import RenderResult
 from dbt_charts.core.render.restated_auto import (
+    ExtraQueries,
     auto_restated_variable_warnings,
     auto_restated_warnings,
+    plan_extra,
 )
 from dbt_charts.core.render.sizing import resolve_active_tab_index
 from dbt_charts.core.render.svg_utils import strip_pagination_chrome
@@ -184,7 +190,7 @@ class DataFormatRenderer(Protocol):
     def __call__(
         self,
         board: Board,
-        executor: Executor,
+        results: ResolveDataProvider,
         variables: VariableValues,
         error_collector: list[Diagnostic],
         max_rows_per_query: int,
@@ -312,7 +318,7 @@ def _tab_variables(layout: Layout) -> set[str]:
 def _collect_render_warnings(
     board: ResolvedBoard,
     authored_chart_heights: dict[str, float],
-    executor: Executor,
+    results: QueryResults,
     variables: VariableValues,
     table_overflows: dict[str, TableOverflow],
     table_numeric_align_lefts: dict[str, list[str]],
@@ -334,8 +340,8 @@ def _collect_render_warnings(
 ) -> list[Diagnostic]:
     """Build WarningContext from cached query results and run all detectors.
 
-    Called after queries have already executed (results are in the executor
-    cache), so every query run from here is a cache hit.
+    Called after queries have been collected into ``results``, so the warning
+    detectors read rows and errors from it and run no query.
 
     This is warning diagnostics only, not the board render path — but a
     *geometry* detector must judge a chart against the width it actually
@@ -390,8 +396,8 @@ def _collect_render_warnings(
         # zero rows: absent from chart_results = failed execute.
         with contextlib.suppress(Exception):  # noqa: BLE001 — query failure already recorded elsewhere
             if chart.query_name:
-                # Re-use cached execute_query result; no re-execution.
-                chart_results[chart_id] = executor.execute_query(
+                # Read the collected rows; nothing is re-executed.
+                chart_results[chart_id] = results.execute_query(
                     chart.query_name, variables
                 )
 
@@ -399,7 +405,7 @@ def _collect_render_warnings(
     # `query:` differs from the base chart's (the shape the deterministic
     # migrator emits: one query per layer). chart_results holds only the base
     # query's rows, so a detector comparing series across layers has nowhere
-    # else to read them. Every execute_query here is a cache hit — the
+    # else to read them. Every read here is of collected rows — the
     # pre-execution pass walks `collect_all_query_names`, which descends into
     # layers, so every layout-reachable layer query has already run.
     layer_results: dict[str, dict[str, Rows]] = {}
@@ -416,19 +422,19 @@ def _collect_render_warnings(
                 continue
             with contextlib.suppress(Exception):  # noqa: BLE001 — query failure already recorded elsewhere
                 layer_results.setdefault(chart_id, {})[query_name] = (
-                    executor.execute_query(query_name, variables)
+                    results.execute_query(query_name, variables)
                 )
 
     # chart id → truncation record, for every chart whose query was cut by
     # execution.max_rows/max_result_bytes this render.
-    query_truncations = executor.truncations()
+    query_truncations = results.truncations
     chart_query_names = {
         chart.query_name for chart in board.charts.values() if chart.query_name
     }
     chart_truncations = {
         chart_id: query_truncations[chart.query_name]
         for chart_id, chart in board.charts.items()
-        if chart.query_name in query_truncations
+        if chart.query_name is not None and chart.query_name in query_truncations
     }
     # Truncations for queries not owned by any chart (e.g. upstream queries
     # demand-executed by cache-ref composition — only the composed query is
@@ -460,14 +466,15 @@ def _collect_render_warnings(
                 continue
             # A render failure must not block the render: the main pass reports it.
             with contextlib.suppress(Exception):  # noqa: BLE001 — render failure is reported by the main pass
+                chart_datasets = build_chart_datasets(chart, results, variables)
                 render_resolved_chart(
                     chart,
-                    chart_results[chart_id],
+                    chart_datasets[chart.query_name],
                     board.style,
                     width=layout_width,
                     height=layout_height,
                     padding=additive_padding(card_padding, chart.layout_padding),
-                    datasets=build_chart_datasets(chart, executor, variables),
+                    datasets=chart_datasets,
                     title_shift=title_shift,
                     authored_height=authored_height,
                     pie_mode=pie_mode,
@@ -518,11 +525,11 @@ def _collect_render_warnings(
         warnings += auto_restated_warnings(
             source_board,
             {chart_id: width for chart_id, (_c, width, *_) in active_charts.items()},
-            executor,
+            results,
             variables,
         )
         warnings += auto_restated_variable_warnings(
-            source_board, executor, variables, ""
+            source_board, results, variables, ""
         )
     return warnings
 
@@ -571,7 +578,9 @@ def _prefetch_query_names(
     hidden = collect_all_query_names(board) - collect_all_query_names(
         scope_tabs(board, variables)
     )
-    return frozenset(name for name in hidden if executor.get_query(name).cache.prefetch)
+    return frozenset(
+        name for name in hidden if get_query(executor.ctx, name).cache.prefetch
+    )
 
 
 def prefetch_tab_queries(
@@ -599,11 +608,39 @@ def prefetch_tab_queries(
         board.clock(executor.rendered_at),
     )
     found = executor.lookup(_prefetch_query_names(board, executor, merged), merged)
-    outcomes = executor.run_misses(found, merged, resolve_max_workers(max_workers))
-    for name, exc in outcomes.items():
+    outcomes = executor.run_misses(found, resolve_max_workers(max_workers))
+    errors: dict[str, Exception | None] = {
+        name: outcome.error if isinstance(outcome, Failed) else None
+        for name, outcome in outcomes.items()
+    }
+    for name, exc in errors.items():
         if exc is not None:
             _logger.warning("prefetch of query %r failed: %s", name, exc)
-    return outcomes
+    return errors
+
+
+def _collect_extra(
+    executor: Executor,
+    results: QueryResults,
+    extra: ExtraQueries,
+    max_workers: int,
+) -> QueryResults:
+    """*results* plus the restated checks' late queries, collected per variables.
+
+    The probe definitions are in the executor's registry only while they run.
+    """
+    registry = executor.query_registry
+    executor.query_registry = {**registry, **extra.definitions}
+    try:
+        for names, values in extra.calls:
+            found = executor.lookup(names, values)
+            outcomes = executor.run_misses(found, max_workers)
+            results = results.with_collection(
+                executor.collect_results(found, outcomes, values)
+            )
+    finally:
+        executor.query_registry = registry
+    return results
 
 
 def render(
@@ -751,14 +788,14 @@ def _render(
 
     # Pre-render query execution — authoritative, not a fallback.
     # Queries run BEFORE calculate_data_aware_layout so the sizing pass can
-    # use cached results (render-first sizing reads query data from the executor
-    # cache without re-executing).
+    # use collected results (render-first sizing reads query data from
+    # ``QueryResults`` without executing).
     # Cache-hit pre-pass: queries already in cache are resolved synchronously
     # so they never occupy a worker thread or wait behind slow warehouse misses.
     # Only misses go to the ThreadPoolExecutor.
-    # Errors are stored on the executor (by run_misses) so that
-    # execute_chart() during the render walk raises the stored error
-    # instead of re-executing.  The render walk never retries a failed query.
+    # A failed query is collected as its error, so reading it during the render
+    # walk raises that error instead of re-executing.  The render walk never
+    # retries a failed query.
     #
     # A drawn format shows one tab per tabs layout, so it executes, resolves and
     # checks only those (`scope_tabs`); the board is rebound so nothing below
@@ -779,24 +816,36 @@ def _render(
                 board_error=e.to_diagnostic(),
             )
     query_names = collect_all_query_names(board)
+    tab_variables = _tab_variables(whole_board.layout)
+    if strict_variables:
+        # scope_tabs empties hidden tabs, but the registry still holds their
+        # variables: an override of one is checked against its options, so the
+        # query behind them is collected too.
+        query_names |= {
+            option_query
+            for name, var in variable_registry.items()
+            if name in parsed_variables
+            and name not in tab_variables
+            and (option_query := var.get_option_query())
+        }
     query_started = time.perf_counter()
 
-    # Partition: resolve hits synchronously, submit only misses to pool.
-    # The lookup warms the memo, so a hit costs one memo read inside
-    # execute_query — negligible vs the worker-slot wait it avoids on a saturated
-    # pool with slow warehouse queries. A cached failure is not a hit: the pool
-    # re-raises it per chart.
+    # Partition: hits are served from the memo or store, only misses go to the
+    # pool, and a cached failure is replayed per chart. collect_results then folds
+    # all three into the QueryResults render reads.
     found = executor.lookup(query_names, merged_variables)
-    for name in found.hits:
-        executor.execute_query(name, merged_variables)
-    executor.run_misses(found, merged_variables, resolved_max_workers)
+    outcomes = executor.run_misses(found, resolved_max_workers)
+    results = executor.collect_results(found, outcomes, merged_variables)
+    if restated_check:
+        results = _collect_extra(
+            executor, results, plan_extra(board, merged_variables), resolved_max_workers
+        )
     query_ms = (time.perf_counter() - query_started) * 1000
     # Option queries have run for the board's own controls, so their rows cost
     # nothing more to check a query-backed select against. A tab
     # variable's options are its tabs: an unknown tab is ERR-TAB-UNKNOWN, raised
     # by the tabs layout with the slugs.
     if strict_variables:
-        tab_variables = _tab_variables(whole_board.layout)
         check_option_values(
             {
                 name: var
@@ -805,7 +854,7 @@ def _render(
             },
             parsed_variables,
             lambda name, var: resolve_option_values(
-                name, var, executor, merged_variables
+                name, var, results, merged_variables
             ),
         )
 
@@ -907,11 +956,11 @@ def _render(
     ):
         try:
             with variable_options(
-                linked_variable_options(board, executor, merged_variables)
+                linked_variable_options(board, results, merged_variables)
             ):
                 resolved_board, render_cache = build_resolved_board(
                     board,
-                    executor,
+                    results,
                     merged_variables,
                     render_first=True,
                     authored_slot_heights=authored_chart_heights,
@@ -973,7 +1022,7 @@ def _render(
         all_warnings = _collect_render_warnings(
             resolved_board,
             authored_chart_heights,
-            executor,
+            results,
             merged_variables,
             table_overflows,
             table_numeric_align_lefts,
@@ -1092,7 +1141,7 @@ def _render(
             # not just this one.
             svg_content = render_board_svg(
                 resolved_board,
-                executor,
+                results,
                 merged_variables,
                 background,
                 grid_enabled,
@@ -1164,14 +1213,14 @@ def _render(
         # walk of the normalized layout tree, which fails per chart into its
         # own list (also embedded inline as `_error` in the payload, by
         # board_to_dict). The two streams are merged by chart rather than
-        # concatenated: they enter the executor by different doors — the draw
-        # through `execute_query` (keyed by query name), the walk through
-        # `execute_chart` (keyed by chart id, and resolving runtime inputs on
-        # the way) — so the same broken chart normally fails in both and
-        # concatenating would report it twice. A chart that fails only in the
-        # walk still has to reach `chart_errors`: it is what `board.py` reads
-        # to call a render "partial", so dropping it would return status "ok"
-        # for a payload that carries an error inline.
+        # concatenated: they read the same collected error by different
+        # doors — the draw keyed by query name, the walk by chart id (and
+        # resolving runtime inputs on the way) — so a broken chart normally
+        # fails in both and concatenating would report it twice. A chart that
+        # fails only in the walk (a resolve failure) still has to reach
+        # `chart_errors`: it is what `board.py` reads to call a render
+        # "partial", so dropping it would return status "ok" for a payload
+        # that carries an error inline.
         #
         # The walk runs even when the draw above failed board-level
         # (board_error is set): it takes no input from the draw, so a draw
@@ -1192,7 +1241,7 @@ def _render(
 
                 output = render_board_text(
                     board,
-                    executor,
+                    results,
                     merged_variables,
                     error_collector=_data_format_errors,
                     max_rows_per_query=max_rows_per_query,
@@ -1202,7 +1251,7 @@ def _render(
             else:
                 output = _data_format_renderer(format)(
                     board,
-                    executor,
+                    results,
                     merged_variables,
                     error_collector=_data_format_errors,
                     max_rows_per_query=max_rows_per_query,
@@ -1339,7 +1388,7 @@ def _render(
             query_ms=query_ms,
             prefetch_query_names=prefetch_query_names,
             output=_to_terminal(
-                board, executor, merged_variables, resolved_board.style, **options
+                board, results, merged_variables, resolved_board.style, **options
             ),
             chart_errors=error_collector,
             payload_errors=error_collector,
@@ -1355,7 +1404,7 @@ def _render(
 
 def _to_terminal(
     board: Board,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     resolved_style: "ResolvedStyle",
     **options: Any,
@@ -1364,7 +1413,7 @@ def _to_terminal(
 
     Args:
         board: Board to render
-        executor: Executor for query execution
+        results: Executor for query execution
         variables: Variable values for queries
         resolved_style: Board-scoped resolved style (from resolved_board.style).
         **options: Terminal-specific options
@@ -1379,7 +1428,7 @@ def _to_terminal(
 
     return render_board_terminal(
         board,
-        executor,
+        results,
         variables=variables,
         width=options.get("width"),
         height=options.get("height"),

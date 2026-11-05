@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::common::{AxisStyle, Font, TitleStyle};
 use crate::contract::stamp_view_root;
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::bar;
 use crate::families::empty_cartesian::{self, Facet, ValueAxis};
 use crate::families::{kpi, pie, spark_bar, table};
@@ -61,7 +61,7 @@ pub fn render(chart_type: &str, payload: &Payload, fonts: &FontBook) -> Result<S
         // (`spark_bar.py:109`) and the render paints no bar rows: its ordinary
         // path is the empty chart, with nothing to decide here.
         "spark_bar" => spark_bar::render(payload, fonts)?,
-        other => return Err(crate::refuse!("{other}: empty result set not supported").into()),
+        other => return Err(diagnostic::refuse!("{other}: empty result set not supported").into()),
     })
 }
 

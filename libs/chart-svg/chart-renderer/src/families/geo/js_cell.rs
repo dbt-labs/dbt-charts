@@ -152,7 +152,7 @@ pub(super) fn sort_domain(domain: &mut Vec<Value>) -> Result<(), String> {
         && domain.iter().filter(|v| !v.is_null()).any(|v| !v.is_string());
     if domain.len() >= 64 {
         if mixed {
-            return Err(crate::refuse!("a point map nominal color mixing text and numbers over 63 values is not supported"));
+            return Err(diagnostic::refuse!("a point map nominal color mixing text and numbers over 63 values is not supported"));
         }
         domain.sort_by(|a, b| ascending(a, b).cmp(&0));
         return Ok(());

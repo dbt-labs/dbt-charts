@@ -24,6 +24,8 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
+from ...._results import rows_result
+
 _BOARD_STYLE, _BOARD_CONTEXT = resolve_style_and_context(get_theme_style())
 
 _DUMMY_QUERY = SqlQuery(sql="SELECT 1", source="test")
@@ -97,7 +99,7 @@ def test_heatmap_chart_local_palette_overrides_theme_for_colorless_rect_fill():
         {"col": "B", "row": "2"},
     ]
     resolved = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
-    svg = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
+    svg = render_resolved_chart(resolved, rows_result(data), _BOARD_STYLE).payload
     expected_stop_0 = resolve_palette("dbt-seq-rust")[0]
     assert isinstance(svg, str)
     assert svg.count(f'fill="{expected_stop_0}" opacity="1"') == len(data)
@@ -457,21 +459,26 @@ def test_link_template_with_color_channel():
     )
     resolved = resolve(chart, _data, chart_style_context=_BOARD_CONTEXT)
     # Must not raise — resolved_channels has color
-    spec = render_resolved_chart(resolved, _data, _BOARD_STYLE).payload
+    spec = render_resolved_chart(resolved, rows_result(_data), _BOARD_STYLE).payload
     assert spec is not None
 
 
-# ============================================================================
-# 1B.6b: KPI gradient mode with CSV-string cell value
-# ============================================================================
+def test_kpi_gradient_color_text_cell_in_a_float_column_is_a_declared_type_mismatch():
+    """A text cell in a column declared float is refused for the contradiction."""
+    from dbt_charts.core.column_types import ColumnType
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
+    from dbt_charts.core.diagnostics.codes_render import (
+        ERR_CHART_CELL_TYPE_MISMATCH,
+    )
+    from dbt_charts.core.execute.cache_backend import ResultRows
+    from dbt_charts.core.render.engine import render_native
 
+    from ..._engine_render import kpi_gradient_chart
 
-def test_kpi_gradient_color_csv_string_interpolates():
-    """KPI gradient background must interpolate when the cell value is a numeric string.
-
-    CSV-loaded data arrives as str; it must not short-circuit to the null color.
-    """
-    from ..._engine_render import kpi_gradient_fill
-
-    fill = kpi_gradient_fill("50", ["#ffffff", "#0000ff"], 0.0, 100.0)
-    assert fill not in ("#ffffff", "#0000ff", "none")
+    chart, board_style = kpi_gradient_chart("50", ["#ffffff", "#0000ff"], 0.0, 100.0)
+    rows = ResultRows([{"v": "50"}], {"v": ColumnType(kind="float")})
+    with pytest.raises(ChartDataError) as exc_info:
+        render_native(
+            chart, rows, width=300, height=160, padding=None, board_style=board_style
+        )
+    assert exc_info.value.code is ERR_CHART_CELL_TYPE_MISMATCH

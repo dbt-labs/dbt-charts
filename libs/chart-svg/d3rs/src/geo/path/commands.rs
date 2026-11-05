@@ -5,7 +5,7 @@
 
 use crate::geo::stream::GeoStream;
 use crate::js_math::js_round;
-use scene::{PathCommand, PathData};
+use crate::path::Command;
 
 #[derive(Clone, Copy)]
 enum Point {
@@ -19,7 +19,7 @@ pub struct PathCommands {
     /// `10 ** digits` when coordinates are rounded; d3 skips rounding for `digits` null or above 15.
     rounding: Option<f64>,
     radius: f64,
-    out: Vec<PathCommand>,
+    out: Vec<Command>,
     in_polygon: bool,
     point: Point,
 }
@@ -36,9 +36,9 @@ impl PathCommands {
     }
 
     /// The path, or `None` for an empty one (d3 returns null); the sink starts over.
-    pub fn result(&mut self) -> Option<PathData> {
+    pub fn result(&mut self) -> Option<Vec<Command>> {
         let commands = std::mem::take(&mut self.out);
-        (!commands.is_empty()).then_some(PathData(commands))
+        (!commands.is_empty()).then_some(commands)
     }
 
     fn round(&self, v: f64) -> f64 {
@@ -51,8 +51,8 @@ impl PathCommands {
         let (x, y) = (self.round(x), self.round(y));
         let top = y + r;
         let bottom = top - self.round(2.0 * self.radius);
-        let arc = |y: f64| PathCommand::A { rx: r, ry: r, rot: 0.0, large: true, sweep: true, x, y };
-        self.out.extend([PathCommand::M(x, y), PathCommand::M(x, top), arc(bottom), arc(top), PathCommand::Z]);
+        let arc = |y: f64| Command::SvgArc { rx: r, ry: r, rot: 0.0, large: true, sweep: true, x, y };
+        self.out.extend([Command::MoveTo(x, y), Command::MoveTo(x, top), arc(bottom), arc(top), Command::ClosePath]);
     }
 }
 
@@ -71,7 +71,7 @@ impl GeoStream for PathCommands {
 
     fn line_end(&mut self) {
         if self.in_polygon {
-            self.out.push(PathCommand::Z);
+            self.out.push(Command::ClosePath);
         }
         self.point = Point::Isolated;
     }
@@ -79,10 +79,10 @@ impl GeoStream for PathCommands {
     fn point(&mut self, x: f64, y: f64, _z: Option<f64>) {
         match self.point {
             Point::First => {
-                self.out.push(PathCommand::M(self.round(x), self.round(y)));
+                self.out.push(Command::MoveTo(self.round(x), self.round(y)));
                 self.point = Point::Rest;
             }
-            Point::Rest => self.out.push(PathCommand::L(self.round(x), self.round(y))),
+            Point::Rest => self.out.push(Command::LineTo(self.round(x), self.round(y))),
             Point::Isolated => self.circle(x, y),
         }
     }

@@ -33,7 +33,8 @@ from dbt_charts.core.execute.cache_backend import (
     QueryResultCache,
 )
 from dbt_charts.core.execute.duckdb_cache import compute_relevant_variables
-from dbt_charts.core.execute.executor import Executor, merge_board_variables, utc_now
+from dbt_charts.core.execute.executor import Executor, utc_now
+from dbt_charts.core.execute.plan import merge_board_variables, plan
 from dbt_charts.core.project import Project, board_identity
 from dbt_charts.core.validate import normalize_data_for_json
 
@@ -280,8 +281,8 @@ def _board_answer(
         )
         try:
             current = {
-                name: cache.listed_key(executor.cache_key(name))[:2]
-                for name, _ in named
+                planned.name: cache.listed_key(planned.cache_key)[:2]
+                for planned in plan(executor.ctx, [name for name, _ in named])
             }
         except ExecutionError as exc:
             return BoardAnswer(**shown, variables=[], queries=[], errors=[str(exc)])

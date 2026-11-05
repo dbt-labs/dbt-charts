@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
     from dbt_charts.core.compile.models.style.context import ChartStyleContext
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
-    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
     from dbt_charts.core.render.layout_sizing import RenderCache, ResolvedChartVariants
 
 
@@ -71,7 +71,7 @@ def _resolve_chart_static(
 def _resolve_chart_data_aware(
     chart: Chart,
     chart_style_context: ChartStyleContext,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     width: float,
     *,
@@ -114,13 +114,13 @@ def _resolve_chart_data_aware(
     resolving the chart as if its query had never failed.
     """
     query_name = chart.query_name
-    data = executor.execute_query(query_name, variables) if query_name else []
+    data = results.execute_query(query_name, variables) if query_name else []
     return resolve_chart_with_runtime_inputs(
         chart,
         data,
         chart_style_context,
         width,
-        executor,
+        results,
         variables,
         filter_variables=filter_variables,
         link_open=link_open,
@@ -294,7 +294,7 @@ def build_resolved_board_static(board: Board) -> ResolvedBoard:
 
 def build_resolved_board(
     board: Board,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     render_first: bool = True,
     *,
@@ -310,11 +310,11 @@ def build_resolved_board(
             board.regional.zone,
             language=board.regional.resolved_language,
         ),
-        board_clock(board.clock(executor.rendered_at)),
+        board_clock(board.clock(results.rendered_at)),
     ):
         return _build_resolved_board(
             board,
-            executor,
+            results,
             variables,
             render_first,
             resolve_errors=resolve_errors,
@@ -325,7 +325,7 @@ def build_resolved_board(
 
 def _build_resolved_board(
     board: Board,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     render_first: bool,
     *,
@@ -339,14 +339,14 @@ def _build_resolved_board(
     charts to the sizing pass so heights are measured from the same resolution
     rather than a second one.
 
-    Fetches data per chart via executor, resolves each chart through
+    Fetches data per chart via results, resolves each chart through
     path, and builds a ResolvedBoard with charts in both the charts dict
     and the layout tree.  Board-baking (page/card padding, gap,
     static dimensions) mirrors build_resolved_board_static exactly.
 
     Args:
         board: Compiled board from the YAML → compile pipeline.
-        executor: Executor for query execution (queries are cached; no re-exec).
+        results: ResolveDataProvider for query execution (queries are cached; no re-exec).
         variables: Variable values resolved against board.variable_defaults.
         render_first: When True, Vega-Lite charts are rendered during sizing to
             get actual heights.  Set False for non-SVG formats.
@@ -380,17 +380,17 @@ def _build_resolved_board(
         board,
         plan_board_category_colors(
             board,
-            executor,
+            results,
             variables,
             {
                 name: linked["options"]
                 for name, linked in linked_variable_options(
-                    board, executor, variables
+                    board, results, variables
                 ).items()
             },
         ),
     )
-    board = with_dbt_column_formats(board, executor, variables)
+    board = with_dbt_column_formats(board, results, variables)
 
     # Each layout placement is resolved at its own final width. One authored
     # chart may appear in several slots whose finalized presentation differs.
@@ -404,10 +404,10 @@ def _build_resolved_board(
 
     # Sizing pass: mutates board.layout dimensions in place; returns render_cache
     # populated with pre-rendered SVGs for charts sized via render-first.
-    with board_data_provider(executor):
+    with board_data_provider(results):
         board, render_cache = calculate_data_aware_layout(
             board,
-            executor,
+            results,
             variables,
             render_first,
             resolved_variants=chart_variants,
@@ -437,7 +437,7 @@ def _build_resolved_board(
         board_style=board.resolved_style,
         chart_style_context=board.chart_style_context,
         variable_values=variables,
-        executor=executor,
+        results=results,
         filter_variables=declared_variables,
         link_open=board.links.open,
         chart_variants=chart_variants,
@@ -481,7 +481,7 @@ def _build_resolved_layout(
     board_style: ResolvedStyle,
     chart_style_context: ChartStyleContext,
     variable_values: VariableValues,
-    executor: Executor,
+    results: ResolveDataProvider,
     filter_variables: frozenset[str],
     link_open: LinkOpen,
     chart_variants: ResolvedChartVariants | EllipsisType = ...,
@@ -502,7 +502,7 @@ def _build_resolved_layout(
             board_style=board_style,
             chart_style_context=chart_style_context,
             variable_values=variable_values,
-            executor=executor,
+            results=results,
             filter_variables=filter_variables,
             link_open=link_open,
             chart_variants=chart_variants,
@@ -548,7 +548,7 @@ def _resolve_layout_item(
     board_style: ResolvedStyle,
     chart_style_context: ChartStyleContext,
     variable_values: VariableValues,
-    executor: Executor,
+    results: ResolveDataProvider,
     filter_variables: frozenset[str],
     link_open: LinkOpen,
     chart_variants: ResolvedChartVariants | EllipsisType = ...,
@@ -583,7 +583,7 @@ def _resolve_layout_item(
                         resolved_chart = _resolve_chart_data_aware(
                             item.chart,
                             chart_style_context,
-                            executor,
+                            results,
                             variable_values,
                             item.width,
                             filter_variables=filter_variables,
@@ -611,7 +611,7 @@ def _resolve_layout_item(
             charts,
             chart_variants,
             variable_values=variable_values,
-            executor=executor,
+            results=results,
             filter_variables=filter_variables,
             link_open=link_open,
             resolve_errors=resolve_errors,
@@ -645,7 +645,7 @@ def _resolve_nested(
     chart_variants: ResolvedChartVariants | EllipsisType = ...,
     *,
     variable_values: VariableValues,
-    executor: Executor,
+    results: ResolveDataProvider,
     filter_variables: frozenset[str],
     link_open: LinkOpen,
     resolve_errors: dict[str, ChartResolveFailure],
@@ -667,7 +667,7 @@ def _resolve_nested(
         board_style=board.resolved_style,
         chart_style_context=board.chart_style_context,
         variable_values=variable_values,
-        executor=executor,
+        results=results,
         filter_variables=filter_variables,
         link_open=link_open,
         chart_variants=chart_variants,

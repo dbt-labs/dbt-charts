@@ -20,6 +20,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
 )
 
+from .._results import rows_result
+
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
 
@@ -135,7 +137,7 @@ class TestTableChart:
             chart,
             resolved_style=resolve_style(get_theme_style()),
             chart_style_context=resolve_chart_style_context(get_theme_style()),
-            data=data,
+            data=rows_result(data),
             format="svg",
             width=500,
             height=250,
@@ -148,7 +150,7 @@ class TestTableChart:
             chart,
             resolve_style(get_theme_style()),
             resolve_chart_style_context(get_theme_style()),
-            data,
+            rows_result(data),
             format="json",
             width=500,
             height=250,

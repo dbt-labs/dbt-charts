@@ -21,6 +21,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 
+from ..._results import rows_schema
 from .._engine_render import render_table_svg
 
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
@@ -624,7 +625,13 @@ class TestUnaddressedVisibleEntryRaises:
         """No result shape to compare against — the empty-state render keeps
         its headers rather than guessing at typos."""
         resolved = _resolve({"columns": {"week": {"visible": False}}}, _DATA)
-        svg = render_table_svg(resolved, [], width=600, board_style=_BOARD_RENDER_STYLE)
+        svg = render_table_svg(
+            resolved,
+            [],
+            width=600,
+            board_style=_BOARD_RENDER_STYLE,
+            schema=rows_schema(_DATA),
+        )
         assert "Metric" in svg, "empty-state headers must still render"
         assert "Week" not in svg, "the hidden column's header stays hidden"
 

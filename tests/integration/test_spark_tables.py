@@ -572,37 +572,6 @@ class TestBarAutoMax:
         fracs = _bar_fractions(svg)
         assert fracs == [pytest.approx(0.5), pytest.approx(1.0)]
 
-    def test_csv_string_values_produce_correct_auto_max(self) -> None:
-        """1B.6c regression: CSV-loaded numeric strings must contribute to auto-max.
-
-        Before the fix, the isinstance(v, (int, float)) guard filtered out
-        strings, producing auto_max=None so the bar fell back to
-        default_max=100. With values 20/50/200, default_max=100 clips the
-        200 bar to 100% and produces (0.2, 0.5, 1.0). After the fix
-        coerce_numeric_cell finds auto_max=200 and the bars render at
-        (0.1, 0.25, 1.0).
-        """
-        chart = _make_chart(
-            style={
-                "columns": {
-                    "name": {},
-                    "val": {"spark": {"type": "bar"}},
-                }
-            }
-        )
-        data = [
-            {"name": "A", "val": "20"},
-            {"name": "B", "val": "50"},
-            {"name": "C", "val": "200"},
-        ]
-        svg = render_table_svg(
-            chart,
-            data,
-            board_style=resolve_style(get_theme_style()),
-        )
-        fracs = _bar_fractions(svg)
-        assert fracs == [pytest.approx(0.1), pytest.approx(0.25), pytest.approx(1.0)]
-
     def test_nan_cell_renders_nothing_and_does_not_corrupt_the_column(self) -> None:
         """A NaN value must follow the same null rule as None: no spark rect,
         and no contribution to the column's auto-max or has_negative scan —

@@ -1,8 +1,11 @@
 """Run stage: misses in, one Outcome per query out, over fake executors."""
 
+import logging
 import threading
 from collections.abc import Mapping
 from datetime import UTC, datetime
+
+import pytest
 
 from dbt_charts.core.compile.models.cache import CachePolicy
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -16,6 +19,7 @@ from dbt_charts.core.execute.run import (
     run,
 )
 
+from ..._lookup import planned_query
 from ..._results import rows_result
 
 POLICY = CachePolicy(enabled=True, ttl="1h")
@@ -23,7 +27,8 @@ NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _miss(name: str, sql: str = "SELECT 1") -> Miss:
-    return Miss(name, SqlQuery(sql=sql, source="db", cache=POLICY), ("s", name, "v"))
+    query = SqlQuery(sql=sql, source="db", cache=POLICY)
+    return Miss(planned_query(name, query, ("s", name, "v")))
 
 
 def _rows(miss: Miss) -> Outcome:
@@ -122,14 +127,16 @@ def test_upstream_outside_the_misses_does_not_gate() -> None:
     assert isinstance(outcomes["down"], Rows)
 
 
-def test_settle_failure_becomes_that_querys_failure() -> None:
+def test_a_failed_store_write_keeps_the_rows_it_could_not_store(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     def settle(miss: Miss, outcome: Outcome) -> None:
         if miss.name == "a":
             raise OSError("cache write failed")
 
-    outcomes = run([_miss("a"), _miss("b")], _rows, settle, max_workers=2)
+    with caplog.at_level(logging.WARNING):
+        outcomes = run([_miss("a"), _miss("b")], _rows, settle, max_workers=2)
 
-    failed = outcomes["a"]
-    assert isinstance(failed, Failed)
-    assert isinstance(failed.error, OSError)
+    assert isinstance(outcomes["a"], Rows)
     assert isinstance(outcomes["b"], Rows)
+    assert "cache write failed" in caplog.text

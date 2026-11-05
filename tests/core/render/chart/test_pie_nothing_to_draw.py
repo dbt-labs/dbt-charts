@@ -23,6 +23,7 @@ from dbt_charts.core.render.warnings import (
 )
 from dbt_charts.core.render.warnings.base import WarningContext
 
+from ...._results import rows_result
 from ..._board_utils import make_test_resolved_board
 
 Rows = list[dict[str, Any]]
@@ -42,7 +43,7 @@ def _resolved(rows: Rows) -> tuple[ResolvedPieChart, Any]:
 
 def test_a_pie_over_no_rows_draws_its_empty_frame() -> None:
     resolved, style = _resolved([])
-    artifact = render_resolved_chart(resolved, [], style)
+    artifact = render_resolved_chart(resolved, rows_result([]), style)
     assert artifact.kind == "svg"
     assert isinstance(artifact.payload, str)
     assert "arc mark" not in artifact.payload
@@ -52,7 +53,7 @@ def test_a_pie_over_all_zero_thetas_refuses_by_name() -> None:
     rows = [{"n": "a", "v": 0}, {"n": "b", "v": 0}]
     resolved, style = _resolved(rows)
     with pytest.raises(ChartDataError, match="total is zero"):
-        render_resolved_chart(resolved, rows, style)
+        render_resolved_chart(resolved, rows_result(rows), style)
 
 
 @pytest.mark.parametrize("rows", [[], [{"n": "a", "v": 0}, {"n": "b", "v": 0}]])

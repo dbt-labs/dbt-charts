@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock
 
+import duckdb
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
@@ -25,15 +27,18 @@ from dbt_charts.core.compile.template.daterange import (
     BoardClock,
     resolve_daterange_preset_iso,
 )
-from dbt_charts.core.diagnostics.execution import ExecutionError
+from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_FORMAT_COLUMN_MISSING
+from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.executor import utc_now
 from dbt_charts.core.render import render
 
+from ..._results import rows_schema
+
 
 def _daily_rows(n: int) -> list[dict[str, object]]:
-    return [{"day": f"2026-01-{i:03d}", "val": i} for i in range(n)]
+    return [{"day": date(2026, 1, 1) + timedelta(days=i), "val": i} for i in range(n)]
 
 
 def _category_rows(n: int) -> list[dict[str, object]]:
@@ -44,6 +49,7 @@ def _make_executor(board, query_registry, rows):
     ok = Mock()
     ok.is_success = True
     ok.data = rows
+    ok.schema = rows_schema(rows)
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()
@@ -286,6 +292,7 @@ def _make_per_query_executor(board, query_registry, rows_by_query):
         ok = Mock()
         ok.is_success = True
         ok.data = rows_by_query[kwargs["query_name"]]
+        ok.schema = rows_schema(ok.data)
         ok.resolved_relations = None
         ok.truncated_reason = None
         return ok
@@ -696,3 +703,149 @@ def test_a_preset_name_literal_resolves_when_the_executor_runs_outside_a_render(
     )
 
     assert executor.execute_query("q") == [{"w": "hit"}]
+
+
+_COLLECTED_YAML = """
+title: Collected
+queries:
+  q_good:
+    source: db
+    sql: "SELECT 42 AS value"
+  q_bad:
+    source: db
+    sql: "SELECT * FROM missing_table"
+charts:
+  good:
+    type: kpi
+    query: q_good
+    value: value
+  bad:
+    type: kpi
+    query: q_bad
+    value: value
+cols:
+  - good
+  - bad
+"""
+
+
+def _collected_executor(tmp_path: Path) -> Executor:
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n  db:\n    type: duckdb\n    path: local.duckdb\n"
+    )
+    duckdb.connect(str(tmp_path / "local.duckdb")).close()
+    project = FilesystemProject(tmp_path)
+    result = compile(_COLLECTED_YAML, base_dir=project.directory())
+    assert result.success and result.board is not None, result.errors
+    return Executor(
+        result.board,
+        adapter_registry=build_adapter_registry(project),
+        query_registry=result.query_registry,
+    )
+
+
+@pytest.mark.parametrize("format", ["svg", "json", "text", "terminal"])
+def test_render_never_calls_the_executor_after_collect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, format: str
+) -> None:
+    executor = _collected_executor(tmp_path)
+
+    def forbidden(
+        *args: Any, **kwargs: Any
+    ) -> None:  # type-state: explicit_any — test stub
+        raise AssertionError("render executed a query after collect")
+
+    monkeypatch.setattr(Executor, "execute_query", forbidden)
+    monkeypatch.setattr(Executor, "execute_query_result", forbidden)
+    monkeypatch.setattr(Executor, "execute_chart", forbidden)
+
+    result = render(executor.board, executor, format=format)
+
+    assert result.board_error is None
+    assert [e.code for e in result.chart_errors], "q_bad's failure is per-chart"
+
+
+_HIDDEN_TAB_YAML = """
+title: Hidden tab
+queries:
+  opts:
+    columns: [country]
+    values:
+      - [US]
+      - [CA]
+tabs:
+  items:
+    - title: A
+      text: "tab a"
+    - title: B
+      rows:
+        - title: Section
+          variables:
+            country:
+              input: select
+              options:
+                query: opts
+          rows:
+            - text: "tab b"
+"""
+
+
+def test_strict_override_of_a_hidden_tab_variable_checks_its_options(
+    tmp_path: Path,
+) -> None:
+    result = compile(_HIDDEN_TAB_YAML)
+    assert result.success and result.board is not None, result.errors
+    executor = Executor(
+        result.board,
+        adapter_registry=build_adapter_registry(FilesystemProject(tmp_path)),
+        query_registry=result.query_registry,
+    )
+
+    rendered = render(result.board, executor, variables={"country": "US"})
+
+    assert rendered.board_error is None, rendered.board_error
+
+
+_FORMAT_HIT_YAML = """
+title: Format hit
+queries:
+  q:
+    source: db
+    sql: "SELECT 'east' AS region, 1 AS revenue"
+    formats:
+      nope: currency
+charts:
+  c:
+    type: bar
+    query: q
+    x: region
+    y: revenue
+rows:
+  - c
+"""
+
+
+def test_a_memo_hit_missing_a_formats_column_fails_only_its_chart(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n  db:\n    type: duckdb\n    path: local.duckdb\n"
+    )
+    duckdb.connect(str(tmp_path / "local.duckdb")).close()
+    project = FilesystemProject(tmp_path)
+    result = compile(_FORMAT_HIT_YAML, base_dir=project.directory())
+    assert result.success and result.board is not None, result.errors
+    executor = Executor(
+        result.board,
+        adapter_registry=build_adapter_registry(project),
+        query_registry=result.query_registry,
+    )
+    with pytest.raises(QueryError):
+        executor.execute_query("q", {})  # leaves the rows in the memo
+
+    rendered = render(result.board, executor)
+
+    assert rendered.board_error is None
+    assert [d.code for d in rendered.chart_errors] == [
+        ERR_QUERY_FORMAT_COLUMN_MISSING.code
+    ]

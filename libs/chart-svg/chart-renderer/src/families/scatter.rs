@@ -25,7 +25,7 @@
 //!   axis left to fit against)
 //! - a non-numeric `sort.by`
 
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::time_axis::{Grain as AxisGrain, TimeAxis};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -55,7 +55,7 @@ use measure::{FontBook, Measure};
 use crate::vega_fit;
 use crate::families::cartesian::band_edge;
 use d3rs::scale::{Band, Continuous};
-use crate::diagnostic::warn;
+use diagnostic::warn;
 use crate::layout::Rect;
 use crate::Payload;
 use scene::{Attrs, Node, PathData, Role, Transform};
@@ -1308,6 +1308,7 @@ impl PlainXAxis {
     /// `crowd_w`, the width production's crowding pass measures.
     fn resolve(
         r: &ScatterResolved,
+        types: &column_types::ColumnTypes,
         all_rows: &[serde_json::Map<String, Value>],
         drawn: &[&serde_json::Map<String, Value>],
         fires: &RuleFires,
@@ -1347,7 +1348,7 @@ impl PlainXAxis {
             floor_rule: None,
             x_rules: Vec::new(),
         };
-        if infer_vega_type(all_rows, &r.x) != VegaType::Quantitative {
+        if infer_vega_type(types, all_rows, &r.x)? != VegaType::Quantitative {
             let kept: Vec<(f64, &serde_json::Map<String, Value>)> = drawn.iter().map(|&row| (0.0, row)).collect();
             let domain = if layers.columns.is_empty() {
                 point_scale_domain(all_rows, &kept, &r.x, None)?
@@ -1653,6 +1654,7 @@ fn x_time_axis(
     }
     let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
     let law = crate::families::x_type::resolve_cartesian_x_type(
+        &payload.schema.rows,
         &payload.rows,
         &r.x,
         &crate::families::x_type::XAxis::of(&r.style.axis_x),
@@ -1743,6 +1745,7 @@ impl<'a> XLayers<'a> {
 fn x_has_nan_years(payload: &Payload, r: &ScatterResolved) -> Result<bool, String> {
     let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
     let law = crate::families::x_type::resolve_cartesian_x_type(
+        &payload.schema.rows,
         &payload.rows,
         &r.x,
         &crate::families::x_type::XAxis::of(&r.style.axis_x),
@@ -1756,6 +1759,7 @@ fn x_has_nan_years(payload: &Payload, r: &ScatterResolved) -> Result<bool, Strin
 
 fn date_axis(
     r: &ScatterResolved,
+    types: &column_types::ColumnTypes,
     time: &TimeAxis,
     drawn: &[&serde_json::Map<String, Value>],
     layers: &XLayers,
@@ -1783,6 +1787,7 @@ fn date_axis(
     kept.extend(layer_dates);
     let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
     let law = crate::families::x_type::resolve_cartesian_x_type(
+        types,
         rows,
         &r.x,
         &crate::families::x_type::XAxis::of(&r.style.axis_x),
@@ -2194,7 +2199,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
     // multiples (vl-convert: unrecognized scale `child_layer_0_y`), a categorical y's
     // layers included.
     if YSides::of(overlays).is_some() || (shape.y_nominal && !overlays.is_empty()) {
-        return Err(crate::refuse!("scatter: multiples with a dual-axis layer not supported").into());
+        return Err(diagnostic::refuse!("scatter: multiples with a dual-axis layer not supported").into());
     }
     let ax_y = &r.style.axis_y;
     let has_mirror = ax_y.mirror_requested("scatter")?;
@@ -2257,7 +2262,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
     let edge_pad = x_edge_pad(r, bound.size_domain);
     let date_x = shape
         .x_dates
-        .then(|| date_axis(r, &bound.time, &drawn, &date_layers, &payload.rows, naive_panel_w, edge_pad, x_title.clone(), None, fonts))
+        .then(|| date_axis(r, &payload.schema.rows, &bound.time, &drawn, &date_layers, &payload.rows, naive_panel_w, edge_pad, x_title.clone(), None, fonts))
         .transpose()?;
     if date_x.as_ref().is_some_and(crate::families::scatter_axis::TemporalXAxis::raises_no_marks) {
         return Err(crate::labels_expr::throw_diagnostic(payload));
@@ -2268,7 +2273,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
     // `BaselineFeature` skips a chart under an independent facet scale.
     let fires = if independent { RuleFires::none() } else { RuleFires::of(r, &payload.rows, NO_EXTENT, false) };
     let plain_x = (!shape.x_dates)
-        .then(|| PlainXAxis::resolve(r, &payload.rows, &drawn, &fires, naive_panel_w, edge_pad, x_title, has_mirror, &date_layers, fonts))
+        .then(|| PlainXAxis::resolve(r, &payload.schema.rows, &payload.rows, &drawn, &fires, naive_panel_w, edge_pad, x_title, has_mirror, &date_layers, fonts))
         .transpose()?;
     let facet_x = match (&date_x, &plain_x) {
         (Some(axis), _) => FacetX::Date(axis),
@@ -7046,7 +7051,7 @@ mod tests {
         let fonts = test_fonts();
         let measure = measure::Measure { fonts: &fonts };
         let cell = crate::layout::Rect { x: 0.0, y: 0.0, width: 420.0, height: 260.0 };
-        let (laid, sunk) = crate::diagnostic::collect(|| super::layout::layout(&bound, cell, &measure));
+        let (laid, sunk) = diagnostic::collect(|| super::layout::layout(&bound, cell, &measure));
         let laid = laid.expect("scatter lays out");
         assert!(sunk.is_empty(), "{sunk:?}");
         let codes: Vec<_> = laid.diagnostics.iter().map(|d| d.code).collect();
@@ -7081,7 +7086,7 @@ mod tests {
         let fonts = test_fonts();
         let cell = crate::layout::Rect { x: 0.0, y: 0.0, width: payload.width, height: payload.height };
         let laid = super::layout::layout(&bound, cell, &measure::Measure { fonts: &fonts }).unwrap();
-        let (svg, sunk) = crate::diagnostic::collect(|| render(&payload, &fonts));
+        let (svg, sunk) = diagnostic::collect(|| render(&payload, &fonts));
         assert_eq!(svg.unwrap(), print::print(&laid.nodes));
         assert!(!laid.diagnostics.is_empty(), "the payload must warn for forwarding to be tested");
         assert_eq!(sunk, laid.diagnostics);

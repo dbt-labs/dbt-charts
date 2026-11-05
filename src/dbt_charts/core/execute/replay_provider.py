@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from dbt_charts.core.execute.cache_backend import CacheRows
+from dbt_charts.core.execute.cache_backend import CacheRows, ResultRows
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import VariableValues
@@ -52,7 +52,8 @@ class ReplayDataProvider:
     """A ``ChartDataProvider`` backed by a recording instead of a warehouse.
 
     Attributes:
-        rows_by_query: Recorded rows keyed by query name (no ``queries.`` prefix).
+        results_by_query: Recorded rows and their declared column types keyed by
+            query name (no ``queries.`` prefix).
         recorded_at: When the rows were captured. Required, not optional: it
             becomes the board's "data as of" stamp, and a replayed board with no
             timestamp would fall back to render time and claim the data is fresh.
@@ -60,7 +61,7 @@ class ReplayDataProvider:
             refuses to serve them under any other values.
     """
 
-    rows_by_query: dict[str, CacheRows]
+    results_by_query: dict[str, ResultRows]
     recorded_at: datetime
     variables: VariableValues = field(default_factory=dict)
 
@@ -69,7 +70,16 @@ class ReplayDataProvider:
         query_name: str,
         variables: VariableValues | None = None,
     ) -> CacheRows:
-        """Return the recorded rows for ``query_name``.
+        """Return the recorded rows for ``query_name`` (see
+        :meth:`execute_query_result`)."""
+        return self.execute_query_result(query_name, variables).rows
+
+    def execute_query_result(
+        self,
+        query_name: str,
+        variables: VariableValues | None = None,
+    ) -> ResultRows:
+        """Return the recorded rows and declared types for ``query_name``.
 
         Raises:
             UnrecordedQueryError: If the recording has no entry for the query.
@@ -83,13 +93,13 @@ class ReplayDataProvider:
                 "another."
             )
         key = query_name.removeprefix("queries.")
-        if key not in self.rows_by_query:
+        if key not in self.results_by_query:
             raise UnrecordedQueryError(
                 f"Query {key!r} is not in the recording "
-                f"({sorted(self.rows_by_query)}). The board and its recorded "
+                f"({sorted(self.results_by_query)}). The board and its recorded "
                 "data came from different emits, or the recording is truncated."
             )
-        return self.rows_by_query[key]
+        return self.results_by_query[key]
 
     def text_listings(
         self, base_dir: str, calls: frozenset[ListingCall]

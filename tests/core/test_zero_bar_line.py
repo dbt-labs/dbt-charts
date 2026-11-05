@@ -12,6 +12,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
+from .._results import rows_result
 from .conftest import chart_pane
 
 _BOARD_RS, _BOARD_CTX = resolve_style_and_context(get_theme_style())
@@ -102,7 +103,7 @@ def _make_spec_with_ticks_visible(
     )
     resolved_chart = resolve(chart, data, chart_style_context=_BOARD_CTX)
     return render_resolved_chart(
-        resolved_chart, data, _BOARD_RS, width=400, height=300
+        resolved_chart, rows_result(data), _BOARD_RS, width=400, height=300
     ).payload
 
 
@@ -263,7 +264,7 @@ def test_zero_rule_extends_when_chart_local_unhides_ticks():
     data = [{"x": "A", "y": 10}, {"x": "B", "y": -5}]
     resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
     spec = render_resolved_chart(
-        resolved, data, _BOARD_RS, width=400, height=300
+        resolved, rows_result(data), _BOARD_RS, width=400, height=300
     ).payload
 
     rule_layer = _get_zero_rule_layer(spec)
@@ -309,5 +310,5 @@ class TestNormalizeStackTopRule:
 
         resolved = resolve(chart, self._DATA, chart_style_context=_BOARD_CTX)
         return render_resolved_chart(
-            resolved, self._DATA, _BOARD_RS, width=400, height=300
+            resolved, rows_result(self._DATA), _BOARD_RS, width=400, height=300
         ).payload

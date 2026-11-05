@@ -2,6 +2,7 @@
 //! `vega-scenegraph` draws for each of its names, and the legend Vega draws
 //! for a shape encoding that carries no legend config.
 
+use crate::scene_path::scene_path;
 use crate::families::legend::{legend_grid, LegendGrid, LegendSymbol};
 use d3rs::vega_symbol::{Extents, VegaSymbol};
 use scene::{Attrs, Node, PathData, Role};
@@ -71,7 +72,7 @@ pub fn path(symbol: &str, r: f64) -> Result<PathData, String> {
 
 /// [`path`] for a symbol already known to be Vega's.
 pub fn glyph(symbol: VegaSymbol, r: f64) -> PathData {
-    symbol.draw(size_of(r))
+    scene_path(&symbol.draw(size_of(r)))
 }
 
 /// How a shape legend's symbols are filled (`vega-lite compile/legend/
@@ -208,8 +209,8 @@ mod tests {
     /// A radius is the square root of the size over two, so a size's path is its radius's.
     #[test]
     fn a_radius_draws_the_symbol_of_its_size() {
-        assert_eq!(path("square", 5.0).unwrap(), VegaSymbol::Square.draw(100.0));
-        assert_eq!(path("circle", 3.873).unwrap(), VegaSymbol::Circle.draw(size_of(3.873)));
+        assert_eq!(path("square", 5.0).unwrap(), scene_path(&VegaSymbol::Square.draw(100.0)));
+        assert_eq!(path("circle", 3.873).unwrap(), scene_path(&VegaSymbol::Circle.draw(size_of(3.873))));
     }
 
     #[test]

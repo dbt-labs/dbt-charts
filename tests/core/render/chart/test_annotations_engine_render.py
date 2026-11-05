@@ -15,6 +15,8 @@ from dbt_charts.core.compile.resolve.style.board import resolve_style_and_contex
 from dbt_charts.core.render.chart.session import BoardRenderSession
 from dbt_charts.core.render.chart.vega_lite import render_chart
 
+from ...._results import rows_result
+
 _ROWS = [{"month": f"2024-{m:02d}-01", "revenue": float(m)} for m in range(1, 7)]
 _POINTS = [{"month": float(m), "revenue": float(m)} for m in range(1, 7)]
 _NOTE = "Quarterly goal"
@@ -45,7 +47,7 @@ def _render(family: str) -> str | None:
         rendered_at=_RENDERED_AT,
     )
     return BoardRenderSession(style).render_svg_family(
-        resolved, rows, width=600.0, height=300.0
+        resolved, rows_result(rows), width=600.0, height=300.0
     )
 
 
@@ -59,7 +61,12 @@ def test_the_engine_draws_annotations(family: str) -> None:
 def test_render_chart_draws_annotations() -> None:
     style, ctx = resolve_style_and_context(get_theme_style(get_default_theme_name()))
     svg = render_chart(
-        _chart("line"), style, ctx, _ROWS, format="svg", clock=lambda: _RENDERED_AT
+        _chart("line"),
+        style,
+        ctx,
+        rows_result(_ROWS),
+        format="svg",
+        clock=lambda: _RENDERED_AT,
     )
     assert _NOTE in svg
 
@@ -99,7 +106,7 @@ def test_trend_text_on_a_colored_line_renders_by_default_and_overlaid(
         rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
     )
     svg = BoardRenderSession(style).render_svg_family(
-        resolved, _SEGMENT_ROWS, width=600.0, height=300.0
+        resolved, rows_result(_SEGMENT_ROWS), width=600.0, height=300.0
     )
     assert svg is not None
     assert "SMB trend" in svg and "Enterprise trend" in svg
@@ -128,6 +135,6 @@ def test_a_trend_x_range_draws_the_trend_over_that_span() -> None:
         rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
     )
     svg = BoardRenderSession(style).render_svg_family(
-        resolved, _ROWS, width=600.0, height=300.0
+        resolved, rows_result(_ROWS), width=600.0, height=300.0
     )
     assert svg is not None and "spanned" in svg

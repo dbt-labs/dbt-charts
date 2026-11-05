@@ -23,7 +23,9 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.models.chart.normalized import _CartesianChartFields
+from dbt_charts.core.execute.cache_backend import ResultRows
 from dbt_charts.core.render.svg_utils import escape_attr
 from dbt_charts.core.text.format_d3 import (
     active_time_locale,
@@ -39,7 +41,7 @@ if TYPE_CHECKING:
 def generate_placeholder_data(
     chart_type: str | None,
     chart: Chart | None = None,
-) -> list[dict[str, Any]]:
+) -> ResultRows:
     """Generate appropriate placeholder/dummy data for a chart type.
 
     The data generated depends on the chart type:
@@ -57,7 +59,7 @@ def generate_placeholder_data(
         chart: Optional Chart to extract field names from
 
     Returns:
-        List of dicts containing placeholder data appropriate for the chart type.
+        Placeholder rows appropriate for the chart type, typed by their own literals.
         Data is consistent (not random) for predictable rendering.
 
     """
@@ -90,7 +92,7 @@ def generate_placeholder_data(
     # first instead of probing for the attribute.
     if isinstance(chart, _CartesianChartFields) and chart.multiples is not None:
         data = _expand_for_multiples(data, chart.multiples)
-    return data
+    return ResultRows(data, literal_schema(data))
 
 
 def _placeholder_rows(

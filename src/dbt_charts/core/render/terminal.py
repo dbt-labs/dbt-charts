@@ -30,8 +30,11 @@ from dbt_charts.core.compile.models.primitives import FormatTable
 from dbt_charts.core.compile.models.style.theme.kpi import KpiCompactStyle
 from dbt_charts.core.compile.template.display_text import resolve_display_text
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.execute.chart_data_provider import (
+    ResolveDataProvider,
+    chart_rows,
+)
 from dbt_charts.core.execute.chart_resolution import collect_display_text_inputs
-from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.board_variables import board_data_provider
 from dbt_charts.core.render.boards import resolve_display_text_from_provider
 from dbt_charts.core.render.conditions import evaluate_visible
@@ -42,7 +45,7 @@ if TYPE_CHECKING:
 
 def _dispatch_layout(
     layout: Layout,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: dict[str, Any],
     width: int,
     height: int,
@@ -62,7 +65,7 @@ def _dispatch_layout(
     if layout.type == "cols":
         return render_cols_layout_terminal(
             layout.items,
-            executor,
+            results,
             variables,
             width,
             height,
@@ -73,7 +76,7 @@ def _dispatch_layout(
     if layout.type == "grid":
         return render_grid_layout_terminal(
             layout.items,
-            executor,
+            results,
             variables,
             width,
             height,
@@ -85,7 +88,7 @@ def _dispatch_layout(
     if layout.type == "tabs":
         return render_tabs_layout_terminal(
             layout.items,
-            executor,
+            results,
             variables,
             width,
             height,
@@ -98,7 +101,7 @@ def _dispatch_layout(
     # "rows" or any unknown type — fall back to rows
     return render_rows_layout_terminal(
         layout.items,
-        executor,
+        results,
         variables,
         width,
         height,
@@ -110,7 +113,7 @@ def _dispatch_layout(
 
 def render_board_terminal(
     board: Board,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues | None = None,
     width: int | None = None,
     height: int | None = None,
@@ -123,7 +126,7 @@ def render_board_terminal(
 
     Args:
         board: Compiled board to render
-        executor: Executor for query execution
+        results: ResolveDataProvider for query execution
         variables: Variable values for queries
         width: Terminal width in characters (auto-detect if None)
         height: Terminal height in characters (auto-detect if None)
@@ -160,7 +163,7 @@ def render_board_terminal(
     board_width = width - 4  # Account for padding
     board_height = height - 4
 
-    with board_data_provider(executor):
+    with board_data_provider(results):
         # Render title if present
         title_lines: list[str] = []
         title_height = 0
@@ -183,7 +186,7 @@ def render_board_terminal(
         bg = board.authored_style.background if board.authored_style else None
         layout_output = _dispatch_layout(
             board.layout,
-            executor,
+            results,
             all_variables,
             layout_width,
             layout_height,
@@ -201,7 +204,7 @@ def render_board_terminal(
 
 def render_layout_item_terminal(
     item: LayoutItem,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     available_width: int,
     available_height: int,
@@ -212,7 +215,7 @@ def render_layout_item_terminal(
 
     Args:
         item: Layout item to render
-        executor: Executor for query execution
+        results: ResolveDataProvider for query execution
         variables: Variable values for queries
         available_width: Available terminal width in characters
         available_height: Available terminal height in characters
@@ -221,12 +224,12 @@ def render_layout_item_terminal(
     Returns:
         Terminal-formatted string for the item
     """
-    if not evaluate_visible(item.visible, variables, executor):
+    if not evaluate_visible(item.visible, variables, results):
         return ""
     if item.type == "chart" and item.chart:
         return render_chart_item_terminal(
             item.chart,
-            executor,
+            results,
             variables,
             available_width,
             available_height,
@@ -236,7 +239,7 @@ def render_layout_item_terminal(
     elif item.type == "board" and item.board:
         return render_nested_board_terminal(
             item.board,
-            executor,
+            results,
             variables,
             available_width,
             available_height,
@@ -246,7 +249,7 @@ def render_layout_item_terminal(
 
 def render_chart_item_terminal(
     chart: Chart,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     available_width: int,
     available_height: int,
@@ -258,7 +261,7 @@ def render_chart_item_terminal(
 
     Args:
         chart: Chart to render
-        executor: Executor for query execution
+        results: ResolveDataProvider for query execution
         variables: Variable values for queries
         available_width: Available terminal width in characters
         available_height: Available terminal height in characters
@@ -270,9 +273,9 @@ def render_chart_item_terminal(
     """
     try:
         # Execute query to get data
-        data = executor.execute_chart(chart, variables)
+        data = chart_rows(chart, results, variables).rows
 
-        text_inputs = collect_display_text_inputs(chart, executor, variables)
+        text_inputs = collect_display_text_inputs(chart, results, variables)
         title_text = chart.label if isinstance(chart, KpiChart) else chart.title
         display_title = (
             resolve_display_text(
@@ -309,7 +312,7 @@ def render_chart_item_terminal(
 
 def render_nested_board_terminal(
     board: Board,
-    executor: Executor,
+    results: ResolveDataProvider,
     variables: VariableValues,
     available_width: int,
     available_height: int,
@@ -318,7 +321,7 @@ def render_nested_board_terminal(
 
     Args:
         board: Board to render
-        executor: Executor for query execution
+        results: ResolveDataProvider for query execution
         variables: Variable values for queries
         available_width: Available terminal width in characters
         available_height: Available terminal height in characters
@@ -340,7 +343,7 @@ def render_nested_board_terminal(
     bg = board.authored_style.background if board.authored_style else None
     layout_output = _dispatch_layout(
         board.layout,
-        executor,
+        results,
         variables,
         available_width,
         layout_height,

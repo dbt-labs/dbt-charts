@@ -37,6 +37,7 @@ from dbt_charts.core.render.chart.x_domain_paint_order import (
 )
 from dbt_charts.core.render.engine import _render_payload, build_chart_payload
 
+from ..._results import rows_result
 from .test_engine import _BOARD_CTX, _BOARD_RS, _native
 
 
@@ -181,7 +182,7 @@ def test_layer_x_values_the_base_does_not_order_land_in_the_paint_order_sink() -
     )
     payload = build_chart_payload(
         chart,
-        {"q": base, "p": projected},
+        {"q": rows_result(base), "p": rows_result(projected)},
         width=600.0,
         height=320.0,
         padding=None,

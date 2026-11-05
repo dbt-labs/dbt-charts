@@ -37,6 +37,7 @@ from pydantic import (
     field_validator,
 )
 
+from dbt_charts.core.column_types import ColumnType, literal_schema
 from dbt_charts.core.compile.models.cache import NEVER_CACHED, CachePolicy
 from dbt_charts.core.compile.models.constraints import (
     ConstrainedModel,
@@ -286,6 +287,15 @@ class ValuesQuery(Query):
         default=None,
         description="Row values for compact syntax, parallel to 'columns' (e.g., [['Jan', 100], ['Feb', 140]]).",
     )
+
+    def declared_schema(self) -> dict[str, ColumnType]:
+        """Each column's type, read off the literals. With no rows there is no
+        literal to read: the authored columns are declared as strings."""
+        return literal_schema(
+            self.rows,
+            self.columns,
+            untyped=None if self.rows else ColumnType(kind="string"),
+        )
 
     def model_post_init(self, _context: Any) -> None:
         """Build rows from columns + values if provided."""

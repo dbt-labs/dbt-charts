@@ -81,7 +81,7 @@ def test_two_scopes_with_matching_chart_canvas_but_different_board_canvas_resolv
     executor.render_with_range_filters.return_value = None
     executor.execute_query.return_value = []
     render_ctx = SizingRenderCtx(
-        executor=executor,
+        results=executor,
         resolved_style=resolved_style_a,
         chart_style_context=ctx_a,
     )

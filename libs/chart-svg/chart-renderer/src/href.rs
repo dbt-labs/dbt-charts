@@ -305,10 +305,10 @@ pub(crate) fn checked_href(href: &str) -> Result<&str, String> {
 
 /// `checked_href` with the registered diagnostic: the refusal a table's cell,
 /// row and header links raise, naming the href and its scheme.
-pub(crate) fn checked_href_diagnostic(href: &str) -> Result<&str, crate::diagnostic::Diagnostic> {
+pub(crate) fn checked_href_diagnostic(href: &str) -> Result<&str, diagnostic::Diagnostic> {
     checked_href(href).map_err(|_| {
-        crate::diagnostic::Diagnostic::new(
-            &crate::codes::ERR_LINK_SCHEME_UNSAFE_AT_RENDER,
+        diagnostic::Diagnostic::new(
+            &diagnostic::codes::ERR_LINK_SCHEME_UNSAFE_AT_RENDER,
             [
                 ("href", serde_json::json!(href)),
                 ("scheme", serde_json::json!(link_scheme(href).unwrap_or_default())),

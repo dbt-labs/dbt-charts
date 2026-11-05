@@ -591,7 +591,7 @@ const MAX_SEQUENCE: usize = 2_000_000;
 const MERGE_ENTRY_BYTES: usize = 192;
 
 fn sequence_too_long() -> EvalError {
-    EvalError::Unmodeled(crate::refuse!("labels.expr building a sequence of more than {MAX_SEQUENCE} items is not supported"))
+    EvalError::Unmodeled(diagnostic::refuse!("labels.expr building a sequence of more than {MAX_SEQUENCE} items is not supported"))
 }
 
 /// The board's time vocabulary, which production stamps into the Vega config `timeFormat` and `timeParse` read.
@@ -694,7 +694,7 @@ fn ascending(u: &Val, v: &Val) -> i32 {
 fn v8_sort(items: Vec<Val>, cmp: fn(&Val, &Val) -> i32) -> Res<Vec<Val>> {
     let mut order: Vec<usize> = (0..items.len()).collect();
     d3rs::js_sort::js_sort(&mut order, |a, b| f64::from(cmp(&items[a], &items[b])))
-        .map_err(|_| EvalError::Unmodeled(crate::refuse!("labels.expr sorting 64 or more items is not supported")))?;
+        .map_err(|_| EvalError::Unmodeled(diagnostic::refuse!("labels.expr sorting 64 or more items is not supported")))?;
     Ok(order.into_iter().map(|i| items[i].clone()).collect())
 }
 

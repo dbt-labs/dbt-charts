@@ -428,7 +428,7 @@ class TestTabRendering:
 
         svg, _height = render_tabs_layout(
             items=items,
-            executor=mock_executor,
+            results=mock_executor,
             variables={"view": "overview"},
             available_width=800.0,
             available_height=600.0,
@@ -481,7 +481,7 @@ class TestTabRendering:
         # Pass view=details in variables — should activate second tab
         svg, _height = render_tabs_layout(
             items=items,
-            executor=mock_executor,
+            results=mock_executor,
             variables={"view": "details"},
             available_width=800.0,
             available_height=600.0,
@@ -532,7 +532,7 @@ class TestTabRendering:
 
         svg, _height = render_tabs_layout(
             items=items,
-            executor=mock_executor,
+            results=mock_executor,
             variables={"view": "overview"},
             available_width=800.0,
             available_height=600.0,

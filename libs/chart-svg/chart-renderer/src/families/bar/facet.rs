@@ -1,10 +1,11 @@
 //! Small multiples: one panel per slice of the rows, composed into a single card by `facet_compose`.
 
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::facet_compose::{GhostStyle, PanelGeometry};
 use crate::families::layers::YSides;
 use crate::families::{facet_compose, facet_title, heatmap_facet, multiples};
-use crate::{Payload, codes};
+use crate::Payload;
+use diagnostic::codes;
 
 use measure::FontBook;
 use serde_json::{Value, json};
@@ -290,7 +291,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
         };
         let min_height = horizontal_min_height(&r, n_categories)? * panel_rows_n as f64;
         if let Some(authored) = payload.authored_height.filter(|&authored| n_categories > 0 && min_height > authored) {
-            crate::diagnostic::warn(Diagnostic::new(
+            diagnostic::warn(Diagnostic::new(
                 &codes::WARN_LAYOUT_MIN_EXCEEDS_HEIGHT,
                 [
                     ("authored_height", json!(authored)),
@@ -312,7 +313,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
     // Production's own compile fails on a pinned layer inside small multiples
     // (vl-convert: unrecognized scale `child_layer_0_y`).
     if YSides::of(&layers).is_some() {
-        return Err(crate::refuse!("bar: multiples with a dual-axis layer not supported").into());
+        return Err(diagnostic::refuse!("bar: multiples with a dual-axis layer not supported").into());
     }
     let x_layers = XLayers { all: &layers, payload };
     // The one chart-level legend spans the card, not a panel.

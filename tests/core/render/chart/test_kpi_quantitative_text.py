@@ -12,6 +12,7 @@ Covers the contract changes:
 
 from __future__ import annotations
 
+import datetime
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 
+from ...._results import rows_result
 from ..._engine_render import render_kpi_svg
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
@@ -554,7 +556,7 @@ class TestKpiTemporalFormat:
             value="release_date",
             label="Next release",
             format="date_short",
-            _data=[{"release_date": "2026-11-15"}],
+            _data=[{"release_date": datetime.date(2026, 11, 15)}],
         )
         svg = self._render(resolved, data)
         assert "15 Nov 2026" in svg
@@ -564,7 +566,7 @@ class TestKpiTemporalFormat:
         resolved, data = _resolved_kpi(
             value="release_date",
             label="Next release",
-            _data=[{"release_date": "2026-11-15"}],
+            _data=[{"release_date": datetime.date(2026, 11, 15)}],
         )
         svg = self._render(resolved, data)
         assert "15 Nov 2026" in svg
@@ -578,7 +580,7 @@ class TestKpiTemporalFormat:
             value="release_date",
             label="Next release",
             format=".2s",
-            _data=[{"release_date": "2026-11-15"}],
+            _data=[{"release_date": datetime.date(2026, 11, 15)}],
         )
         svg = self._render(resolved, data)
         assert "15 Nov 2026" in svg
@@ -608,7 +610,7 @@ class TestKpiTemporalFormat:
             value="release_date",
             label="Next release",
         )
-        data = [{"release_date": "2026-11-15"}]
+        data = [{"release_date": datetime.date(2026, 11, 15)}]
         resolved = resolve(chart, data, chart_style_context=board_style)
         svg = self._render(resolved, data)
         assert "15 Nov 2026" in svg
@@ -653,7 +655,7 @@ class TestKpiTemporalFormat:
             value="release_date",
             label="Next release",
             format="%>10,.0f",
-            _data=[{"release_date": "2026-11-15"}],
+            _data=[{"release_date": datetime.date(2026, 11, 15)}],
         )
         svg = self._render(resolved, data)
         assert "15 Nov 2026" in svg
@@ -663,7 +665,7 @@ class TestKpiTemporalFormat:
             value="release_date",
             label="Next release",
             format="%",
-            _data=[{"release_date": "2026-11-15"}],
+            _data=[{"release_date": datetime.date(2026, 11, 15)}],
         )
         svg = self._render(resolved, data)
         assert "15 Nov 2026" in svg
@@ -674,7 +676,7 @@ class TestKpiTemporalFormat:
             value="updated_at",
             label="Last updated",
             format="time_short",
-            _data=[{"updated_at": "2026-11-15T14:30:00"}],
+            _data=[{"updated_at": datetime.datetime(2026, 11, 15, 14, 30)}],
         )
         svg = self._render(resolved, data)
         # "14:30" alone is a substring of the raw ISO value too -- assert the
@@ -690,7 +692,7 @@ class TestKpiTemporalFormat:
             label="Revenue",
             support=support,
             support_format="date_short",
-            _data=[{"revenue": 1_500_000, "renewed_on": "2026-11-15"}],
+            _data=[{"revenue": 1_500_000, "renewed_on": datetime.date(2026, 11, 15)}],
         )
         svg = self._render(resolved, data)
         assert "15 Nov 2026" in svg
@@ -704,7 +706,7 @@ class TestKpiTemporalFormat:
             label="Revenue",
             support=support,
             support_format="percent",
-            _data=[{"revenue": 1_500_000, "renewed_on": "2026-11-15"}],
+            _data=[{"revenue": 1_500_000, "renewed_on": datetime.date(2026, 11, 15)}],
         )
         with pytest.raises(ChartDataError, match="is not a date format"):
             self._render(resolved, data)
@@ -1233,7 +1235,7 @@ def _card_geometry(
     board_style = resolve_style(get_theme_style())
     svg, _ = render_native(
         resolved,
-        data,
+        rows_result(data),
         width=width,
         height=height,
         padding=None,

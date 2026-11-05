@@ -27,6 +27,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.font_measure import get_font_measurer
 
+from .._results import rows_result
 from ._engine_render import render_table_svg
 
 _BOARD_STYLE = resolve_style(get_theme_style())
@@ -252,7 +253,7 @@ class TestSizerAgreesWithRenderer:
 
         chart = _chart(make_chart)
         executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-        executor.execute_chart.return_value = [_NARROW_ROW]
+        executor.execute_query_result.return_value = rows_result([_NARROW_ROW])
 
         resolved = resolve(chart, [_NARROW_ROW], chart_style_context=_BOARD_CTX)
         estimated = _get_table_height_from_data(

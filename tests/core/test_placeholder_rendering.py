@@ -2,6 +2,8 @@ from types import SimpleNamespace
 
 from dbt_charts.core.compile.models.primitives import BoardLinks
 
+from .._results import rows_result
+
 """Tests for placeholder rendering with overlay and transparency.
 
 These tests verify that placeholder charts are rendered with:
@@ -35,7 +37,7 @@ class TestPlaceholderRendering:
             chart,
             _rs,
             _ctx,
-            data=[],
+            data=rows_result([]),
             format="svg",
             is_placeholder=True,
         )
@@ -53,7 +55,7 @@ class TestPlaceholderRendering:
             chart,
             _rs,
             _ctx,
-            data=[],
+            data=rows_result([]),
             format="svg",
             is_placeholder=True,
         )
@@ -72,7 +74,7 @@ class TestPlaceholderRendering:
             chart,
             _rs,
             _ctx,
-            data=[],
+            data=rows_result([]),
             format="svg",
             is_placeholder=True,
         )

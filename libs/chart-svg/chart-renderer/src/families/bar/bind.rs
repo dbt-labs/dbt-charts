@@ -4,7 +4,7 @@
 //! the support_table strip are validated. Nothing here measures text.
 
 use crate::common::{MarkLabels, row_num, row_str};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::layers::{OverlayBarLayer, OverlayLayer, OverlayLineLayer, OverlayScatterLayer, resolve_layer_rows};
 use d3rs::scale::Continuous;
 use crate::families::span;
@@ -63,10 +63,9 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     let mut wide_series: Vec<String> = Vec::new();
     if !r.wide_measures.is_empty() {
         wide_series = crate::common::wide_series_names(&r.wide_measures, r.color.as_deref(), &prepared.rows);
-        let folded = prepared.with_inputs(
-            prepared.resolved.clone(),
-            crate::common::unfold_wide_rows(&prepared.rows, &r.wide_measures, r.color.as_deref()),
-        );
+        let folded = prepared
+            .with_inputs(prepared.resolved.clone(), crate::common::unfold_wide_rows(&prepared.rows, &r.wide_measures, r.color.as_deref()))
+            .with_row_types(crate::common::unfold_wide_types(&prepared.schema.rows, &r.wide_measures)?);
         r.series_from_measures = r.color.is_none();
         r.prefold_rows = prepared.rows.clone();
         r.link_color = Some(r.color.clone().unwrap_or_else(|| crate::common::WIDE_KEY_FIELD.to_string()));
@@ -77,7 +76,7 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     // A colorless bar is selected by its category, which a link prints verbatim only off a date axis.
     let x_text: Vec<String> = prepared.rows.iter().map(|row| row_str(row, &r.x)).collect();
     let x_text: Vec<&str> = x_text.iter().map(String::as_str).collect();
-    let dated_x = crate::families::temporal::x_values_are_standard_dates(&x_text)
+    let dated_x = crate::families::temporal::x_is_standard_date(&r.column_types, &r.x, &x_text)?
         || crate::families::temporal::has_labeled_bucket(&prepared.rows, &r.x);
     let selection_key = match (r.link_color.as_deref(), dated_x) {
         (Some(color), _) => Some(("color", color)),

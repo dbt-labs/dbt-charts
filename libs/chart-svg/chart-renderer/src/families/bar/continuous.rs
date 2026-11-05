@@ -2,7 +2,7 @@
 //! arm of its own.
 
 use crate::common::{VALUE_AXIS_BREATHING_ROOM, axis_title_text, format_y_label, row_num, row_str};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::axis_caption::value_axis_caption;
 use d3rs::scale::Continuous;
 use crate::families::facet_compose::PanelGeometry;
@@ -229,7 +229,7 @@ pub(super) fn render_vertical_continuous_x_panel(
         bars_data.push((xv, yv));
         bar_x_text.push(row_str(row, &r.x));
         bar_cat.push(row_str(row, &r.x));
-        bar_extra.push(crate::families::tooltip_extra::rows_for(&r.tooltip, row)?);
+        bar_extra.push(crate::families::tooltip_extra::rows_for(&r.tooltip, row, &r.column_types)?);
     }
     if bars_data.is_empty() {
         return Ok(None);

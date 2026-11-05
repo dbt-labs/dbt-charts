@@ -26,7 +26,7 @@ use serde_json::Value;
 use crate::common::{Divider, GappedDivider};
 use crate::conditions::eval_bool_condition;
 use crate::contract;
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::prose;
 use crate::sizing::{
     self, calculate_cols_boxes, calculate_grid_boxes, calculate_layout_height,
@@ -2268,6 +2268,7 @@ fn render_error_card_svg(
         board_style: None,
         language: None,
         datasets: None,
+        schema: Default::default(),
         geometries: None,
         variables: Default::default(),
         variable_options: Default::default(),
@@ -2482,9 +2483,8 @@ fn render_chart_item(
     // with no dataset to look up at all, so it skips the query_name/
     // datasets lookup below entirely rather than forwarding an empty
     // placeholder into `payload.chart_datasets`.
-    let static_rows: Vec<serde_json::Map<String, Value>> = Vec::new();
-    let (rows, datasets) = if chart_type == "callout" {
-        (&static_rows, None)
+    let (rows, datasets, schema) = if chart_type == "callout" {
+        (Vec::new(), None, crate::payload_schema::PayloadSchema::default())
     } else {
         let query_name = chart_json
             .get("query_name")
@@ -2497,7 +2497,8 @@ fn render_chart_item(
         let r = ds
             .get(query_name)
             .ok_or_else(|| format!("chart {chart_id}: dataset {query_name} not forwarded"))?;
-        (r, Some(ds))
+        let schema = crate::payload_schema::PayloadSchema::of_datasets(ds, query_name)?;
+        (r.rows.clone(), Some(crate::payload_schema::rows_by_query(ds)), schema)
     };
     let layout_padding = chart_json
         .get("layout_padding")
@@ -2565,7 +2566,7 @@ fn render_chart_item(
         // The composer sizes no custom chart (`sizing`), so no template runs here.
         max_template_output_bytes: None,
         resolved: chart_json.clone(),
-        rows: rows.clone(),
+        rows,
         width: slot_w,
         height: slot_h,
         background: Some(chart_bg.to_string()),
@@ -2582,7 +2583,8 @@ fn render_chart_item(
         padding: Some(spec_padding),
         board_style: Some(payload.board_style.clone()),
         language: None,
-        datasets: datasets.cloned(),
+        datasets,
+        schema,
         geometries: matches!(chart_type, "geoshape" | "point_map").then(|| payload.geometries.clone()),
         // The real paint: `slot_h` is the already-decided box height, not
         // a static estimate to grow from — see `Payload::measuring`. The
@@ -3994,7 +3996,7 @@ fn size_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<Sized
             input.authoring.layout_height.as_deref().is_some_and(|h| h.trim().ends_with('%'))
         })
     {
-        return Err(crate::refuse!("a percentage height on a root grid item is not supported"));
+        return Err(diagnostic::refuse!("a percentage height on a root grid item is not supported"));
     }
     // Production assigns a rows board against the container height it just
     // measured, whose plain running total can land a rounding step under the
@@ -5994,11 +5996,12 @@ mod nested_box_sidecar_tests {
         chart_id: &str,
         query_name: &str,
         rows_json: &str,
-    ) -> (String, HashMap<String, Vec<serde_json::Map<String, serde_json::Value>>>) {
+    ) -> (String, HashMap<String, column_types::Dataset>) {
         let rows: Vec<serde_json::Map<String, serde_json::Value>> =
             serde_json::from_str(rows_json).unwrap();
+        let schema = crate::payload_schema::test_schema_of(&rows);
         let mut inner = HashMap::new();
-        inner.insert(query_name.to_string(), rows);
+        inner.insert(query_name.to_string(), column_types::Dataset { rows, schema });
         (chart_id.to_string(), inner)
     }
 

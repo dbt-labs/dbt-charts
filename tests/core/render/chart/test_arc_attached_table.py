@@ -49,6 +49,7 @@ from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.pie_layout import sized_pie_mode
 from dbt_charts.core.render.svg_utils import escape_attr
 
+from ...._results import rows_result
 from ..._engine_render import render_pie_svg
 
 _SVG_NS = "{http://www.w3.org/2000/svg}"
@@ -89,7 +90,9 @@ def _modes(pcts: list[float], names: list[str], width: float) -> tuple[str, str]
         width=width,
     )
     assert isinstance(resolved, ResolvedPieChart)
-    return resolved.labeled_mode, sized_pie_mode(resolved, rows, board_style)
+    return resolved.labeled_mode, sized_pie_mode(
+        resolved, rows_result(rows), board_style
+    )
 
 
 _EIGHT_NAMES = [
@@ -241,7 +244,9 @@ def test_arc_resolution_suppresses_label_rows_below_threshold(make_chart):
     rs, ctx = resolve_style_and_context(get_theme_style())
     resolved = resolve(chart, data, chart_style_context=ctx, width=415.0)
     assert resolved.slice_label_indices == (0, 1, 2)
-    artifact = render_resolved_chart(resolved, data, rs, width=415.0, height=415.0)
+    artifact = render_resolved_chart(
+        resolved, rows_result(data), rs, width=415.0, height=415.0
+    )
     assert isinstance(artifact.payload, str)
     painted = re.findall(
         r'aria-roledescription="text mark"><tspan[^>]*>([^<]*)</tspan>',
@@ -288,7 +293,7 @@ def test_composed_render_wedge_paint_matches_swatch_paint(make_chart):
         {"series": "Echo", "value": 1.0},
     ]
     rs, ctx = resolve_style_and_context(get_theme_style())
-    svg = render_chart(chart, rs, ctx, data, format="svg", width=415.0)
+    svg = render_chart(chart, rs, ctx, rows_result(data), format="svg", width=415.0)
     palette = list(ctx.palette)
 
     # Donut wedges are <path> elements with class="mark-arc" (the arc
@@ -357,7 +362,7 @@ def test_hybrid_render_emits_donut_and_table(make_chart):
     data = [{"series": f"S{i}", "value": v} for i, v in enumerate(_HYBRID_TAIL_VALUES)]
     rs, ctx = resolve_style_and_context(get_theme_style())
 
-    svg = render_chart(chart, rs, ctx, data, format="svg", width=1200.0)
+    svg = render_chart(chart, rs, ctx, rows_result(data), format="svg", width=1200.0)
 
     # Donut from Vega-Lite — class="marks" wrapper.
     assert 'class="marks"' in svg, "Composed output must include the VL donut SVG"
@@ -385,7 +390,7 @@ def test_hybrid_render_keeps_wheel_labels_and_titles_the_table(make_chart):
     ]
     rs, ctx = resolve_style_and_context(get_theme_style())
 
-    svg = render_chart(chart, rs, ctx, data, format="svg", width=600.0)
+    svg = render_chart(chart, rs, ctx, rows_result(data), format="svg", width=600.0)
     donut_text, table_text = _donut_and_table_texts(svg)
 
     assert "Big" in donut_text and "Rest" in donut_text, (
@@ -417,7 +422,7 @@ def test_hybrid_heading_uses_table_body_style_not_chart_title(make_chart):
     rs, ctx = resolve_style_and_context(get_theme_style())
     table_style = ctx.table
 
-    svg = render_chart(chart, rs, ctx, data, format="svg", width=600.0)
+    svg = render_chart(chart, rs, ctx, rows_result(data), format="svg", width=600.0)
 
     m = re.search(r"<text[^>]*>Too small to label</text>", svg)
     assert m, f"Expected an exact 'Too small to label' text element. svg={svg!r}"
@@ -482,7 +487,7 @@ def test_full_table_render_has_no_labels_no_title_lists_every_slice(make_chart):
     ]
     rs, ctx = resolve_style_and_context(get_theme_style())
 
-    svg = render_chart(chart, rs, ctx, data, format="svg", width=300.0)
+    svg = render_chart(chart, rs, ctx, rows_result(data), format="svg", width=300.0)
     donut_text, table_text = _donut_and_table_texts(svg)
 
     assert donut_text == "", (
@@ -515,14 +520,14 @@ def test_full_table_two_row_donut_has_no_stripe(make_chart):
     # stripe assertion below would pass green while checking nothing.
     resolved = resolve(chart, data, chart_style_context=ctx, width=500.0)
     assert isinstance(resolved, ResolvedPieChart)
-    assert sized_pie_mode(resolved, data, rs) == "full_table", (
+    assert sized_pie_mode(resolved, rows_result(data), rs) == "full_table", (
         "Fixture no longer reaches full_table mode -- the stripe assertion "
         "below would be vacuous. Re-tune the fixture, don't delete this."
     )
     assert resolved.full_attachment is not None
     assert resolved.full_attachment.table.style.table.row.stripe.color is None
 
-    svg = render_chart(chart, rs, ctx, data, format="svg", width=500.0)
+    svg = render_chart(chart, rs, ctx, rows_result(data), format="svg", width=500.0)
 
     row_h = get_theme_style().charts.table.row.height
     stripe_like = [
@@ -567,7 +572,7 @@ def test_render_attached_table_mode_keeps_standard_arc_height(make_chart):
     data = [{"series": f"S{i}", "value": v} for i, v in enumerate(_HYBRID_TAIL_VALUES)]
     rs, ctx = resolve_style_and_context(get_theme_style())
 
-    svg = render_chart(chart, rs, ctx, data, format="svg", width=1200.0)
+    svg = render_chart(chart, rs, ctx, rows_result(data), format="svg", width=1200.0)
     m_w = re.search(r'<svg[^>]+\bwidth="([0-9.]+)"', svg)
     m_h = re.search(r'<svg[^>]+\bheight="([0-9.]+)"', svg)
     assert m_w and m_h, "SVG root must have width and height attributes"
@@ -591,7 +596,7 @@ def test_direct_label_mode_omits_attached_table(make_chart):
     ]
     rs, ctx = resolve_style_and_context(get_theme_style())
 
-    svg = render_chart(chart, rs, ctx, data, format="svg", width=415.0)
+    svg = render_chart(chart, rs, ctx, rows_result(data), format="svg", width=415.0)
     # No swatch rects from the attached table.
     swatch_rects = re.findall(
         r'<rect[^>]*\brx="3"[^>]*\bfill="#[a-fA-F0-9]+"[^>]*/?>',
@@ -612,7 +617,7 @@ def test_high_cardinality_dominant_wheel_keeps_direct_labels(make_chart):
     data = [{"series": f"S{i}", "value": 100} for i in range(8)]
     rs, ctx = resolve_style_and_context(get_theme_style())
 
-    svg = render_chart(chart, rs, ctx, data, format="svg", width=700.0)
+    svg = render_chart(chart, rs, ctx, rows_result(data), format="svg", width=700.0)
 
     swatch_rects = re.findall(
         r'<rect[^>]*\brx="3"[^>]*\bfill="#[a-fA-F0-9]+"[^>]*/?>',
@@ -637,7 +642,7 @@ def test_attached_table_uses_chart_format_not_hardcoded_currency(make_chart):
     data = [{"series": f"S{i}", "value": v} for i, v in enumerate(_HYBRID_TAIL_VALUES)]
     rs, ctx = resolve_style_and_context(get_theme_style())
 
-    svg = render_chart(chart, rs, ctx, data, format="svg", width=1200.0)
+    svg = render_chart(chart, rs, ctx, rows_result(data), format="svg", width=1200.0)
     # No $ sign should appear in the value column when chart has no format.
     dollar_texts = re.findall(r">[\s]*\$[\s]*<", svg)
     assert not dollar_texts, (
@@ -659,7 +664,7 @@ def test_attached_table_preserves_format_config_prefix_suffix(make_chart):
     data = [{"series": f"S{i}", "value": v} for i, v in enumerate(_HYBRID_TAIL_VALUES)]
     rs, ctx = resolve_style_and_context(get_theme_style())
 
-    svg = render_chart(chart, rs, ctx, data, format="svg", width=1200.0)
+    svg = render_chart(chart, rs, ctx, rows_result(data), format="svg", width=1200.0)
     # The suffix should appear in the rendered value column.
     usd_count = len(re.findall(r"USD", svg))
     assert usd_count >= 1, (
@@ -679,7 +684,9 @@ def test_arc_layer_not_filtered_by_wedge_threshold(make_chart):
     ]
     rs, ctx = resolve_style_and_context(get_theme_style())
     resolved = resolve(chart, data, chart_style_context=ctx, width=415.0)
-    artifact = render_resolved_chart(resolved, data, rs, width=415.0, height=415.0)
+    artifact = render_resolved_chart(
+        resolved, rows_result(data), rs, width=415.0, height=415.0
+    )
     assert isinstance(artifact.payload, str)
     # Small (~5.7%) is under the 8% label floor but still paints its wedge.
     assert artifact.payload.count('aria-roledescription="arc mark"') == 2
@@ -691,7 +698,7 @@ def test_resolved_pie_uses_stored_width_when_render_width_is_omitted(make_chart)
     rs, ctx = resolve_style_and_context(get_theme_style())
     resolved = resolve(chart, data, chart_style_context=ctx, width=415.0)
 
-    artifact = render_resolved_chart(resolved, data, rs)
+    artifact = render_resolved_chart(resolved, rows_result(data), rs)
 
     assert artifact.kind == "svg"
     assert isinstance(artifact.payload, str)
@@ -705,7 +712,7 @@ def test_resolved_pie_rejects_conflicting_render_width(make_chart):
     resolved = resolve(chart, data, chart_style_context=ctx, width=415.0)
 
     with pytest.raises(RenderError, match="finalized at width 415.0, not 500.0"):
-        render_resolved_chart(resolved, data, rs, width=500.0)
+        render_resolved_chart(resolved, rows_result(data), rs, width=500.0)
 
 
 # --------------------------------------------------------------------------
@@ -782,7 +789,7 @@ def test_wide_tabled_pie_places_table_to_the_right(make_chart):
     data = [{"series": f"S{i}", "value": v} for i, v in enumerate(_HYBRID_TAIL_VALUES)]
     rs, ctx = resolve_style_and_context(get_theme_style())
 
-    svg = render_chart(chart, rs, ctx, data, format="svg", width=900.0)
+    svg = render_chart(chart, rs, ctx, rows_result(data), format="svg", width=900.0)
     m_w = re.search(r'^<svg[^>]+\bwidth="([0-9.]+)"', svg)
     m_h = re.search(r'^<svg[^>]+\bheight="([0-9.]+)"', svg)
     assert m_w and m_h
@@ -824,7 +831,7 @@ def test_narrow_tabled_pie_places_table_below(make_chart):
     data = [{"series": f"S{i}", "value": v} for i, v in enumerate(_HYBRID_TAIL_VALUES)]
     rs, ctx = resolve_style_and_context(get_theme_style())
 
-    svg = render_chart(chart, rs, ctx, data, format="svg", width=340.0)
+    svg = render_chart(chart, rs, ctx, rows_result(data), format="svg", width=340.0)
     m_w = re.search(r'^<svg[^>]+\bwidth="([0-9.]+)"', svg)
     assert m_w
     w = float(m_w.group(1))
@@ -863,7 +870,7 @@ def test_attached_table_modes_suppress_builtin_color_legend(make_chart, model_co
         chart = make_chart("pie", x="name", y="value")
         data = [{"name": n, "value": v} for n, v in pairs]
         return render_chart(
-            chart, themed_rs, themed_ctx, data, format="svg", width=760.0
+            chart, themed_rs, themed_ctx, rows_result(data), format="svg", width=760.0
         )
 
     # Direct-label pie: dark keeps its built-in color legend (unchanged).

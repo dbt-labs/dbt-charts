@@ -5,8 +5,8 @@
 use serde_json::Value;
 
 use super::model::{payload_error, Anchor, Scalar};
-use crate::codes;
-use crate::diagnostic::{self, Diagnostic};
+use diagnostic::codes;
+use diagnostic::{self, Diagnostic};
 use crate::families::cartesian::band_edge;
 use d3rs::scale::{Band, Continuous, Transform};
 
@@ -329,7 +329,7 @@ fn band_date_span(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostic::collect;
+    use ::diagnostic::collect;
     use crate::time_axis::testing::day;
 
     const SITE: Site = Site { chart_id: "c", index: 3 };

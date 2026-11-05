@@ -18,7 +18,7 @@
 //!   y axis inside its cell; a shared one is a single `row_header` axis at
 //!   the left of every grid row.
 
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use std::borrow::Cow;
 use std::collections::HashSet;
 
@@ -563,21 +563,22 @@ fn narrowed_domain(rows: &[Map<String, Value>], field: &str, sort: Option<&Chart
 /// untouched, as the emitter only canonicalizes a dated y; an authored grain
 /// over a column no date reads gives no ladder either.
 pub(crate) fn date_dimension(
+    types: &column_types::ColumnTypes,
     rows: &[Map<String, Value>],
     field: &str,
     axis: &AxisStyle,
     is_x: bool,
 ) -> Result<(Vec<Map<String, Value>>, Option<TimeUnit>), String> {
     let law_axis = XAxis::of(axis);
-    let law = |rows: &[Map<String, Value>]| resolve_cartesian_x_type(rows, field, &law_axis, "heatmap", false, &[]);
-    let normalized = if is_x { normalize_labeled_temporal(rows, field)? } else { Cow::Borrowed(rows) };
+    let law = |rows: &[Map<String, Value>]| resolve_cartesian_x_type(types, rows, field, &law_axis, "heatmap", false, &[]);
+    let normalized = if is_x { normalize_labeled_temporal(types, rows, field)? } else { Cow::Borrowed(rows) };
     let resolution = law(&normalized)?;
     let Grain::Calendar(tu) = resolution.grain else { return Ok((normalized.into_owned(), None)) };
     if !matches!(resolution.from_data, VegaType::Temporal | VegaType::Ordinal) {
         return Ok((normalized.into_owned(), None));
     }
-    let mut rows = if is_x { normalized.into_owned() } else { normalize_labeled_temporal(&normalized, field)?.into_owned() };
-    if infer_vega_type(&rows, field) == VegaType::Temporal {
+    let mut rows = if is_x { normalized.into_owned() } else { normalize_labeled_temporal(types, &normalized, field)?.into_owned() };
+    if infer_vega_type(types, &rows, field)? == VegaType::Temporal {
         for row in &mut rows {
             if let Some(((y, m, d), _)) = row.get(field).and_then(Value::as_str).and_then(parse_date) {
                 row.insert(field.to_string(), Value::String(format!("{y:04}-{m:02}-{d:02}")));
@@ -1129,8 +1130,8 @@ enum FacetColor {
 pub(crate) fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
     let folded = fold_wide_y(payload)?;
     let payload = folded.as_ref().unwrap_or(payload);
-    let Prelude { r, kind, .. } = Prelude::of(payload)?;
-    render_facet(payload, fonts, &r, kind)
+    let Prelude { r, kind, types, .. } = Prelude::of(payload)?;
+    render_facet(payload, fonts, &r, kind, &types)
 }
 
 fn render_facet(
@@ -1138,10 +1139,11 @@ fn render_facet(
     fonts: &FontBook,
     r: &HeatmapResolved,
     kind: ColorKind,
+    types: &column_types::ColumnTypes,
 ) -> Result<String, Diagnostic> {
     let mc = r.multiples.as_ref().expect("render dispatched on multiples");
     if r.patterns.is_active() {
-        return Err(crate::refuse!("heatmap: pattern fills on small multiples are not supported").into());
+        return Err(diagnostic::refuse!("heatmap: pattern fills on small multiples are not supported").into());
     }
     let independent = mc.scale == "independent";
     let legend_edge = facet_compose::facet_legend_edge(&r.legend.position);
@@ -1151,7 +1153,7 @@ fn render_facet(
         return Err("heatmap: multiples with no baked panel_axes — resolve() should always supply at least one".into());
     }
     let axes = &r.panel_axes;
-    let (rows, x_grain) = date_dimension(&payload.rows, &r.x, &r.style.axis_x, true)?;
+    let (rows, x_grain) = date_dimension(&payload.schema.rows, &payload.rows, &r.x, &r.style.axis_x, true)?;
     let rows = if r.is_flat() { super::heatmap::with_flat_column(rows) } else { rows };
     // Vega-Lite decides which scales a panel narrows from the data as authored;
     // only the domains it then draws follow the rows with a valid color.
@@ -1234,9 +1236,9 @@ fn render_facet(
     let y_title_extra = crate::common::y_title_extra(&ax_y.title, &y_title_paint);
     let y_label_ws: Vec<(String, f64)> = y_raw_widths.iter().map(|(b, w)| (b.clone(), w.min(y_label_limit))).collect();
     let color = match kind {
-        ColorKind::Categories => FacetColor::Categories(color_categories(r, &rows)?),
+        ColorKind::Categories => FacetColor::Categories(color_categories(types, r, &rows)?),
         ColorKind::Dates => {
-            let (min, max, aware) = date_color_extent(&rows, &r.color)?;
+            let (min, max, aware) = date_color_extent(types, &rows, &r.color)?;
             FacetColor::Dates { min, max, aware }
         }
         ColorKind::Gradient => {
@@ -1260,8 +1262,8 @@ fn render_facet(
         },
         tooltip: tooltip_value_title(r)?.zip(r.style.tooltip_format.as_ref()),
         native_aria: false,
-        x_header: HeaderFmt::of(&rows, &r.x, ax_x)?,
-        y_header: HeaderFmt::of(&rows, &r.y, ax_y)?,
+        x_header: HeaderFmt::of(&payload.schema.rows, &rows, &r.x, ax_x)?,
+        y_header: HeaderFmt::of(&payload.schema.rows, &rows, &r.y, ax_y)?,
         link: r.datum_link((x_grain.is_some(), false, kind == ColorKind::Dates)),
         mirror,
         ghost_titles: Some((x_title.as_str(), y_title.as_str())),

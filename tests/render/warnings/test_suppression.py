@@ -37,6 +37,8 @@ from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 from dbt_charts.core.render.warnings import registry as _registry
 
+from ..._results import rows_schema
+
 # ---------------------------------------------------------------------------
 # partition() unit tests
 # ---------------------------------------------------------------------------
@@ -160,7 +162,7 @@ def test_validate_suppression_codes_rejects_unknown_code() -> None:
 
 @pytest.mark.parametrize(
     "code",
-    ["WARN-ADJACENT-TEXT-ROWS", "WARN-FANOUT-RISK", "WARN-PIE-TOO-MANY-SEGMENTS"],
+    ["WARN-FANOUT-RISK", "WARN-PIE-TOO-MANY-SEGMENTS"],
 )
 def test_validate_suppression_codes_keeps_a_retired_code_loading_with_a_warning(
     code: str,
@@ -314,6 +316,7 @@ def _make_executor(board, query_registry):
     ok = Mock()
     ok.is_success = True
     ok.data = [{"category": "a", "value": 1}]
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()

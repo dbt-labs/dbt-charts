@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from dbt_charts import _engine
+from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.compile.config import (
     get_default_theme_name,
     get_theme_style,
@@ -42,6 +43,7 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.constants.layout import SUPPORT_TABLE_COLUMN_BLOCK_SHARE_WARN_RATIO
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.execute.cache_backend import ResultRows
 from dbt_charts.core.render.board_variables import variable_options
 from dbt_charts.core.render.chart.annotation_nothing_drawn import (
     collect_annotation_nothing_drawn,
@@ -85,12 +87,12 @@ from dbt_charts.core.render.chart.x_domain_paint_order import (
 )
 from dbt_charts.core.render.engine import (
     build_chart_payload,
-    column_types,
     dumps_payload,
     render_native,
 )
 from dbt_charts.core.text.format_d3 import regional_scope
 
+from ..._results import rows_result
 from ...conftest import InMemoryProject
 from .._svg_render import render_board_to_svg
 
@@ -136,7 +138,7 @@ def _native(
     chart = _resolved(chart_def, data)
     return render_native(
         chart,
-        data if render_data is None else render_data,
+        rows_result(data if render_data is None else render_data),
         width=width,
         height=height,
         padding=None,
@@ -155,7 +157,7 @@ def test_payload_carries_the_options_of_the_variables_chart_links_set() -> None:
     with variable_options(options):
         payload = build_chart_payload(
             chart,
-            {chart.query_name: _REVENUE},
+            {chart.query_name: rows_result(_REVENUE)},
             width=300.0,
             height=150.0,
             padding=None,
@@ -171,7 +173,7 @@ def test_payload_carries_variables_and_datasets() -> None:
     chart = _resolved(_KPI, _REVENUE)
     payload = build_chart_payload(
         chart,
-        {chart.query_name: _REVENUE},
+        {chart.query_name: rows_result(_REVENUE)},
         width=300.0,
         height=150.0,
         padding=None,
@@ -227,7 +229,7 @@ def test_payload_carries_no_engine_decided_literal(
     chart = resolve(flat, _REVENUE, chart_style_context=board_ctx)
     payload = build_chart_payload(
         chart,
-        {chart.query_name: _REVENUE},
+        {chart.query_name: rows_result(_REVENUE)},
         width=300.0,
         height=150.0,
         padding=None,
@@ -240,12 +242,15 @@ def test_payload_carries_no_engine_decided_literal(
     assert not leaked, f"{theme}: payload carries engine-decided literals {leaked}"
 
 
-def test_payload_types_every_column_of_rows_and_each_dataset() -> None:
+def test_payload_ships_the_declared_schema_of_rows_and_each_dataset() -> None:
     chart = _resolved(_KPI, _REVENUE)
-    other = [{"day": datetime.date(2024, 1, 2), "label": "a"}]
+    other = ResultRows(
+        [{"day": datetime.date(2024, 1, 2), "label": "2024-01-02"}],
+        {"day": ColumnType(kind="date"), "label": ColumnType(kind="string")},
+    )
     payload = build_chart_payload(
         chart,
-        {chart.query_name: _REVENUE, "other": other},
+        {chart.query_name: rows_result(_REVENUE), "other": other},
         width=300.0,
         height=150.0,
         padding=None,
@@ -254,61 +259,17 @@ def test_payload_types_every_column_of_rows_and_each_dataset() -> None:
         title_shift=NO_TITLE_SHIFT,
         is_placeholder=False,
     )
-    assert payload["column_types"] == {
-        "rows": {"revenue": "integer"},
+    integer = {"kind": "integer", "element": None, "fields": None}
+    assert payload["schema"] == {
+        "rows": {"revenue": integer},
         "datasets": {
-            chart.query_name: {"revenue": "integer"},
-            "other": {"day": "date", "label": "string"},
+            chart.query_name: {"revenue": integer},
+            "other": {
+                "day": {"kind": "date", "element": None, "fields": None},
+                "label": {"kind": "string", "element": None, "fields": None},
+            },
         },
     }
-
-
-def test_column_types_name_each_cell_kind() -> None:
-    rows = [
-        {
-            "s": "a",
-            "i": 1,
-            "f": 1.5,
-            "d": Decimal("1.50"),
-            "b": True,
-            "date": datetime.date(2024, 1, 2),
-            "ts": datetime.datetime(2024, 1, 2, 3, 4),
-            "n": None,
-            "nested": [{"key": "k", "value": 1}],
-        },
-        {"s": None, "i": None, "f": float("nan"), "n": None},
-    ]
-    assert column_types(rows) == {
-        "s": "string",
-        "i": "integer",
-        "f": "float",
-        "d": "decimal",
-        "b": "boolean",
-        "date": "date",
-        "ts": "datetime",
-        "n": "null",
-        "nested": "nested",
-    }
-
-
-def test_column_types_widen_integers_into_floats() -> None:
-    assert column_types([{"v": 1}, {"v": 2.5}]) == {"v": "float"}
-
-
-@pytest.mark.parametrize(
-    "mixed",
-    [
-        ["a", 1],
-        [datetime.date(2024, 1, 2), "2024-01-02"],
-        [datetime.date(2024, 1, 2), datetime.datetime(2024, 1, 2)],
-        [True, 1],
-        [Decimal("1"), 1.5],
-    ],
-)
-def test_column_types_report_a_column_mixing_cell_kinds_as_mixed(
-    mixed: list[Any],
-) -> None:
-    assert column_types([{"v": cell} for cell in mixed]) == {"v": "mixed"}
 
 
 def test_payload_carries_the_active_time_locale() -> None:
@@ -325,7 +286,7 @@ def test_payload_carries_the_active_time_locale() -> None:
     ):
         payload = build_chart_payload(
             chart,
-            {chart.query_name: _REVENUE},
+            {chart.query_name: rows_result(_REVENUE)},
             width=300.0,
             height=150.0,
             padding=None,
@@ -344,11 +305,16 @@ def test_a_table_prints_an_aware_cell_in_the_board_zone_and_a_naive_one_as_writt
     None
 ):
     instant = datetime.datetime(2024, 3, 10, 7, 30, tzinfo=datetime.UTC)
-    rows = [{"at": instant}, {"at": instant.replace(tzinfo=None)}]
+    rows = [{"at": instant, "wall": instant.replace(tzinfo=None)}]
     table = {
         "type": "table",
         "query": "q",
-        "style": {"columns": {"at": {"format": "%H:%M %Z"}}},
+        "style": {
+            "columns": {
+                "at": {"format": "%H:%M %Z"},
+                "wall": {"format": "%H:%M %Z"},
+            }
+        },
     }
     utc = Regional()
     with regional_scope(
@@ -383,7 +349,7 @@ def test_title_shift_grows_the_card_by_body_dy() -> None:
     def height(shift: TitleShift) -> float:
         svg, _ = render_native(
             chart,
-            rows,
+            rows_result(rows),
             width=300.0,
             height=90.0,
             padding=None,
@@ -405,7 +371,7 @@ def test_kpi_and_spark_bar_numbers_print_under_the_active_number_locale() -> Non
     def texts(chart_def: dict[str, Any]) -> list[str]:
         svg, _ = render_native(
             _resolved(chart_def, rows),
-            rows,
+            rows_result(rows),
             width=300.0,
             height=90.0,
             padding=None,
@@ -443,7 +409,7 @@ def test_kpi_prints_a_non_finite_cell_as_pythons_str_of_it(
     kpi = {"type": "kpi", "query": "q", "value": "revenue", "label": "Revenue"}
     svg, _ = render_native(
         _resolved(kpi, rows),
-        rows,
+        rows_result(rows),
         width=300.0,
         height=90.0,
         padding=None,
@@ -471,7 +437,7 @@ _SPARK_ROWS = [{"revenue": 5, "category": "a"}, {"revenue": 9, "category": "b"}]
 def _spark_svg(**kwargs: Any) -> str:
     svg, _ = render_native(
         _resolved(_SPARK, _SPARK_ROWS),
-        _SPARK_ROWS,
+        rows_result(_SPARK_ROWS),
         width=300.0,
         height=0.0,
         padding=None,
@@ -533,7 +499,7 @@ def test_a_kpi_link_resolves_against_the_link_context() -> None:
     def href() -> str:
         svg, _ = render_native(
             _resolved(kpi, rows),
-            rows,
+            rows_result(rows),
             width=300.0,
             height=90.0,
             padding=None,
@@ -565,7 +531,7 @@ def test_a_spark_bar_link_is_ignored_as_it_always_was(how: str) -> None:
     assert chart.link
     svg, _ = render_native(
         chart,
-        _SPARK_ROWS,
+        rows_result(_SPARK_ROWS),
         width=300.0,
         height=0.0,
         padding=None,
@@ -577,8 +543,7 @@ def test_a_spark_bar_link_is_ignored_as_it_always_was(how: str) -> None:
 def test_spark_bar_labels_print_str_of_the_cell() -> None:
     rows = [
         {"revenue": 5, "category": datetime.datetime(2024, 1, 1, 12, 0, 0)},
-        {"revenue": 9, "category": datetime.date(2024, 1, 2)},
-        {"revenue": 3, "category": float("nan")},
+        {"revenue": 9, "category": datetime.datetime(2024, 1, 2)},
     ]
     chart = _resolved(_SPARK, rows)
     spark = chart.style.spark_bar
@@ -590,14 +555,14 @@ def test_spark_bar_labels_print_str_of_the_cell() -> None:
     )
     svg, _ = render_native(
         chart,
-        rows,
+        rows_result(rows),
         width=400.0,
         height=0.0,
         padding=None,
         board_style=_BOARD_RS,
     )
     labels = re.findall(r'fill="#[0-9a-f]+" font-family="[^"]*">([^<]+)</text>', svg)
-    assert labels == ["2024-01-01 12:00:00", "2024-01-02", "nan"]
+    assert labels == ["2024-01-01 12:00:00", "2024-01-02 00:00:00"]
 
 
 @pytest.mark.parametrize(
@@ -618,11 +583,11 @@ def test_spark_bar_labels_print_str_of_the_cell() -> None:
         (None, 12.0),
         (None, 4_820_000),
         (None, "At risk"),
-        ("date_short", "2026-03-04"),
+        ("date_short", datetime.date(2026, 3, 4)),
     ],
 )
 def test_the_engine_kpi_prints_the_text_board_to_dict_and_the_terminal_print(
-    fmt: str | None, cell: float | str
+    fmt: str | None, cell: float | str | datetime.date
 ) -> None:
     """`kpi_value_text` is the second formatter for a KPI value; this pins it to the card."""
     from dbt_charts.core.render.chart.kpi_value import kpi_value_text
@@ -633,7 +598,7 @@ def test_the_engine_kpi_prints_the_text_board_to_dict_and_the_terminal_print(
     chart = _resolved(chart_def, rows)
     svg, _ = render_native(
         chart,
-        rows,
+        rows_result(rows),
         width=400.0,
         height=90.0,
         padding=None,
@@ -679,7 +644,7 @@ def test_a_placeholder_font_weight_of_any_authored_kind_leaves_every_engine_char
         rows = _SPARK_ROWS if name == "spark_bar" else [{"revenue": 5, "category": "a"}]
         svg, _ = render_native(
             _resolved(chart_def, rows),
-            rows,
+            rows_result(rows),
             width=300.0,
             height=90.0,
             padding=None,
@@ -836,7 +801,7 @@ def test_table_text_truncation_records_the_engine_count_per_column() -> None:
     chart = _resolved(table, [_WIDE_ROW])
     payload = build_chart_payload(
         chart,
-        {chart.query_name: [_WIDE_ROW]},
+        {chart.query_name: rows_result([_WIDE_ROW])},
         width=200.0,
         height=0.0,
         padding=None,
@@ -877,7 +842,7 @@ def test_callout_truncation_reports_the_text_as_authored_not_as_resolved() -> No
     with image_scope(project), _sinks() as sinks:
         render_native(
             callout,
-            [],
+            rows_result([]),
             width=120.0,
             height=40.0,
             padding=None,
@@ -1146,7 +1111,8 @@ def test_cartesian_engine_warnings_land_in_their_sinks(
 def test_a_non_finite_numeric_table_cell_paints_the_null_dash(
     cell: float | Decimal,
 ) -> None:
-    rows = [{"n": "a", "v": 1.5}, {"n": "b", "v": cell}]
+    first = Decimal("1.5") if isinstance(cell, Decimal) else 1.5
+    rows = [{"n": "a", "v": first}, {"n": "b", "v": cell}]
     svg, _ = _native({"type": "table", "query": "q"}, rows, width=400.0, height=0.0)
     assert "—" in svg
 
@@ -1361,13 +1327,15 @@ def test_the_width_measure_labels_decimal_pivot_dimensions_as_the_render_does() 
     decimals = rows([Decimal("2024"), Decimal("2.50"), Decimal("1000000.00")])
     chart = _resolved(table, decimals)
     as_text = measure_table_natural_width(
-        chart, rows(["2024", "2.50", "1000000.00"]), _BOARD_RS
+        chart, rows_result(rows(["2024", "2.50", "1000000.00"])), _BOARD_RS
     )
     as_floats = measure_table_natural_width(
-        chart, rows([2024.0, 2.5, 1000000.0]), _BOARD_RS
+        chart, rows_result(rows([2024.0, 2.5, 1000000.0])), _BOARD_RS
     )
     assert as_text is not None and as_floats is not None
-    assert measure_table_natural_width(chart, decimals, _BOARD_RS) == as_text
+    assert (
+        measure_table_natural_width(chart, rows_result(decimals), _BOARD_RS) == as_text
+    )
     assert as_text != as_floats
 
 
@@ -1388,7 +1356,7 @@ def test_the_width_measure_sizes_an_aware_cell_as_the_board_zone_prints_it() -> 
             utc.format_locale, utc.time_locale, utc.week_start, ZoneInfo(zone)
         ):
             return engine.measure_table_natural_width(
-                _resolved(table, rows), rows, _BOARD_RS
+                _resolved(table, rows), rows_result(rows), _BOARD_RS
             )
 
     assert width("America/New_York") != width("UTC")
@@ -1415,7 +1383,9 @@ def test_the_width_measure_carries_the_active_time_locale(
         german.week_start,
         german.zone,
     ):
-        engine.measure_table_natural_width(_resolved(table, rows), rows, _BOARD_RS)
+        engine.measure_table_natural_width(
+            _resolved(table, rows), rows_result(rows), _BOARD_RS
+        )
     assert sent[0]["time_locale"] == german.time_locale
     assert sent[0]["time_zone"] == "Europe/Berlin"
 
@@ -1538,7 +1508,7 @@ def test_a_resolved_annotation_draws_in_the_engine(family: str) -> None:
     )
     svg, _ = render_native(
         chart,
-        _MONTHLY,
+        rows_result(_MONTHLY),
         width=480.0,
         height=300.0,
         padding=None,
@@ -1588,7 +1558,7 @@ def test_a_resolved_scatter_annotation_draws_in_the_engine(
     )
     svg, _ = render_native(
         chart,
-        rows,
+        rows_result(rows),
         width=480.0,
         height=300.0,
         padding=None,
@@ -1619,7 +1589,12 @@ def test_a_scatter_date_annotation_past_the_data_widens_the_x_axis(date: str) ->
         rendered_at=datetime.datetime(2025, 6, 14, tzinfo=datetime.UTC),
     )
     svg, _ = render_native(
-        chart, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+        chart,
+        rows_result(rows),
+        width=480.0,
+        height=300.0,
+        padding=None,
+        board_style=_BOARD_RS,
     )
     assert 'aria-roledescription="annotation"' in svg
 
@@ -1658,7 +1633,12 @@ def test_a_scatter_y_annotation_past_the_data_widens_an_engine_computed_domain(
         rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
     )
     svg, _ = render_native(
-        resolved, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+        resolved,
+        rows_result(rows),
+        width=480.0,
+        height=300.0,
+        padding=None,
+        board_style=_BOARD_RS,
     )
     assert 'aria-roledescription="annotation"' in svg
 
@@ -1697,7 +1677,7 @@ def test_a_scatter_on_bent_axes_draws_annotations(continuous: dict[str, Any]) ->
     )
     svg, _ = render_native(
         resolved,
-        _POINTS,
+        rows_result(_POINTS),
         width=480.0,
         height=300.0,
         padding=None,
@@ -1759,7 +1739,12 @@ def test_a_dot_plot_draws_category_annotations(
         rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
     )
     svg, _ = render_native(
-        resolved, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+        resolved,
+        rows_result(rows),
+        width=480.0,
+        height=300.0,
+        padding=None,
+        board_style=_BOARD_RS,
     )
     panels = 1 if multiples is None else 2
     assert svg.count(">Focus</text>") == panels
@@ -1794,7 +1779,12 @@ def test_a_shared_log_y_scale_stays_shared_when_one_panel_has_a_trend() -> None:
         rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
     )
     svg, _ = render_native(
-        resolved, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+        resolved,
+        rows_result(rows),
+        width=480.0,
+        height=300.0,
+        padding=None,
+        board_style=_BOARD_RS,
     )
     labels = re.findall(r'text-anchor="end"[^>]*>([^<]+)</text>', svg)
     ladder = labels[: labels.index(labels[0], 1)]
@@ -1824,7 +1814,12 @@ def test_rule_text_above_a_facet_panel_reserves_room_for_it() -> None:
             rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
         )
         svg, _ = render_native(
-            chart, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+            chart,
+            rows_result(rows),
+            width=480.0,
+            height=300.0,
+            padding=None,
+            board_style=_BOARD_RS,
         )
         return float(re.search(r'<g transform="translate\([^,]+,([^)]+)\)', svg)[1])
 
@@ -1853,7 +1848,12 @@ def test_a_scatter_on_a_date_x_draws_date_annotations() -> None:
         rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
     )
     svg, _ = render_native(
-        chart, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+        chart,
+        rows_result(rows),
+        width=480.0,
+        height=300.0,
+        padding=None,
+        board_style=_BOARD_RS,
     )
     assert svg.index("annotations-background") < svg.index("annotations-foreground")
     assert ">Launch</text>" in svg
@@ -1881,7 +1881,12 @@ def test_rule_text_above_a_rail_chart_reserves_top_margin() -> None:
         rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
     )
     svg, _ = render_native(
-        chart, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+        chart,
+        rows_result(rows),
+        width=480.0,
+        height=300.0,
+        padding=None,
+        board_style=_BOARD_RS,
     )
     plot_top = float(re.search(r'<g transform="translate\([^,]+,([^)]+)\)', svg)[1])
     text = re.search(
@@ -1910,7 +1915,12 @@ def test_an_annotation_the_engine_draws_nothing_for_is_recorded() -> None:
     )
     with collect_annotation_nothing_drawn() as drawn_nothing:
         render_native(
-            chart, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+            chart,
+            rows_result(rows),
+            width=480.0,
+            height=300.0,
+            padding=None,
+            board_style=_BOARD_RS,
         )
     assert list(drawn_nothing) == ["c1"]
     assert list(drawn_nothing["c1"]) == [0]
@@ -1963,7 +1973,12 @@ def test_a_resolved_annotation_draws_on_a_bar(
         rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
     )
     svg, _ = render_native(
-        chart, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+        chart,
+        rows_result(rows),
+        width=480.0,
+        height=300.0,
+        padding=None,
+        board_style=_BOARD_RS,
     )
     assert svg.index("annotations-background") < svg.index("annotations-foreground")
     assert ">Quota</text>" in svg
@@ -1988,7 +2003,7 @@ def _payload_of(
     chart = _resolved(chart_def, rows)
     return build_chart_payload(
         chart,
-        {chart.query_name: rows},
+        {chart.query_name: rows_result(rows)},
         width=600.0,
         height=400.0,
         padding=None,

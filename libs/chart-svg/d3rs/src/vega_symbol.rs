@@ -6,7 +6,7 @@
 //! References: https://github.com/vega/vega/blob/v6.2.0/packages/vega-scenegraph/src/path/symbols.js
 
 use crate::path::Path;
-use scene::{PathCommand, PathData};
+use crate::path::Command;
 
 /// `HalfSqrt3` of `vega-scenegraph/src/util/constants.js`.
 const HALF_SQRT_3: f64 = 0.866_025_403_784_438_6;
@@ -102,17 +102,17 @@ impl VegaSymbol {
     }
 
     /// `symbol().type(this).size(size)()`: the path data, centered on the origin.
-    pub fn draw(self, size: f64) -> PathData {
+    pub fn draw(self, size: f64) -> Vec<Command> {
         let mut path = Path::new();
         match self.outline(size) {
             // Vega's circle is d3's two half arcs, as written: `Path::arc` splits a sweep at quarter turns.
             // d3-path's `arc` draws nothing of a radius of 0, leaving the lone `moveTo`.
             Outline::Circle(r) => {
                 if r == 0.0 {
-                    return PathData(vec![PathCommand::M(0.0, 0.0)]);
+                    return vec![Command::MoveTo(0.0, 0.0)];
                 }
-                let half = |x| PathCommand::A { rx: r, ry: r, rot: 0.0, large: true, sweep: true, x, y: 0.0 };
-                return PathData(vec![PathCommand::M(r, 0.0), half(-r), half(r)]);
+                let half = |x| Command::SvgArc { rx: r, ry: r, rot: 0.0, large: true, sweep: true, x, y: 0.0 };
+                return vec![Command::MoveTo(r, 0.0), half(-r), half(r)];
             }
             Outline::Square(w) => {
                 let x = -w / 2.0;
@@ -129,7 +129,7 @@ impl VegaSymbol {
                 }
             }
         }
-        path.into_path_data()
+        path.into_commands()
     }
 
     /// The bounds Vega's `boundContext` collects from [`draw`](Self::draw): every point drawn, an arc as its box.

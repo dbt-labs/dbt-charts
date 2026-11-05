@@ -21,6 +21,7 @@ from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.board_resolve import build_resolved_board
 
+from ..._results import rows_result
 from .._engine_render import render_pie_svg
 from .._svg_render import render_board_to_svg
 
@@ -939,7 +940,7 @@ style:
         resolved_board, executor = _resolve_board(board)
         chart = resolved_board.charts["strip"]
         data = executor.execute_query(chart.query_name, {})
-        artifact = render_resolved_chart(chart, data, resolved_board.style)
+        artifact = render_resolved_chart(chart, rows_result(data), resolved_board.style)
         assert isinstance(artifact.payload, dict), artifact
         return artifact.payload
 
@@ -986,6 +987,6 @@ rows:
         resolved_board, executor = _resolve_board(board)
         chart = resolved_board.charts["strip"]
         data = executor.execute_query(chart.query_name, {})
-        artifact = render_resolved_chart(chart, data, resolved_board.style)
+        artifact = render_resolved_chart(chart, rows_result(data), resolved_board.style)
         assert isinstance(artifact.payload, dict), artifact
         return artifact.payload

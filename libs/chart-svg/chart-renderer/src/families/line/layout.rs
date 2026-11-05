@@ -5,9 +5,10 @@
 use super::bind::Bound;
 use crate::time_axis::{Dates, TimeColumns};
 use crate::pattern::Paint;
+use crate::scene_path::scene_path;
 use super::{FacetPanelOpts, area_paint, HALO_POINT_STROKE_W, LinePanelGeometry, LineXAxis, LineXAxisBody, PlotRect, Shape, StackColumn, X_AXIS_OFFSET, bare_label_ink, bare_label_layout, bare_label_widths, description_color_title, domain_position, flush_anchor_px, last_y_ascending_order, mirror_ghost_x, nominal_label_anchor, point_mark_reach, quantitative_x_ticks, rail_cascade_bounds, series_dash, series_fill, shape, stack_columns, stack_data, stack_extent, stacked_top_datum, tick_snap, tilted_temporal_label, with_dash, y_family, y_font_size};
 use crate::families::temporal::{interval_axis, interval_labels_allowed, labels_unpinned, BareMark, IntervalAxis};
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use std::collections::{HashMap, HashSet};
 
 /// The gap between a start label outside the plot and its point.
@@ -44,7 +45,7 @@ use crate::families::temporal::{
     interval_tick_days,
     frac_of, interval_tick_labels, native_tick_interval, none_tick_labels,
     resolve_vega_x_labels, temporal_label_half_width, time_unit_floor,
-    x_values_are_temporal_candidates, VegaType,
+    VegaType,
     AuthoredTickCadence, AuthoredTimeFormat, BareTick, ResolvedVegaLabels, TemporalLabel,
     TimePart, TimeUnit, UtcTickInterval,
 };
@@ -92,7 +93,7 @@ fn laid_out(bound: &Bound, cell: Rect, measure: &Measure, padding: Option<Paddin
     } else {
         std::borrow::Cow::Owned(Payload { width: cell.width, height: cell.height, padding: padding.or(bound.payload.padding), ..Payload::clone(&bound.payload) })
     };
-    let (fitted, diagnostics) = crate::diagnostic::collect(|| {
+    let (fitted, diagnostics) = diagnostic::collect(|| {
         let fit_with = |with_strip| {
             fit(bound, &payload, &payload.rows, (payload.width, payload.height), payload.padding.as_ref(), measure.fonts, None, with_strip)
         };
@@ -103,7 +104,7 @@ fn laid_out(bound: &Bound, cell: Rect, measure: &Measure, padding: Option<Paddin
     });
     // A layout that fails has no `Layout` to carry what it found: those WARNs reach the sink, as they
     // did when the render wrote to it directly.
-    let fitted = fitted.inspect_err(|_| diagnostics.iter().cloned().for_each(crate::diagnostic::warn))?;
+    let fitted = fitted.inspect_err(|_| diagnostics.iter().cloned().for_each(diagnostic::warn))?;
     let laid_out = Layout {
         insets: fitted.canvas.insets_of(&fitted.data_box),
         data_box: fitted.data_box,
@@ -386,7 +387,7 @@ pub(super) fn fit(
     // runs — a bare 4-digit year parses fine but has no date-like
     // structure at all, so it never reaches `detect_time_unit` and stays
     // nominal (`x_values_are_temporal_candidates`, ported from that gate).
-    let x_is_temporal_candidate = x_values_are_temporal_candidates(&domain_strs);
+    let x_is_temporal_candidate = crate::families::temporal::x_is_temporal_candidate(&payload.schema.rows, x_field, &domain_strs)?;
     // `normalize_labeled_temporal`'s `is_year_shaped` branch runs BEFORE
     // `infer_vega_type_from_data`/`detect_time_unit`, rewriting a bare year
     // in `[1700, 2100]` to `YYYY-01-01` — so a year-shaped x resolves
@@ -395,7 +396,7 @@ pub(super) fn fit(
     // structural gate above. `is_year_shaped` (`common.rs`) is the single
     // predicate both this cadence gate and the categorical-sort gate below
     // read — never a second, narrower reimplementation.
-    let x_is_year_shaped = is_year_shaped(&payload.rows, x_field);
+    let x_is_year_shaped = is_year_shaped(&payload.schema.rows, &payload.rows, x_field)?;
 
     let view_w = if facet.is_some() {
         svg_w
@@ -460,7 +461,7 @@ pub(super) fn fit(
     // the corpus: `playground/chart-lab-import-review/area_review`'s own
     // 28-day cadence matches no bucketed grain yet still headers "Apr 27,
     // 2025", never the raw "2024-01-07".
-    let x_is_standard_date = crate::families::temporal::x_values_are_standard_dates(&domain_strs);
+    let x_is_standard_date = crate::families::temporal::x_is_standard_date(&payload.schema.rows, x_field, &domain_strs)?;
     // The grain a redefined `date_<grain>` name is keyed by is the one the
     // labels resolve to (`resolve_label_time_unit`), not the data's own.
     let label_grain = match detected_data_tu {
@@ -631,10 +632,10 @@ pub(super) fn fit(
         if is_multi {
             let chart_id = payload.resolved["id"].clone();
             return Err(if r.wide_measures.is_empty() {
-                Diagnostic::new(&crate::codes::ERR_STEP_BAND_MULTI_SERIES, [("chart_id", chart_id)])
+                Diagnostic::new(&diagnostic::codes::ERR_STEP_BAND_MULTI_SERIES, [("chart_id", chart_id)])
             } else {
                 let chart_type = serde_json::json!(if draw_areas { "Area" } else { "Line" });
-                Diagnostic::new(&crate::codes::ERR_BAND_STEP_MULTI_METRIC, [("chart_id", chart_id), ("chart_type", chart_type)])
+                Diagnostic::new(&diagnostic::codes::ERR_BAND_STEP_MULTI_METRIC, [("chart_id", chart_id), ("chart_type", chart_type)])
             });
         }
     }
@@ -861,7 +862,7 @@ pub(super) fn fit(
     let datum_extras: HashMap<(String, String), Vec<String>> = label_rows
         .iter()
         .filter(|_| !r.tooltip.is_empty())
-        .map(|(key, row)| Ok((key.clone(), crate::families::tooltip_extra::rows_for(&r.tooltip, row)?)))
+        .map(|(key, row)| Ok((key.clone(), crate::families::tooltip_extra::rows_for(&r.tooltip, row, &bound.payload.schema.rows)?)))
         .collect::<Result<_, String>>()?;
 
     // `is_stacked` implies the stack mode is authored.
@@ -1843,7 +1844,7 @@ pub(super) fn fit(
             let authored_ordinal = r.style.axis_x.resolved_authored_type() == Some("ordinal");
             let temporal_vega_arm = detected_data_tu.is_some() || bare_temporal;
             if authored_ordinal || !temporal_vega_arm {
-                return Err(crate::refuse!(
+                return Err(diagnostic::refuse!(
                     "{fam}: axis_x.ticks.time_unit {unit:?} off a temporal x axis on a Vega arm is not supported: production raises ERR_TICKS_INTERVAL_NOT_TEMPORAL on a non-temporal or authored-ordinal axis, and the legacy margin arm draws no calendar ticks"
                 ).into());
             }
@@ -2292,7 +2293,7 @@ pub(super) fn fit(
         .transpose()?;
     // Production draws the native ticks of an axis that speaks an authored expression, not the cadence's.
     if x_expr.is_some() && x_tick_cadence.is_some() {
-        return Err(crate::refuse!("{fam}: an authored x tick cadence beside an authored axis_x.labels.expr is not supported").into());
+        return Err(diagnostic::refuse!("{fam}: an authored x tick cadence beside an authored axis_x.labels.expr is not supported").into());
     }
     // The text a nominal x label paints: `x_domain` stays the raw lookup key.
     let x_shown: Vec<String> = match &x_expr {
@@ -2537,7 +2538,7 @@ pub(super) fn fit(
                 // No resolved grain: production measures the datum text bare (a raw
                 // quantitative axis keeps the flat row).
                 (Some(angle), None) => {
-                    let quantitative = crate::families::temporal::infer_vega_type(rows, x_field)
+                    let quantitative = crate::families::temporal::infer_vega_type(&bound.payload.schema.rows, rows, x_field)?
                         == crate::families::temporal::VegaType::Quantitative;
                     if quantitative {
                         font_size
@@ -2586,7 +2587,7 @@ pub(super) fn fit(
                         .collect();
                     row_days.sort_unstable();
                     if interval_tick_days((extent.0 as i64, extent.1 as i64), interval)? != row_days {
-                        return Err(crate::refuse!(
+                        return Err(diagnostic::refuse!(
                             "{fam}: a bucketed temporal x axis with a bucket no row fills is not supported {why}: Vega ticks the empty bucket (type_inference.py:1049-1052)"
                         ).into());
                     }
@@ -4590,7 +4591,7 @@ pub(super) fn fit(
             // labels never reach past its top.
             if rail_strip_rows.is_none() || rail_bottom_strip {
                 let rail_half = vega_fit::middle_rise(sl.font_size);
-                for (_, v) in crate::diagnostic::collect(|| rail_cascade(ph).expect("every anchor has a plan, checked where the plans are built")).0.0 {
+                for (_, v) in diagnostic::collect(|| rail_cascade(ph).expect("every anchor has a plan, checked where the plans are built")).0.0 {
                     ink = ink.max(rail_half - y_frac(v) * ph);
                 }
             }
@@ -4685,7 +4686,7 @@ pub(super) fn fit(
         let plot_w = if svg_w > 0.0 { 2.0 * svg_w - canvas_w_uncorrected } else { view_w };
         if svg_w > 0.0 && plot_w <= 0.0 {
             return Err(Diagnostic::new(
-                &crate::codes::ERR_CONCAT_OVERSHOOT_NONPOSITIVE,
+                &diagnostic::codes::ERR_CONCAT_OVERSHOOT_NONPOSITIVE,
                 [
                     ("new_w", serde_json::json!(plot_w)),
                     ("orig_w", serde_json::json!(svg_w)),
@@ -5229,13 +5230,13 @@ pub(super) fn fit(
     // A linked disconnected step draws each plateau as its own path, which carries its band's datum link.
     let line_paths = |runs: &[Vec<(f64, f64)>], data_key: &str| -> Vec<(PathData, Option<&str>)> {
         if !(disconnected && r.link.is_some()) {
-            return vec![(d3rs::shape::line_path(runs, curve), series_href(data_key))];
+            return vec![(scene_path(&d3rs::shape::line_path(runs, curve)), series_href(data_key))];
         }
         let hrefs = band_step_walk
             .iter()
             .filter(|&&i| matches!(data.get(&(x_domain[i].clone(), data_key.to_string())), Some(Some(_))))
             .map(|&i| href_at(i, data_key));
-        runs.iter().zip(hrefs).map(|(run, href)| (d3rs::shape::line_path(std::slice::from_ref(run), curve), href)).collect()
+        runs.iter().zip(hrefs).map(|(run, href)| (scene_path(&d3rs::shape::line_path(std::slice::from_ref(run), curve)), href)).collect()
     };
     let runs_of_band = |series: &str| -> Vec<Vec<(f64, f64)>> {
         let mut runs: Vec<Vec<(f64, f64)>> = Vec::new();
@@ -5441,7 +5442,7 @@ pub(super) fn fit(
     let yg = &ax_y.grid;
     let (y_lo, y_hi) = (y_min.min(y_max), y_min.max(y_max));
     // Area fills from its floor like a bar, so only a line chart tears.
-    let tear = yg.torn_baseline.as_ref().filter(|t| t.visible && !draw_areas);
+    let tear = yg.torn_baseline.as_ref().filter(|t| t.enabled && !draw_areas);
     let torn_y = tear
         .and_then(|_| crate::torn::torn_edge_value(y_lo, y_hi))
         .map(|edge| rule_at(y_at(edge)));
@@ -5600,7 +5601,7 @@ pub(super) fn fit(
     // Backdrop areas (area only, fill=canvas, opacity=1)
     if draw_areas && area_backdrop && !is_stacked {
         for (series, runs) in &series_points {
-            let d = d3rs::shape::area_path(runs, area_floor_y, curve);
+            let d = scene_path(&d3rs::shape::area_path(runs, area_floor_y, curve));
             let anchor = r.link_open.anchor(series_href(&data_key_of(series)));
             let path = Node::path(Role::Chrome, d, Attrs::new().set("fill", canvas).num("fill-opacity", 1.0));
             plot.push(crate::contract::connected_group("area", "layer_0_marks", vec![crate::href::linked(anchor, path)]));
@@ -5666,7 +5667,7 @@ pub(super) fn fit(
             let thickest = runs.iter().flatten().map(|&(_, lo, hi)| (hi - lo).abs()).fold(0.0, f64::max);
             let mark = paint.for_mark(thickest, stroke_color, line_w);
             band_marks.insert(series.clone(), mark.clone());
-            let d = d3rs::shape::stacked_area_path(runs, curve);
+            let d = scene_path(&d3rs::shape::stacked_area_path(runs, curve));
             // The path's first item: the first x's own datum, or the imputed row there.
             let anchor = selection.mark(r.link_open.anchor(datum_href(0, &data_key_of(series))));
             let fill = Attrs::new().set("fill", &mark.fill).num("fill-opacity", area_opacity).quick_some("data-dbt-ink", mark.ink.as_deref());
@@ -5699,7 +5700,7 @@ pub(super) fn fit(
             let thickest = runs.iter().flatten().map(|&(_, y)| (area_floor_y - y).abs()).fold(0.0, f64::max);
             let mark = paint.for_mark(thickest, "none", 0.0);
             band_marks.insert(series.clone(), mark.clone());
-            let d = d3rs::shape::area_path(runs, area_floor_y, curve);
+            let d = scene_path(&d3rs::shape::area_path(runs, area_floor_y, curve));
             let anchor = selection.mark(r.link_open.anchor(series_href(&data_key_of(series))));
             let path = Node::path(
                 mark_of(series, None),

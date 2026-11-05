@@ -14,6 +14,7 @@ from dbt_charts.core.compile.resolve.style.board import resolve_style_and_contex
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.vega_lite import render_chart
 
+from ...._results import rows_result
 from ..._engine_render import render_chart_svg
 from ...conftest import chart_pane
 
@@ -1156,7 +1157,7 @@ def _fit_svg(make_chart, *, stacked):
         chart,
         board_rs,
         board_ctx,
-        rows,
+        rows_result(rows),
         format="svg",
         width=600.0,
         height=_SLOT,
@@ -1218,7 +1219,13 @@ class TestFitTestMeasuresThePlotRect:
         )
         resolve(chart, rows, chart_style_context=board_ctx)
         svg = render_chart(
-            chart, board_rs, board_ctx, rows, format="svg", width=800.0, height=400.0
+            chart,
+            board_rs,
+            board_ctx,
+            rows_result(rows),
+            format="svg",
+            width=800.0,
+            height=400.0,
         )
         assert _svg_texts(svg).count("287") == 4, (
             "all four 287-unit segments must keep their labels in a facet; "

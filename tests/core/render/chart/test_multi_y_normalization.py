@@ -22,6 +22,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
+from ...._results import rows_result
+
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style("stark"))
 
 
@@ -75,7 +77,7 @@ class TestMultiYBarEndpointLabels:
         data = _multi_measure_bar_data()
         ctx = resolve_chart_style_context(get_theme_style("stark"))
         rc = resolve(chart, data, chart_style_context=ctx)
-        artifact = render_resolved_chart(rc, data, _BOARD_STYLE, width=400)
+        artifact = render_resolved_chart(rc, rows_result(data), _BOARD_STYLE, width=400)
         spec = artifact.payload
 
         titles = _collect_color_titles(spec)
@@ -92,7 +94,7 @@ class TestMultiYBarEndpointLabels:
         data = _multi_measure_line_data()
         ctx = resolve_chart_style_context(get_theme_style("stark"))
         rc = resolve(chart, data, chart_style_context=ctx)
-        artifact = render_resolved_chart(rc, data, _BOARD_STYLE, width=400)
+        artifact = render_resolved_chart(rc, rows_result(data), _BOARD_STYLE, width=400)
         spec = artifact.payload
 
         titles = _collect_color_titles(spec)

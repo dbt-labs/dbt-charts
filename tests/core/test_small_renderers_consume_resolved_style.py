@@ -50,7 +50,7 @@ class TestRenderTabsLayout:
 
         svg, height = render_tabs_layout(
             items=(item,),
-            executor=None,
+            results=None,
             variables={},
             available_width=400.0,
             available_height=300.0,
@@ -94,7 +94,7 @@ class TestRenderTabsLayout:
         )
         _, height = render_tabs_layout(
             items=(item,),
-            executor=None,
+            results=None,
             variables={},
             available_width=400.0,
             available_height=1100.0,

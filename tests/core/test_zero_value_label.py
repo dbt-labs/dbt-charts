@@ -21,6 +21,8 @@ from dbt_charts.core.compile.resolve.style.board import resolve_style_and_contex
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
+from .._results import rows_schema
+
 _SVG_NS = "http://www.w3.org/2000/svg"
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
@@ -41,6 +43,7 @@ def _make_executor(
     ok = Mock()
     ok.is_success = True
     ok.data = rows
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()

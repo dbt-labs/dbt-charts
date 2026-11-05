@@ -28,6 +28,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.render.chart.session import BoardRenderSession
 
+from ....._results import rows_result
+
 NOW = datetime(2024, 6, 14, 9, 30, tzinfo=UTC)
 
 REGIONS = ("East", "West", "North", "South")
@@ -347,7 +349,7 @@ def _svg(annotations: list[dict[str, Any]]) -> str:
         rendered_at=NOW,
     )
     svg = BoardRenderSession(style).render_svg_family(
-        resolved, ROWS, width=600.0, height=300.0
+        resolved, rows_result(ROWS), width=600.0, height=300.0
     )
     assert svg is not None
     return svg

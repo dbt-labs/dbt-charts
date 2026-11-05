@@ -22,6 +22,8 @@ from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 from dbt_charts.core.render.warnings import registry as _registry
 
+from ..._results import rows_schema
+
 _BOARD_YAML = """
 title: Test
 charts:
@@ -43,6 +45,7 @@ def _make_executor(board, query_registry, rows=None):
     ok = Mock()
     ok.is_success = True
     ok.data = rows if rows is not None else [{"category": "a", "value": 1}]
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()
@@ -152,6 +155,7 @@ def test_failed_query_chart_omitted_from_chart_results(
     failing_ok = Mock()
     failing_ok.is_success = True
     failing_ok.data = []
+    failing_ok.schema = rows_schema(failing_ok.data)
     failing_ok.resolved_relations = None
     mock_registry = Mock()
     mock_registry.project_file_sources.return_value = {}

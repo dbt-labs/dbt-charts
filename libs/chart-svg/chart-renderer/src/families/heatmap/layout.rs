@@ -15,7 +15,7 @@ use super::{
     legend_date_label, rotated_label, svg_text_anchor, tick_line, y_labels_own_side, GradientColors, LabelFace,
     AXIS_TRANSLATE, BREATHING_ROOM_PX,
 };
-use crate::diagnostic::Diagnostic;
+use diagnostic::Diagnostic;
 use crate::families::axis_caption::category_axis_caption;
 use crate::families::cartesian::BandScale;
 use crate::families::color_scale::{GradientAt, VerticalGradient};

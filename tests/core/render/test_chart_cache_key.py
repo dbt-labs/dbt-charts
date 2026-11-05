@@ -86,7 +86,7 @@ def test_repeated_pie_is_resolved_independently_for_each_slot_width() -> None:
     executor.execute_query.return_value = rows
     rs, ctx = resolve_style_and_context(get_theme_style())
     render_ctx = SizingRenderCtx(
-        executor=executor,
+        results=executor,
         resolved_style=rs,
         chart_style_context=ctx,
         pre_resolved={},
@@ -116,7 +116,7 @@ def test_repeated_non_pie_reuses_its_canonical_resolved_chart() -> None:
     executor.execute_query.return_value = [{"x": "A", "y": 1}]
     rs, ctx = resolve_style_and_context(get_theme_style())
     render_ctx = SizingRenderCtx(
-        executor=executor, resolved_style=rs, chart_style_context=ctx
+        results=executor, resolved_style=rs, chart_style_context=ctx
     )
 
     wide = _require_resolved(render_ctx, chart, executor, {}, 1128.0, rs, ctx)
@@ -140,7 +140,7 @@ def test_same_chart_same_width_is_deduplicated():
     executor.rendered_at = None
     rs, ctx = resolve_style_and_context(get_theme_style())
     render_ctx = SizingRenderCtx(
-        executor=executor,
+        results=executor,
         resolved_style=rs,
         chart_style_context=ctx,
         pre_resolved={"shared_chart": _resolved(chart, ctx)},
@@ -187,7 +187,7 @@ def test_natural_height_tiny_overshoot_clamped_to_static_estimate():
     executor.rendered_at = None
     rs, ctx = resolve_style_and_context(get_theme_style())
     render_ctx = SizingRenderCtx(
-        executor=executor,
+        results=executor,
         resolved_style=rs,
         chart_style_context=ctx,
         pre_resolved={"daily_activity": _resolved(chart, ctx)},
@@ -251,7 +251,7 @@ def test_natural_height_large_undershoot_is_not_clamped_up():
     executor.rendered_at = None
     rs, ctx = resolve_style_and_context(get_theme_style())
     render_ctx = SizingRenderCtx(
-        executor=executor,
+        results=executor,
         resolved_style=rs,
         chart_style_context=ctx,
         pre_resolved={"plan_mix": _resolved(chart, ctx)},
@@ -328,7 +328,7 @@ def test_align_cols_heights_same_chart_different_heights_get_separate_entries():
 
     with patch.object(layout_sizing, "_render_chart_to_svg", side_effect=fake_render):
         render_ctx = SizingRenderCtx(
-            executor=executor,
+            results=executor,
             resolved_style=rs,
             chart_style_context=ctx,
             render_cache={
@@ -411,7 +411,7 @@ class TestGridRowAlignment:
             )
 
         render_ctx = SizingRenderCtx(
-            executor=executor,
+            results=executor,
             resolved_style=rs,
             chart_style_context=ctx,
             render_cache={
@@ -478,7 +478,7 @@ class TestGridRowAlignment:
         rs, ctx = resolve_style_and_context(get_theme_style())
 
         render_ctx = SizingRenderCtx(
-            executor=executor,
+            results=executor,
             resolved_style=rs,
             chart_style_context=ctx,
             render_cache={
@@ -541,7 +541,7 @@ class TestGridRowAlignment:
         rs, ctx = resolve_style_and_context(get_theme_style())
 
         render_ctx = SizingRenderCtx(
-            executor=executor,
+            results=executor,
             resolved_style=rs,
             chart_style_context=ctx,
             render_cache={
@@ -613,7 +613,7 @@ class TestColsBoardItemAlignment:
             )
 
         render_ctx = SizingRenderCtx(
-            executor=executor,
+            results=executor,
             resolved_style=rs,
             chart_style_context=ctx,
             render_cache={
@@ -670,7 +670,7 @@ class TestColsBoardItemAlignment:
         executor.rendered_at = None
         rs, ctx = resolve_style_and_context(get_theme_style())
         render_ctx = SizingRenderCtx(
-            executor=executor,
+            results=executor,
             resolved_style=rs,
             chart_style_context=ctx,
             natural_heights={

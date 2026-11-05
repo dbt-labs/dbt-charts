@@ -43,6 +43,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 from dbt_charts.core.render.chart.vega_lite import render_chart
 from dbt_charts.core.render.engine import render_native
 
+from ...._results import rows_result
 from ..._engine_render import render_kpi_svg, render_spark_bar_svg, render_table_svg
 
 # Oracle type: (resolved, data, width, height, board_style) -> svg string
@@ -94,7 +95,7 @@ def _oracle_callout(
     assert isinstance(resolved, ResolvedCalloutChart)
     return render_native(
         resolved,
-        data,
+        rows_result(data),
         width=width,
         height=height,
         padding=None,
@@ -186,7 +187,13 @@ def _route_and_compare(
     monkeypatch.setattr(BoardRenderSession, "render_svg_family", _spy)
 
     actual = render_chart(
-        flat, board_style, board_ctx, data, format="svg", width=400, height=200
+        flat,
+        board_style,
+        board_ctx,
+        rows_result(data),
+        format="svg",
+        width=400,
+        height=200,
     )
 
     assert calls, (

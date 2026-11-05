@@ -30,9 +30,9 @@ use mdsvg::style::Style as MdsvgStyle;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::codes;
+use diagnostic::codes;
 use crate::common::Font;
-use crate::diagnostic::{warn, Diagnostic};
+use diagnostic::{warn, Diagnostic};
 use crate::layout::{Insets, IntrinsicWidth, Layout, Rect};
 use crate::Payload;
 use measure::font_files::{font_path, mono_font_path};
@@ -986,13 +986,13 @@ mod tests {
         let mut json = placard_payload(None, CODE_URL);
         json["resolved"]["message"] = serde_json::json!(long);
         let payload: Payload = serde_json::from_value(json).unwrap();
-        let (rendered, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
+        let (rendered, warnings) = diagnostic::collect(|| render(&payload, &test_fonts()));
         rendered.expect("placard renders");
         assert!(warnings.is_empty(), "{warnings:?}");
 
         let json = callout_payload(None, &long);
         let payload: Payload = serde_json::from_value(json).unwrap();
-        let (rendered, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
+        let (rendered, warnings) = diagnostic::collect(|| render(&payload, &test_fonts()));
         rendered.expect("callout renders");
         assert_eq!(warnings.len(), 1, "{warnings:?}");
     }
@@ -1010,7 +1010,7 @@ mod tests {
     fn a_message_taller_than_its_cap_warns_with_the_authored_text() {
         let message = "line\n\n".repeat(30);
         let payload: Payload = serde_json::from_value(callout_payload(None, &message)).unwrap();
-        let (svg, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
+        let (svg, warnings) = diagnostic::collect(|| render(&payload, &test_fonts()));
         svg.expect("renders");
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "WARN-CALLOUT-TEXT-TRUNCATED");
@@ -1023,7 +1023,7 @@ mod tests {
     #[test]
     fn a_message_within_its_cap_warns_nothing() {
         let payload: Payload = serde_json::from_value(callout_payload(None, "Shipped.")).unwrap();
-        let (svg, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
+        let (svg, warnings) = diagnostic::collect(|| render(&payload, &test_fonts()));
         svg.expect("renders");
         assert!(warnings.is_empty());
     }
@@ -1116,7 +1116,7 @@ mod tests {
         let message = "line\n\n".repeat(30);
         let bound = bound_of(callout_payload(None, &message));
         let cell = Rect { x: 0.0, y: 0.0, width: 300.0, height: 100.0 };
-        let (laid_out, sunk) = crate::diagnostic::collect(|| layout(&bound, cell, &measure));
+        let (laid_out, sunk) = diagnostic::collect(|| layout(&bound, cell, &measure));
         let laid_out = laid_out.unwrap();
         assert!(sunk.is_empty(), "layout hands its WARNs back, it does not sink them");
         assert_eq!(laid_out.diagnostics.len(), 1);

@@ -30,6 +30,8 @@ from dbt_charts.core.compile.resolve.style.board import resolve_style_and_contex
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
+from .._results import rows_result
+
 _BOARD_RS, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
 
@@ -78,7 +80,7 @@ class TestValidation:
         )
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         with pytest.raises(ChartDataError, match="labels.values"):
-            render_resolved_chart(resolved, data, _BOARD_RS)
+            render_resolved_chart(resolved, rows_result(data), _BOARD_RS)
 
     def test_label_values_on_bar_auto_orient_horizontal_raises(self):
         # Bar auto-orients horizontal whenever x is nominal (non-temporal) —
@@ -98,7 +100,7 @@ class TestValidation:
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         assert resolved.orientation == "horizontal"
         with pytest.raises(ChartDataError, match="labels.values"):
-            render_resolved_chart(resolved, data, _BOARD_RS)
+            render_resolved_chart(resolved, rows_result(data), _BOARD_RS)
 
     def test_label_values_on_forced_horizontal_bar_raises_even_with_iso_x(self):
         # An authored orientation: horizontal (not auto-inferred) with x data
@@ -119,7 +121,7 @@ class TestValidation:
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         assert resolved.orientation == "horizontal"
         with pytest.raises(ChartDataError, match="never honors it"):
-            render_resolved_chart(resolved, data, _BOARD_RS)
+            render_resolved_chart(resolved, rows_result(data), _BOARD_RS)
 
     def test_label_values_on_quantitative_x_axis_raises(self):
         style = LineChartStylePatch(
@@ -129,7 +131,7 @@ class TestValidation:
         chart = LineChart(id="num_line", type="line", x="x", y="y", style=style)
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         with pytest.raises(ChartDataError, match="labels.values"):
-            render_resolved_chart(resolved, data, _BOARD_RS)
+            render_resolved_chart(resolved, rows_result(data), _BOARD_RS)
 
     def test_label_values_on_axis_y_raises_at_resolve(self):
         """axis_y.labels is AxisLabelStylePatch — values is structurally absent.
@@ -156,7 +158,7 @@ class TestValidation:
         )
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         with pytest.raises(ChartDataError, match="ISO"):
-            render_resolved_chart(resolved, data, _BOARD_RS)
+            render_resolved_chart(resolved, rows_result(data), _BOARD_RS)
 
 
 class TestBucketStringDomains:
@@ -185,7 +187,7 @@ class TestBucketStringDomains:
         chart = BarChart(id="mdyd_bar", type="bar", x="m", y="v", style=style)
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         with pytest.raises(ChartDataError, match="labels.values"):
-            render_resolved_chart(resolved, data, _BOARD_RS)
+            render_resolved_chart(resolved, rows_result(data), _BOARD_RS)
 
     def test_subdaily_timestamps_on_forced_ordinal_axis_rejected(self):
         """Sub-daily timestamps skip bucket normalization; on an authored
@@ -201,4 +203,4 @@ class TestBucketStringDomains:
         chart = LineChart(id="hr_line", type="line", x="m", y="v", style=style)
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         with pytest.raises(ChartDataError, match="labels.values"):
-            render_resolved_chart(resolved, data, _BOARD_RS)
+            render_resolved_chart(resolved, rows_result(data), _BOARD_RS)

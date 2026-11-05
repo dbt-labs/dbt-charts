@@ -11,7 +11,7 @@ use dbt_charts_color::{parse_css_color, rgb01_to_hex};
 use library::{Library, Mark, Tile};
 use scene::{Attrs, Node, PathData, Role, Shape};
 use serde::Deserialize;
-use crate::{codes, diagnostic::Diagnostic};
+use diagnostic::{codes, Diagnostic};
 use serde_json::json;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap};
@@ -433,7 +433,7 @@ impl PatternPlan {
             if self.fallbacks.collide() {
                 return Err(Diagnostic::new(&codes::ERR_PATTERN_FALLBACK_FLAT, params));
             }
-            crate::diagnostic::warn(Diagnostic::new(&codes::WARN_PATTERN_FALLBACK_FLAT, params));
+            diagnostic::warn(Diagnostic::new(&codes::WARN_PATTERN_FALLBACK_FLAT, params));
         }
         let used = self.used.borrow();
         Ok((!used.is_empty()).then(|| Node::new(Role::Chrome, Attrs::new(), Shape::Defs(used.iter().map(|(_, node)| node.clone()).collect()))))

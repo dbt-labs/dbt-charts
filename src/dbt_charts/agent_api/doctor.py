@@ -1,6 +1,7 @@
 """Typed doctor verb: why can't `dct` reach my data?
 
 Reports the install method, whether the project and `profiles.yml` resolve,
+whether the dbt manifest predates `profiles.yml`,
 and whether each source's warehouse adapter imports. Only
 `with_warehouse=True` opens a warehouse connection.
 """
@@ -8,7 +9,7 @@ and whether each source's warehouse adapter imports. Only
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -20,7 +21,9 @@ from dbt_charts.agent_api.project_session import ProjectSession
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import ResolvedSourceConfig
 from dbt_charts.core.connections import test_connection
+from dbt_charts.core.dbt_manifest import manifest_relpath
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
     SUPPORTED_ADAPTER_TYPES,
@@ -28,6 +31,7 @@ from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
     import_adapter_module,
 )
 from dbt_charts.core.execute.drivers import is_driver_source, require_driver_extra
+from dbt_charts.core.project import Project
 from dbt_charts.core.project_roots import resolve_profiles_path
 
 
@@ -37,7 +41,7 @@ class DoctorCheck(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    code: Literal["install", "project", "profiles", "adapter", "connection"]
+    code: Literal["install", "project", "profiles", "manifest", "adapter", "connection"]
     source: str | None = None
     status: Literal["pass", "warn", "fail", "skip"]
     message: str
@@ -54,7 +58,8 @@ class DoctorReport(BaseModel):
 
 
 def run_doctor(project_dir: Path, with_warehouse: bool) -> DoctorReport:
-    """Diagnose the install, project, `profiles.yml`, and per-source adapters.
+    """Diagnose the install, project, `profiles.yml`, manifest freshness, and
+    per-source adapters.
 
     Args:
         project_dir: Directory to start from; the project root is found by
@@ -73,6 +78,7 @@ def run_doctor(project_dir: Path, with_warehouse: bool) -> DoctorReport:
         reason = "no project found" if root is None else "project check failed"
         checks += [
             DoctorCheck(code="profiles", status="skip", message="no dbt project"),
+            DoctorCheck(code="manifest", status="skip", message="no dbt project"),
             DoctorCheck(code="adapter", status="skip", message=reason),
             DoctorCheck(code="connection", status="skip", message=reason),
         ]
@@ -134,12 +140,16 @@ def _project_check(
     )
 
 
+def _profiles_path(dbt_dir: Path, profiles_dir: str | None) -> Path:
+    explicit = (dbt_dir / profiles_dir).resolve() if profiles_dir else None
+    return resolve_profiles_path(dbt_dir, explicit)
+
+
 def _profiles_check(
     dbt_dir: Path, profiles_dir: str | None, source: str | None
 ) -> DoctorCheck:
-    explicit = (dbt_dir / profiles_dir).resolve() if profiles_dir else None
     try:
-        path = resolve_profiles_path(dbt_dir, explicit)
+        path = _profiles_path(dbt_dir, profiles_dir)
     except FileNotFoundError as exc:
         return DoctorCheck(
             code="profiles", source=source, status="fail", message=str(exc)
@@ -164,6 +174,60 @@ def _profiles_checks(
     return checks
 
 
+def _manifest_check(
+    project: Project,
+    dbt_dir: Path | None,
+    dbt_sources: dict[str, dict[str, Any]],
+) -> DoctorCheck:
+    """Warn when a `profiles.yml` was edited after the manifest built alongside
+    it: ref() and source() keep resolving to the old schema until dbt reruns.
+
+    Each `dbt_profile` source is checked with its own `profiles_dir` and
+    `target_path`, the pair its queries actually use; with no such source the
+    default search and target path apply.
+    """
+    if dbt_dir is None:
+        return DoctorCheck(code="manifest", status="skip", message="no dbt project")
+    pairs = {
+        (raw.get("profiles_dir"), raw.get("target_path"))
+        for raw in dbt_sources.values()
+    } or {(None, None)}
+    compared: list[tuple[Path, Path]] = []
+    for profiles_dir, target_path in sorted(pairs, key=repr):
+        try:
+            manifest = dbt_dir / manifest_relpath(project, target_path)
+        except ExecutionError as exc:
+            return DoctorCheck(code="manifest", status="warn", message=str(exc))
+        try:
+            profiles = _profiles_path(dbt_dir, profiles_dir)
+        except FileNotFoundError:
+            continue
+        if manifest.is_file():
+            compared.append((profiles, manifest))
+    if not compared:
+        return DoctorCheck(
+            code="manifest",
+            status="skip",
+            message="no manifest alongside a resolvable profiles.yml",
+        )
+    for profiles, manifest in compared:
+        if profiles.stat().st_mtime > manifest.stat().st_mtime:
+            return DoctorCheck(
+                code="manifest",
+                status="warn",
+                message=(
+                    f"{profiles} is newer than {manifest}, so ref() and source() "
+                    "may resolve to a schema the profile no longer points at"
+                ),
+                hint="run `dbt parse` (or any dbt command that rewrites the manifest)",
+            )
+    return DoctorCheck(
+        code="manifest",
+        status="pass",
+        message=", ".join(f"{m} is at least as new as {p.name}" for p, m in compared),
+    )
+
+
 def _source_checks(
     root: Path, dbt_dir: Path | None, with_warehouse: bool
 ) -> list[DoctorCheck]:
@@ -171,15 +235,19 @@ def _source_checks(
         try:
             registry = session.adapter_registry
             names = [source["name"] for source in registry.list_sql_sources()]
-            profiles_dirs = {
-                name: raw.get("profiles_dir")
+            dbt_sources = {
+                name: raw
                 for name in names
                 if (raw := registry.resolve_source_config(name))["type"]
                 == "dbt_profile"
             }
+            profiles_dirs = {
+                name: raw.get("profiles_dir") for name, raw in dbt_sources.items()
+            }
         except (DbtChartsError, TypeError) as exc:
             return [
                 *_profiles_checks(dbt_dir, {}),
+                _manifest_check(session.project, dbt_dir, {}),
                 DoctorCheck(code="adapter", status="fail", message=str(exc)),
                 DoctorCheck(
                     code="connection",
@@ -187,7 +255,10 @@ def _source_checks(
                     message="sources failed to load",
                 ),
             ]
-        profiles = _profiles_checks(dbt_dir, profiles_dirs)
+        profiles = [
+            *_profiles_checks(dbt_dir, profiles_dirs),
+            _manifest_check(session.project, dbt_dir, dbt_sources),
+        ]
         if not names:
             return [
                 *profiles,

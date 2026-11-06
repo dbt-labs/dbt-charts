@@ -31,18 +31,18 @@ pub(super) fn color_one_to_one(r: &BarResolved, payload: &Payload, color: &str) 
 
 /// The rows a panel's category domain reads: its own, plus those dropped for a null numeric color.
 pub(super) fn panel_cat_rows<'a>(
-    all: Option<&'a [multiples::Panel]>,
-    panel: &'a multiples::Panel,
+    all: Option<&'a [::bind::multiples::Panel]>,
+    panel: &'a ::bind::multiples::Panel,
 ) -> &'a [serde_json::Map<String, Value>] {
     all.and_then(|all| all.iter().find(|p| p.key == panel.key)).map_or(panel.rows.as_slice(), |p| p.rows.as_slice())
 }
 
 /// The chart's rows regrouped into its facet panels, with the category and
 /// color fields restored when one of them is itself a facet field.
-pub(super) fn facet_panels(r: &BarResolved, rows: &[serde_json::Map<String, Value>]) -> Result<Vec<multiples::Panel>, String> {
-    let mut panels = multiples::regroup(&r.panel_axes, rows).map_err(|e| format!("bar: {e}"))?;
+pub(super) fn facet_panels(r: &BarResolved, rows: &[serde_json::Map<String, Value>]) -> Result<Vec<::bind::multiples::Panel>, String> {
+    let mut panels = ::bind::multiples::regroup(&r.panel_axes, rows).map_err(|e| format!("bar: {e}"))?;
     for field in std::iter::once(r.x.as_str()).chain(r.color.as_deref()) {
-        multiples::restamp(&mut panels, &r.panel_axes, field);
+        ::bind::multiples::restamp(&mut panels, &r.panel_axes, field);
     }
     Ok(panels)
 }
@@ -50,7 +50,7 @@ pub(super) fn facet_panels(r: &BarResolved, rows: &[serde_json::Map<String, Valu
 /// `emitters/bar.py::_is_color_1to1_with_x` folded per panel: every panel
 /// holding both fields must be 1:1 on its own, and at least one must (a
 /// panel with neither field abstains, like `is_1to1`'s `None`).
-pub(super) fn color_1to1_across_panels(panels: &[multiples::Panel], cat_field: &str, color_field: &str) -> bool {
+pub(super) fn color_1to1_across_panels(panels: &[::bind::multiples::Panel], cat_field: &str, color_field: &str) -> bool {
     let mut checked = false;
     for panel in panels {
         if !panel.rows.iter().any(|row| row.contains_key(cat_field) && row.contains_key(color_field)) {
@@ -112,7 +112,7 @@ pub(super) fn color_1to1_with_cat(
 ///
 /// The vertical arm's scope (refuses outside it rather than approximate):
 /// `multiples.rows` and/or `multiples.columns` (a sparse grid fills the slots
-/// after Vega's empty ones, `multiples::empty_leading_cells`), a color channel
+/// after Vega's empty ones, `::bind::multiples::empty_leading_cells`), a color channel
 /// only with the legend on top (`BarFacetPanelOpts`: one chart-level legend,
 /// palette, category domain and `xOffset` verdict), no support_table
 /// (production's `FacetFeature` refuses it alongside `multiples`), layers over
@@ -159,9 +159,9 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
     if panels.is_empty() {
         return Err("bar: multiples produced zero panels — no row matched the baked panel_axes".into());
     }
-    let panel_rows_n = multiples::panel_axis_cardinality(&axes, mc.rows.as_deref());
-    let panel_cols_n = multiples::panel_axis_cardinality(&axes, mc.columns.as_deref());
-    let missing = multiples::empty_leading_cells(panels.len(), panel_rows_n, panel_cols_n)?;
+    let panel_rows_n = ::bind::multiples::panel_axis_cardinality(&axes, mc.rows.as_deref());
+    let panel_cols_n = ::bind::multiples::panel_axis_cardinality(&axes, mc.columns.as_deref());
+    let missing = ::bind::multiples::empty_leading_cells(panels.len(), panel_rows_n, panel_cols_n)?;
     // A titled value axis paints once, at the last column of each row.
     // `regroup`'s own panel order is `axes`' cartesian product, rows outer /
     // columns inner (`multiples.rs`'s own doc comment) — `panels[row *
@@ -242,9 +242,9 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
     // (`_discrete_facet_channels`): a continuous time scale stays shared.
     let x_discrete = matches!(
         x_resolution(&r, &payload.rows)?.resolution.vl_type,
-        crate::families::temporal::VegaType::Ordinal | crate::families::temporal::VegaType::Nominal
+        ::bind::temporal::VegaType::Ordinal | ::bind::temporal::VegaType::Nominal
     );
-    let x_narrowed = !horizontal && x_discrete && mc.rows.is_none() && multiples::field_is_proper_subset_in_a_panel(&panels, &r.x);
+    let x_narrowed = !horizontal && x_discrete && mc.rows.is_none() && ::bind::multiples::field_is_proper_subset_in_a_panel(&panels, &r.x);
     let color_one_to_one = r
         .color
         .as_deref()
@@ -274,7 +274,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
     let cat_narrowed = horizontal
         && r.layers.is_empty()
         && !has_mirror
-        && multiples::field_is_proper_subset_in_a_panel(&panels, &r.x)
+        && ::bind::multiples::field_is_proper_subset_in_a_panel(&panels, &r.x)
         && multiples::extra_axis_is_affordable(
             multiples::facet_panel_width(payload.width, panel_cols_n, false, 0.0),
             cat_axis_px,
@@ -285,9 +285,9 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
     let floored;
     let payload = if horizontal {
         let n_categories = if cat_narrowed {
-            panels.iter().map(|p| crate::common::count_horizontal_bar_categories(&p.rows, &r.x)).max().unwrap_or(0)
+            panels.iter().map(|p| ::bind::rows::count_horizontal_bar_categories(&p.rows, &r.x)).max().unwrap_or(0)
         } else {
-            crate::common::count_horizontal_bar_categories(&payload.rows, &r.x)
+            ::bind::rows::count_horizontal_bar_categories(&payload.rows, &r.x)
         };
         let min_height = horizontal_min_height(&r, n_categories)? * panel_rows_n as f64;
         if let Some(authored) = payload.authored_height.filter(|&authored| n_categories > 0 && min_height > authored) {

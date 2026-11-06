@@ -54,6 +54,7 @@
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}–{end_day} {month} {year}",
   "controls.reset": "Сбросить",
+  "controls.remove_value": "Убрать {value}",
   "controls.search": "Поиск",
   "controls.search_values": "Поиск значений",
   "controls.select_all": "Выбрать все",

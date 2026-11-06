@@ -29,7 +29,7 @@ from dbt.adapters.databricks import connections as dbx_connections
 from dbt.adapters.databricks.connections import DatabricksDBTConnection
 from dbt_common.exceptions import DbtConfigError
 
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
 pytestmark = pytest.mark.usefixtures("no_spog_probe")
 

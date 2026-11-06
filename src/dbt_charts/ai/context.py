@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,11 +24,6 @@ class DbtChartsAIContext:
     # localhost URLs in `render_board` responses (including as_link=True).
     server_port: int | None = None
     prompt_context: dict[str, str] | None = None
-    # Paths ``read_file`` has returned content for on this context, which
-    # ``write_file`` requires before it will overwrite an existing file. Kept
-    # out of equality (and so out of the frozen hash) because it is a record of
-    # what the agent has done, not part of the scope this context names.
-    files_read: set[str] = field(default_factory=set, compare=False)
 
     def resolve_dashboard_path(self, path: Path) -> Path:
         """Resolve a dashboard path inside the scoped dashboards directory.

@@ -1,4 +1,4 @@
-"""Tests for LOCAL_AUTHORING_REGISTRY_KWARGS (MCP, playground).
+"""Tests for LOCAL_AUTHORING_ENV_KWARGS (MCP, playground).
 
 `dct serve` used to share this posture but now defaults to strict read-only
 (external access off) — see dbt-charts/tests/core/serve/test_serve_read_only_posture.py.
@@ -12,11 +12,12 @@ import duckdb
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
-from dbt_charts.core.execute.adapters.adapter_registry import (
-    LOCAL_AUTHORING_REGISTRY_KWARGS,
-    build_adapter_registry,
-)
 from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
+from dbt_charts.core.execute.env import (
+    LOCAL_AUTHORING_ENV_KWARGS,
+    build_exec_env,
+    close_env,
+)
 
 from ..._backend_runner import DuckDBRunner
 
@@ -26,9 +27,9 @@ class TestLocalAuthoringRegistryKwargs:
         db_path = str(tmp_path / "test.duckdb")
         kwargs = DuckDBBackend._resolve_duckdb_connect_kwargs(
             db_path,
-            LOCAL_AUTHORING_REGISTRY_KWARGS["read_only"],
-            LOCAL_AUTHORING_REGISTRY_KWARGS["duckdb_config"],
-            LOCAL_AUTHORING_REGISTRY_KWARGS["allow_external_access_in_readonly"],
+            LOCAL_AUTHORING_ENV_KWARGS["read_only"],
+            LOCAL_AUTHORING_ENV_KWARGS["duckdb_config"],
+            LOCAL_AUTHORING_ENV_KWARGS["allow_external_access_in_readonly"],
         )
         assert kwargs.get("read_only") is True
         assert kwargs.get("config", {}).get("enable_external_access") is True
@@ -36,18 +37,14 @@ class TestLocalAuthoringRegistryKwargs:
     def test_registry_opens_read_only_with_external_access(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        registry = build_adapter_registry(
-            local_project(tmp_path), **LOCAL_AUTHORING_REGISTRY_KWARGS
-        )
-        backend = registry._backends.for_source(  # noqa: SLF001
-            DuckDBSourceConfig(type="duckdb")
-        )
+        registry = build_exec_env(local_project(tmp_path), **LOCAL_AUTHORING_ENV_KWARGS)
+        backend = registry.backends.for_source(DuckDBSourceConfig(type="duckdb"))
         try:
             assert backend.read_only is True
             assert backend.allow_external_access_in_readonly is True
             assert backend._duckdb_config == {"enable_external_access": True}
         finally:
-            registry.close()
+            close_env(registry)
 
     def test_external_read_works_and_db_write_blocked_on_file_db(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -64,7 +61,7 @@ class TestLocalAuthoringRegistryKwargs:
         adapter = DuckDBRunner(
             data_dir=local_project(tmp_path).data_path("."),
             source_config=DuckDBSourceConfig(type="duckdb", path=db_path),
-            **LOCAL_AUTHORING_REGISTRY_KWARGS,
+            **LOCAL_AUTHORING_ENV_KWARGS,
         )
         try:
             result = adapter.execute(

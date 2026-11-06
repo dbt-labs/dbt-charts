@@ -12,7 +12,8 @@ refused — these tools never touch the wider filesystem.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Literal
@@ -48,17 +49,26 @@ class ReadFileArgs(BaseModel):
 class WriteFileArgs(BaseModel):
     """Write a UTF-8 text file in the project, creating parent directories.
 
-    Overwriting an existing file is refused unless you have already read_file'd
-    it — you cannot preserve what you have not seen. To change
-    part of an existing file, prefer apply_patch. Path is root-relative (includes the
-    charts/ prefix for a dashboard) and may not escape it. If the path came
-    from search_files, use the hit's file_path, not board_path.
+    Overwriting an existing file requires expected_sha256, the content_sha256
+    that read_file (or your last write_file) returned for it — you cannot
+    preserve what you have not seen, and a file changed since you read it is
+    refused. Omit it only to create a new file. To change part of an existing
+    file, prefer apply_patch. Path is root-relative (includes the charts/ prefix
+    for a dashboard) and may not escape it. If the path came from search_files,
+    use the hit's file_path, not board_path.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     path: str = Field(description="File path relative to the project root.")
     content: str = Field(description="Full file contents to write.")
+    expected_sha256: str | None = Field(
+        default=None,
+        description=(
+            "content_sha256 from read_file or a previous write_file of this path. "
+            "Required to overwrite an existing file; omit to create a new one."
+        ),
+    )
 
 
 class MoveFileArgs(BaseModel):
@@ -97,6 +107,7 @@ class ReadFileResult(BaseModel):
     success: bool
     path: str
     content: str | None = None
+    content_sha256: str | None = None
     error: str | None = None
 
 
@@ -106,6 +117,7 @@ class WriteFileResult(BaseModel):
     success: bool
     path: str
     bytes_written: int = 0
+    content_sha256: str | None = None
     error: str | None = None
 
 
@@ -135,53 +147,13 @@ def read_file(path: str, project: Project) -> ReadFileResult:
         return ReadFileResult(success=False, path=path, error=f"file not found: {path}")
     except (ValueError, IsADirectoryError, *_UNREADABLE_FILE) as exc:
         return ReadFileResult(success=False, path=path, error=str(exc))
-    return ReadFileResult(success=True, path=path, content=content)
-
-
-def refuse_blind_overwrite(
-    path: str, project: Project, files_seen: Collection[str]
-) -> WriteFileResult | None:
-    """The refusal for overwriting a file the caller has never read, or None.
-
-    An agent cannot preserve what it has not seen: given a whole-file write over
-    a board it never read, everything in that board it did not think to reproduce
-    is simply gone. `files_seen` is the caller's record of paths it has read — hosts scope that
-    however their session works, so the refusal says only "has not been read",
-    never how long that is remembered.
-
-    A path this cannot resolve is refused, not waved through. "I could not
-    check" must never mean "go ahead": ``exists()`` applies ``assert_relpath``
-    and ``write_text`` does not, so the two disagree about a backslash-spelled
-    ref — on POSIX it becomes a junk file named ``charts\board.yml`` at the
-    root, and on Windows it *is* ``charts/board.yml`` and overwrites the very
-    board this gate exists to protect.
-    """
-    if path in files_seen:
-        return None
-    try:
-        # A package board path writes its host copy, so that is what is overwritten.
-        _, path = copy_on_write_paths(path, project)
-        if path in files_seen or not project.exists(path):
-            return None
-    except ValueError as exc:
-        return WriteFileResult(
-            success=False,
-            path=path,
-            error=(
-                f"{path} is not a usable project path ({exc}), so whether it "
-                "would overwrite an existing file cannot be checked. Write a "
-                "project-root-relative path with forward slashes."
-            ),
-        )
-    return WriteFileResult(
-        success=False,
-        path=path,
-        error=(
-            f"{path} already exists and has not been read. Overwriting it would "
-            "discard content you have not seen. Call read_file first, or use "
-            "apply_patch to change part of it."
-        ),
+    return ReadFileResult(
+        success=True, path=path, content=content, content_sha256=_sha256(content)
     )
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def copy_on_write_paths(path: str, project: Project) -> tuple[str, str]:
@@ -205,18 +177,72 @@ def copy_on_write_paths(path: str, project: Project) -> tuple[str, str]:
     return (target if project.exists(target) else path), target
 
 
-def write_file(path: str, content: str, project: Project) -> WriteFileResult:
+def write_file(
+    path: str, content: str, project: Project, expected_sha256: str | None = None
+) -> WriteFileResult:
     """Write *content* to *path*; a package board path saves a host copy.
 
-    The result's ``path`` is where the content was actually written.
+    Overwriting an existing file needs *expected_sha256*, the hash of the
+    content the caller read: an agent cannot preserve what it has not seen, and
+    the hash is stateless proof of reading that also catches a file changed
+    since. The result's ``path`` is where the content was actually written.
+
+    A path the project cannot resolve is refused, not waved through: "I could
+    not check" must never mean "go ahead". ``exists()`` applies
+    ``assert_relpath`` and ``write_text`` does not, so a backslash-spelled ref
+    would become a junk file on POSIX and, on Windows, overwrite the very board
+    this check protects.
     """
-    _, path = copy_on_write_paths(path, project)
     try:
-        project.write_text(path, content)
+        _, target = copy_on_write_paths(path, project)
+        exists = project.exists(target)
+    except ValueError as exc:
+        return WriteFileResult(
+            success=False,
+            path=path,
+            error=(
+                f"{path} is not a usable project path ({exc}), so whether it "
+                "would overwrite an existing file cannot be checked. Write a "
+                "project-root-relative path with forward slashes."
+            ),
+        )
+    if exists:
+        try:
+            existing = project.read_text(target)
+        except _UNREADABLE_FILE as exc:
+            return WriteFileResult(
+                success=False,
+                path=target,
+                error=(
+                    f"{target} already exists and cannot be read ({exc}), so "
+                    "overwriting it is refused."
+                ),
+            )
+        if expected_sha256 is None:
+            error = (
+                f"{target} already exists and has not been read. Overwriting it "
+                "would discard content you have not seen. Call read_file and pass "
+                "its content_sha256 as expected_sha256, or use apply_patch to "
+                "change part of it."
+            )
+        elif expected_sha256 != _sha256(existing):
+            error = (
+                f"{target} has changed since you read it. Call read_file again "
+                "and redo your change on the current content."
+            )
+        else:
+            error = None
+        if error is not None:
+            return WriteFileResult(success=False, path=target, error=error)
+    try:
+        project.write_text(target, content)
     except (ValueError, OSError) as exc:
-        return WriteFileResult(success=False, path=path, error=str(exc))
+        return WriteFileResult(success=False, path=target, error=str(exc))
     return WriteFileResult(
-        success=True, path=path, bytes_written=len(content.encode("utf-8"))
+        success=True,
+        path=target,
+        bytes_written=len(content.encode("utf-8")),
+        content_sha256=_sha256(content),
     )
 
 

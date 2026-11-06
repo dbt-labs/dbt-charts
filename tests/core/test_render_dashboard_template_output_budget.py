@@ -27,8 +27,8 @@ _CODE = "ERR-TEMPLATE-OUTPUT-TOO-LARGE"
 def _render(tmp_path: Path, board_yaml: str, *, format: str = "svg"):
     from dbt_charts.cli.filesystem_project import FilesystemProject
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.adapters.adapter_registry import (
-        build_adapter_registry,
+    from dbt_charts.core.execute.env import (
+        build_exec_env,
     )
 
     project = FilesystemProject(tmp_path)
@@ -37,11 +37,11 @@ def _render(tmp_path: Path, board_yaml: str, *, format: str = "svg"):
     board_path.write_text(board_yaml)
     (tmp_path / "dbt_charts.yml").write_text("sources:\n  db:\n    type: duckdb\n")
 
-    registry = build_adapter_registry(project)
+    registry = build_exec_env(project)
     return render_dashboard(
         board=project.path("charts/board.yml").read_board(),
         project=project,
-        adapter_registry=registry,
+        env=registry,
         result_cache=None,
         format=format,
     )

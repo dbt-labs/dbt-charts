@@ -103,7 +103,7 @@ fn a_swatch_is_not_a_color_past_the_one_trailing_newline() {
 /// bad swatch.
 #[test]
 fn a_cell_format_error_is_raised_before_a_bad_swatch() {
-    let _locale = crate::time_locale::en_us_scope();
+    let _locale = ::bind::time_locale::en_us_scope();
     let columns = json!({"at": {"label": "At"}, "c": {"swatch": true}});
     let rows = vec![
         json!({"at": "2024-03-05T09:30:00", "c": "not a color"}),

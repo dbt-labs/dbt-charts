@@ -1,0 +1,17 @@
+[package]
+name = "yaml"
+version = "0.0.1"
+edition = "2021"
+description = "Authored YAML to a spanned Node: dbt-yaml StringNode, YAML 1.1 scalar resolution, refusals as diagnostics."
+
+[dependencies]
+diagnostic = { path = "../diagnostic" }
+dbt-yaml = "=0.10.8"
+indexmap = { version = "2", features = ["serde"] }
+regex = "1"
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+d3rs = { path = "../d3rs" }
+
+[[bin]]
+name = "yaml-node"
+path = "src/bin/yaml_node.rs"

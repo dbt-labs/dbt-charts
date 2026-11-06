@@ -23,14 +23,14 @@ import pytest
 
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._engine_migrations import migrate_mapping
 
 
 @pytest.fixture
@@ -39,10 +39,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: dict[str, Any], catalog: YamlSchemaCatalog) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 def test_chart_level_data_table_migrates_to_support_table(
@@ -228,25 +227,3 @@ EXPECTED_DATA_TABLE_MOVES = (
     "tabs.items.*.style.charts.line.data_table",
     "tabs.items.*.style.charts.scatter.data_table",
 )
-
-
-def test_resolved_move_set_is_exactly_the_documented_positions(
-    catalog: YamlSchemaCatalog,
-) -> None:
-    """The bare ``support_table`` tail resolves to these 36 positions and no others.
-
-    Both halves matter. Missing a position silently strips a released field from
-    a board that authored it; gaining one means the tail matched somewhere it was
-    never meant to, which is how a rename reaches an unrelated feature.
-    """
-    from dbt_charts.core.compile.migrations.versions.v0_6_0 import moves
-
-    data_table_moves = [
-        move
-        for move in moves("0.5.0", "0.6.0", catalog=catalog)
-        if move.old_path[-1] == "data_table"
-    ]
-    resolved = tuple(sorted(".".join(move.old_path) for move in data_table_moves))
-    assert resolved == EXPECTED_DATA_TABLE_MOVES
-    for move in data_table_moves:
-        assert move.new_path == (*move.old_path[:-1], "support_table")

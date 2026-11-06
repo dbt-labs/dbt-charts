@@ -93,7 +93,7 @@ exclude = [
     # `databricks` namespace is owned by `databricks-sdk` (the dist whose top_level
     # is `databricks`), so tach resolves the import to `databricks_sdk`.
     "databricks_sdk",
-    # Warehouse drivers read by execute/adapters/typed_fetch.py for their own
+    # Warehouse drivers read by execute/backends/typed_fetch.py for their own
     # type constants, each imported lazily inside the family that needs it and
     # present whenever the matching dbt adapter is installed: psycopg2
     # (dbt-postgres), redshift_connector (dbt-redshift), snowflake
@@ -251,7 +251,7 @@ layer = "core"
 # compile/render layering fix): SQLDialect/get_dialect/VALID_OPERATORS are
 # pure runtime/dialect behavior with zero execute-specific dependencies, so
 # they live as a leaf module both compile (template/parameterized.py, filter_injection.py)
-# and execute (executor.py, adapters/) can depend on directly.
+# and execute (run.py, backends/) can depend on directly.
 depends_on = []   # leaf node — no compile/execute/render deps
 
 [[modules]]

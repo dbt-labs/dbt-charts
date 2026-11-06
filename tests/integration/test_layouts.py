@@ -14,11 +14,11 @@ from dbt_charts.core.compile.config import (
     get_default_theme_name,
     get_theme_style,
 )
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
 
 from .._paths import DBT_CHARTS_DIR
+from .._run import Run
 
 
 class TestRowsLayout:
@@ -54,17 +54,21 @@ rows:
         assert result.board is not None
         assert result.board.layout.type == "rows"
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
-        svg_output = render(result.board, executor, format="svg").output
+        svg_output = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_output, str)
         assert "<svg" in svg_output
 
-        html_output = render(result.board, executor, format="html").output
+        html_output = render(
+            result.board, executor.ctx, executor.ledger, format="html"
+        ).output
         assert isinstance(html_output, str)
         # HTML format now wraps SVG output in minimal HTML document
         assert "<!DOCTYPE html>" in html_output
@@ -112,17 +116,21 @@ cols:
         assert result.board is not None
         assert result.board.layout.type == "cols"
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
-        svg_output = render(result.board, executor, format="svg").output
+        svg_output = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_output, str)
         assert "<svg" in svg_output
 
-        html_output = render(result.board, executor, format="html").output
+        html_output = render(
+            result.board, executor.ctx, executor.ledger, format="html"
+        ).output
         assert isinstance(html_output, str)
         # HTML format now wraps SVG output in minimal HTML document
         assert "<!DOCTYPE html>" in html_output
@@ -173,17 +181,21 @@ grid:
         assert result.board.layout.type == "grid"
         assert result.board.layout.columns == 24
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
-        svg_output = render(result.board, executor, format="svg").output
+        svg_output = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_output, str)
         assert "<svg" in svg_output
 
-        html_output = render(result.board, executor, format="html").output
+        html_output = render(
+            result.board, executor.ctx, executor.ledger, format="html"
+        ).output
         assert isinstance(html_output, str)
         # HTML format now wraps SVG output in minimal HTML document
         assert "<!DOCTYPE html>" in html_output
@@ -257,18 +269,22 @@ tabs:
         assert result.board.layout.tab_titles is not None
         assert "Bar Chart" in result.board.layout.tab_titles
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
-        svg_output = render(result.board, executor, format="svg").output
+        svg_output = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_output, str)
         assert "<svg" in svg_output
         assert "Bar Chart" in svg_output or "Tab 1" in svg_output
 
-        html_output = render(result.board, executor, format="html").output
+        html_output = render(
+            result.board, executor.ctx, executor.ledger, format="html"
+        ).output
         assert isinstance(html_output, str)
         # HTML format now wraps SVG output in minimal HTML document
         assert "<!DOCTYPE html>" in html_output
@@ -313,13 +329,15 @@ rows:
         assert result.board is not None
         assert result.board.layout.type == "rows"
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
-        svg_output = render(result.board, executor, format="svg").output
+        svg_output = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_output, str)
         assert "<svg" in svg_output
 
@@ -336,12 +354,14 @@ rows:
         assert result.success
         assert result.board is not None
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
             query_registry=result.query_registry,
         )
-        svg_output = render(result.board, executor, format="svg").output
+        svg_output = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_output, str)
 
         first_section = result.board.layout.items[0].board
@@ -371,12 +391,14 @@ rows:
         assert result.success
         assert result.board is not None
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
-        svg_output = render(result.board, executor, format="svg").output
+        svg_output = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_output, str)
         expected_content_width = get_theme_style(
             get_default_theme_name()

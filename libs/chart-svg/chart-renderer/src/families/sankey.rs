@@ -226,7 +226,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
     };
 
     let fmt = |v: f64| {
-        crate::number_locale::d3_format(&r.value_format, v)
+        ::bind::formats::locale::d3_format(&r.value_format, v)
             .map_err(|e| format!("sankey: value_format {:?}: {e}", r.value_format))
     };
     let mut inflow = vec![0.0; nodes.len()];
@@ -267,7 +267,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
     let mut link_nodes = Vec::with_capacity(flows.len());
     for (li, (f, (path, looped))) in flows.iter().zip(&laid.links).enumerate() {
         let (s, t) = (&nodes[f.source].name, &nodes[f.target].name);
-        let share = crate::number_locale::d3_format(".0%", f.value / outflow[f.source])
+        let share = ::bind::formats::locale::d3_format(".0%", f.value / outflow[f.source])
             .map_err(|e| format!("sankey: share format: {e}"))?;
         let label = format!(
             "{ROLE_HEADER}{s} → {t}; {}: {}; {MUTED}{}: {share}",

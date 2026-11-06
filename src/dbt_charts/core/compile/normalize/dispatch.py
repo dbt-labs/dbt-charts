@@ -94,8 +94,7 @@ from dbt_charts.core.compile.normalize.chart_styles import attach_chart_styles
 from dbt_charts.core.compile.normalize.charts import (
     RegisteredChart,
     _collect_charts_from_layout,
-    display_text_at,
-    display_text_fields,
+    display_texts,
     normalize_chart,
 )
 from dbt_charts.core.compile.normalize.layout import (
@@ -914,7 +913,7 @@ def normalize_board(
         from dbt_charts.core.compile.compiler import build_chart_registry
 
         # `inherited_cache`, not `board_cache`, for the same reason as the query
-        # registry below: `_build_registry` folds this board's own `cache:` in.
+        # registry below: `_build_env` folds this board's own `cache:` in.
         chart_registry = build_chart_registry(
             board,
             cross_board_queries,
@@ -1348,8 +1347,7 @@ def _pull_chart_text_queries(
 
     for chart in charts.values():
         label = (chart.source_path or chart.id) if inline else chart.id
-        for field in display_text_fields(chart.type):
-            text = display_text_at(chart, field)
+        for field, text in display_texts(chart, chart.type).items():
             reject_listing_calls(text, f"chart '{label}' {field}")
             for name in sorted(text_query_references([text])):
                 key = chart.text_queries[name]

@@ -5,12 +5,11 @@ Thread 2: Protocol conformance — QueryResultCache Protocol + fake backend.
 Thread 3: Import hygiene — module importable without duckdb installed.
 """
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure, CacheHit
 from dbt_charts.core.execute.duckdb_cache import (
     compute_query_hash,
@@ -18,9 +17,11 @@ from dbt_charts.core.execute.duckdb_cache import (
     compute_variables_hash,
 )
 from dbt_charts.core.execute.plan import plan
+from dbt_charts.core.execute.query_result import QueryResult
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 from .._results import rows_result, rows_schema
+from .._scripted_env import ScriptedBackend, backend_of, scripted_env
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixtures
@@ -80,7 +81,7 @@ class TestCrossRaceCacheDedup:
         self, in_memory_cache: TrivialDuckDBCache
     ):
         """Key behavior: BoardA seeds cache; BoardB reads it without adapter call."""
-        from dbt_charts.core.execute import Executor
+        from .._run import Run
 
         # Compile both boards
         result_a = compile(BOARD_YAML_A)
@@ -89,32 +90,25 @@ class TestCrossRaceCacheDedup:
         shared_rows = [{"amount": 500}]
 
         # Adapter for board A — succeeds once
-        ok = Mock()
-        ok.is_success = True
-        ok.data = shared_rows
-        ok.schema = rows_schema(ok.data)
-        ok.resolved_relations = None
-        ok.truncated_reason = None
-        registry_a = Mock()
-        registry_a.project_file_sources.return_value = {}
-        registry_a.execute.return_value = ok
+        registry_a = scripted_env(ScriptedBackend(shared_rows))
 
         # Adapter for board B — must NOT be called
-        registry_b = Mock()
-        registry_b.project_file_sources.return_value = {}
-        registry_b.execute.side_effect = AssertionError(
-            "BoardB adapter must not be called — should hit BoardA's cache entry"
+        registry_b_backend = ScriptedBackend(
+            side_effect=AssertionError(
+                "BoardB adapter must not be called — should hit BoardA's cache entry"
+            )
         )
+        registry_b = scripted_env(registry_b_backend)
 
-        executor_a = Executor(
+        executor_a = Run(
             result_a.board,
-            adapter_registry=registry_a,
+            env=registry_a,
             query_registry=result_a.query_registry,
             result_cache=in_memory_cache,
         )
-        executor_b = Executor(
+        executor_b = Run(
             result_b.board,
-            adapter_registry=registry_b,
+            env=registry_b,
             query_registry=result_b.query_registry,
             result_cache=in_memory_cache,
         )
@@ -122,12 +116,12 @@ class TestCrossRaceCacheDedup:
         # BoardA executes → seeds cache
         rows_a = executor_a.execute_query("revenue")
         assert rows_a == shared_rows
-        assert registry_a.execute.call_count == 1
+        assert backend_of(registry_a).execute.call_count == 1
 
         # BoardB executes → must read from cache (adapter NOT called)
         rows_b = executor_b.execute_query("revenue")
         assert rows_b == shared_rows
-        assert registry_b.execute.call_count == 0
+        assert registry_b_backend.execute.call_count == 0
 
 
 BOARD_YAML_REFS = """
@@ -155,18 +149,17 @@ class TestReferenceExpansionKeysCache:
     def test_upstream_edit_misses_downstream_cache(
         self, in_memory_cache: TrivialDuckDBCache
     ):
-        from dbt_charts.core.execute import Executor
+        from .._run import Run
 
         def run(yaml_text: str, rows: list[dict[str, int]]) -> tuple[list, Mock]:
             compiled = compile(yaml_text)
-            registry = Mock()
-            registry.project_file_sources.return_value = {}
-            registry.execute.return_value = QueryResult(
-                data=rows, columns=["n"], schema=rows_schema(rows)
+            registry_backend = ScriptedBackend(
+                QueryResult(data=rows, columns=["n"], schema=rows_schema(rows))
             )
-            executor = Executor(
+            registry = scripted_env(registry_backend)
+            executor = Run(
                 compiled.board,
-                adapter_registry=registry,
+                env=registry,
                 query_registry=compiled.query_registry,
                 result_cache=in_memory_cache,
             )
@@ -178,26 +171,26 @@ class TestReferenceExpansionKeysCache:
 
         assert old_rows == [{"n": 1}]
         assert new_rows == [{"n": 2}]
-        assert registry.execute.call_count == 1
+        assert backend_of(registry).execute.call_count == 1
 
     def test_upstream_dbt_ref_manifest_change_changes_downstream_key(self) -> None:
-        from dbt_charts.core.execute import Executor
+        from .._run import Run
 
         compiled = compile(
             BOARD_YAML_REFS.replace("SELECT 1 AS n", "SELECT n FROM {{ ref('x') }}")
         )
 
         def key_for(manifest_version: str) -> tuple[str, str, str]:
-            registry = Mock()
-            registry.project_file_sources.return_value = {}
-            registry.resolve_query_source.return_value = {}
-            registry.dbt_manifest_version.return_value = manifest_version
-            executor = Executor(
+            registry = scripted_env(ScriptedBackend())
+            executor = Run(
                 compiled.board,
-                adapter_registry=registry,
+                env=registry,
                 query_registry=compiled.query_registry,
             )
-            return plan(executor.ctx, ["downstream"], {})[0].cache_key
+            with patch.object(
+                registry.dbt_refs, "manifest_version", return_value=manifest_version
+            ):
+                return plan(executor.ctx, ["downstream"], {})[0].cache_key
 
         assert key_for("v1") != key_for("v2")
 
@@ -353,8 +346,9 @@ class TestQueryResultCacheProtocol:
 
     def test_executor_accepts_protocol_backend(self):
         """Executor constructed with a fake Protocol backend runs without error."""
-        from dbt_charts.core.execute import Executor
         from dbt_charts.core.execute.cache_backend import QueryResultCache
+
+        from .._run import Run
 
         class NoopCache:
             def get(self, source_hash, query_hash, variables_hash, *, ttl=None):
@@ -387,20 +381,12 @@ class TestQueryResultCacheProtocol:
         assert isinstance(NoopCache(), QueryResultCache)
 
         result = compile(BOARD_YAML_A)
-        ok = Mock()
-        ok.is_success = True
-        ok.data = [{"amount": 1}]
-        ok.schema = rows_schema(ok.data)
-        ok.resolved_relations = None
-        ok.truncated_reason = None
-        mock_registry = Mock()
-        mock_registry.project_file_sources.return_value = {}
-        mock_registry.execute.return_value = ok
+        mock_registry = scripted_env(ScriptedBackend([{"amount": 1}]))
 
         noop = NoopCache()
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=mock_registry,
+            env=mock_registry,
             query_registry=result.query_registry,
             result_cache=noop,
         )

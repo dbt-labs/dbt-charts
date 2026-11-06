@@ -33,9 +33,11 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
     resolve_style_and_context,
 )
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.project import Project
+
+from ..._run import Run
 
 _ZERO_PADDING = PaddingStyle(left=0.0, right=0.0, top=0.0, bottom=0.0)
 
@@ -65,8 +67,10 @@ class TestRenderChartItemReturnsActualHeight:
         from dbt_charts.core.render.chart.rendering import render_chart_item
 
         chart = make_chart("bar", x="category", y="value")
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-        executor.execute_chart.return_value = [
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
+        executor.execute_query.return_value = [
             {"category": "A", "value": 10},
             {"category": "B", "value": 20},
         ]
@@ -95,8 +99,10 @@ class TestRenderChartItemReturnsActualHeight:
         from dbt_charts.core.render.chart.rendering import render_chart_item
 
         chart = make_chart("bar", x="category", y="value")
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-        executor.execute_chart.return_value = [
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
+        executor.execute_query.return_value = [
             {"category": "A", "value": 10},
             {"category": "B", "value": 20},
         ]
@@ -129,8 +135,10 @@ class TestRenderChartItemReturnsActualHeight:
         from dbt_charts.core.render.chart.rendering import render_chart_item
 
         chart = make_chart("kpi", x=None, y=None, value="value")
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-        executor.execute_chart.return_value = [{"value": 42}]
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
+        executor.execute_query.return_value = [{"value": 42}]
 
         # Use a height comfortably above the KPI fixed-slot minimum so the
         # renderer respects what was passed.
@@ -192,9 +200,9 @@ rows:
 """
         )
         assert result.success and result.board is not None
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
@@ -584,7 +592,7 @@ class TestRenderChartItemAcceptsResolvedChart:
         from dbt_charts.core.compile.compiler import compile
         from dbt_charts.core.compile.config import reset_config
         from dbt_charts.core.compile.resolve.style.board import resolve_style
-        from dbt_charts.core.execute.executor import Executor
+        from dbt_charts.core.execute.query_results import QueryResults
         from dbt_charts.core.render.board_resolve import (
             build_resolved_board_static as resolve_board,
         )
@@ -617,8 +625,10 @@ charts:
         resolved_chart = chart_items[0].chart
         assert resolved_chart is not None
 
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-        executor.execute_chart.return_value = [{"category": "A", "value": 10}]
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
+        executor.execute_query.return_value = [{"category": "A", "value": 10}]
 
         svg, height = render_chart_item(
             resolved_chart,

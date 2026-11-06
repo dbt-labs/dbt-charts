@@ -8,7 +8,7 @@ use serde_json::Value;
 use super::Plane;
 use diagnostic::codes;
 use diagnostic::Diagnostic;
-use crate::time_axis::date_text_day;
+use ::bind::time_axis::date_text_day;
 
 /// A number, or an ISO date (`YYYY-MM-DD[THH:MM[:SS]]`). Dates are never numbers.
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -454,6 +454,17 @@ impl Annotation {
     /// Days of every date it places on x: its anchor, range bounds and trend samples.
     pub fn x_days(&self) -> impl Iterator<Item = f64> + '_ {
         self.x_scalars().filter_map(Scalar::days)
+    }
+
+    /// Days of the dates it places on x that grow the axis domain: a point and
+    /// a trend's samples. A range never does.
+    pub fn x_point_days(&self) -> impl Iterator<Item = f64> + '_ {
+        let point: Option<&Scalar> = match &self.x {
+            Some(Anchor::Value { value }) => Some(value),
+            _ => None,
+        };
+        let trend = self.trend.iter().flat_map(|t| t.line.iter().map(|(x, _)| x));
+        point.into_iter().chain(trend).filter_map(Scalar::days)
     }
 
     /// Whole days of the dates it places on x that a bucket scaffold must

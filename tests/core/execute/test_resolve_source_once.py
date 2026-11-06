@@ -20,14 +20,15 @@ from dbt_charts.core.diagnostics import ERR_SOURCE_NOT_NAMED
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
 from dbt_charts.core.dialects import SQLDialect
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 from dbt_charts.core.execute.backends.base import BackendRegistry
 from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.env import ExecEnv, make_exec_env
 from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.source_resolver import SourceResolver
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+from ..._run import Run
 
 
 class _RowsBackend:
@@ -45,10 +46,10 @@ class _RowsBackend:
 
 def _registry(
     local_project: Callable[..., FilesystemProject],
-) -> tuple[AdapterRegistry, MagicMock]:
+) -> tuple[ExecEnv, MagicMock]:
     resolver = MagicMock(spec=SourceResolver)
     resolver.resolve.return_value = DuckDBSourceConfig(type="duckdb", path=":memory:")
-    registry = AdapterRegistry(
+    registry = make_exec_env(
         project=local_project(Path()),
         resolver=resolver,
         backends=BackendRegistry({"duckdb": _RowsBackend()}),
@@ -82,9 +83,9 @@ def test_each_query_resolves_its_source_once(
 ) -> None:
     registry, resolver = _registry(local_project)
     compiled = compile_board(_BOARD)
-    executor = Executor(
+    executor = Run(
         compiled.board,
-        adapter_registry=registry,
+        env=registry,
         query_registry=compiled.query_registry,
         result_cache=TrivialDuckDBCache(db_path=tmp_path / "c.duckdb"),
     )
@@ -103,9 +104,9 @@ def test_incremental_tail_reuses_the_resolved_source(
 
     def run() -> MagicMock:
         registry, resolver = _registry(local_project)
-        Executor(
+        Run(
             compiled.board,
-            adapter_registry=registry,
+            env=registry,
             query_registry=compiled.query_registry,
             result_cache=cache,
         ).execute_query("plain")
@@ -124,9 +125,9 @@ def test_unresolvable_source_keeps_the_resolver_error_fields(
         ERR_SOURCE_NOT_NAMED, available=["db"]
     )
     compiled = compile_board(_BOARD)
-    executor = Executor(
+    executor = Run(
         compiled.board,
-        adapter_registry=registry,
+        env=registry,
         query_registry=compiled.query_registry,
         result_cache=TrivialDuckDBCache(db_path=tmp_path / "c.duckdb"),
     )
@@ -149,9 +150,9 @@ def test_a_resolver_failure_is_that_querys_error_and_is_recorded(
     resolver.resolve.side_effect = failure
     compiled = compile_board(_BOARD)
     cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
-    executor = Executor(
+    executor = Run(
         compiled.board,
-        adapter_registry=registry,
+        env=registry,
         query_registry=compiled.query_registry,
         result_cache=cache,
     )
@@ -169,10 +170,10 @@ def test_a_cached_query_is_served_without_resolving(
     compiled = compile_board(_BOARD)
     cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
 
-    def executor_for(registry: AdapterRegistry) -> Executor:
-        return Executor(
+    def executor_for(registry: ExecEnv) -> Run:
+        return Run(
             compiled.board,
-            adapter_registry=registry,
+            env=registry,
             query_registry=compiled.query_registry,
             result_cache=cache,
         )
@@ -202,9 +203,9 @@ def test_a_dbt_jinja_query_with_an_unresolvable_source_fails_as_that_query(
     resolver.resolve.side_effect = failure
     compiled = compile_board(_JINJA_BOARD)
     cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
-    executor = Executor(
+    executor = Run(
         compiled.board,
-        adapter_registry=registry,
+        env=registry,
         query_registry=compiled.query_registry,
         result_cache=cache,
     )
@@ -222,13 +223,13 @@ def test_an_unreadable_manifest_does_not_escape_the_cache_key(
     local_project: Callable[..., FilesystemProject], tmp_path: Path
 ) -> None:
     registry, _ = _registry(local_project)
-    registry.dbt_manifest_version = MagicMock(  # type: ignore[method-assign] — stub the manifest read
+    registry.dbt_refs.manifest_version = MagicMock(  # type: ignore[method-assign] — stub the manifest read
         side_effect=ExecutionError("manifest unreadable")
     )
     compiled = compile_board(_JINJA_BOARD)
-    executor = Executor(
+    executor = Run(
         compiled.board,
-        adapter_registry=registry,
+        env=registry,
         query_registry=compiled.query_registry,
         result_cache=TrivialDuckDBCache(db_path=tmp_path / "c.duckdb"),
     )

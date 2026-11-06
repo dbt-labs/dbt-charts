@@ -24,7 +24,7 @@ from dbt_charts.core.render.chart.series_label_truncation import (
 from dbt_charts.core.render.warnings import series_label_truncated as detector
 from dbt_charts.core.render.warnings.base import WarningContext
 
-from ..._results import rows_schema
+from ..._scripted_env import ScriptedBackend, scripted_env
 from ...core._board_utils import make_test_resolved_board, make_test_resolved_chart
 
 _LONG = "Enterprise Cloud Data Integration Platform — North America Region West"
@@ -147,24 +147,19 @@ def test_render_dashboard_fires_the_warning_for_a_long_color_column(
     DETECTORS entry in registry.py would leave this failing while every unit
     test above still passes.
     """
-    from unittest.mock import Mock
 
     from dbt_charts.core.board import render_dashboard
     from dbt_charts.core.project import InMemoryBoard
 
     def _render(segment: str) -> set[str]:
-        ok = Mock()
-        ok.is_success = True
-        ok.data = [
-            {"month": month, "revenue": value, "segment": segment}
-            for month, value in (("2024-01-01", 10), ("2024-02-01", 20))
-        ]
-        ok.schema = rows_schema(ok.data)
-        ok.resolved_relations = None
-        ok.truncated_reason = None
-        registry = Mock()
-        registry.execute.return_value = ok
-        registry.project_file_sources.return_value = {}
+        registry = scripted_env(
+            ScriptedBackend(
+                [
+                    {"month": month, "revenue": value, "segment": segment}
+                    for month, value in (("2024-01-01", 10), ("2024-02-01", 20))
+                ]
+            )
+        )
         project = local_project(tmp_path)
         board = InMemoryBoard(
             """
@@ -186,7 +181,7 @@ rows:
         )
         result = render_dashboard(
             board=board,
-            adapter_registry=registry,
+            env=registry,
             format="json",
             project=project,
             result_cache=None,

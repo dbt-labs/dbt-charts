@@ -19,7 +19,7 @@ from xml.etree import ElementTree
 import pytest
 
 from dbt_charts.core.board import BoardRenderResult, render_dashboard
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env, make_exec_env
 from dbt_charts.core.project import BoardFile, InMemoryBoard
 
 from ...conftest import InMemoryProject
@@ -48,7 +48,7 @@ def _render(
         board=board or project.path("sales.yml").read_board(),
         variables=variables,
         project=project,
-        adapter_registry=build_adapter_registry(project, read_only=False),
+        env=build_exec_env(project, read_only=False),
         result_cache=None,
         format="svg",
     )
@@ -386,19 +386,19 @@ class TestErrorScope:
 
 def test_a_render_with_no_project_reports_the_image() -> None:
     from dbt_charts.core.compile import compile
-    from dbt_charts.core.execute import Executor
-    from dbt_charts.core.execute.adapters import AdapterRegistry
     from dbt_charts.core.render.renderer import render
+
+    from ..._run import Run
 
     result = compile("text: '![l](logo.svg)'\n")
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=AdapterRegistry(project=InMemoryProject(Path("/p"), {})),
+        env=make_exec_env(project=InMemoryProject(Path("/p"), {})),
         query_registry=result.query_registry,
         result_cache=None,
     )
-    rendered = render(result.board, executor)
+    rendered = render(result.board, executor.ctx, executor.ledger)
     assert [e.code for e in rendered.chart_errors] == ["ERR-IMAGE-REF-UNRESOLVED"]
     assert "no project" in rendered.chart_errors[0].message
 
@@ -469,7 +469,7 @@ def test_json_output_does_not_expose_the_provenance_directory() -> None:
     result = render_dashboard(
         board=project.path("sales.yml").read_board(),
         project=project,
-        adapter_registry=build_adapter_registry(project, read_only=False),
+        env=build_exec_env(project, read_only=False),
         result_cache=None,
         format="json",
     )

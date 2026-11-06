@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any
+from unittest.mock import Mock
 
 import pytest
 from pydantic import BaseModel
@@ -20,6 +21,7 @@ from pytest_postgresql import factories
 from dbt_charts._render_tz import pin_vl_convert_tz_utc
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import ProjectSourcesConfig
+from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     BarChart,
@@ -34,9 +36,14 @@ from dbt_charts.core.compile.models.chart.normalized import (
     SparkBarChart,
     TableChart,
 )
-from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.compile.models.query.normalized import AnyQuery, SqlQuery
+from dbt_charts.core.compile.models.source import ResolvedSourceConfig
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.diagnostics.registry import DiagnosticCode
+from dbt_charts.core.execute import run as run_stage
+from dbt_charts.core.execute.env import ExecEnv
+from dbt_charts.core.execute.query_result import QueryParams, QueryResult
+from dbt_charts.core.execute.run import Route
 from dbt_charts.core.project import (
     ALL_FILES_GLOB,
     SKIP_SCAN_DIRS,
@@ -228,6 +235,29 @@ def unset_dbt_target_path(monkeypatch: pytest.MonkeyPatch) -> None:
     """DBT_TARGET_PATH moves where manifests are read from; a developer's shell
     value must not reach a test that expects dbt's default location."""
     monkeypatch.delenv("DBT_TARGET_PATH", raising=False)
+
+
+@pytest.fixture
+def routes(monkeypatch: pytest.MonkeyPatch) -> Mock:
+    """Stands in for the run stage: a test that names this fixture scripts what every
+    route returns. Configure ``return_value`` or ``side_effect`` with ``QueryResult``s
+    (or an exception to raise); the mock is called with the run's query."""
+    answer = Mock()
+
+    def run_route(
+        _env: ExecEnv,
+        _route: Route,
+        query: AnyQuery,
+        _variables: VariableValues | None,
+        _params: QueryParams,
+        _board: Board | None,
+        _query_name: str,
+        _source: ResolvedSourceConfig | None,
+    ) -> QueryResult:
+        return answer(query)
+
+    monkeypatch.setattr(run_stage, "run_route", run_route)
+    return answer
 
 
 @pytest.fixture(autouse=True)

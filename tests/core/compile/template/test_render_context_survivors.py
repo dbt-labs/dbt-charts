@@ -206,7 +206,7 @@ class TestResolveJinjaTemplateContext:
         """filter_helpers is not a general mechanism for adding a new context
         callable — only RESERVED_FILTER_HELPER_NAMES may be bound. Without
         this guard, a future caller widening the mapping (today's one
-        production caller is execute/adapters/dbt_profile.py) would pass
+        production caller is execute/backends/dbt_profile.py) would pass
         every helper it names into every board-SQL render silently."""
         assert {"filter", "filter_date_range"} == RESERVED_FILTER_HELPER_NAMES
         with pytest.raises(CompilationError, match="filter_helpers"):
@@ -409,6 +409,17 @@ class TestLabelsEnvContext:
         (runs on every rendered expression) — pin its one behavior change
         from Jinja's default (str(None) -> "None")."""
         assert label_jinja_env().from_string("{{ value }}").render(value=None) == ""
+
+    def test_display_text_finalize_is_print_text_value(self) -> None:
+        """The display-text environment's finalize decides how a multiselect,
+        mapping or daterange prints in every title and text — pinned by
+        identity so a swap or removal trips the gate."""
+        from dbt_charts.core.compile.template.jinja import (
+            _jinja_env_text,
+            _print_text_value,
+        )
+
+        assert _jinja_env_text.finalize is _print_text_value
 
     def test_pie_label_context_is_exactly_row_plus_index_markers_plus_pie_extras(
         self, monkeypatch: pytest.MonkeyPatch

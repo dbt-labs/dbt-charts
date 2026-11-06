@@ -11,14 +11,11 @@ sink being opened in the wrong pass.
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import Mock
-
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
-from ..._results import rows_schema
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, rows_by_sql, scripted_env
 
 _CODE = "WARN-LAYER-X-DOMAIN-PAINT-ORDER"
 
@@ -66,31 +63,21 @@ rows:
 """
 
 
-def _make_executor(board: object, query_registry: object, layer_rows: list[dict]):
+def _make_executor(board: object, query_registry: dict, layer_rows: list[dict]):
     rows_by_query = {"base": _BASE_ROWS, "overlay": layer_rows}
-
-    def _execute(_query: object, _variables: object, **kwargs: Any) -> Mock:
-        ok = Mock()
-        ok.is_success = True
-        ok.data = rows_by_query[kwargs["query_name"]]
-        ok.schema = rows_schema(ok.data)
-        ok.resolved_relations = None
-        ok.truncated_reason = None
-        return ok
-
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.side_effect = _execute
-    return Executor(
-        board, adapter_registry=mock_registry, query_registry=query_registry
+    backend = ScriptedBackend(
+        side_effect=rows_by_sql(
+            {query_registry[name].sql: rows for name, rows in rows_by_query.items()}
+        )
     )
+    return Run(board, env=scripted_env(backend), query_registry=query_registry)
 
 
 def _render(layer_rows: list[dict]):
     result = compile(_BOARD)
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, layer_rows)
-    return render(result.board, executor, format="svg")
+    return render(result.board, executor.ctx, executor.ledger, format="svg")
 
 
 def test_layer_only_categories_on_an_unorderable_axis_warn() -> None:

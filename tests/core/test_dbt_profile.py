@@ -17,7 +17,7 @@ class TestReadTargetDict:
         The old `startswith('config')` filter hid such profiles — exact != 'config'
         is the fix.
         """
-        from dbt_charts.core.execute.adapters.dbt_profile import _read_target_dict
+        from dbt_charts.core.execute.backends.dbt_profile import _read_target_dict
 
         (tmp_path / "profiles.yml").write_text(
             "config_dev:\n"
@@ -38,7 +38,7 @@ class TestReadTargetDictWithoutProject:
     def test_relative_path_stays_relative_and_profile_comes_from_env_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from dbt_charts.core.execute.adapters.dbt_profile import _read_target_dict
+        from dbt_charts.core.execute.backends.dbt_profile import _read_target_dict
 
         (tmp_path / "profiles.yml").write_text(
             "demo:\n"
@@ -56,7 +56,7 @@ class TestReadTargetDictWithoutProject:
     def test_missing_profile_error_names_the_profiles_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from dbt_charts.core.execute.adapters.dbt_profile import _read_target_dict
+        from dbt_charts.core.execute.backends.dbt_profile import _read_target_dict
 
         (tmp_path / "profiles.yml").write_text(
             "demo:\n  outputs:\n    dev:\n      type: duckdb\n"
@@ -98,10 +98,10 @@ class TestMissingAdapterPackage:
         import sys
 
         from dbt_charts.core.diagnostics import ERR_ADAPTER_NOT_INSTALLED
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import (
             AdapterNotInstalledError,
         )
-        from dbt_charts.core.execute.adapters.dbt_profile import _read_target_dict
+        from dbt_charts.core.execute.backends.dbt_profile import _read_target_dict
 
         self._write_profile(tmp_path, "snowflake")
         monkeypatch.setitem(sys.modules, "dbt.adapters.snowflake", None)
@@ -116,7 +116,7 @@ class TestMissingAdapterPackage:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A type dbt Charts has no mapping for keeps dbt's own text."""
-        from dbt_charts.core.execute.adapters.dbt_profile import _read_target_dict
+        from dbt_charts.core.execute.backends.dbt_profile import _read_target_dict
 
         self._write_profile(tmp_path, "sqlserver")
         monkeypatch.setattr("dbt.adapters.factory.load_plugin", self._plugin_not_found)
@@ -130,7 +130,7 @@ class TestReadProfilesYml:
 
     def test_empty_profiles_yml_raises_value_error(self, tmp_path: Path) -> None:
         """An empty profiles.yml (safe_load → None) must raise ValueError, not return {}."""
-        from dbt_charts.core.execute.adapters.dbt_profile import _read_profiles_yml
+        from dbt_charts.core.execute.backends.dbt_profile import _read_profiles_yml
 
         (tmp_path / "profiles.yml").write_text("")
         with pytest.raises(ValueError, match="did not parse to a mapping"):
@@ -138,7 +138,7 @@ class TestReadProfilesYml:
 
     def test_non_mapping_profiles_yml_raises_value_error(self, tmp_path: Path) -> None:
         """A profiles.yml containing only a list raises ValueError."""
-        from dbt_charts.core.execute.adapters.dbt_profile import _read_profiles_yml
+        from dbt_charts.core.execute.backends.dbt_profile import _read_profiles_yml
 
         (tmp_path / "profiles.yml").write_text("- just\n- a\n- list\n")
         with pytest.raises(ValueError, match="did not parse to a mapping"):
@@ -146,7 +146,7 @@ class TestReadProfilesYml:
 
     def test_valid_profiles_yml_returns_dict(self, tmp_path: Path) -> None:
         """A well-formed profiles.yml returns a dict."""
-        from dbt_charts.core.execute.adapters.dbt_profile import _read_profiles_yml
+        from dbt_charts.core.execute.backends.dbt_profile import _read_profiles_yml
 
         (tmp_path / "profiles.yml").write_text(
             "myprofile:\n  outputs:\n    dev:\n      type: duckdb\n"

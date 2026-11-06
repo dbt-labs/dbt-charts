@@ -799,20 +799,24 @@ class TestBuiltinVariables:
     ) -> None:
         """render() must accept a builtin_variables kwarg and expose its values in templates."""
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import AdapterRegistry
+        from dbt_charts.core.execute.env import make_exec_env
         from dbt_charts.core.render.renderer import render
+
+        from ..._run import Run
 
         result = compile("title: Test\ntext: val={{ builtin_key }}\n")
         assert result.board is not None
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=AdapterRegistry(project=local_project(Path())),
+            env=make_exec_env(project=local_project(Path())),
             query_registry=result.query_registry,
             result_cache=None,
         )
         render_result = render(
-            result.board, executor, builtin_variables={"builtin_key": "hello"}
+            result.board,
+            executor.ctx,
+            executor.ledger,
+            builtin_variables={"builtin_key": "hello"},
         )
         assert render_result.output is not None
         assert "val=hello" in str(render_result.output)
@@ -822,25 +826,27 @@ class TestBuiltinVariables:
     ) -> None:
         """User-declared variable defaults shadow builtin_variables (builtin goes in first)."""
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import AdapterRegistry
+        from dbt_charts.core.execute.env import make_exec_env
         from dbt_charts.core.render.renderer import render
+
+        from ..._run import Run
 
         result = compile(
             "title: Precedence\ntext: val={{ my_var }}\n"
             "variables:\n  my_var:\n    default: from_var\n"
         )
         assert result.board is not None
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=AdapterRegistry(project=local_project(Path())),
+            env=make_exec_env(project=local_project(Path())),
             query_registry=result.query_registry,
             result_cache=None,
         )
         # builtin supplies "from_builtin"; user registry default "from_var" must win
         render_result = render(
             result.board,
-            executor,
+            executor.ctx,
+            executor.ledger,
             builtin_variables={"my_var": "from_builtin"},
         )
         assert render_result.output is not None
@@ -856,22 +862,24 @@ class TestBuiltinVariables:
         two precedence layers.
         """
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import AdapterRegistry
+        from dbt_charts.core.execute.env import make_exec_env
         from dbt_charts.core.render.renderer import render
+
+        from ..._run import Run
 
         result = compile("title: Runtime Shadow\ntext: val={{ my_var }}\n")
         assert result.board is not None
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=AdapterRegistry(project=local_project(Path())),
+            env=make_exec_env(project=local_project(Path())),
             query_registry=result.query_registry,
             result_cache=None,
         )
         # builtin supplies "from_builtin"; runtime caller passes "from_url" — must win
         render_result = render(
             result.board,
-            executor,
+            executor.ctx,
+            executor.ledger,
             variables={"my_var": "from_url"},
             builtin_variables={"my_var": "from_builtin"},
         )
@@ -883,20 +891,23 @@ class TestBuiltinVariables:
     ) -> None:
         """builtin_variables=None must work the same as omitting it."""
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import AdapterRegistry
+        from dbt_charts.core.execute.env import make_exec_env
         from dbt_charts.core.render.renderer import render
+
+        from ..._run import Run
 
         result = compile("title: Test\ntext: val={{ builtin_key }}\n")
         assert result.board is not None
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=AdapterRegistry(project=local_project(Path())),
+            env=make_exec_env(project=local_project(Path())),
             query_registry=result.query_registry,
             result_cache=None,
         )
         # builtin_key is undefined — Jinja renders '' for undefined
-        render_result = render(result.board, executor, builtin_variables=None)
+        render_result = render(
+            result.board, executor.ctx, executor.ledger, builtin_variables=None
+        )
         assert render_result.output is not None
 
 
@@ -908,7 +919,7 @@ class TestDirContextThroughCallers:
     ) -> None:
         """render_dashboard must inject this_dir.name so a board can render the dirname."""
         from dbt_charts.core.board import render_dashboard
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env, close_env
 
         reports = tmp_path / "charts" / "reports"
         reports.mkdir(parents=True)
@@ -916,17 +927,17 @@ class TestDirContextThroughCallers:
         board_path.write_text("title: Dir Test\ntext: dn={{ this_dir.name }}\n")
 
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=True)
+        registry = build_exec_env(project, read_only=True)
         try:
             result = render_dashboard(
                 board=project.path("charts/reports/dash.yml").read_board(),
                 project=project,
-                adapter_registry=registry,
+                env=registry,
                 result_cache=None,
                 format="svg",
             )
         finally:
-            registry.close()
+            close_env(registry)
 
         assert result.status == "ok"
         assert result.data is not None
@@ -944,7 +955,7 @@ class TestDirContextThroughCallers:
         its own once builtin_variables is supplied.
         """
         from dbt_charts.core.board import render_dashboard
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env, close_env
         from dbt_charts.core.project import InMemoryBoard
         from dbt_charts.core.render.dir_context import lazy_dir_context
 
@@ -953,20 +964,20 @@ class TestDirContextThroughCallers:
         yaml_content = "title: Dir Test\ntext: dn={{ this_dir.name }}\n"
 
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=True)
+        registry = build_exec_env(project, read_only=True)
         try:
             result = render_dashboard(
                 board=InMemoryBoard(
                     yaml_content, path=project.path("charts/_elsewhere.yml")
                 ),
                 project=project,
-                adapter_registry=registry,
+                env=registry,
                 result_cache=None,
                 builtin_variables=lazy_dir_context(project.directory("charts/reports")),
                 format="svg",
             )
         finally:
-            registry.close()
+            close_env(registry)
 
         assert result.status == "ok"
         assert "dn=reports" in str(result.data)
@@ -979,11 +990,11 @@ class TestDirContextThroughCallers:
         real anchor to trigger a filesystem dir scan (matching the Cloud
         git-blob path, which never has a local anchor to scan)."""
         from dbt_charts.core.board import render_dashboard
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env, close_env
         from dbt_charts.core.project import InMemoryBoard
 
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=True)
+        registry = build_exec_env(project, read_only=True)
         yaml_content = (
             "title: InMemory\n"
             "text: has_dir={{ 'yes' if this_dir is defined else 'no' }}\n"
@@ -994,19 +1005,19 @@ class TestDirContextThroughCallers:
             located = render_dashboard(
                 board=project.path("charts/_t.yml").read_board(),
                 project=project,
-                adapter_registry=registry,
+                env=registry,
                 result_cache=None,
                 format="svg",
             )
             pathless = render_dashboard(
                 board=InMemoryBoard(yaml_content, path=None),
                 project=project,
-                adapter_registry=registry,
+                env=registry,
                 result_cache=None,
                 format="svg",
             )
         finally:
-            registry.close()
+            close_env(registry)
 
         assert located.status == "ok"
         assert "has_dir=yes" in str(located.data)
@@ -1019,11 +1030,11 @@ class TestDirContextThroughCallers:
         """A caller can still opt out of dir-nav injection via an explicit
         empty builtin_variables override."""
         from dbt_charts.core.board import render_dashboard
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env, close_env
         from dbt_charts.core.project import InMemoryBoard
 
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=True)
+        registry = build_exec_env(project, read_only=True)
         yaml_content = (
             "title: InMemory\n"
             "text: has_dir={{ 'yes' if this_dir is defined else 'no' }}\n"
@@ -1032,13 +1043,13 @@ class TestDirContextThroughCallers:
             result = render_dashboard(
                 board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
                 project=project,
-                adapter_registry=registry,
+                env=registry,
                 result_cache=None,
                 builtin_variables={},
                 format="svg",
             )
         finally:
-            registry.close()
+            close_env(registry)
 
         assert result.status == "ok"
         assert "has_dir=no" in str(result.data)

@@ -1,0 +1,12 @@
+[package]
+name = "migrate"
+version = "0.0.1"
+edition = "2021"
+description = "Grammar migrations over a spanned yaml Node: shape recognition against frozen JSON Schemas, declared moves and deletions, span-addressed edits."
+
+[dependencies]
+yaml = { path = "../yaml" }
+indexmap = { version = "2", features = ["serde"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+fancy-regex = "0.19"
+

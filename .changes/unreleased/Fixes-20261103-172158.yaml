@@ -1,0 +1,3 @@
+kind: Fixes
+body: A click-to-filter link on a dated line or scatter x now carries the row's ISO date instead of 0NaN-NaN-NaN.
+time: 2026-11-03T17:21:58.117826-08:00

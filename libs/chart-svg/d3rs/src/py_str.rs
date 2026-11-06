@@ -8,6 +8,19 @@ pub fn is_py_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 
+/// `DividerStyle._space_separated`: a dash pattern stripped of Python's
+/// whitespace set, its `[ ,]+` separators joined by single spaces. The one
+/// reading `compile` and `board-model` share, for input the `Dasharray`
+/// pattern admits.
+pub fn dash_pattern_separated(value: &str) -> String {
+    value
+        .trim_matches(is_py_space)
+        .split([' ', ','])
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Collapse multiple whitespace runs to a single space and strip edges.
 /// Mirrors Python's `" ".join(text.split())`.
 pub fn normalize_whitespace(text: &str) -> String {

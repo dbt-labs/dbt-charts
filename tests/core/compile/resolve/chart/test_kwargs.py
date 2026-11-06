@@ -21,8 +21,9 @@ from typing import Any
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
+
+from ....._run import Run
 
 # Board palette has plenty of capacity for the field (4 values, slots 0-3),
 # but `narrow`'s own chart-local palette has only 3 stops -- too short to
@@ -67,14 +68,14 @@ rows:
 
 def _resolve_board(
     yaml_content: str, resolve_errors: dict[str, Any] | None = None
-) -> tuple[Any, Executor]:
+) -> tuple[Any, Run]:
     from dbt_charts.core.render.board_resolve import build_resolved_board
 
     result = compile(yaml_content)
     assert result.success and result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        env=build_exec_env(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
     )
     kwargs: dict[str, Any] = (

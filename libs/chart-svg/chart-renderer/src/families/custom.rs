@@ -312,7 +312,7 @@ fn format_filter(
             if spec.is_empty() {
                 return Ok(value.to_string());
             }
-            crate::number_locale::d3_format(&spec, n)
+            ::bind::formats::locale::d3_format(&spec, n)
                 .map_err(invalid)
                 .map(Into::into)
         }
@@ -1209,8 +1209,8 @@ mod tests {
             "padding": null,
             "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},
                 "font": FAMILY,
-                "format_locale": crate::number_locale::en_us_wire(),
-                "time_locale": crate::time_locale::en_us_wire(),
+                "format_locale": ::bind::formats::locale::en_us_wire(),
+                "time_locale": ::bind::time_locale::en_us_wire(),
                 "sub_unit_specs": {"currency": "$,.2f", "number": ",.2f"},
             },
             "variables": {"region": "North"},
@@ -1441,7 +1441,7 @@ mod tests {
         );
         assert!(svg.contains("<text>0.0 0.2 0.4 0.6 0.8 1.0 | 0.8M 40% 3,000</text>"), "{svg}");
         let p = payload("{{ d3.scale_linear([0, 1000], [0, 1]).tick_format(5, ',.1f')(1234.5) }}", |_| {});
-        let svg = crate::number_locale::with_number_locale(&crate::number_locale::de_de(), || {
+        let svg = ::bind::formats::locale::with_number_locale(&::bind::formats::locale::de_de(), || {
             render(&p, &test_fonts()).unwrap()
         });
         assert!(svg.contains("1.234,5"), "{svg}");
@@ -1823,7 +1823,7 @@ mod tests {
     // `d3rs/tests/oracle/d3` (`scale_utc.json`, `time_format.json`).
     #[test]
     fn d3_scale_utc_maps_ticks_and_nices_like_d3() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let svg = template_svg(
             "{% set x = d3.scale_utc(['2024-02-14T05:07:00Z', 1711343220000], [10, 410]) %}<text>{{ x(1708751220000) }} {{ x('2024-02-14T05:07:00') }} {{ x.invert(210) }} {{ x.domain }} {{ x.range }}</text>\
              {% set y = d3.scale_utc(['2024-02-14T05:07:00Z', '2024-02-26T05:07:00Z'], [0, 1]) %}<text>{{ y.ticks() }}</text><text>{{ y.ticks(5) }}</text>\
@@ -1839,11 +1839,11 @@ mod tests {
     fn d3_time_format_and_tick_format_print_utc_through_the_board_locale() {
         let template = "{% set f = d3.scale_utc([0, 1], [0, 1]).tick_format() %}<text>{% for t in [1710061507089, 1710061507000, 1710061500000, 1710061200000, 1710082800000, 1710201600000, 1710028800000, 1709251200000, 1704067200000] %}{{ f(t) }}|{% endfor %}</text>\
                         <text>{{ d3.time_format('%c')(1577977445007) }} {{ d3.time_format('%A, %d. %B %Y')('2024-02-29T23:30:00Z') }} {{ d3.scale_utc([0, 1], [0, 1]).tick_format(5, '%b')(1710061507089) }}</text>";
-        let _en = crate::time_locale::en_us_scope();
+        let _en = ::bind::time_locale::en_us_scope();
         let svg = template_svg(template);
         assert!(svg.contains("<text>.089|:07|09:05|09 AM|03 PM|Tue 12|Mar 10|March|2024|</text>"), "{svg}");
         assert!(svg.contains("<text>1/2/2020, 3:04:05 PM Thursday, 29. February 2024 Mar</text>"), "{svg}");
-        let german = crate::time_locale::with_time_locale(&crate::time_locale::de_de(), || template_svg(template));
+        let german = ::bind::time_locale::with_time_locale(&::bind::time_locale::de_de(), || template_svg(template));
         assert!(german.contains("<text>.089|:07|09:05|09 AM|03 PM|Di 12|Mrz 10|März|2024|</text>"), "{german}");
         assert!(german.contains("Donnerstag, 29. Februar 2024 Mrz</text>"), "{german}");
     }
@@ -1851,7 +1851,7 @@ mod tests {
     // `new Date(+t)`: a fraction truncates toward zero, as `time_format.json`'s `clip:` cases print.
     #[test]
     fn d3_instants_truncate_to_whole_milliseconds_like_a_date() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let svg = template_svg(
             "<text>{{ d3.time_format('%Q')(1234567.891) }} {{ d3.time_format('%Q')(-1.5) }} {{ d3.time_format('%Q')(-0.5) }} {{ d3.time_format('%Y')(-0.5) }}</text>\
              <text>{{ d3.scale_utc([0.9, 1000.7], [0, 1000]).domain }} {{ d3.scale_utc([0, 1000], [0, 1000])(500.9) }}</text>",
@@ -1862,18 +1862,18 @@ mod tests {
 
     #[test]
     fn d3_time_parse_reads_utc_instants_like_d3() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let svg = template_svg(
             "<text>{{ d3.time_parse('%Y-%m-%dT%H:%M:%S%Z')('2024-03-10T09:05:07+0530') }} {{ d3.time_parse('%Y-%m-%d')('2024-02-30') }} {{ d3.time_parse('%Y-%m-%d')('2024-03') }} {{ d3.time_parse('%Q')('9999999999999999') }}</text>",
         );
         assert!(svg.contains("<text>1710041707000.0 1709251200000.0 None None</text>"), "{svg}");
-        let german = crate::time_locale::with_time_locale(&crate::time_locale::de_de(), || template_svg("<text>{{ d3.time_parse('%d.%m.%Y')('11.03.2024') }}</text>"));
+        let german = ::bind::time_locale::with_time_locale(&::bind::time_locale::de_de(), || template_svg("<text>{{ d3.time_parse('%d.%m.%Y')('11.03.2024') }}</text>"));
         assert!(german.contains("<text>1710115200000.0</text>"), "{german}");
     }
 
     #[test]
     fn d3_misuse_is_an_error_naming_the_call() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         for (template, needle) in [
             ("{{ d3.scale_linear([], [0, 1]) }}", "d3.scale_linear(): domain must be two numbers"),
             ("{{ d3.scale_utc(['2024-01-01'], [0, 1]) }}", "d3.scale_utc(): domain must be two instants [start, stop], got 1 values"),

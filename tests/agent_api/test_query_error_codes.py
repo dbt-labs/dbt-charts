@@ -10,7 +10,7 @@ import pytest
 from dbt_charts.agent_api.query import execute_query, query_board
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.diagnostics.registry import REGISTRY
-from dbt_charts.core.execute.adapters import AdapterRegistry, build_adapter_registry
+from dbt_charts.core.execute.env import ExecEnv, build_exec_env, make_exec_env
 from dbt_charts.core.project import Project
 
 BOARD = """
@@ -43,8 +43,8 @@ def project(
 
 
 @pytest.fixture
-def registry(project: FilesystemProject) -> AdapterRegistry:
-    return build_adapter_registry(project, read_only=False)
+def registry(project: FilesystemProject) -> ExecEnv:
+    return build_exec_env(project, read_only=False)
 
 
 @pytest.mark.parametrize(
@@ -60,17 +60,17 @@ def registry(project: FilesystemProject) -> AdapterRegistry:
     ],
 )
 def test_sql_form_failure_carries_the_classifying_code(
-    registry: AdapterRegistry, sql: str, source: str | None, code: str
+    registry: ExecEnv, sql: str, source: str | None, code: str
 ) -> None:
-    result = execute_query(sql, source=source, adapter_registry=registry)
+    result = execute_query(sql, source=source, env=registry)
 
     assert not result.success
     assert result.error_code == code
     assert REGISTRY.get(code).code == code
 
 
-def test_sql_form_success_has_no_error_code(registry: AdapterRegistry) -> None:
-    result = execute_query("select 1 as a", source="db", adapter_registry=registry)
+def test_sql_form_success_has_no_error_code(registry: ExecEnv) -> None:
+    result = execute_query("select 1 as a", source="db", env=registry)
 
     assert result.success
     assert result.error_code is None
@@ -80,9 +80,9 @@ def test_sql_form_success_has_no_error_code(registry: AdapterRegistry) -> None:
 def test_deployment_without_the_adapter_is_not_internal(
     project: FilesystemProject,
 ) -> None:
-    bare = AdapterRegistry(project=project, project_sources=project.sources)
+    bare = make_exec_env(project=project, project_sources=project.sources)
 
-    result = execute_query("select 1", source="db", adapter_registry=bare)
+    result = execute_query("select 1", source="db", env=bare)
 
     assert result.error_code == "ERR-ADAPTER-UNAVAILABLE"
 
@@ -98,12 +98,12 @@ def test_deployment_without_the_adapter_is_not_internal(
 )
 def test_board_form_failure_carries_the_classifying_code(
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     path: str,
     name: str,
     code: str,
 ) -> None:
-    result = query_board(name, Path(path), project, adapter_registry=registry)
+    result = query_board(name, Path(path), project, env=registry)
 
     assert not result.success
     assert result.error_code == code
@@ -113,11 +113,11 @@ def test_board_form_failure_carries_the_classifying_code(
 def test_board_that_does_not_compile_reports_the_compile_error_code(
     tmp_path: Path,
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
 ) -> None:
     (tmp_path / "broken.yml").write_text("queries:\n  q:\n    sql: select 1\nrows: [")
 
-    result = query_board("q", Path("broken.yml"), project, adapter_registry=registry)
+    result = query_board("q", Path("broken.yml"), project, env=registry)
 
     assert not result.success
     assert result.error_code is not None
@@ -127,9 +127,9 @@ def test_board_that_does_not_compile_reports_the_compile_error_code(
 
 
 def test_board_form_success_has_no_error_code(
-    project: FilesystemProject, registry: AdapterRegistry
+    project: FilesystemProject, registry: ExecEnv
 ) -> None:
-    result = query_board("ok", Path("orders.yml"), project, adapter_registry=registry)
+    result = query_board("ok", Path("orders.yml"), project, env=registry)
 
     assert result.success
     assert result.error_code is None
@@ -137,14 +137,12 @@ def test_board_form_success_has_no_error_code(
 
 def test_an_absolute_board_path_on_a_hosted_project_is_the_callers_argument(
     tmp_path: Path,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     in_memory_project: Callable[..., Project],
 ) -> None:
     hosted = in_memory_project(tmp_path, {"charts/orders.yml": "title: Orders\n"})
 
-    result = query_board(
-        "ok", tmp_path / "charts" / "orders.yml", hosted, adapter_registry=registry
-    )
+    result = query_board("ok", tmp_path / "charts" / "orders.yml", hosted, env=registry)
 
     assert result.error_code == "ERR-TOOL-ARGUMENTS-INVALID"
     assert "charts/orders.yml" in result.errors[0]
@@ -158,9 +156,9 @@ def test_an_absolute_board_path_on_a_hosted_project_is_the_callers_argument(
     ],
 )
 def test_an_inline_file_source_the_caller_got_wrong_carries_the_compile_code(
-    registry: AdapterRegistry, source: str, code: str, reason: str
+    registry: ExecEnv, source: str, code: str, reason: str
 ) -> None:
-    result = execute_query("select 1", source=source, adapter_registry=registry)
+    result = execute_query("select 1", source=source, env=registry)
 
     assert not result.success
     assert result.error_code == code

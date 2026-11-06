@@ -11,7 +11,8 @@ import pytest
 from dbt_charts.agent_api.board_sql import execute_board_sql
 from dbt_charts.agent_api.query import ExecuteQueryResult
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters import AdapterRegistry, build_adapter_registry
+from dbt_charts.core.execute import run as run_stage
+from dbt_charts.core.execute.env import ExecEnv, build_exec_env
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 _BOARD = """
@@ -56,8 +57,8 @@ def project(
 
 
 @pytest.fixture
-def registry(project: FilesystemProject) -> AdapterRegistry:
-    return build_adapter_registry(project, read_only=False)
+def registry(project: FilesystemProject) -> ExecEnv:
+    return build_exec_env(project, read_only=False)
 
 
 @pytest.fixture
@@ -72,7 +73,7 @@ def cache() -> Iterator[TrivialDuckDBCache]:
 def _run(
     sql: str,
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache | None,
     variables: dict[str, Any] | None = None,
 ) -> ExecuteQueryResult:
@@ -86,7 +87,7 @@ _REV_CACHE = "SELECT region, amt FROM {{ queries.rev.cache }}"
 
 def test_a_cold_cache_ref_runs_the_upstream_and_reports_the_miss(
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache,
 ) -> None:
     result = _run(_REV_CACHE, project, registry, cache)
@@ -100,7 +101,7 @@ def test_a_cold_cache_ref_runs_the_upstream_and_reports_the_miss(
 
 def test_a_cached_entry_is_read_with_no_warehouse_call(
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -109,7 +110,7 @@ def test_a_cached_entry_is_read_with_no_warehouse_call(
     def _no_warehouse(*args: object, **kwargs: object) -> None:
         raise AssertionError("the warehouse was called")
 
-    monkeypatch.setattr(registry, "execute", _no_warehouse)
+    monkeypatch.setattr(run_stage, "run_route", _no_warehouse)
     result = _run(
         "SELECT sum(amt) AS total FROM {{ queries.rev.cache }}",
         project,
@@ -128,7 +129,7 @@ def test_a_cached_entry_is_read_with_no_warehouse_call(
 
 def test_two_cache_refs_join_in_one_query(
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache,
 ) -> None:
     sql = (
@@ -153,7 +154,7 @@ def test_two_cache_refs_join_in_one_query(
 
 def test_an_inline_query_ref_runs_fresh_on_the_boards_source(
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache,
 ) -> None:
     result = _run(
@@ -171,7 +172,7 @@ def test_an_inline_query_ref_runs_fresh_on_the_boards_source(
 
 def test_a_variables_override_is_applied_and_selects_its_own_cache_slice(
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache,
 ) -> None:
     us = _run(_REV_CACHE, project, registry, cache)
@@ -185,7 +186,7 @@ def test_a_variables_override_is_applied_and_selects_its_own_cache_slice(
 
 def test_a_variable_the_board_does_not_declare_is_refused(
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache,
 ) -> None:
     result = _run(_REV_CACHE, project, registry, cache, variables={"nope": "x"})
@@ -198,7 +199,7 @@ def test_a_variable_the_board_does_not_declare_is_refused(
 def test_an_unset_variable_binds_as_the_board_renders_it(
     tmp_path: Path,
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache,
 ) -> None:
     (tmp_path / "charts" / "days.yml").write_text(
@@ -230,7 +231,7 @@ rows:
 
 def test_the_transient_query_writes_no_cache_entry(
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache,
 ) -> None:
     _run(_REV_CACHE, project, registry, cache)
@@ -243,7 +244,7 @@ def test_the_transient_query_writes_no_cache_entry(
 
 def test_sql_without_refs_runs_on_the_boards_default_source(
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache,
 ) -> None:
     result = _run("SELECT 41 + 1 AS answer", project, registry, cache)
@@ -254,7 +255,7 @@ def test_sql_without_refs_runs_on_the_boards_default_source(
 
 
 def test_a_cache_ref_with_no_result_cache_is_an_error(
-    project: FilesystemProject, registry: AdapterRegistry
+    project: FilesystemProject, registry: ExecEnv
 ) -> None:
     result = _run(_REV_CACHE, project, registry, None)
 
@@ -267,7 +268,7 @@ def test_a_cache_ref_with_no_result_cache_is_an_error(
 
 def test_a_cache_ref_to_an_uncached_query_is_an_error(
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache,
 ) -> None:
     result = _run(
@@ -280,7 +281,7 @@ def test_a_cache_ref_to_an_uncached_query_is_an_error(
 
 def test_mutating_sql_is_refused(
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache,
 ) -> None:
     result = _run("DROP TABLE t", project, registry, cache)
@@ -291,7 +292,7 @@ def test_mutating_sql_is_refused(
 
 def test_a_missing_board_is_a_structured_failure(
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache,
 ) -> None:
     result = execute_board_sql("SELECT 1", Path("nope.yml"), project, registry, cache)
@@ -302,7 +303,7 @@ def test_a_missing_board_is_a_structured_failure(
 
 def test_rows_are_cut_at_the_limit(
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache,
 ) -> None:
     result = execute_board_sql(
@@ -320,7 +321,7 @@ def test_rows_are_cut_at_the_limit(
 
 def test_a_board_without_a_default_source_lends_the_referenced_querys(
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache,
 ) -> None:
     """Queries that name their own source and a board that names none: SQL
@@ -377,7 +378,7 @@ def test_a_board_without_a_default_source_lends_the_referenced_querys(
 
 def test_bad_sql_over_cached_rows_is_a_structured_failure(
     project: FilesystemProject,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     cache: TrivialDuckDBCache,
 ) -> None:
     result = _run("SELECT nope FROM {{ queries.rev.cache }}", project, registry, cache)

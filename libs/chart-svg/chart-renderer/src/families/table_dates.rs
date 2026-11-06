@@ -6,7 +6,7 @@
 
 use column_types::ColumnType;
 
-use crate::time_locale::active_time_locale;
+use ::bind::time_locale::active_time_locale;
 use d3rs::calendar::{civil_from_days, days_from_civil, days_in_month, is_leap_year, weekday};
 
 /// glibc's C-locale `%h`, which `portable_strftime` leaves to the host
@@ -197,7 +197,7 @@ pub(super) fn parse_temporal(
 ) -> Result<Option<Moment>, TemporalError> {
     let utc = match declared {
         ColumnType::DatetimeTz => true,
-        ColumnType::String => crate::time_zone::is_aware(value),
+        ColumnType::String => ::bind::time_zone::is_aware(value),
         _ if declared.is_temporal() => false,
         _ => return Ok(None),
     };
@@ -473,8 +473,8 @@ pub(super) fn strftime(m: Moment, spec: &str) -> Result<String, String> {
         return wall_strftime(m, None, spec);
     }
     let instant = m.epoch_millis();
-    let wall = crate::time_zone::wall_ms(instant)?;
-    let (offset, name) = crate::time_zone::zone_names(instant)?;
+    let wall = ::bind::time_zone::wall_ms(instant)?;
+    let (offset, name) = ::bind::time_zone::zone_names(instant)?;
     let zone = Zone { offset, name, instant };
     wall_strftime(Moment { micro: m.micro, ..Moment::from_epoch_millis(wall)? }, Some(&zone), spec)
 }
@@ -559,7 +559,7 @@ fn wall_strftime(m: Moment, zone: Option<&Zone>, spec: &str) -> Result<String, S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::time_locale::{de_de, en_us, with_time_locale};
+    use ::bind::time_locale::{de_de, en_us, with_time_locale};
     use d3rs::time_format::Locale;
 
     fn in_locale(locale: &Locale, m: Moment, spec: &str) -> Result<String, String> {
@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn an_aware_cell_prints_in_the_board_zone_and_a_naive_one_as_written() {
-        let _zone = crate::time_zone::zone_scope("America/New_York");
+        let _zone = ::bind::time_zone::zone_scope("America/New_York");
         let at = |s: &str, declared: ColumnType| {
             en_strftime(parse_temporal(s, &declared).unwrap().unwrap(), "%Y-%m-%d %H:%M %Z %z").unwrap()
         };

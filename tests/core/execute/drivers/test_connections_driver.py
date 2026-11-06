@@ -22,10 +22,10 @@ from dbt_charts.core.connections import (
     probe_relation_readability,
     test_connection as run_test_connection,
 )
-from dbt_charts.core.execute.adapters.base import RowFetchLimit
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+from dbt_charts.core.execute.backends.dbt_adapter_factory import (
     AdapterNotInstalledError,
 )
+from dbt_charts.core.execute.query_result import RowFetchLimit
 from dbt_charts.core.inspect.relations import Relation
 
 from ...._fake_driver import FakeDriverConnection, fake_lakecompute_driver
@@ -43,7 +43,7 @@ _COLUMNS = pa.table(
 @pytest.fixture(autouse=True)
 def _dbt_path_is_forbidden() -> Generator[None]:
     with patch(
-        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+        "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
         side_effect=AssertionError("a driver source must never build a dbt adapter"),
     ):
         yield
@@ -121,7 +121,7 @@ class TestBulkSchema:
         with (
             fake_lakecompute_driver(_COLUMNS),
             patch(
-                "dbt_charts.core.execute.adapters.base.resolve_effective_row_limit",
+                "dbt_charts.core.execute.query_result.resolve_effective_row_limit",
                 return_value=_limit(effective=2),
             ),
             pytest.raises(RuntimeError, match="truncated"),

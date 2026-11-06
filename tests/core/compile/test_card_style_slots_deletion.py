@@ -19,10 +19,6 @@ import yaml
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
-)
-from dbt_charts.core.compile.migrations.migrations import (
-    _board_migration_context,
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
@@ -31,7 +27,7 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
 )
 from dbt_charts.core.utils import YAML_LOADER
 
-from ._migration_declarations import schema_has_tail
+from ._engine_migrations import migrate_mapping
 
 CARD_LESS_FAMILIES = (
     "bar",
@@ -50,10 +46,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: dict[str, Any], catalog: YamlSchemaCatalog) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 def _board(style: dict[str, Any]) -> dict[str, Any]:
@@ -69,45 +64,6 @@ def _board(style: dict[str, Any]) -> dict[str, Any]:
         "style": style,
         "rows": ["sales"],
     }
-
-
-def test_registry_declares_the_board_level_card_style_deletions() -> None:
-    """Declared at the 0.5.0 -> 0.6.0 boundary, now frozen -- not at
-    ``catalog.latest_released.version``, which is 0.6.0 itself post-freeze."""
-    _, registry = _board_migration_context()
-    deletions = registry.deletions_from("0.5.0")
-
-    # Scoped to the card-style fields this test is about. `charts`-anchored
-    # deletions are not exclusively card-style -- heatmap's inert
-    # `axis_quantitative` slot is one too -- so an unfiltered set comparison
-    # here fails on every unrelated family/field removal that follows.
-    declared = {
-        d.path
-        for d in deletions
-        if d.path[0:1] == ("charts",) and d.path[2:3] in (("font",), ("border",))
-    }
-    assert declared == {
-        ("charts", fam, field)
-        for fam in CARD_LESS_FAMILIES
-        for field in ("font", "border")
-    }
-
-
-@pytest.mark.parametrize("family", CARD_LESS_FAMILIES)
-@pytest.mark.parametrize("field", ["font", "border"])
-def test_tail_was_in_the_released_grammar_and_is_gone_from_the_live_one(
-    family: str, field: str, catalog: YamlSchemaCatalog
-) -> None:
-    """Both halves of what makes a Deletion legal, asserted directly.
-
-    Source-present is what makes the key worth migrating; target-absent is what
-    stops the tail stripping a slot that still works. Source is pinned to
-    0.5.0, the grammar the tail actually shipped in -- not
-    ``catalog.latest_released.version``, which is 0.6.0 post-freeze and never had it.
-    """
-    tail = ("charts", family, field)
-    assert schema_has_tail(catalog.schema_for("0.5.0"), tail)
-    assert not schema_has_tail(catalog.current_schema, tail)
 
 
 @pytest.mark.parametrize("family", CARD_LESS_FAMILIES)
@@ -210,7 +166,6 @@ def test_chart_local_card_style_key_migrates_and_kpi_keeps_its_own(
 def test_chart_local_strip_says_the_family_has_no_card(
     field: str, catalog: YamlSchemaCatalog
 ) -> None:
-    _, registry = _board_migration_context()
     raw = {
         "charts": {
             "c": {
@@ -225,4 +180,4 @@ def test_chart_local_strip_says_the_family_has_no_card(
     }
 
     with pytest.warns(SchemaMigrationWarning, match="line has no per-chart card"):
-        migrate_mapping(raw, catalog=catalog, registry=registry)
+        migrate_mapping(raw)

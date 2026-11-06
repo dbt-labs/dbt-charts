@@ -30,12 +30,12 @@ from dbt_charts.core.column_types import (
 )
 from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_NUMERIC_OVERFLOW
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters.base import (
+from dbt_charts.core.execute.arrow_ingest import relabel
+from dbt_charts.core.execute.query_result import (
     QueryResult,
     RowFetchLimit,
     apply_row_limit_truncation,
 )
-from dbt_charts.core.execute.arrow_ingest import relabel
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from nanoarrow._array import CArray
     from nanoarrow._schema import CSchema
 
-    from dbt_charts.core.execute.adapters.base import ResolvedRelation
+    from dbt_charts.core.execute.query_result import ResolvedRelation
 
 _INT64_MIN = -(2**63)
 _INT64_MAX = 2**63 - 1

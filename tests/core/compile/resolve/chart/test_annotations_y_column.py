@@ -462,3 +462,69 @@ def test_an_unfilled_scatter_layer_point_radius_includes_its_stroke() -> None:
         return item.style.circle.point_radius
 
     assert radius(False) == pytest.approx(radius(True) + 2.5)
+
+
+def test_an_x_max_covers_the_rows_of_layers_beside_the_base() -> None:
+    latest = [{"month": date(2024, 7, 1), "revenue": 5.0}]
+    note = _one(
+        _line(
+            [{"type": "note", "x": "max()", "y": 20, "text": "Now"}],
+            layers=[{"type": "scatter", "query": "latest", "y": "revenue"}],
+            datasets={"latest": latest},
+        )
+    )
+    assert isinstance(note.x, ResolvedValueAnchor)
+    assert str(note.x.value).startswith("2024-07-01")
+
+
+def test_a_numeric_x_max_covers_the_rows_of_layers_beside_the_base() -> None:
+    rows = [{"gas": g, "revenue": 1.0 + g} for g in (1, 2, 3)]
+    latest = [{"gas": 9, "revenue": 5.0}]
+    note = _one(
+        _line(
+            [{"type": "note", "x": "max()", "y": 20, "text": "Now"}],
+            rows=rows,
+            x="gas",
+            layers=[{"type": "scatter", "query": "latest", "y": "revenue"}],
+            datasets={"latest": latest},
+        )
+    )
+    assert isinstance(note.x, ResolvedValueAnchor)
+    assert note.x.value == 9.0
+
+
+def test_an_x_min_on_a_layer_column_covers_the_base_rows() -> None:
+    latest = [{"month": date(2024, 7, 1), "churn_rate": 0.5}]
+    layers = [{"type": "scatter", "query": "latest", "y": "churn_rate"}]
+
+    def x_of(fn: str) -> str:
+        note = _one(
+            _line(
+                [{"type": "note", "x": fn, "y": 0.5, "y_column": "churn_rate"}],
+                layers=layers,
+                datasets={"latest": latest},
+            )
+        )
+        assert isinstance(note.x, ResolvedValueAnchor)
+        return str(note.x.value)
+
+    assert x_of("min()").startswith("2024-01-01")
+    assert x_of("max()").startswith("2024-07-01")
+
+
+def test_an_x_average_on_a_base_sharing_layer_counts_the_base_once() -> None:
+    rows = [{"gas": g, "revenue": 1.0 + g, "churn_rate": 0.1} for g in (1, 2, 3)]
+    note = _one(
+        _line(
+            [{"type": "rule", "x": "avg()", "y_column": "churn_rate"}],
+            rows=rows,
+            x="gas",
+            layers=[
+                {"type": "line", "y": "churn_rate"},
+                {"type": "scatter", "query": "far", "y": "revenue"},
+            ],
+            datasets={"far": [{"gas": 30, "revenue": 5.0}]},
+        )
+    )
+    assert isinstance(note.x, ResolvedValueAnchor)
+    assert note.x.value == 9.0

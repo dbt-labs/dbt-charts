@@ -11,8 +11,7 @@ from typing import Any
 
 import pytest
 
-from dbt_charts.core.compile.migrations import SchemaMigrationWarning, migrate_mapping
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
+from dbt_charts.core.compile.migrations import SchemaMigrationWarning
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     JsonObject,
@@ -20,12 +19,13 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     load_yaml_schema_catalog,
 )
 
+from ._engine_migrations import migrate_mapping
+
 
 def _migrate(raw: JsonObject, catalog: YamlSchemaCatalog) -> JsonObject:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 def _minimal_board(style: dict[str, Any]) -> dict[str, Any]:
@@ -42,19 +42,6 @@ def _minimal_board(style: dict[str, Any]) -> dict[str, Any]:
             }
         },
     }
-
-
-def test_registry_covers_the_0_4_0_variables_deletions() -> None:
-    _, registry = _board_migration_context()
-
-    deletions = registry.deletions_from("0.4.0")
-
-    assert all(d.target_schema == "0.5.0" for d in deletions)
-    tails = {d.path for d in deletions}
-    assert ("style", "variables", "padding") in tails
-    assert ("style", "variables", "container_padding") in tails
-    assert ("style", "variables", "popover_rail_background") in tails
-    assert ("style", "variables", "value", "numeric_variant") in tails
 
 
 def test_variables_dead_fields_migrate_away_in_memory() -> None:

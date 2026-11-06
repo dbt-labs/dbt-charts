@@ -240,6 +240,6 @@ class TestServeProjectRootDiscovery:
 
         app = create_server(FilesystemProject(dbt_repo), target="prod")
         with TestClient(app):
-            dbt_context = app.state.adapter_registry.dbt_context
+            dbt_context = app.state.env.dbt_context
         assert dbt_context is not None, "expected a linked dbt project"
         assert dbt_context.target == "prod"

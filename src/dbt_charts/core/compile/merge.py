@@ -559,7 +559,7 @@ def _fragment_from_yaml(
     if written_in is not None:
         from dbt_charts.core.compile.migrations import prepare_board_mapping
 
-        data = prepare_board_mapping(data, patch=True)
+        data = prepare_board_mapping(data)
         anchor_images(data, written_in)
     try:
         return BOARD_PATCH_ADAPTER.validate_python(data, context=AUTHORED_INPUT)
@@ -646,8 +646,8 @@ def _retired_theme_redirect(entry: str, ctx: _ExtendCtx) -> str | None:
     ``extends:``'s authored type (``ThemeName | str | list[str]``) accepts
     theme names, board names, and paths alike, so a retired builtin name is
     ambiguous with a real project board of the same name in a way ``theme:``
-    never is — unlike ``theme:``'s identity-path Move
-    (``migrations.py``'s ``_apply_identity_moves``), which runs unconditionally
+    never is — unlike ``theme:``'s identity-path Move in the migration engine,
+    which runs unconditionally
     on the raw mapping before any board lookup is even possible. This redirect
     is asked first in ``_resolve_entry``, before ``_resolve_fragment_file``
     ever runs, so it re-checks the same named-board condition itself (via
@@ -659,10 +659,6 @@ def _retired_theme_redirect(entry: str, ctx: _ExtendCtx) -> str | None:
     replacement = retired_theme_renames().get(entry)
     if replacement is None:
         return None
-    # THEME_RENAMES's declared value type (MappedScalar) is shared with
-    # Move.value_map's generic contract; every entry it actually holds is a
-    # theme-name string.
-    assert isinstance(replacement, str)
     if _named_board_path(entry, ctx) is not None:
         return None
     return replacement
@@ -999,7 +995,7 @@ def merge_metas(
 
         with migration_notice_file(meta_path.relpath):
             try:
-                meta_mapping = prepare_board_mapping(meta_data, patch=True)
+                meta_mapping = prepare_board_mapping(meta_data)
                 anchor_images(meta_mapping, meta_path.parent)
                 fragment = BOARD_PATCH_ADAPTER.validate_python(
                     meta_mapping, context=AUTHORED_INPUT

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -20,9 +20,11 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core import board as _core_dashboard_module
 from dbt_charts.core.compile import config as config_module
 from dbt_charts.core.compile.config import ProjectSourcesConfig
-from dbt_charts.core.execute.adapters.adapter_registry import (
-    AdapterRegistry,
-    build_adapter_registry as _real_build_adapter_registry,
+from dbt_charts.core.execute.backends.base import BackendRegistry
+from dbt_charts.core.execute.env import (
+    ExecEnv,
+    build_exec_env as _real_build_exec_env,
+    make_exec_env,
 )
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 from dbt_charts.core.project import InMemoryBoard, Project
@@ -186,7 +188,7 @@ def test_project_render_board_forwards_cache_and_project_root(
 
     # Prime the cached property BEFORE calling render_board so we can assert
     # render_board forwards the cached object, not a freshly-built one.
-    pre_built = project.adapter_registry
+    pre_built = project.env
     ctx = LinkContext()
     board = InMemoryBoard("", path=project.project.path("charts/x.yml"))
     result = project.render_board(board=board, format="json", link_context=ctx)
@@ -197,7 +199,7 @@ def test_project_render_board_forwards_cache_and_project_root(
     assert captured["board"] is board
     assert captured["format"] == "json"
     # Pin identity: render_board must forward the cached registry, not rebuild.
-    assert captured["adapter_registry"] is pre_built
+    assert captured["env"] is pre_built
     assert captured["link_context"] is ctx
 
 
@@ -285,24 +287,29 @@ def test_project_render_board_forwards_extra_render_options(
     assert captured["height"] == 40
 
 
-def test_project_adapter_registry_lazy(tmp_path: Path) -> None:
-    """adapter_registry builds on first access, caches on subsequent access."""
+def test_project_exec_env_lazy(tmp_path: Path) -> None:
+    """env builds on first access, caches on subsequent access."""
     (tmp_path / "dbt_charts.yml").write_text("name: t\n")
 
     with (
         patch(
-            "dbt_charts.agent_api.project_session.build_adapter_registry",
-            side_effect=_real_build_adapter_registry,
+            "dbt_charts.agent_api.project_session.build_exec_env",
+            side_effect=_real_build_exec_env,
         ) as spy,
         ProjectSession.open(tmp_path) as project,
     ):
         assert spy.call_count == 0  # lazy — not built at open()
-        registry_a = project.adapter_registry
-        assert isinstance(registry_a, AdapterRegistry)
+        registry_a = project.env
+        assert isinstance(registry_a, ExecEnv)
         assert spy.call_count == 1
-        registry_b = project.adapter_registry
+        registry_b = project.env
         assert registry_b is registry_a  # cached
         assert spy.call_count == 1
+
+
+def _spy_env(project: FilesystemProject, backend: Mock) -> ExecEnv:
+    """An env whose only backend is *backend*, to observe whether the env is closed."""
+    return make_exec_env(project=project, backends=BackendRegistry({"duckdb": backend}))
 
 
 def test_project_refresh_rebuilds_registry(tmp_path: Path) -> None:
@@ -310,11 +317,11 @@ def test_project_refresh_rebuilds_registry(tmp_path: Path) -> None:
     (tmp_path / "dbt_charts.yml").write_text("name: t\n")
 
     with ProjectSession.open(tmp_path) as project:
-        first = project.adapter_registry
-        with patch.object(first, "close") as close_spy:
+        first = project.env
+        with patch("dbt_charts.agent_api.project_session.close_env") as close_spy:
             project.refresh()
-            close_spy.assert_called_once()
-        second = project.adapter_registry
+            close_spy.assert_called_once_with(first)
+        second = project.env
         assert second is not first
 
 
@@ -324,16 +331,14 @@ def test_project_close_closes_registry(tmp_path: Path) -> None:
 
     # Built path: close() forwards.
     project = ProjectSession.open(tmp_path)
-    registry = project.adapter_registry
-    with patch.object(registry, "close") as close_spy:
+    registry = project.env
+    with patch("dbt_charts.agent_api.project_session.close_env") as close_spy:
         project.close()
-        close_spy.assert_called_once()
+        close_spy.assert_called_once_with(registry)
 
     # Unbuilt path: close() does not build a registry just to close it.
     project2 = ProjectSession.open(tmp_path)
-    with patch(
-        "dbt_charts.agent_api.project_session.build_adapter_registry"
-    ) as build_spy:
+    with patch("dbt_charts.agent_api.project_session.build_exec_env") as build_spy:
         project2.close()
         build_spy.assert_not_called()
 
@@ -444,31 +449,27 @@ def test_project_warnings_ignore_is_read_only(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Injected adapter_registry
+# Injected env
 # ---------------------------------------------------------------------------
 
 
-def test_project_accepts_injected_adapter_registry(
+def test_project_accepts_injected_env(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """ProjectSession(project=..., adapter_registry=reg) returns reg without lazy-build."""
-    registry = _real_build_adapter_registry(local_project(tmp_path), read_only=True)
-    project = ProjectSession(project=local_project(tmp_path), adapter_registry=registry)
-    assert project.adapter_registry is registry
+    """ProjectSession(project=..., env=reg) returns reg without lazy-build."""
+    registry = _real_build_exec_env(local_project(tmp_path), read_only=True)
+    project = ProjectSession(project=local_project(tmp_path), env=registry)
+    assert project.env is registry
 
 
 def test_project_injected_registry_skips_build(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """When adapter_registry is pre-injected, build_adapter_registry is never called."""
-    registry = _real_build_adapter_registry(local_project(tmp_path), read_only=True)
-    with patch(
-        "dbt_charts.agent_api.project_session.build_adapter_registry"
-    ) as mock_build:
-        project = ProjectSession(
-            project=local_project(tmp_path), adapter_registry=registry
-        )
-        _ = project.adapter_registry
+    """When env is pre-injected, build_exec_env is never called."""
+    registry = _real_build_exec_env(local_project(tmp_path), read_only=True)
+    with patch("dbt_charts.agent_api.project_session.build_exec_env") as mock_build:
+        project = ProjectSession(project=local_project(tmp_path), env=registry)
+        _ = project.env
     mock_build.assert_not_called()
 
 
@@ -491,7 +492,7 @@ def test_project_injected_registry_refresh_skips_registry_rebuild_but_clears_cac
         load_project_sources as real_sources_loader,
     )
 
-    registry = _real_build_adapter_registry(local_project(tmp_path), read_only=True)
+    registry = _real_build_exec_env(local_project(tmp_path), read_only=True)
     with (
         patch.object(
             config_module, "load_project_sources", side_effect=real_sources_loader
@@ -502,9 +503,7 @@ def test_project_injected_registry_refresh_skips_registry_rebuild_but_clears_cac
             side_effect=real_warnings_loader,
         ) as warnings_loader,
     ):
-        project = ProjectSession(
-            project=local_project(tmp_path), adapter_registry=registry
-        )
+        project = ProjectSession(project=local_project(tmp_path), env=registry)
 
         # Lazy init: no loaders called at construction time.
         assert sources_loader.call_count == 0
@@ -517,7 +516,7 @@ def test_project_injected_registry_refresh_skips_registry_rebuild_but_clears_cac
 
         project.refresh()  # invalidates caches, skips registry rebuild
         # Registry is unchanged — skipped because we don't own it.
-        assert project.adapter_registry is registry
+        assert project.env is registry
 
         _ = project.sources  # re-load after refresh
         _ = project.warnings_ignore  # re-load after refresh
@@ -543,12 +542,12 @@ def test_refresh_sees_dbt_charts_yml_added_after_open(tmp_path: Path) -> None:
         assert session.warnings_ignore == frozenset({"WARN-REAGGREGATION"})
 
 
-def test_open_threads_resolver_to_adapter_registry(tmp_path: Path) -> None:
-    """ProjectSession.open(resolver=...) must forward the resolver to the built AdapterRegistry.
+def test_open_threads_resolver_to_env(tmp_path: Path) -> None:
+    """ProjectSession.open(resolver=...) must forward the resolver to the built ExecEnv.
 
-    Regression: ProjectSession constructed with an injected registry (_owns_registry=False)
-    makes refresh() a silent no-op. open() sets _owns_registry=True and must store
-    resolver so the adapter_registry property passes it to build_adapter_registry().
+    Regression: ProjectSession constructed with an injected registry (_owns_env=False)
+    makes refresh() a silent no-op. open() sets _owns_env=True and must store
+    resolver so the env property passes it to build_exec_env().
     """
     from dbt_charts.core.execute.source_resolver import DefaultSourceResolver
 
@@ -557,11 +556,11 @@ def test_open_threads_resolver_to_adapter_registry(tmp_path: Path) -> None:
 
     sentinel = _SentinelResolver()
     with ProjectSession.open(tmp_path, resolver=sentinel) as project:
-        registry = project.adapter_registry
-        assert registry._resolver is sentinel, (
-            "Resolver passed to ProjectSession.open() must reach AdapterRegistry._resolver. "
+        registry = project.env
+        assert registry.resolver is sentinel, (
+            "Resolver passed to ProjectSession.open() must reach ExecEnv._resolver. "
             "Check that ProjectSession._resolver is set in open() and forwarded in the "
-            "adapter_registry property's build_adapter_registry() call."
+            "env property's build_exec_env() call."
         )
 
 
@@ -576,17 +575,14 @@ def test_project_init_passes_read_only_to_registry(
 
     captured: dict[str, object] = {}
 
-    def fake_build(project_root: Path, **kwargs: object) -> object:
+    def fake_build(project_root: Project, **kwargs: object) -> object:
         captured.update(kwargs)
 
-        class _Stub:
-            def close(self) -> None: ...
+        return make_exec_env(project_root)
 
-        return _Stub()
-
-    monkeypatch.setattr(project_module, "build_adapter_registry", fake_build)
+    monkeypatch.setattr(project_module, "build_exec_env", fake_build)
     p = ProjectSession(project=local_project(tmp_path), read_only=read_only)
-    _ = p.adapter_registry
+    _ = p.env
     p.close()
     assert captured["read_only"] is read_only
 
@@ -599,17 +595,14 @@ def test_project_open_threads_read_only_to_registry(
 
     captured: dict[str, object] = {}
 
-    def fake_build(project_root: Path, **kwargs: object) -> object:
+    def fake_build(project_root: Project, **kwargs: object) -> object:
         captured.update(kwargs)
 
-        class _Stub:
-            def close(self) -> None: ...
+        return make_exec_env(project_root)
 
-        return _Stub()
-
-    monkeypatch.setattr(project_module, "build_adapter_registry", fake_build)
+    monkeypatch.setattr(project_module, "build_exec_env", fake_build)
     p = ProjectSession.open(tmp_path, read_only=read_only)
-    _ = p.adapter_registry
+    _ = p.env
     p.close()
     assert captured["read_only"] is read_only
 
@@ -623,17 +616,14 @@ def test_project_init_defaults_to_read_only_true(
 
     captured: dict[str, object] = {}
 
-    def fake_build(project_root: Path, **kwargs: object) -> object:
+    def fake_build(project_root: Project, **kwargs: object) -> object:
         captured.update(kwargs)
 
-        class _Stub:
-            def close(self) -> None: ...
+        return make_exec_env(project_root)
 
-        return _Stub()
-
-    monkeypatch.setattr(project_module, "build_adapter_registry", fake_build)
+    monkeypatch.setattr(project_module, "build_exec_env", fake_build)
     p = ProjectSession(project=local_project(tmp_path))
-    _ = p.adapter_registry
+    _ = p.env
     p.close()
     assert captured["read_only"] is True
 
@@ -707,67 +697,49 @@ def test_project_injected_registry_close_does_not_close_it(
     The caller injected the registry and retains its lifecycle. ProjectSession does not
     own it (analogous to the _owns_cache / supplied-cache contract).
     """
-    close_calls: list[str] = []
-
-    class _SpyRegistry:
-        def close(self) -> None:
-            close_calls.append("close")
+    backend = Mock()
 
     project = ProjectSession(
         project=local_project(tmp_path),
-        adapter_registry=_SpyRegistry(),  # type: ignore[arg-type]
+        env=_spy_env(local_project(tmp_path), backend),
     )
     project.close()
-    assert close_calls == [], (
-        "ProjectSession must not close an injected registry it does not own; "
-        f"got close_calls={close_calls!r}"
-    )
+    backend.close.assert_not_called()
 
 
-def test_project_injected_registry_with_owns_registry_closes_it(
+def test_project_injected_registry_with_owns_env_closes_it(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """close() DOES close an injected registry when the caller opts in via owns_registry=True."""
-    close_calls: list[str] = []
-
-    class _SpyRegistry:
-        def close(self) -> None:
-            close_calls.append("close")
+    """close() DOES close an injected registry when the caller opts in via owns_env=True."""
+    backend = Mock()
 
     project = ProjectSession(
         project=local_project(tmp_path),
-        adapter_registry=_SpyRegistry(),  # type: ignore[arg-type]
-        owns_registry=True,
+        env=_spy_env(local_project(tmp_path), backend),
+        owns_env=True,
     )
     with project:
         pass
-    assert close_calls == ["close"], (
-        "ProjectSession must close an injected registry when owns_registry=True; "
-        f"got close_calls={close_calls!r}"
-    )
+    backend.close.assert_called_once_with()
 
 
-def test_project_injected_registry_with_owns_registry_refresh_leaves_it_untouched(
+def test_project_injected_registry_with_owns_env_refresh_leaves_it_untouched(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """refresh() must not close or rebuild an injected registry, even when owns_registry=True."""
-    close_calls: list[str] = []
+    """refresh() must not close or rebuild an injected registry, even when owns_env=True."""
+    backend = Mock()
 
-    class _SpyRegistry:
-        def close(self) -> None:
-            close_calls.append("close")
-
-    registry = _SpyRegistry()
+    registry = _spy_env(local_project(tmp_path), backend)
     project = ProjectSession(
         project=local_project(tmp_path),
-        adapter_registry=registry,  # type: ignore[arg-type]
-        owns_registry=True,
+        env=registry,
+        owns_env=True,
     )
 
     project.refresh()
 
-    assert project.adapter_registry is registry
-    assert close_calls == []
+    assert project.env is registry
+    backend.close.assert_not_called()
 
 
 def test_project_emit_board_forwards_project_registry_and_cache(
@@ -775,7 +747,7 @@ def test_project_emit_board_forwards_project_registry_and_cache(
     monkeypatch: pytest.MonkeyPatch,
     local_project: Callable[..., FilesystemProject],
 ) -> None:
-    """ProjectSession.emit_board() forwards self.project/.adapter_registry/.cache
+    """ProjectSession.emit_board() forwards self.project/.env/.cache
     to agent_api.board_artifact.emit_board_artifact, plus the call's own args."""
     from dbt_charts.agent_api import board_artifact as _board_artifact_module
     from dbt_charts.agent_api.board_artifact import EmitBoardArtifactResult
@@ -793,7 +765,7 @@ def test_project_emit_board_forwards_project_registry_and_cache(
         _board_artifact_module, "emit_board_artifact", fake_emit_board_artifact
     )
 
-    pre_built = session.adapter_registry
+    pre_built = session.env
     board_path = tmp_path / "board.yml"
     artifact_path = tmp_path / "out" / "board.artifact.json"
     recording_path = tmp_path / "out" / "board.recording.json"
@@ -805,32 +777,32 @@ def test_project_emit_board_forwards_project_registry_and_cache(
     assert result.success
     assert captured["args"] == (board_path, artifact_path, recording_path)
     assert captured["project"] is session.project
-    assert captured["adapter_registry"] is pre_built
+    assert captured["env"] is pre_built
     assert captured["result_cache"] is cache
     assert captured["variables"] == {"region": "West"}
 
 
-def test_project_adapter_registry_threads_project(tmp_path: Path) -> None:
-    """ProjectSession.adapter_registry passes the project object to build_adapter_registry.
+def test_project_exec_env_threads_project(tmp_path: Path) -> None:
+    """ProjectSession.env passes the project object to build_exec_env.
 
-    Locks the threading contract: build_adapter_registry receives the same Project
+    Locks the threading contract: build_exec_env receives the same Project
     instance stored on the session (identity, not equality). The project carries
     the sources snapshot via its cached_property.
     """
-    with patch(
-        "dbt_charts.agent_api.project_session.build_adapter_registry"
-    ) as mock_build:
-        mock_build.return_value = MagicMock(spec=["close"])
-        with ProjectSession.open(tmp_path) as session:
-            _ = session.adapter_registry
-            assert mock_build.called, "build_adapter_registry was never called"
-            passed_project = (
-                mock_build.call_args.args[0]
-                if mock_build.call_args.args
-                else mock_build.call_args.kwargs.get("project")
-            )
-            assert passed_project is session.project, (
-                "build_adapter_registry must receive the same Project instance "
-                "stored on the session (identity, not equality). "
-                "A new Project() inside adapter_registry would break source caching."
-            )
+    with (
+        patch("dbt_charts.agent_api.project_session.build_exec_env") as mock_build,
+        ProjectSession.open(tmp_path) as session,
+    ):
+        mock_build.return_value = make_exec_env(session.project)
+        _ = session.env
+        assert mock_build.called, "build_exec_env was never called"
+        passed_project = (
+            mock_build.call_args.args[0]
+            if mock_build.call_args.args
+            else mock_build.call_args.kwargs.get("project")
+        )
+        assert passed_project is session.project, (
+            "build_exec_env must receive the same Project instance "
+            "stored on the session (identity, not equality). "
+            "A new Project() inside env would break source caching."
+        )

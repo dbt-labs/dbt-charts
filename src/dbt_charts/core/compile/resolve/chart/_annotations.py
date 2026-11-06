@@ -108,6 +108,7 @@ from dbt_charts.core.compile.resolve.chart._annotation_stats import (
 from dbt_charts.core.compile.resolve.chart._chart_rows import (
     ChartDataset,
     LayerDatasets,
+    Panel,
     partition,
 )
 from dbt_charts.core.compile.resolve.chart._domain import layers_own_y_scale
@@ -424,6 +425,9 @@ class _Scope:
     panel: str | None
     series: str | None
     points: tuple[_Point, ...]
+    # The x cells of the layers' own rows beside the base's: an x aggregate
+    # reads the whole axis, not just the base query's span.
+    layer_xs: tuple[Any, ...] = ()  # type-state: explicit_any — query cells
 
 
 def resolve_annotations(
@@ -532,6 +536,13 @@ def _resolve_one(
         series_ink = (
             None if ink_unknown else _series_ink(chart, scope.series, colors, ctx)
         )
+        if scope.series is None and _has_x_aggregate(annotation):
+            scope = replace(
+                scope,
+                layer_xs=_layer_xs(
+                    plotted, plotted_dataset, scope.panel, datasets, target.layer
+                ),
+            )
         resolver = _AnchorResolver(chart, scope, rendered_at, categories)
         try:
             placements = list(_placements(annotation, chart, resolver, scope))
@@ -672,6 +683,46 @@ def _is_computed(annotation: Annotation) -> bool:
         if isinstance(anchor, AnchorRange):
             anchors.extend((anchor.from_, anchor.to))
     return any(isinstance(a, AggregateAnchor) for a in anchors)
+
+
+def _has_x_aggregate(annotation: Annotation) -> bool:
+    if isinstance(annotation, TrendAnnotation):
+        return False
+    x = annotation.x
+    bounds = (x.from_, x.to) if isinstance(x, AnchorRange) else (x,)
+    return any(isinstance(b, AggregateAnchor) for b in bounds)
+
+
+def _panel_key(dataset: ChartDataset, panel: Panel) -> str | None:
+    return pydantic_core.to_json(list(panel.key)).decode() if dataset.axes else None
+
+
+def _layer_xs(
+    chart: AnnotationChart,
+    dataset: ChartDataset,
+    panel: str | None,
+    datasets: LayerDatasets,
+    targeted: int | None,
+) -> tuple[Any, ...]:  # type-state: explicit_any — query cells
+    """The plotted x cells of the panel's rows beyond the scope's own: every
+    own-query layer's, and the base's when the scope reads a layer of its own query."""
+    own_query = any(
+        layer.index == targeted and layer.query is not None for layer in chart.layers
+    )
+    sources = [dataset] if own_query else []
+    sources += [
+        _layer_dataset(chart, layer, dataset, datasets)
+        for layer in chart.layers
+        if layer.query is not None and layer.index != targeted
+    ]
+    return tuple(
+        x
+        for source in sources
+        for part in source.panels
+        if _panel_key(source, part) == panel
+        for row in part.rows
+        if (x := _plotted_x(chart, row.get(chart.x_field))) is not None
+    )
 
 
 def _derived_axis(annotation: Annotation) -> Axis | None:
@@ -908,7 +959,7 @@ def _scopes(
         assert isinstance(series, list)
         names = list(series)
     for panel in dataset.panels:
-        key = pydantic_core.to_json(list(panel.key)).decode() if dataset.axes else None
+        key = _panel_key(dataset, panel)
         for name in names:
             points = _points(chart, panel.rows, name)
             # A panel draws only the series it has rows for.
@@ -1044,13 +1095,22 @@ class _AnchorResolver:
             case "temporal":
                 if anchor.fn not in ("min", "max"):
                     raise _Invalid(f"{name}() on a date x; only min() and max()")
-                days = [_x_days(x) for x, _ in self.scope.points]
+                days = [
+                    _x_days(x)
+                    for x in [*(x for x, _ in self.scope.points), *self.scope.layer_xs]
+                ]
                 return _iso_days(aggregate(anchor.fn, None, days))
             case "quantitative":
                 return aggregate(
                     anchor.fn,
                     anchor.percent,
-                    [float(x) for x, _ in self.scope.points],
+                    [
+                        float(x)
+                        for x in [
+                            *(x for x, _ in self.scope.points),
+                            *self.scope.layer_xs,
+                        ]
+                    ],
                 )
 
     def _literal(
@@ -1365,9 +1425,12 @@ def _x_days(
 def _year_start(
     value: object,  # type-state: object_annotation — a cell or literal
 ) -> date | None:
-    """January 1 of a year-shaped int, integral Decimal or float, or four-digit
-    string, the same shapes the channel reads as temporal; else None."""
-    if isinstance(value, int | float | Decimal | str) and is_year_shaped([value]):
+    """January 1 of a year-shaped int, integral Decimal, or four-digit string,
+    the same shapes the channel reads as temporal, or of an integral float
+    literal on such an axis; else None."""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    if isinstance(value, int | Decimal | str) and is_year_shaped([value]):
         return date(int(value), 1, 1)
     return None
 

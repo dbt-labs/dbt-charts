@@ -7,13 +7,13 @@ page counts and carries no static file, so it never warns.
 
 from __future__ import annotations
 
-from unittest.mock import Mock
-
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import RenderResult, render
+
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 _STATIC_MULTI_PAGE_MAX_PAGES = 20
 
@@ -26,18 +26,9 @@ def _make_executor(
     board: Board,
     query_registry: dict[str, AnyQuery],
     rows: list[dict[str, object]],
-) -> Executor:
-    ok = Mock()
-    ok.is_success = True
-    ok.data = rows
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.return_value = ok
-    return Executor(
-        board, adapter_registry=mock_registry, query_registry=query_registry
-    )
+) -> Run:
+    mock_registry = scripted_env(ScriptedBackend(rows))
+    return Run(board, env=mock_registry, query_registry=query_registry)
 
 
 _BOARD = """
@@ -69,7 +60,7 @@ def _render(yaml_text: str, n_rows: int, fmt: str) -> RenderResult:
     result = compile(yaml_text)
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _rows(n_rows))
-    return render(result.board, executor, format=fmt)
+    return render(result.board, executor.ctx, executor.ledger, format=fmt)
 
 
 def test_capped_table_is_silent_in_any_slot() -> None:

@@ -24,7 +24,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.fonts import NOTO_EMOJI_FONT_FAMILY
 from dbt_charts.core.project import Project
 
@@ -143,17 +143,20 @@ class TestRenderedSVGContainsNotoEmoji:
         self, local_project: Callable[..., Project]
     ) -> None:
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
         from dbt_charts.core.render import render
+
+        from ..._run import Run
 
         result = compile(_EMOJI_YAML)
         assert result.success and result.board is not None, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
-        svg_out = render(result.board, executor, format="svg").output
+        svg_out = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_out, str)
         # Verify Noto Emoji appears in an actual font-family="..." attribute, not only
         # in the <style> block — vl-convert reads attributes for per-character shaping.

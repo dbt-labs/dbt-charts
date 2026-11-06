@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from importlib_resources import files
 from pydantic import BaseModel, ConfigDict
 
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+from dbt_charts.core.execute.backends.dbt_adapter_factory import (
     SUPPORTED_ADAPTER_TYPES,
     AdapterNotInstalledError,
     import_adapter_module,

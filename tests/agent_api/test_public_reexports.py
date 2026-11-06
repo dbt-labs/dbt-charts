@@ -60,8 +60,8 @@ def test_execution_seams_are_reexported() -> None:
     Composition roots (CLI, MCP, serve, Cloud, A lIe, Playground) compose against
     `dbt_charts.agent_api`, not `dbt_charts.core.*`. The extension protocols and the
     resolver base impls a root subclasses are re-exported here so callers have one
-    public home for the seam surface. `AdapterRegistry` is intentionally absent — it
-    is built via `ProjectSession` / `build_adapter_registry`, not subclassed.
+    public home for the seam surface. `ExecEnv` is intentionally absent — it
+    is built via `ProjectSession` / `build_exec_env`, not subclassed.
     """
     assert agent_api.SourceResolver is SourceResolver
     assert agent_api.DefaultSourceResolver is DefaultSourceResolver

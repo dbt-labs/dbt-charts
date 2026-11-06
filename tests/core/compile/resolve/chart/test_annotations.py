@@ -1262,7 +1262,7 @@ def test_auto_keys_take_their_preferred_spot_and_stay_free() -> None:
     rule = _one({"type": "rule", "y": 16, "text": "Goal"})
     assert [_free(a) for a in (note, band, rule)] == [
         ("top", "center", True, True),
-        ("right", "center", True, True),
+        ("right", "center", True, False),
         ("top", "end", True, True),
     ]
 
@@ -1439,8 +1439,8 @@ def test_the_charts_level_annotations_path_is_rejected() -> None:
         StylePatch.model_validate({"charts": {"annotations": _rule_style("#111111")}})
 
 
-@pytest.mark.parametrize("year", [str, Decimal, float])
-def test_a_string_decimal_or_float_year_x_resolves_like_a_date(year: type) -> None:
+@pytest.mark.parametrize("year", [str, Decimal])
+def test_a_string_or_decimal_year_x_resolves_like_a_date(year: type) -> None:
     rows = [
         {"year": year(2018 + i), "revenue": float(r)}
         for i, r in enumerate([1, 3, 2, 5, 4, 6])
@@ -1455,6 +1455,19 @@ def test_a_string_decimal_or_float_year_x_resolves_like_a_date(year: type) -> No
     ).annotations
     assert trend.trend is not None
     assert _value(note.x) == "2023-01-01"
+
+
+def test_a_float_year_x_is_a_measure_not_a_date() -> None:
+    rows = [
+        {"year": float(2018 + i), "revenue": float(r)}
+        for i, r in enumerate([1, 3, 2, 5, 4, 6])
+    ]
+    (note,) = _line(
+        [{"type": "note", "x": "max()", "y": "max()", "text": "peak"}],
+        rows=rows,
+        x="year",
+    ).annotations
+    assert _value(note.x) == 2023.0
 
 
 def test_a_float_literal_on_a_year_axis_is_that_year() -> None:

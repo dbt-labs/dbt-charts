@@ -23,7 +23,7 @@ import pytest
 from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_NUMERIC_OVERFLOW
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters.base import RowFetchLimit
+from dbt_charts.core.execute.query_result import RowFetchLimit
 from dbt_charts.core.execute.result import (
     arrow_to_query_result,
     read_bounded_stream,

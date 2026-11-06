@@ -10,13 +10,12 @@ hand-built WarningContext, matching the pattern in
 from __future__ import annotations
 
 import re
-from unittest.mock import Mock
 
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
-from ..._results import rows_schema
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 _CODE = "WARN-ENDPOINT-LABEL-GAP-OVERFLOW"
 
@@ -36,18 +35,8 @@ def _rows() -> list[dict[str, object]]:
 def _make_executor(
     board: object, query_registry: object, rows: list[dict[str, object]]
 ):
-    ok = Mock()
-    ok.is_success = True
-    ok.data = rows
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.return_value = ok
-    return Executor(
-        board, adapter_registry=mock_registry, query_registry=query_registry
-    )
+    mock_registry = scripted_env(ScriptedBackend(rows))
+    return Run(board, env=mock_registry, query_registry=query_registry)
 
 
 _CRAMPED = """
@@ -128,7 +117,7 @@ def test_cramped_rail_warns_and_distributes_evenly() -> None:
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _rows())
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     codes = {w.code for w in render_result.warnings}
     assert _CODE in codes, (
@@ -162,7 +151,7 @@ def test_roomy_rail_silent() -> None:
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _rows())
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     codes = {w.code for w in render_result.warnings}
     assert _CODE not in codes
@@ -181,7 +170,7 @@ def test_cramped_rail_warns_via_chart_root_height() -> None:
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _rows())
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     codes = {w.code for w in render_result.warnings}
     assert _CODE in codes, (
@@ -248,7 +237,7 @@ def test_local_overflow_warns_and_drops_only_what_does_not_fit() -> None:
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _clustered_rows())
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     codes = {w.code for w in render_result.warnings}
     assert _OVERFLOW_CODE in codes, (
@@ -346,7 +335,7 @@ def test_cols_alignment_stretch_does_not_leave_a_stale_overflow() -> None:
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _stretched_rows())
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     codes = {w.code for w in render_result.warnings}
     assert _CODE not in codes, (

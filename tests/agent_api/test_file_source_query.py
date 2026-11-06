@@ -1,6 +1,6 @@
 """Regression tests: dct query / execute_query / query_board against a file source.
 
-Root cause: agent_api.execute_query and query_board share AdapterRegistry.execute(),
+Root cause: agent_api.execute_query and query_board share ExecEnv.execute(),
 which used to refuse any file-source (csv/json/parquet) query unconditionally,
 naming the render path as the only reader. A ProjectSession now supplies
 the registry a file-source materializer (the local DuckDB-backed factory when
@@ -105,15 +105,15 @@ def test_execute_query_glob_schema_mismatch_names_the_offending_files(
 def test_registry_with_no_materializer_still_refuses(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """A hand-built AdapterRegistry with no materializer wired refuses; only
-    ``build_adapter_registry`` supplies the local default.
+    """A hand-built ExecEnv with no materializer wired refuses; only
+    ``build_exec_env`` supplies the local default.
     """
-    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.execute.env import make_exec_env
 
     project = _csv_project(tmp_path, local_project)
-    registry = AdapterRegistry(project=project, project_sources=project.sources)
+    registry = make_exec_env(project=project, project_sources=project.sources)
 
-    with ProjectSession.from_project(project, adapter_registry=registry) as session:
+    with ProjectSession.from_project(project, env=registry) as session:
         result = session.execute_query("SELECT * FROM orders", source="marts")
 
     assert result.success is False

@@ -1,6 +1,6 @@
 """Agent-API tests for the warehouse tier of ``validate_paths``.
 
-The tier is opt-in (``adapter_registry=`` / ``--warehouse``) and *additive*: it
+The tier is opt-in (``env=`` / ``--warehouse``) and *additive*: it
 appends to the stateless findings rather than standing in for them. Half of
 these tests exist to pin that — a warehouse sweep that quietly replaced the
 schema pass would look green on exactly the boards validation is meant to catch.
@@ -10,17 +10,19 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import Mock
 
 import duckdb
 
 from dbt_charts.agent_api.validate import validate_paths
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import ProjectSourcesConfig, load_project_sources
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 from dbt_charts.core.execute.backends.base import BackendRegistry
 from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
+from dbt_charts.core.execute.env import ExecEnv, make_exec_env
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
+
+from .._scripted_env import ScriptedBackend, backend_of, scripted_env
 
 _HEALTHY_BOARD = (
     "title: Test Board\n"
@@ -43,13 +45,13 @@ def _write_dbt_charts_yml(project_root: Path, db_path: Path) -> None:
     )
 
 
-def _make_registry(project_root: Path, db_path: Path) -> AdapterRegistry:
-    """Build an AdapterRegistry with a real read-only DuckDB adapter."""
+def _make_registry(project_root: Path, db_path: Path) -> ExecEnv:
+    """Build an ExecEnv with a real read-only DuckDB adapter."""
     project = FilesystemProject(project_root)
     project_sources = ProjectSourcesConfig(
         sources={"testdb": {"type": "duckdb", "path": str(db_path)}}
     )
-    return AdapterRegistry(
+    return make_exec_env(
         project=project,
         project_sources=project_sources,
         backends=BackendRegistry(
@@ -60,7 +62,7 @@ def _make_registry(project_root: Path, db_path: Path) -> AdapterRegistry:
 
 def _setup_duckdb_project(
     tmp_path: Path, *, board_yml: str = _HEALTHY_BOARD, with_data: bool = True
-) -> tuple[FilesystemProject, AdapterRegistry]:
+) -> tuple[FilesystemProject, ExecEnv]:
     """Create a minimal project with a DuckDB file containing an `orders` table."""
     db_path = tmp_path / "test.duckdb"
     conn = duckdb.connect(str(db_path))
@@ -83,7 +85,7 @@ def _validate(tmp_path: Path, project, registry):
     results = validate_paths(
         [tmp_path / "charts" / "test_board.yml"],
         project=project,
-        adapter_registry=registry,
+        env=registry,
     )
     assert len(results) == 1
     return results[0]
@@ -269,7 +271,7 @@ class TestWarehouseValidateDuckDB:
     def test_a_multi_hop_query_chain_is_resolved_before_the_check(self, tmp_path):
         """`{{ queries.X }}` two hops deep must reach the warehouse rendered.
 
-        AdapterRegistry composes refs in one non-recursive pass, so a chain
+        ExecEnv composes refs in one non-recursive pass, so a chain
         would arrive with the inner `{{ queries.base }}` still in the SQL and
         come back as a syntax error on SQL that renders fine.
         """
@@ -296,7 +298,7 @@ class TestWarehouseValidateDuckDB:
 
 def _setup_csv_project(
     tmp_path: Path, local_project: Callable[..., FilesystemProject], *, board_yml: str
-) -> tuple[FilesystemProject, AdapterRegistry]:
+) -> tuple[FilesystemProject, ExecEnv]:
     """Create a minimal project with a csv file source containing an `orders` table."""
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -309,7 +311,7 @@ def _setup_csv_project(
     (charts_dir / "test_board.yml").write_text(board_yml)
 
     project = local_project(tmp_path)
-    registry = AdapterRegistry(
+    registry = make_exec_env(
         project=project,
         project_sources=load_project_sources(project),
         file_materializer=FileSourceMaterializer(project),
@@ -390,7 +392,7 @@ class TestWarehouseTierIsAdditive:
         results = validate_paths(
             [tmp_path / "charts" / "meta.yml"],
             project=project,
-            adapter_registry=registry,
+            env=registry,
         )
         assert all(r.success for r in results), [e for r in results for e in r.errors]
 
@@ -412,13 +414,15 @@ class TestWarehouseValidateUnresolvableSource:
         from dbt_charts.core.diagnostics.base import DbtChartsError
 
         project, _ = _setup_duckdb_project(tmp_path, with_data=False)
-        registry = MagicMock()
-        registry.resolve_query_source.side_effect = DbtChartsError.from_code(
-            ERR_SOURCE_NOT_NAMED, available=[]
+        registry = scripted_env(ScriptedBackend())
+        registry.resolver = Mock(
+            resolve=Mock(
+                side_effect=DbtChartsError.from_code(ERR_SOURCE_NOT_NAMED, available=[])
+            )
         )
 
         r = _validate(tmp_path, project, registry)
-        registry.execute.assert_not_called()
+        backend_of(registry).execute.assert_not_called()
         assert r.success is False
 
     def test_stopping_keeps_what_the_earlier_queries_found(self, tmp_path):
@@ -451,14 +455,14 @@ class TestWarehouseValidateUnresolvableSource:
                 "    y: id\n"
             ),
         )
-        real_resolve = registry.resolve_query_source
+        real_resolve = registry.resolver.resolve
 
-        def _resolve(query, **kwargs):
+        def _resolve(**kwargs):
             if kwargs.get("query_name") == "z_unresolvable":
                 raise DbtChartsError.from_code(ERR_SOURCE_NOT_NAMED, available=[])
-            return real_resolve(query, **kwargs)
+            return real_resolve(**kwargs)
 
-        registry.resolve_query_source = _resolve
+        setattr(registry.resolver, "resolve", _resolve)  # noqa: B010 — pyright rejects assigning a method
 
         r = _validate(tmp_path, project, registry)
         codes = {e.code for e in r.errors}
@@ -466,27 +470,29 @@ class TestWarehouseValidateUnresolvableSource:
         assert "ERR-SOURCE-NOT-NAMED" in codes, codes
 
 
-def _postgres_registry() -> MagicMock:
+def _postgres_registry() -> ExecEnv:
     """A registry whose mechanism is EXPLAIN: validity only, no result schema."""
     from dbt_charts.core.column_types import literal_schema
     from dbt_charts.core.compile.models.source import parse_source_config
-    from dbt_charts.core.execute.adapters.base import QueryResult
+    from dbt_charts.core.execute.query_result import QueryResult
 
-    registry = MagicMock()
-    registry.resolve_query_source.return_value = parse_source_config(
-        {
-            "type": "postgres",
-            "host": "h",
-            "dbname": "d",
-            "user": "u",
-            "password": "p",
-        }
+    return scripted_env(
+        ScriptedBackend(
+            QueryResult(
+                data=[{"QUERY PLAN": "Result"}],
+                schema=literal_schema([{"QUERY PLAN": "Result"}]),
+            )
+        ),
+        source=parse_source_config(
+            {
+                "type": "postgres",
+                "host": "h",
+                "dbname": "d",
+                "user": "u",
+                "password": "p",
+            }
+        ),
     )
-    registry.execute.return_value = QueryResult(
-        data=[{"QUERY PLAN": "Result"}],
-        schema=literal_schema([{"QUERY PLAN": "Result"}]),
-    )
-    return registry
 
 
 class TestWarehouseValidateExplainAdapter:
@@ -514,16 +520,16 @@ class TestWarehouseValidateExplainAdapter:
 class TestWarehouseValidateUncheckedAdapter:
     """An adapter with no cheap validity primitive must say so, not report a pass."""
 
-    def _unchecked_registry(self) -> MagicMock:
+    def _unchecked_registry(self) -> ExecEnv:
         """A trino source — an adapter in the ``anything else`` row: it has no
         entry in ``_PREFIX_CHECKS`` and no dry run, unlike a csv/json/parquet
         file source, which resolves to DuckDB's own DESCRIBE.
         """
         from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
 
-        registry = MagicMock()
-        registry.resolve_query_source.return_value = DbtTargetSourceConfig(type="trino")
-        return registry
+        return scripted_env(
+            ScriptedBackend(), source=DbtTargetSourceConfig(type="trino")
+        )
 
     def test_unchecked_adapter_warns_rather_than_passing_silently(self, tmp_path):
         project, _ = _setup_duckdb_project(tmp_path, with_data=False)
@@ -560,7 +566,7 @@ class TestWarehouseValidateUncheckedAdapter:
         project, _ = _setup_duckdb_project(tmp_path, with_data=False)
         registry = self._unchecked_registry()
         _validate(tmp_path, project, registry)
-        registry.execute.assert_not_called()
+        backend_of(registry).execute.assert_not_called()
 
 
 class TestNoWarehouseWithoutFlag:
@@ -576,9 +582,9 @@ class TestNoWarehouseWithoutFlag:
         def _boom(*args, **kwargs):
             raise AssertionError("warehouse I/O without --warehouse")
 
-        registry = session.adapter_registry
-        registry.execute = _boom
-        registry.resolve_query_source = _boom
+        registry = session.env
+        setattr(registry.backends, "for_source", _boom)  # noqa: B010 — pyright rejects assigning a method
+        registry.resolver.resolve = _boom
 
         results = session.validate_paths([tmp_path / "charts" / "test_board.yml"])
         assert len(results) == 1

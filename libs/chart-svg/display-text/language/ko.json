@@ -54,6 +54,7 @@
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{year}년 {month} {start_day}–{end_day}일",
   "controls.reset": "초기화",
+  "controls.remove_value": "{value} 제거",
   "controls.search": "검색",
   "controls.search_values": "값 검색",
   "controls.select_all": "모두 선택",

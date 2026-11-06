@@ -24,17 +24,15 @@ from dbt_charts.core.compile.migrations import (
     IncompleteMigrationError,
     MigrationConflictError,
     SchemaMigrationWarning,
-    migrate_mapping,
     migrate_yaml_text,
-)
-from dbt_charts.core.compile.migrations.migrations import (
-    _board_migration_context,
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._engine_migrations import migrate_mapping
 
 
 @pytest.fixture
@@ -43,10 +41,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: dict[str, Any], catalog: YamlSchemaCatalog) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 def test_kpi_style_tone_migrates_into_existing_support(
@@ -114,7 +111,6 @@ def test_kpi_style_tone_dropped_when_no_support_block(
     A SchemaMigrationWarning naming the chart must be raised so the author
     can manually add a support: block and re-set the tone there.
     """
-    _, registry = _board_migration_context()
     raw: dict[str, Any] = {
         "charts": {
             "revenue_kpi": {
@@ -128,7 +124,7 @@ def test_kpi_style_tone_dropped_when_no_support_block(
     }
 
     with pytest.warns(SchemaMigrationWarning, match="revenue_kpi"):
-        migrated = migrate_mapping(raw, catalog=catalog, registry=registry)
+        migrated = migrate_mapping(raw)
 
     chart = migrated["charts"]["revenue_kpi"]
     assert "tone" not in str(chart)
@@ -186,7 +182,6 @@ def test_kpi_conflict_when_support_tone_already_set(
     """
     import copy
 
-    _, registry = _board_migration_context()
     raw: dict[str, Any] = {
         "charts": {
             "k1": {
@@ -202,7 +197,7 @@ def test_kpi_conflict_when_support_tone_already_set(
     original = copy.deepcopy(raw)
 
     with pytest.raises(MigrationConflictError):
-        migrate_mapping(raw, catalog=catalog, registry=registry)
+        migrate_mapping(raw)
 
     # Input must not be mutated when conflict is raised
     assert raw == original
@@ -269,20 +264,6 @@ def test_board_without_style_tone_is_unchanged(catalog: YamlSchemaCatalog) -> No
     AuthoredBoard.model_validate(migrated)
 
 
-def test_registry_covers_the_0_4_0_conditional_moves(
-    catalog: YamlSchemaCatalog,
-) -> None:
-    """The ConditionalMove is registered at the 0.4.0 -> 0.5.0 boundary."""
-    _, registry = _board_migration_context()
-    cond_moves = registry.conditional_moves_from("0.4.0")
-
-    assert cond_moves
-    assert all(cm.target_schema == "0.5.0" for cm in cond_moves)
-    # The registered move targets KPI charts specifically
-    kpi_moves = [cm for cm in cond_moves if cm.chart_type == "kpi"]
-    assert kpi_moves
-
-
 def test_migrate_yaml_text_raises_for_kpi_with_style_tone(
     catalog: YamlSchemaCatalog,
 ) -> None:
@@ -295,7 +276,6 @@ def test_migrate_yaml_text_raises_for_kpi_with_style_tone(
     caller can tell "this was never old" from "this was old and could not be
     fully modernized" — only the second is worth announcing.
     """
-    _, registry = _board_migration_context()
     yaml_text = (
         "charts:\n"
         "  k1:\n"
@@ -308,7 +288,7 @@ def test_migrate_yaml_text_raises_for_kpi_with_style_tone(
     )
 
     with pytest.raises(IncompleteMigrationError):
-        migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+        migrate_yaml_text(yaml_text)
 
 
 def test_migrate_board_yaml_text_raises_for_kpi_with_style_tone() -> None:

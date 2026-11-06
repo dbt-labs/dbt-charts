@@ -4,7 +4,7 @@ The two halves of the artifact round trip that make a resolved board a
 first-class, replayable output: `dump_board_artifact`/`load_board_artifact`
 (de)serialize the published `ResolvedBoard` contract, and
 `render_board_from_artifact` renders one with a `ReplayDataProvider` instead
-of a live `Executor` — no compile, no warehouse.
+of live `QueryResults` — no compile, no warehouse.
 
 Both loaders stamp a registered `ERR-*` code on failure rather than letting a
 bare `pydantic.ValidationError` or `ReplayDataProvider` exception reach a
@@ -31,6 +31,7 @@ from dbt_charts.core.compile.resolve.chart.label_data import (
     pie_presentation_fingerprint,
 )
 from dbt_charts.core.compile.template.listings import extract_listing_calls
+from dbt_charts.core.compile.template.variables import normalize_render_values
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_BOARD_ARTIFACT_INVALID,
@@ -179,6 +180,12 @@ def render_board_from_artifact(
         recorded_at=recording.recorded_at,
         variables=recording.variables,
     )
+    # A recording holds plain lists; text prints a multiselect or daterange by
+    # its declared type, which the live render restores the same way.
+    declared = {name: var for board in boards for name, var in board.variables.items()}
+    typed_variables = normalize_render_values(
+        variables, declared, resolved.clock(recording.recorded_at)
+    )
     resolved_background = resolved.style.background
     # `embed_fonts` follows the caller, because a replay's contract is reproducing
     # whatever it is being compared against: an artifact rendered for export must
@@ -189,7 +196,7 @@ def render_board_from_artifact(
         return render_board_svg(
             resolved,
             provider,
-            variables,
+            typed_variables,
             background=(
                 None if resolved_background == "transparent" else resolved_background
             ),

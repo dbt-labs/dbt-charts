@@ -18,7 +18,7 @@ from dbt_charts.core.compile.models.source import (
     TrinoSourceConfig,
 )
 from dbt_charts.core.connections import bulk_tables_for_config
-from dbt_charts.core.execute.adapters import AdapterRegistry
+from dbt_charts.core.execute.env import make_exec_env
 from dbt_charts.core.inspect.resolver import LayeredSchemaResolver
 from dbt_charts.core.inspect.sources.driver import DriverSchemaSource
 
@@ -90,15 +90,13 @@ def test_an_unknown_table_is_none() -> None:
 
 
 def test_the_resolver_routes_lakecompute_to_the_driver_source_not_dbt() -> None:
-    registry = AdapterRegistry(
+    registry = make_exec_env(
         project=_NonFilesystemProject(),
         project_sources=ProjectSourcesConfig(
             sources={"lake": {"type": "lakecompute", "token": "t"}}
         ),
     )
-    resolver = LayeredSchemaResolver(
-        cache=None, adapter_registry=registry, project=registry.project
-    )
+    resolver = LayeredSchemaResolver(cache=None, env=registry, project=registry.project)
     with (
         fake_lakecompute_driver(_COLUMNS),
         patch(
@@ -112,14 +110,12 @@ def test_the_resolver_routes_lakecompute_to_the_driver_source_not_dbt() -> None:
 
 def test_a_raw_registry_dict_is_parsed_not_trusted() -> None:
     """A bad key fails extra-forbidden rather than reaching the driver."""
-    registry = AdapterRegistry(
+    registry = make_exec_env(
         project=_NonFilesystemProject(),
         project_sources=ProjectSourcesConfig(
             sources={"lake": {"type": "lakecompute", "token": "t", "schema": "x"}}
         ),
     )
-    resolver = LayeredSchemaResolver(
-        cache=None, adapter_registry=registry, project=registry.project
-    )
+    resolver = LayeredSchemaResolver(cache=None, env=registry, project=registry.project)
     with pytest.raises(ValueError, match="Extra inputs are not permitted"):
         resolver.list_schemas("lake")

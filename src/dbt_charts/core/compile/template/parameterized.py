@@ -919,9 +919,8 @@ def render_parameterized_with_queries(
 ) -> ParameterizedQuery:
     """Render parameterized SQL with query reference support.
 
-    Like render_parameterized but also handles {{ queries.* }} references.
-    Used on both the render path (executor.py) and the direct-query path
-    (adapter_registry.execute) so composition cannot be silently omitted.
+    Like render_parameterized but also handles {{ queries.* }} references. Every execution path composes through it, so
+    composition cannot be silently omitted.
 
     Args:
         template: SQL template with Jinja expressions

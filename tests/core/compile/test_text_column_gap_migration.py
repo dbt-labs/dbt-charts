@@ -16,13 +16,13 @@ import pytest
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
     migrate_yaml_text,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     load_yaml_schema_catalog,
 )
+
+from ._engine_migrations import migrate_mapping
 
 BOARD = """title: T
 text: Some prose.
@@ -61,13 +61,10 @@ def test_an_authored_column_gap_is_dropped_with_a_warning() -> None:
 def test_the_mapping_loses_the_gap_and_keeps_its_siblings() -> None:
     import yaml
 
-    catalog = load_yaml_schema_catalog()
-    _, registry = _board_migration_context()
+    load_yaml_schema_catalog()
 
     with pytest.warns(SchemaMigrationWarning):
-        result = migrate_mapping(
-            yaml.safe_load(BOARD), catalog=catalog, registry=registry
-        )
+        result = migrate_mapping(yaml.safe_load(BOARD))
 
     column = result["style"]["text"]["column"]
     assert column["max_number"] == 2
@@ -75,12 +72,11 @@ def test_the_mapping_loses_the_gap_and_keeps_its_siblings() -> None:
 
 
 def test_the_text_rewrite_replay_drops_the_gap_and_keeps_its_siblings() -> None:
-    catalog = load_yaml_schema_catalog()
-    _, registry = _board_migration_context()
+    load_yaml_schema_catalog()
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        result = migrate_yaml_text(BOARD, catalog=catalog, registry=registry)
+        result = migrate_yaml_text(BOARD)
 
     assert "gap:" not in result
     assert "max_number: 2" in result

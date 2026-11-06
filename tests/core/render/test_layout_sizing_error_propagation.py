@@ -49,7 +49,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.query_results import QueryResults
 
 _ZERO_PADDING = PaddingStyle(left=0.0, right=0.0, top=0.0, bottom=0.0)
 
@@ -69,8 +69,9 @@ def _make_chart(chart_type: str = "table") -> Chart:
 
 
 def _executor_raising(exc: Exception) -> MagicMock:
-    mock = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    mock.execute_chart.side_effect = exc
+    mock = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
+    mock.execute_query.side_effect = exc
+    mock.execute_query_result.side_effect = exc
     return mock
 
 
@@ -137,7 +138,9 @@ class TestSizingProviderErrorPropagation:
 
         chart = _make_chart("bar")
         item = LayoutItem(type="chart", width=400.0, height=0.0, chart=chart)
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
 
         mock_resolved = MagicMock(spec=ResolvedChart)
         mock_resolved.id = chart.id
@@ -206,7 +209,9 @@ class TestSizingProviderErrorPropagation:
 
         chart = _make_chart("bar")
         item = LayoutItem(type="chart", width=400.0, height=0.0, chart=chart)
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
         executor.execute_query.return_value = []
 
         theme = get_theme_style()
@@ -285,7 +290,9 @@ class TestAlignColsErrorPropagation:
         )
         item_tall = LayoutItem(type="chart", width=400.0, height=0.0, chart=chart_tall)
 
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
         theme = get_theme_style()
         resolved = resolve_style(theme)
         board_ctx = resolve_chart_style_context(theme)

@@ -18,7 +18,7 @@ Two halves, with different owners:
 - **Ownership** (``team``, ``cost_center``, …) cannot be derived from anything the
   engine knows. It is authored per source via ``attribution:``.
 
-The payload reaches the warehouse through ``execute/adapters/query_header.py``; this
+The payload reaches the warehouse through ``execute/backends/query_header.py``; this
 module stays free of any dbt import so the compile layer can share its vocabulary.
 
 Engine-owned values are *normalized* to the label charset (we generate them, so a board

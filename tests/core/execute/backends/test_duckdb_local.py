@@ -11,6 +11,7 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
+from dbt_charts.core.execute.run import run_query
 
 
 def _make_query(sql: str, source: str = "db") -> SqlQuery:
@@ -424,16 +425,16 @@ class TestDuckDBBackendRegisteredInRegistry:
     ) -> None:
         """A query naming a duckdb-typed registry source executes on the
         DuckDB backend."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
         (tmp_path / "dbt_charts.yml").write_text(
             "sources:\n  analytics:\n    type: duckdb\n    path: ':memory:'\n"
         )
-        registry = build_adapter_registry(local_project(tmp_path))
+        registry = build_exec_env(local_project(tmp_path))
         query = _make_query("SELECT 42 AS val", source="analytics")
-        result = registry.execute(query)
+        result = run_query(registry, query)
         assert result.error is None
         assert result.data == [{"val": 42}]
 
@@ -442,7 +443,7 @@ class TestDuckDBBackendDbtProjectPath:
     """Regression: dbt_project_path scan for local DuckDB files must not be dropped.
 
     When a dbt project sits next to dbt_charts.yml and has a data/dev.duckdb file,
-    a no-source SQL query via build_adapter_registry must auto-connect to that file
+    a no-source SQL query via build_exec_env must auto-connect to that file
     (the DBT_PROJECT_DB_NAMES scan). This reproduces the CRITICAL regression where
     the DuckDB backend dropped the dbt_project_path branch entirely.
     """
@@ -450,8 +451,9 @@ class TestDuckDBBackendDbtProjectPath:
     def test_dbt_project_duckdb_auto_connected(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
+            close_env,
         )
 
         # Set up a minimal dbt project layout so dbt_project_path_for returns tmp_path.
@@ -467,16 +469,16 @@ class TestDuckDBBackendDbtProjectPath:
         seed_conn.execute("INSERT INTO test_table VALUES (42, 'hello')")
         seed_conn.close()
 
-        registry = build_adapter_registry(
+        registry = build_exec_env(
             local_project(tmp_path),
             read_only=False,
         )
         try:
-            result = registry.execute(_make_query("SELECT id, name FROM test_table"))
+            result = run_query(registry, _make_query("SELECT id, name FROM test_table"))
             assert result.error is None, f"Query failed: {result.error}"
             assert result.data == [{"id": 42, "name": "hello"}]
         finally:
-            registry.close()
+            close_env(registry)
 
     def test_dbt_project_without_local_warehouse_raises(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -484,18 +486,19 @@ class TestDuckDBBackendDbtProjectPath:
         from dbt_charts.core.diagnostics.codes_execute import (
             ERR_DBT_PROJECT_NO_LOCAL_WAREHOUSE,
         )
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
+            close_env,
         )
 
         (tmp_path / "dbt_project.yml").write_text("name: test\n")
-        registry = build_adapter_registry(local_project(tmp_path), read_only=False)
+        registry = build_exec_env(local_project(tmp_path), read_only=False)
         try:
-            result = registry.execute(_make_query("SELECT 42 AS x"))
+            result = run_query(registry, _make_query("SELECT 42 AS x"))
             assert result.error is not None
             assert result.error.code is ERR_DBT_PROJECT_NO_LOCAL_WAREHOUSE
         finally:
-            registry.close()
+            close_env(registry)
 
 
 class TestDuckDBBackendAttachConfig:
@@ -511,8 +514,9 @@ class TestDuckDBBackendAttachConfig:
         silently inherit the first source's session, settings from the
         wrong source, and an attach alias (or secret) meant for one source
         visible to another."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
+            close_env,
         )
 
         db_a = tmp_path / "a.duckdb"
@@ -544,24 +548,26 @@ class TestDuckDBBackendAttachConfig:
             "        alias: dbb\n"
             "        read_only: true\n"
         )
-        registry = build_adapter_registry(local_project(tmp_path))
+        registry = build_exec_env(local_project(tmp_path))
         try:
-            alpha_threads = registry.execute(
-                _make_query("SELECT current_setting('threads') AS t", source="alpha")
+            alpha_threads = run_query(
+                registry,
+                _make_query("SELECT current_setting('threads') AS t", source="alpha"),
             )
-            beta_threads = registry.execute(
-                _make_query("SELECT current_setting('threads') AS t", source="beta")
+            beta_threads = run_query(
+                registry,
+                _make_query("SELECT current_setting('threads') AS t", source="beta"),
             )
             assert alpha_threads.error is None, alpha_threads.error
             assert beta_threads.error is None, beta_threads.error
             assert alpha_threads.data == [{"t": 2}]
             assert beta_threads.data == [{"t": 7}]
 
-            alpha_row = registry.execute(
-                _make_query("SELECT id FROM dba.w", source="alpha")
+            alpha_row = run_query(
+                registry, _make_query("SELECT id FROM dba.w", source="alpha")
             )
-            beta_row = registry.execute(
-                _make_query("SELECT id FROM dbb.w", source="beta")
+            beta_row = run_query(
+                registry, _make_query("SELECT id FROM dbb.w", source="beta")
             )
             assert alpha_row.error is None, alpha_row.error
             assert beta_row.error is None, beta_row.error
@@ -569,28 +575,31 @@ class TestDuckDBBackendAttachConfig:
             assert beta_row.data == [{"id": 2}]
 
             # alpha's session must not see beta's attach alias, and vice versa.
-            alpha_dbs = registry.execute(
+            alpha_dbs = run_query(
+                registry,
                 _make_query(
                     "SELECT database_name FROM duckdb_databases()", source="alpha"
-                )
+                ),
             )
-            beta_dbs = registry.execute(
+            beta_dbs = run_query(
+                registry,
                 _make_query(
                     "SELECT database_name FROM duckdb_databases()", source="beta"
-                )
+                ),
             )
             alpha_names = {row["database_name"] for row in alpha_dbs.data}
             beta_names = {row["database_name"] for row in beta_dbs.data}
             assert "dba" in alpha_names and "dbb" not in alpha_names
             assert "dbb" in beta_names and "dba" not in beta_names
         finally:
-            registry.close()
+            close_env(registry)
 
     def test_attach_alias_is_queryable(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
+            close_env,
         )
 
         other_db = tmp_path / "other.duckdb"
@@ -609,24 +618,26 @@ class TestDuckDBBackendAttachConfig:
             "        alias: other\n"
             "        read_only: true\n"
         )
-        registry = build_adapter_registry(local_project(tmp_path))
+        registry = build_exec_env(local_project(tmp_path))
         try:
-            dbs = registry.execute(
+            dbs = run_query(
+                registry,
                 _make_query(
                     "SELECT database_name FROM duckdb_databases()", source="analytics"
-                )
+                ),
             )
             assert dbs.error is None, dbs.error
             names = {row["database_name"] for row in dbs.data}
             assert "other" in names
 
-            rows = registry.execute(
-                _make_query("SELECT id FROM other.widgets", source="analytics")
+            rows = run_query(
+                registry,
+                _make_query("SELECT id FROM other.widgets", source="analytics"),
             )
             assert rows.error is None, rows.error
             assert rows.data == [{"id": 7}]
         finally:
-            registry.close()
+            close_env(registry)
 
     def test_attach_works_with_no_data_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -855,8 +866,9 @@ class TestDuckDBBackendAttachConfig:
     def test_settings_applied_to_connection(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
+            close_env,
         )
 
         (tmp_path / "dbt_charts.yml").write_text(
@@ -867,17 +879,18 @@ class TestDuckDBBackendAttachConfig:
             "    settings:\n"
             "      threads: 2\n"
         )
-        registry = build_adapter_registry(local_project(tmp_path))
+        registry = build_exec_env(local_project(tmp_path))
         try:
-            result = registry.execute(
+            result = run_query(
+                registry,
                 _make_query(
                     "SELECT current_setting('threads') AS threads", source="analytics"
-                )
+                ),
             )
             assert result.error is None, result.error
             assert result.data == [{"threads": 2}]
         finally:
-            registry.close()
+            close_env(registry)
 
     def test_extensions_applied_to_connection(
         self,
@@ -887,10 +900,11 @@ class TestDuckDBBackendAttachConfig:
     ) -> None:
         """duckdb_extensions() scans the home directory, which the locked
         connection refuses, so the applied list is observed at setup."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
-        )
         from dbt_charts.core.execute.backends import duckdb_local as duckdb_backend
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
+            close_env,
+        )
 
         applied: list[str | dict[str, str]] = []
         original = duckdb_backend._apply_duckdb_extensions
@@ -911,19 +925,22 @@ class TestDuckDBBackendAttachConfig:
             "    extensions:\n"
             "      - json\n"
         )
-        registry = build_adapter_registry(local_project(tmp_path))
+        registry = build_exec_env(local_project(tmp_path))
         try:
-            result = registry.execute(_make_query("SELECT 1 AS n", source="analytics"))
+            result = run_query(
+                registry, _make_query("SELECT 1 AS n", source="analytics")
+            )
             assert result.error is None, result.error
             assert applied == ["json"]
         finally:
-            registry.close()
+            close_env(registry)
 
     def test_secrets_created(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
+            close_env,
         )
 
         (tmp_path / "dbt_charts.yml").write_text(
@@ -937,18 +954,19 @@ class TestDuckDBBackendAttachConfig:
             "        key_id: fake\n"
             "        secret: fakesecret\n"
         )
-        registry = build_adapter_registry(local_project(tmp_path))
+        registry = build_exec_env(local_project(tmp_path))
         try:
-            result = registry.execute(
+            result = run_query(
+                registry,
                 _make_query(
                     "SELECT name FROM duckdb_secrets() WHERE name = 'my_secret'",
                     source="analytics",
-                )
+                ),
             )
             assert result.error is None, result.error
             assert result.data == [{"name": "my_secret"}]
         finally:
-            registry.close()
+            close_env(registry)
 
     def test_secret_type_injection_is_rejected_before_any_sql_runs(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -959,8 +977,9 @@ class TestDuckDBBackendAttachConfig:
         config-apply, on a connection that authoring `secrets` had just
         switched external access on for, before validate_select_only or
         validate_setup_sql ever see anything."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
+            close_env,
         )
 
         main_db = tmp_path / "main.duckdb"
@@ -982,16 +1001,16 @@ class TestDuckDBBackendAttachConfig:
             "    secrets:\n"
             f'      - type: "{injected_type}"\n'
         )
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
         try:
-            result = registry.execute(
-                _make_query("SELECT x FROM t", source="analytics")
+            result = run_query(
+                registry, _make_query("SELECT x FROM t", source="analytics")
             )
             assert result.error is not None
             assert result.error.code is not None
             assert result.error.code.code == "ERR-ADAPTER-DUCKDB-CONFIG-INVALID"
         finally:
-            registry.close()
+            close_env(registry)
         assert not exfil_path.exists()
 
     def test_secret_field_key_injection_is_rejected_before_any_sql_runs(
@@ -1000,8 +1019,9 @@ class TestDuckDBBackendAttachConfig:
         """A secret's provider field keys are spliced into CREATE SECRET SQL
         the same way `type` is; an injected key must be rejected the same
         way, before any generated SQL reaches the connection."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
+            close_env,
         )
 
         main_db = tmp_path / "main.duckdb"
@@ -1023,16 +1043,16 @@ class TestDuckDBBackendAttachConfig:
             "      - type: s3\n"
             f'        "{injected_key}": x\n'
         )
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
         try:
-            result = registry.execute(
-                _make_query("SELECT x FROM t", source="analytics")
+            result = run_query(
+                registry, _make_query("SELECT x FROM t", source="analytics")
             )
             assert result.error is not None
             assert result.error.code is not None
             assert result.error.code.code == "ERR-ADAPTER-DUCKDB-CONFIG-INVALID"
         finally:
-            registry.close()
+            close_env(registry)
         assert not exfil_path.exists()
 
     def test_attach_option_value_injection_via_dbt_profile_is_rejected(
@@ -1047,6 +1067,8 @@ class TestDuckDBBackendAttachConfig:
         untouched, reaching the same splice site: a list-valued option
         value must still be rejected, not formatted."""
         import yaml
+
+        from dbt_charts.core.execute.env import close_env
 
         main_db = tmp_path / "main.duckdb"
         seed = duckdb.connect(str(main_db))
@@ -1095,18 +1117,18 @@ class TestDuckDBBackendAttachConfig:
         )
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
 
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
         try:
-            result = registry.execute(_make_query("SELECT x FROM t", source="prod"))
+            result = run_query(registry, _make_query("SELECT x FROM t", source="prod"))
             assert result.error is not None
             assert result.error.code is not None
             assert result.error.code.code == "ERR-ADAPTER-DUCKDB-CONFIG-INVALID"
         finally:
-            registry.close()
+            close_env(registry)
 
     def test_secret_map_key_injection_is_escaped_not_spliced(self) -> None:
         """A dict-valued secret field (DuckDB `map`) sits inside single
@@ -1146,8 +1168,8 @@ class TestDuckDBBackendAttachConfig:
         yaml_field: str,
     ) -> None:
         from dbt_charts.core.compile.errors import CompilationError
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
         (tmp_path / "dbt_charts.yml").write_text(
@@ -1158,7 +1180,7 @@ class TestDuckDBBackendAttachConfig:
             f"    {yaml_field}"
         )
         with pytest.raises(CompilationError, match="is not supported"):
-            build_adapter_registry(local_project(tmp_path))
+            build_exec_env(local_project(tmp_path))
 
     def test_unsupported_field_rejected_for_dbt_profile_expanded_source(
         self,
@@ -1173,8 +1195,9 @@ class TestDuckDBBackendAttachConfig:
         author to a dbt_profile source."""
         import yaml
 
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
+            close_env,
         )
 
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
@@ -1213,13 +1236,13 @@ class TestDuckDBBackendAttachConfig:
             "name: test_project\nprofile: test_project\n"
         )
 
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
         try:
             # A file-backed source (path != ':memory:') opens per query on the
             # read-only ephemeral path, which converts a typed DbtChartsError
             # into QueryResult.error.
-            result = registry.execute(
-                _make_query("SELECT n FROM numbers", source="prod")
+            result = run_query(
+                registry, _make_query("SELECT n FROM numbers", source="prod")
             )
             assert result.error is not None
             assert result.error.code is not None
@@ -1228,15 +1251,16 @@ class TestDuckDBBackendAttachConfig:
             assert "use_credential_provider" in message
             assert "dbt_profile" not in message
         finally:
-            registry.close()
+            close_env(registry)
 
     def test_attach_failure_on_memory_source_is_query_result_error(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """A :memory: source uses the pooled connect path; the failure must
         still come back as a typed QueryResult.error, not a raised exception."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
+            close_env,
         )
 
         missing = tmp_path / "does_not_exist.duckdb"
@@ -1250,22 +1274,25 @@ class TestDuckDBBackendAttachConfig:
             "        alias: other\n"
             "        read_only: true\n"
         )
-        registry = build_adapter_registry(local_project(tmp_path))
+        registry = build_exec_env(local_project(tmp_path))
         try:
-            result = registry.execute(_make_query("SELECT 1 AS n", source="analytics"))
+            result = run_query(
+                registry, _make_query("SELECT 1 AS n", source="analytics")
+            )
             assert result.error is not None
             assert result.error.code is not None
             assert result.error.code.code == "ERR-ADAPTER-DUCKDB-CONFIG-APPLY-FAILED"
         finally:
-            registry.close()
+            close_env(registry)
 
     def test_attach_failure_on_file_source_is_query_result_error(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """A file-backed (non-:memory:) read-only source opens per query; the
         same attach failure comes back as QueryResult.error too."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
+            close_env,
         )
 
         main_db = tmp_path / "main.duckdb"
@@ -1282,14 +1309,16 @@ class TestDuckDBBackendAttachConfig:
             "        alias: other\n"
             "        read_only: true\n"
         )
-        registry = build_adapter_registry(local_project(tmp_path))
+        registry = build_exec_env(local_project(tmp_path))
         try:
-            result = registry.execute(_make_query("SELECT 1 AS n", source="analytics"))
+            result = run_query(
+                registry, _make_query("SELECT 1 AS n", source="analytics")
+            )
             assert result.error is not None
             assert result.error.code is not None
             assert result.error.code.code == "ERR-ADAPTER-DUCKDB-CONFIG-APPLY-FAILED"
         finally:
-            registry.close()
+            close_env(registry)
 
     def test_dbt_profile_expansion_carries_attach_through(self, tmp_path: Path) -> None:
         """DbtTargetSourceConfig (extra='allow') is how a dbt_profile duckdb

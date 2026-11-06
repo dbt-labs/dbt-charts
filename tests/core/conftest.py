@@ -37,12 +37,13 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedTotalValueSlot,
 )
 from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-from dbt_charts.core.execute.adapters.base import QueryResult
-from dbt_charts.core.execute.adapters.typed_fetch import TypedRows
 from dbt_charts.core.execute.backends.base import BackendRegistry
 from dbt_charts.core.execute.backends.dbt_core import DbtBackend
+from dbt_charts.core.execute.backends.typed_fetch import TypedRows
 from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.env import close_env, make_exec_env
+from dbt_charts.core.execute.query_result import QueryResult
+from dbt_charts.core.execute.run import execute_resolved, run_query
 
 # Ink palette slot 0 from the default resolved theme.
 # This is rcs.single_series_palette[0] for the built-in theme.
@@ -431,12 +432,12 @@ class DbtHarness:
     def __init__(
         self, project: Any, *, max_workers: int | None = None, profile_type: str
     ) -> None:  # type-state: explicit_any — test project double
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import (
             DBT_SOURCE_TYPES,
         )
 
         self.backend = DbtBackend(max_workers)
-        self.registry = AdapterRegistry(
+        self.registry = make_exec_env(
             project=project,
             backends=BackendRegistry(dict.fromkeys(DBT_SOURCE_TYPES, self.backend)),
             profile_type=profile_type,
@@ -449,8 +450,8 @@ class DbtHarness:
         params: list[Any] | None = None,  # type-state: explicit_any — test params
         source_config: Any = None,  # type-state: explicit_any — test source
     ) -> QueryResult:
-        return self.registry.execute(
-            query, variables, params, source_config=source_config
+        return run_query(
+            self.registry, query, variables, params, source_config=source_config
         )
 
     def run_resolved(
@@ -461,9 +462,12 @@ class DbtHarness:
     ) -> QueryResult:
         """Send *resolved* to the backend for *source*, as a check that wraps the
         rendered statement does."""
-        return self.registry.execute_resolved(
-            resolved, query, source_config=DbtTargetSourceConfig(**source)
+        return execute_resolved(
+            self.registry,
+            resolved,
+            query,
+            source_config=DbtTargetSourceConfig(**source),
         )
 
     def close(self) -> None:
-        self.registry.close()
+        close_env(self.registry)

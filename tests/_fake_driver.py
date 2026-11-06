@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import nanoarrow as na
 import pyarrow as pa
 
-from dbt_charts.core.execute.adapters.base import RowFetchLimit
+from dbt_charts.core.execute.query_result import RowFetchLimit
 
 
 class FakeDriverConnection:

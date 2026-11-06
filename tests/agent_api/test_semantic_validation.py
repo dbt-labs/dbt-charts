@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.agent_api import ProjectSession
-from dbt_charts.core.execute.adapters import AdapterRegistry
+from dbt_charts.core.execute import run as run_stage
 
 from .._paths import DBT_CHARTS_DIR
 
@@ -34,7 +34,7 @@ def session(
     def no_warehouse(*args: object, **kwargs: object) -> None:
         raise AssertionError("validation must not reach the warehouse")
 
-    monkeypatch.setattr(AdapterRegistry, "execute", no_warehouse)
+    monkeypatch.setattr(run_stage, "run_route", no_warehouse)
     with ProjectSession.open(tmp_path) as opened:
         yield opened
 

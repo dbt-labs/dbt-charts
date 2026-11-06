@@ -28,7 +28,7 @@ from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.render.layout_sizing import (
     SizingRenderCtx,
     _make_data_aware_height_provider,
@@ -105,7 +105,7 @@ def test_second_placement_not_poisoned_by_first_placements_max_bars_failure() ->
         {"type": "cols", "items": [low_board_item, high_board_item]}
     )
 
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
     executor.execute_query.return_value = _ROWS
     render_ctx = SizingRenderCtx(

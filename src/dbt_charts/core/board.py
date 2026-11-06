@@ -53,15 +53,16 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.registry import REGISTRY
 from dbt_charts.core.diagnostics.suppression import partition as _partition_warnings
-from dbt_charts.core.execute import ExecutionError, Executor
-from dbt_charts.core.execute.adapters import AdapterRegistry
+from dbt_charts.core.execute import ExecutionError
 from dbt_charts.core.execute.cache_backend import QueryResultCache
-from dbt_charts.core.execute.executor import utc_now
+from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.execute.lookup import (
+    Ledger,
     cache_hit_ats,
     query_data_ages,
     warehouse_cache_hit_ats,
 )
+from dbt_charts.core.execute.plan import make_context, utc_now
 from dbt_charts.core.project import (
     CHARTS_SUBDIR,
     BoardFile,
@@ -297,42 +298,12 @@ def _compile_failed(
     )
 
 
-def _board_executor(
-    result: CompileResult,
-    board: Board,
-    *,
-    project: Project,
-    adapter_registry: AdapterRegistry,
-    use_cache: bool,
-    result_cache: QueryResultCache | None,
-    clock: Callable[[], datetime],
-    board_path: ProjectPath | None,
-) -> Executor:
-    """The executor one board's queries run through.
-
-    File sources run through ``adapter_registry``, which owns the
-    materializer. A stored board's file slug goes on every cache entry it
-    writes.
-    """
-    return Executor(
-        board,
-        adapter_registry=adapter_registry,
-        query_registry=result.query_registry,
-        use_cache=use_cache,
-        result_cache=result_cache,
-        clock=clock,
-        board_slug=board_identity(board_path.relpath)
-        if board_path is not None
-        else None,
-    )
-
-
 def prefetch_dashboard(
     board: BoardFile,
     variables: VariableValues,
     *,
     project: Project,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     result_cache: QueryResultCache | None,
     max_workers: int | None = None,
     builtin_variables: VariableValues | None = None,
@@ -351,19 +322,20 @@ def prefetch_dashboard(
         result = compile_result if compile_result is not None else compile_file(board)
         if not result.success or result.board is None:
             raise CompilationError("; ".join(e.message for e in result.errors))
-        executor = _board_executor(
-            result,
+        ctx = make_context(
             result.board,
-            project=project,
-            adapter_registry=adapter_registry,
-            use_cache=True,
+            env,
+            result.query_registry,
             result_cache=result_cache,
             clock=clock,
-            board_path=board.path,
+            board_slug=board_identity(board.path.relpath)
+            if board.path is not None
+            else None,
         )
         return prefetch_tab_queries(
             result.board,
-            executor,
+            ctx,
+            Ledger(),
             variables,
             max_workers,
             builtin_variables,
@@ -377,7 +349,7 @@ def render_dashboard(
     *,
     chart: str | None = None,
     project: Project,
-    adapter_registry: AdapterRegistry | None = None,
+    env: ExecEnv | None = None,
     format: str = "json",
     server_port: int | None = None,
     use_cache: bool = True,
@@ -412,7 +384,7 @@ def render_dashboard(
     ``builtin_variables`` overrides the dir-navigation variables ``render_dashboard``
     otherwise derives from ``board.path`` — pass it when the caller's anchor has its
     own directory-listing semantics.
-    ``clock`` is the render's time source, handed to its ``Executor``.
+    ``clock`` is the render's time source, handed to its context.
     ``strict_variables`` rejects a variable the board does not declare, and a
     choice value outside its static options, instead of running the queries as
     if it were never set. A host whose variables are a browser's query string,
@@ -458,9 +430,9 @@ def render_dashboard(
             url=_view_url(board.path, variables, port=server_port),
         )
 
-    if adapter_registry is None:
+    if env is None:
         return _input_error(
-            "adapter_registry is required for full render "
+            "env is required for full render "
             "(or pass as_link=True with a board for link-only)"
         )
 
@@ -551,6 +523,7 @@ def render_dashboard(
     from dbt_charts.core.render.render_result import RenderResult as _RenderResult
 
     render_result: _RenderResult
+    ledger = Ledger()
     try:
         if strict_variables and result.board is not None:
             # The full board's registry, not the focused one: a focused chart
@@ -561,15 +534,17 @@ def render_dashboard(
                 variables
                 or {},  # type-state: silent_fallback — no values is an empty mapping, not masked bad input
             )
-        executor = _board_executor(
-            result,
+        # A stored board's file slug goes on every cache entry it writes.
+        ctx = make_context(
             compiled_board,
-            project=project,
-            adapter_registry=adapter_registry,
+            env,
+            result.query_registry,
             use_cache=use_cache,
             result_cache=result_cache,
             clock=clock,
-            board_path=file_path,
+            board_slug=board_identity(file_path.relpath)
+            if file_path is not None
+            else None,
         )
         if scale is not None:
             render_options["scale"] = scale
@@ -588,7 +563,8 @@ def render_dashboard(
         with image_scope(project):
             render_result = render(
                 compiled_board,
-                executor,
+                ctx,
+                ledger,
                 format=format,
                 variables=variables
                 or {},  # type-state: silent_fallback — no values is an empty mapping, not masked bad input
@@ -670,7 +646,7 @@ def render_dashboard(
         else:
             data = rendered_output
     except (ExecutionError, RenderError, ChartDataError) as e:
-        # What reaches here is what never entered the sizing pass: executor
+        # What reaches here is what never entered the sizing pass: context
         # construction, and MissingRequiredVariablesError (a RenderError
         # subclass) raised before build_resolved_board is called. Both are
         # board-level fatals with nothing to isolate. A chart's own resolve
@@ -708,9 +684,9 @@ def render_dashboard(
             *render_result.suppressed_warnings,
         ],
         url=url,
-        board_query_data_ages=query_data_ages(executor.ledger),
-        warehouse_cache_hit_ats=warehouse_cache_hit_ats(executor.ledger),
+        board_query_data_ages=query_data_ages(ledger),
+        warehouse_cache_hit_ats=warehouse_cache_hit_ats(ledger),
         query_ms=render_result.query_ms,
-        cache_hits=len(cache_hit_ats(executor.ledger)),
+        cache_hits=len(cache_hit_ats(ledger)),
         prefetch_query_names=sorted(render_result.prefetch_query_names),
     )

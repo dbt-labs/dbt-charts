@@ -1,12 +1,14 @@
 //! The vertical bar on a quantitative x: a linear x scale padded by the half-bar reservation, in a closed-form
 //! arm of its own.
 
-use crate::common::{VALUE_AXIS_BREATHING_ROOM, axis_title_text, format_y_label, row_num, row_str};
+use crate::common::{VALUE_AXIS_BREATHING_ROOM, axis_title_text, format_y_label};
+use ::bind::rows::{row_num, row_str};
 use diagnostic::Diagnostic;
 use crate::families::axis_caption::value_axis_caption;
 use d3rs::scale::Continuous;
 use crate::families::facet_compose::PanelGeometry;
-use crate::families::layers::{AreaFrame, BarLayerMark, DualAxisTitles, LayerAxis, LayerAxisFrame, LayerAxisInk, LayerScale, LayerSide, LayerStack, MOVED_BASE_LABEL_PAD, OverlayAxisY, OverlayLayer, PointColor, YSides, claim_layers, layer_color_groups, layer_color_promoted, layer_color_text, layer_series_text, merged_axis_title, merged_legend_title, panel_layer_rows, placed_bar_layer_marks, scope_group_top};
+use crate::families::layers::{AreaFrame, BarLayerMark, DualAxisTitles, LayerAxis, LayerAxisFrame, LayerAxisInk, LayerScale, LayerSide, LayerStack, MOVED_BASE_LABEL_PAD, OverlayAxisY, OverlayLayer, PointColor, YSides, claim_layers, layer_series_text, merged_legend_title, panel_layer_rows, placed_bar_layer_marks, scope_group_top};
+use ::bind::layers::{layer_color_groups, layer_color_promoted, layer_color_text, merged_axis_title};
 use crate::families::legend::{LegendEntry, LegendSymbol, drawn_symbol_legend, legend_fit_bounds, legend_origin, legend_slide, legend_title_text, vega_legend};
 use crate::families::{facet_compose, multiples};
 use crate::frame::{ChartFrame, FrameTitle};
@@ -117,7 +119,7 @@ pub(super) fn continuous_x_shape_ok(rows: &[serde_json::Map<String, Value>], r: 
 /// quantitative: a year-shaped column is rewritten to dates first, and an
 /// authored `axis_x.type` overrides the data.
 pub(super) fn x_is_linear(r: &BarResolved, chart_rows: &[serde_json::Map<String, Value>]) -> Result<bool, String> {
-    Ok(x_resolution(r, chart_rows)?.resolution.vl_type == crate::families::temporal::VegaType::Quantitative)
+    Ok(x_resolution(r, chart_rows)?.resolution.vl_type == ::bind::temporal::VegaType::Quantitative)
 }
 
 /// One bar's horizontal extent in plot pixels, and the x its value label centers on.
@@ -178,7 +180,7 @@ pub(super) fn render_vertical_continuous_x_panel(
     // overhang`'s own left reserve, never `plot_w` alone. `0.0` off the
     // single-chart wrapper.
     value_axis_right_overhang: f64,
-    // A facet panel's canonical key and its place in `multiples::regroup`
+    // A facet panel's canonical key and its place in `::bind::multiples::regroup`
     // order, which annotations name and clip ids number.
     panel: Option<(&str, usize)>,
     // The composer paints the only value axis (a left one with no mirror), so this panel reserves and paints none.
@@ -523,7 +525,7 @@ pub(super) fn render_vertical_continuous_x_panel(
             .map(|(i, layer, ml, is_house, rows)| {
                 let style = crate::families::layers::LayerLabelStyle::new(ml, is_house, rows, board_style)?;
                 let x_field = layer.x().unwrap_or(&r.x);
-                let items = crate::common::valued_rows(rows.iter(), layer.y())
+                let items = ::bind::rows::valued_rows(rows.iter(), layer.y())
                     .into_iter()
                     .filter_map(|(row, val)| row_num(row, x_field).map(|x| (x, val, row)))
                     .map(|(x, val, row)| {
@@ -911,14 +913,14 @@ pub(super) fn render_vertical_continuous_x_panel(
     let mut facet_legend: Option<facet_compose::FacetLegend> = None;
     if let Some(lg) = &legend {
         if suppress_x_axis {
-            let mut nodes: Vec<scene::Node> = drawn_symbol_legend(&legend_entries, lg, &r.legend, LegendSymbol::Square(swatch_stroke), 0.0, 0.0, stamp_legend_series).into_iter().collect();
-            nodes.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (m.plot_w, m.plot_h), (0.0, 0.0))?);
+            let mut nodes: Vec<scene::Node> = drawn_symbol_legend(&legend_entries, lg, &r.legend, LegendSymbol::Square(swatch_stroke), 0.0, 0.0, stamp_legend_series, r.canvas.as_str()).into_iter().collect();
+            nodes.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (m.plot_w, m.plot_h), (0.0, 0.0), r.canvas.as_str())?);
             facet_legend = Some(facet_compose::FacetLegend { nodes, box_w: lg.box_w, box_h: lg.box_h() });
         } else {
             let (lx, ly) = legend_xy.get();
             let (dx, dy) = legend_slide(&r.id, &r.legend.position, lg, (m.plot_w, m.plot_h))?;
-            head.extend(drawn_symbol_legend(&legend_entries, lg, &r.legend, LegendSymbol::Square(swatch_stroke), group_x + lx + dx, group_y + ly + dy, stamp_legend_series));
-            head.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (m.plot_w, m.plot_h), (group_x + lx + dx, group_y + ly + dy))?);
+            head.extend(drawn_symbol_legend(&legend_entries, lg, &r.legend, LegendSymbol::Square(swatch_stroke), group_x + lx + dx, group_y + ly + dy, stamp_legend_series, r.canvas.as_str()));
+            head.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (m.plot_w, m.plot_h), (group_x + lx + dx, group_y + ly + dy), r.canvas.as_str())?);
         }
     }
     let mut plot: Vec<Node> = Vec::new();
@@ -1267,7 +1269,8 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
         plot.extend(mark_labels(ml, false, false, true, &points, painted_layers, board_style, 0.0, 0.0, r.canvas.as_str(), r.link_open)?);
     }
     let annotations = crate::annotation::AnnotationCtx { occupied: crate::annotation::DataMark::plot_marks(&plot), ..annotations };
-    plot.extend(crate::annotation::nodes(&annotations, crate::annotation::Plane::Foreground)?);
+    // Built where the data marks are known, painted right after the x axis so a rule on the plot edge covers its ticks.
+    let foreground_annotations = crate::annotation::nodes(&annotations, crate::annotation::Plane::Foreground)?;
 
     // X ticks + labels + title (flush anchors at the plot edges) — a facet
     // panel that suppresses its own x-axis skips this whole call, matching
@@ -1278,6 +1281,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
     if !suppress_x_axis {
         plot.extend(x_axis.nodes(ax_x, 0.0, plot_w, (x_edge.edge_y(plot_h), x_edge.edge_y(plot_h)), fonts)?);
     }
+    plot.extend(foreground_annotations);
 
     // Y ticks + labels, on the side the base's axis sits.
     let y_label_color = ax_y.labels.font.color.as_deref().unwrap_or("#626366");

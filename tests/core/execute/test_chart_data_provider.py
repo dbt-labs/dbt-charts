@@ -1,4 +1,4 @@
-"""The ChartDataProvider seam: Executor satisfies it.
+"""The ChartDataProvider seam: Run satisfies it.
 
 The Protocol's narrowness is a design rule, not a test: asserting which members
 it does and does not declare would be introspection ceremony, which this repo
@@ -9,10 +9,11 @@ docstring; the type checkers enforce conformance below.
 from __future__ import annotations
 
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
-from dbt_charts.core.execute.executor import Executor
+
+from ..._run import Run
 
 
-def _executor_is_a_provider(executor: Executor) -> ChartDataProvider:
+def _executor_is_a_provider(executor: Run) -> ChartDataProvider:
     """Type-level assertion that ``Executor`` satisfies the Protocol.
 
     This is enforced by pyright in CI, which is stronger than any runtime

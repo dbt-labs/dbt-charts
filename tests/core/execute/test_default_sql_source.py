@@ -20,8 +20,10 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_DBT_PROJECT_NO_LOCAL_WAREHOUSE,
 )
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+from dbt_charts.core.execute.env import ExecEnv, close_env, make_exec_env
 from dbt_charts.core.execute.plan import resolve_source
+from dbt_charts.core.execute.plan_sources import resolve_query_source
+from dbt_charts.core.execute.run import run_query
 from dbt_charts.core.execute.source_resolver import DbtContext
 
 
@@ -32,9 +34,7 @@ def isolated_profile_search(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
         monkeypatch.delenv(var, raising=False)
 
 
-def _registry(
-    root: Path, local_project: Callable[..., FilesystemProject]
-) -> AdapterRegistry:
+def _registry(root: Path, local_project: Callable[..., FilesystemProject]) -> ExecEnv:
     """A dbt project that declares no ``sources:``, so a source name resolves to
     nothing and defers to the project."""
     root.mkdir()
@@ -55,7 +55,7 @@ def _registry(
             }
         )
     )
-    return AdapterRegistry(
+    return make_exec_env(
         project=local_project(root),
         dbt_context=DbtContext(dbt_project_path=root, target=None),
     )
@@ -66,8 +66,11 @@ def test_dbt_jinja_resolves_to_the_dbt_target(
 ) -> None:
     registry = _registry(tmp_path / "shop", local_project)
 
-    resolved = registry.resolve_query_source(
-        SqlQuery(sql="SELECT * FROM {{ ref('orders') }}", source="unknown")
+    resolved = resolve_query_source(
+        SqlQuery(sql="SELECT * FROM {{ ref('orders') }}", source="unknown"),
+        sources=registry.sources,
+        resolver=registry.resolver,
+        dbt_context=registry.dbt_context,
     )
 
     assert isinstance(resolved, DbtTargetSourceConfig)
@@ -83,7 +86,12 @@ def test_plain_sql_resolves_to_the_local_duckdb_warehouse(
     warehouse = root / "data" / "dev.duckdb"
     duckdb.connect(str(warehouse)).close()
 
-    resolved = registry.resolve_query_source(SqlQuery(sql="SELECT 1", source="unknown"))
+    resolved = resolve_query_source(
+        SqlQuery(sql="SELECT 1", source="unknown"),
+        sources=registry.sources,
+        resolver=registry.resolver,
+        dbt_context=registry.dbt_context,
+    )
 
     assert resolved == DuckDBSourceConfig(type="duckdb", path=str(warehouse))
 
@@ -94,7 +102,12 @@ def test_plain_sql_with_no_local_warehouse_is_an_error(
     registry = _registry(tmp_path / "shop", local_project)
 
     with pytest.raises(DbtChartsError) as raised:
-        registry.resolve_query_source(SqlQuery(sql="SELECT 1", source="unknown"))
+        resolve_query_source(
+            SqlQuery(sql="SELECT 1", source="unknown"),
+            sources=registry.sources,
+            resolver=registry.resolver,
+            dbt_context=registry.dbt_context,
+        )
 
     assert raised.value.code is ERR_DBT_PROJECT_NO_LOCAL_WAREHOUSE
 
@@ -105,7 +118,8 @@ def test_the_executor_chooses_the_source_on_the_expanded_sql(
     """A query with no Jinja of its own that composes one using ``ref()`` runs on
     the dbt target; choosing on the authored text would send it to local DuckDB."""
     from dbt_charts.core.compile import compile as compile_board
-    from dbt_charts.core.execute import Executor
+
+    from ..._run import Run
 
     registry = _registry(tmp_path / "shop", local_project)
     compiled = compile_board(
@@ -121,9 +135,9 @@ def test_the_executor_chooses_the_source_on_the_expanded_sql(
         )
     )
     assert compiled.board is not None, compiled.errors
-    executor = Executor(
+    executor = Run(
         compiled.board,
-        adapter_registry=registry,
+        env=registry,
         query_registry=compiled.query_registry,
     )
 
@@ -144,20 +158,21 @@ def test_a_dialect_query_is_translated_to_the_source_it_lands_on(
     root.mkdir()
     (root / "data").mkdir()
     duckdb.connect(str(root / "data" / "dev.duckdb")).close()
-    registry = AdapterRegistry(
+    registry = make_exec_env(
         project=local_project(root),
         dbt_context=DbtContext(dbt_project_path=root, target=None),
         backends=BackendRegistry({"duckdb": DuckDBBackend(data_dir=root)}),
     )
 
-    result = registry.execute(
+    result = run_query(
+        registry,
         SqlQuery(
             sql="select date_trunc(date '2024-05-17', month) as m",
             source="unknown",
             dialect="bigquery",
-        )
+        ),
     )
-    registry.close()
+    close_env(registry)
 
     assert result.error is None, result.error
     assert [str(row["m"])[:10] for row in result.data] == ["2024-05-01"]

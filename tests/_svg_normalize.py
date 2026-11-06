@@ -1,6 +1,6 @@
 """Test-only helper: make two renders of the same board comparable.
 
-Render time is an input (``Executor(clock=...)``), so a test that pins the clock
+Render time is an input (``Run(clock=...)``), so a test that pins the clock
 gets the same stamp from both renders. What still varies between two renders in
 one process is Vega-Lite's ``gradient_N`` / ``clip_N`` counters and the
 renderer's own ``clipN``, all of which increment per render for the process's

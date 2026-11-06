@@ -1,0 +1,25 @@
+[package]
+name = "bind"
+version = "0.0.1"
+edition = "2021"
+description = "The bind stage: a normalized board plus its datasets to a bound board. Data-derived facts only; no measuring, no nodes."
+
+[dependencies]
+board-types = { path = "../board-types" }
+column-types = { path = "../column-types" }
+d3rs = { path = "../d3rs" }
+diagnostic = { path = "../diagnostic" }
+display-text = { path = "../display-text" }
+jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bundle-always"] }
+indexmap = { version = "2", features = ["serde"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# Scope guards and locale builders the engine's tests build payloads and active scopes with.
+test-support = []
+
+[dev-dependencies]
+bind = { path = ".", features = ["test-support"] }
+diagnostic = { path = "../diagnostic", features = ["test-support"] }

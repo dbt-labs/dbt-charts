@@ -217,10 +217,10 @@ def is_year_shaped(samples: list[Any]) -> bool:
 
     Value-only heuristic (no column-name signal): an ``int`` in
     ``[1700, 2100]``, a ``str`` matching ``^\\d{4}$`` in that range, or an
-    integral ``Decimal`` or ``float`` (``2024.0``) in range — warehouses
-    return year integers as ``Decimal`` (BigQuery NUMERIC, Snowflake NUMBER) or
-    ``float`` (a DOUBLE column), and the render engine reads both as a year.
-    A non-integral number (e.g. ``2024.5``) is not a year, nor is ``bool``.
+    integral ``Decimal`` in range — warehouses return year integers as
+    ``Decimal`` (BigQuery NUMERIC, Snowflake NUMBER). A ``float`` is never a
+    year: a DOUBLE column of years is a measure, the render engine's rule too.
+    A non-integral ``Decimal`` (e.g. ``2024.5``) is not a year, nor is ``bool``.
     Empty input is not year-shaped. Shared by compile-time bar
     orientation/axis inference and render-time time-unit detection so both
     agree on what counts as a year.
@@ -235,9 +235,6 @@ def is_year_shaped(samples: list[Any]) -> bool:
                 return False
         elif isinstance(v, Decimal):
             if v != v.to_integral_value() or not (_YEAR_MIN <= v <= _YEAR_MAX):
-                return False
-        elif isinstance(v, float):
-            if not (v.is_integer() and _YEAR_MIN <= v <= _YEAR_MAX):
                 return False
         elif isinstance(v, str) and _YEAR_STRING_PATTERN.match(v):
             if not (_YEAR_MIN <= int(v) <= _YEAR_MAX):

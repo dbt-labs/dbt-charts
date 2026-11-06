@@ -158,7 +158,7 @@ class TestNormalizeRenderValues:
             {"r": "year_to_date"}, _registry(r="daterange"), _CLOCK
         )
         assert values["r"] == ["2026-01-01", "2026-10-20"]
-        assert type(values["r"]) is list
+        assert isinstance(values["r"], list)
         assert resolve_jinja_template("{{ r[0] }}", values) == "2026-01-01"
 
     def test_date_pair_and_blank_pass_through(self) -> None:

@@ -20,7 +20,7 @@ from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.cache_backend import ResultRows
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.render.data_format import render_board_data
 from dbt_charts.core.render.errors import RenderError
 
@@ -31,7 +31,7 @@ from .._board_utils import _default_chart_style_context, _default_resolved_style
 def _make_executor(
     data: list[dict[str, Any]], schema: dict[str, ColumnType] | None = None
 ) -> MagicMock:
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
     executor.execute_query_result.return_value = ResultRows(
         data, rows_schema(data) if schema is None else schema
@@ -193,7 +193,7 @@ def test_errored_chart_is_keyed_by_slug_carrying_its_error(
 ) -> None:
     """A chart that fails to execute is visible as a failure, not a hole."""
     board = _make_board([make_chart("bar", id="revenue_bar", x="month", y="revenue")])
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
     executor.execute_query_result.side_effect = ExecutionError("boom")
     result = _render(board, executor)

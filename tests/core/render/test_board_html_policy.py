@@ -27,10 +27,10 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import Project
-from dbt_charts.core.render import render as render_board
+
+from ..._run import Run, render_run
 
 
 def _compile_and_render(
@@ -43,11 +43,11 @@ def _compile_and_render(
     assert isinstance(tmp_path, Path)
     result = compile(board_yaml)
     assert result.board is not None
-    rendered = render_board(
+    rendered = render_run(
         result.board,
-        Executor(
+        Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         ),
         format="svg",
         variables=variables,

@@ -127,6 +127,21 @@ class TestExtension:
         assert "/static/fonts/" in html
         assert "data:font/" not in html
 
+    def test_variables_reach_the_page(self, tmp_path):
+        page = (
+            "---\nboard:\n  variables:\n    region:\n      default: East\n---\n\n"
+            + _BAR.format(title='"Revenue in {{ region }}"')
+        )
+        assert "Revenue in East" in _md(page, tmp_path)
+        assert "Revenue in West" in _md(page, tmp_path, variables={"region": "West"})
+
+    def test_frontmatter_is_not_printed(self, tmp_path):
+        page = "---\nboard:\n  title: Sales\n---\n\n" + _BAR.format(title="x")
+        html = _md(page, tmp_path, embed_fonts=False)
+        assert "board:" not in html
+        assert "<hr" not in html
+        assert "<p></p>" not in html
+
     def test_a_broken_fence_fails_naming_its_line(self, tmp_path):
         with pytest.raises(ChartFenceError, match="line 3"):
             _md("Intro.\n\n```charts\ntype: bar\ncolour: red\n```\n", tmp_path)
@@ -376,7 +391,7 @@ class TestFenceDbtChartsExample:
             *,
             board,
             project,
-            adapter_registry,
+            env,
             result_cache,
             builtin_variables,
             format,
@@ -388,7 +403,7 @@ class TestFenceDbtChartsExample:
                 return real_render_dashboard(
                     board=board,
                     project=project,
-                    adapter_registry=adapter_registry,
+                    env=env,
                     result_cache=result_cache,
                     builtin_variables=builtin_variables,
                     format=format,
@@ -428,7 +443,7 @@ class TestFenceDbtChartsExample:
             *,
             board,
             project,
-            adapter_registry,
+            env,
             result_cache,
             builtin_variables,
             format,
@@ -628,31 +643,31 @@ class TestFenceResolvesSharedPlaygroundSource:
 
 
 # ---------------------------------------------------------------------------
-# Adapter registry construction and cleanup
+# Exec env construction and cleanup
 # ---------------------------------------------------------------------------
 
 
-class TestExampleClosesAdapterRegistry:
-    """_example_html builds an adapter registry directly and closes it after rendering."""
+class TestExampleClosesExecEnv:
+    """_example_html builds an exec env directly and closes it after rendering."""
 
     @pytest.fixture
     def registry_spy(self):
-        """Yield (fake_registry, build_calls) with build_adapter_registry stubbed."""
+        """Yield (fake_registry, build_calls) with build_exec_env stubbed."""
         fake_registry = MagicMock()
         build_calls: list[object] = []
 
-        def fake_build_adapter_registry(project, *, read_only=True, **kwargs):
+        def fake_build_exec_env(project, *, read_only=True, **kwargs):
             build_calls.append(project)
             return fake_registry
 
         with patch(
-            "dbt_charts.integrations.markdown.build_adapter_registry",
-            side_effect=fake_build_adapter_registry,
+            "dbt_charts.integrations.markdown.build_exec_env",
+            side_effect=fake_build_exec_env,
         ):
             yield fake_registry, build_calls
 
     def test_example_closes_registry(self, tmp_path, monkeypatch, registry_spy):
-        """An example builds an adapter registry and closes it once rendering finishes."""
+        """An example builds an exec env and closes it once rendering finishes."""
 
         fake_registry, build_calls = registry_spy
 
@@ -667,9 +682,9 @@ class TestExampleClosesAdapterRegistry:
                 False,
             )
 
-        assert build_calls, "build_adapter_registry was never called"
+        assert build_calls, "build_exec_env was never called"
         assert isinstance(build_calls[0], FilesystemProject)
-        assert fake_registry.close.call_count > 0, "adapter registry was never closed"
+        assert fake_registry.backends.close.call_count > 0, "exec env was never closed"
         assert "<svg>ok</svg>" in result
 
 

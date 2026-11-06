@@ -10,9 +10,10 @@ from pathlib import Path
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import ProjectSourcesConfig
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
+
+from .._run import Run
 
 _MEMORY_DUCKDB_SOURCES = ProjectSourcesConfig(
     sources={"test_profile": {"type": "duckdb", "path": ":memory:"}}
@@ -71,12 +72,14 @@ rows:
         assert result.success
         assert result.board is not None
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
-        svg_output = render(result.board, executor, format="svg").output
+        svg_output = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_output, str)
 
         # The server draws the control into the board, so it is in the SVG —
@@ -92,7 +95,9 @@ rows:
 
         # Asking for controls draws nothing new — the control was already there.
         # It attaches the options a runtime needs to open the menu over it.
-        with_controls = render(result.board, executor, format="svg", controls=True)
+        with_controls = render(
+            result.board, executor.ctx, executor.ledger, format="svg", controls=True
+        )
         assert isinstance(with_controls.output, str)
         assert 'data-dbt-variable="region"' in with_controls.output
         assert "North" in with_controls.output
@@ -145,12 +150,14 @@ rows:
         # root board.variables must be empty — controls live in the nested board
         assert "region" not in result.board.variables
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
-        svg_output = render(result.board, executor, format="svg").output
+        svg_output = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_output, str)
 
         # The nested board renders its own strip, so its anchor box is the one
@@ -197,12 +204,12 @@ rows:
         result = compile(yaml_content)
         assert result.success
         assert result.board is not None
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
-        svg = render(result.board, executor, format="svg").output
+        svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
         assert isinstance(svg, str)
 
         assert 'data-dbt-variables-static="true"' in svg
@@ -230,14 +237,14 @@ text: Exported region
         result = compile(yaml_content)
         assert result.success
         assert result.board is not None
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
-        png = render(result.board, executor, format="png").output
-        pdf = render(result.board, executor, format="pdf").output
+        png = render(result.board, executor.ctx, executor.ledger, format="png").output
+        pdf = render(result.board, executor.ctx, executor.ledger, format="pdf").output
 
         assert isinstance(png, bytes) and png.startswith(b"\x89PNG")
         assert isinstance(pdf, bytes) and pdf.startswith(b"%PDF")
@@ -274,18 +281,24 @@ rows:
         assert result.success
         assert result.board is not None
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
-        svg_output = render(result.board, executor, format="svg").output
+        svg_output = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_output, str)
         assert "2023" in svg_output
 
         svg_output_custom = render(
-            result.board, executor, format="svg", variables={"year": 2024}
+            result.board,
+            executor.ctx,
+            executor.ledger,
+            format="svg",
+            variables={"year": 2024},
         ).output
         assert isinstance(svg_output_custom, str)
         assert "2024" in svg_output_custom
@@ -316,9 +329,9 @@ rows:
         assert result.success
         assert result.board is not None
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
@@ -362,19 +375,25 @@ rows:
         assert result.success
         assert result.board is not None
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
-        svg_output = render(result.board, executor, format="svg").output
+        svg_output = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_output, str)
         assert "2023" in svg_output
         assert "Q1" in svg_output or "Q 1" in svg_output
 
         svg_output_custom = render(
-            result.board, executor, format="svg", variables={"year": 2024, "quarter": 2}
+            result.board,
+            executor.ctx,
+            executor.ledger,
+            format="svg",
+            variables={"year": 2024, "quarter": 2},
         ).output
         assert isinstance(svg_output_custom, str)
         assert "2024" in svg_output_custom
@@ -414,13 +433,15 @@ rows:
         assert result.board.variable_defaults["year"] == 2023
         assert result.board.variable_defaults["name"] == "Sales"
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
-        svg_output = render(result.board, executor, format="svg").output
+        svg_output = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_output, str)
         assert "2023" in svg_output
         assert "Sales" in svg_output
@@ -456,13 +477,15 @@ rows:
         assert result.success
         assert result.board is not None
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
-        svg_output = render(result.board, executor, format="svg").output
+        svg_output = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_output, str)
         assert "2023" in svg_output
 
@@ -501,20 +524,26 @@ rows:
             f"Template was baked in at compile time: {inner_board.text!r}"
         )
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
         # Default render
-        svg_default = render(result.board, executor, format="svg").output
+        svg_default = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_default, str)
         assert "Hello, World" in svg_default
 
         # Changed variable
         svg_changed = render(
-            result.board, executor, format="svg", variables={"name": "Alice"}
+            result.board,
+            executor.ctx,
+            executor.ledger,
+            format="svg",
+            variables={"name": "Alice"},
         ).output
         assert isinstance(svg_changed, str)
         assert "Hello, Alice" in svg_changed, (
@@ -545,13 +574,13 @@ rows:
   - c1
 """
 
-    def _executor(self) -> Executor:
+    def _executor(self) -> Run:
         result = compile(self._BOARD, project_sources=_MEMORY_DUCKDB_SOURCES)
         assert result.success, result.errors
         assert result.board is not None
-        return Executor(
+        return Run(
             result.board,
-            adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+            env=build_exec_env(FilesystemProject(Path.cwd())),
             query_registry=result.query_registry,
         )
 

@@ -1,6 +1,6 @@
 """Tests for glob pattern support in file sources.
 
-Covers FileSourceMaterializer glob expansion, Executor cache key correctness
+Covers FileSourceMaterializer glob expansion, Run cache key correctness
 with globs, and the validate-time empty-glob check.
 """
 
@@ -20,9 +20,10 @@ from dbt_charts.core.compile.models.source import (
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.execution import QueryError
-from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+from ..._run import Run
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -683,11 +684,11 @@ class TestExecutorGlobCacheKey:
         return board
 
     def _registry(self, project: Any, **file_source: Any) -> Any:
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
-        return build_adapter_registry(project, **file_source)
+        return build_exec_env(project, **file_source)
 
     def test_cold_glob_render_returns_all_matched_rows(self, tmp_path: Path) -> None:
         """Glob source on cold render returns rows from all matched files."""
@@ -700,9 +701,9 @@ class TestExecutorGlobCacheKey:
         )
         board = self._board()
         mat = FileSourceMaterializer(project)
-        ex = Executor(
+        ex = Run(
             board,
-            adapter_registry=self._registry(project, file_materializer=mat),
+            env=self._registry(project, file_materializer=mat),
             query_registry={"q": board.queries["q"]},
             result_cache=TrivialDuckDBCache(),
         )
@@ -724,9 +725,9 @@ class TestExecutorGlobCacheKey:
         result_cache = TrivialDuckDBCache()
 
         mat1 = _CountingMaterializer(project)
-        ex1 = Executor(
+        ex1 = Run(
             board,
-            adapter_registry=self._registry(project, file_materializer=mat1),
+            env=self._registry(project, file_materializer=mat1),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
@@ -734,9 +735,9 @@ class TestExecutorGlobCacheKey:
         assert mat1.run_calls == 1
 
         mat2 = _CountingMaterializer(project)
-        ex2 = Executor(
+        ex2 = Run(
             board,
-            adapter_registry=self._registry(project, file_materializer=mat2),
+            env=self._registry(project, file_materializer=mat2),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
@@ -755,9 +756,9 @@ class TestExecutorGlobCacheKey:
         result_cache = TrivialDuckDBCache()
 
         mat1 = _CountingMaterializer(project)
-        ex1 = Executor(
+        ex1 = Run(
             board,
-            adapter_registry=self._registry(project, file_materializer=mat1),
+            env=self._registry(project, file_materializer=mat1),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
@@ -770,9 +771,9 @@ class TestExecutorGlobCacheKey:
         new_file.write_text('[{"id": 2}]')
 
         mat2 = _CountingMaterializer(project)
-        ex2 = Executor(
+        ex2 = Run(
             board,
-            adapter_registry=self._registry(project, file_materializer=mat2),
+            env=self._registry(project, file_materializer=mat2),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
@@ -793,7 +794,7 @@ class TestExecutorGlobErrorCodes:
     the structured code without string-matching."""
 
     def _setup(self, tmp_path: Path, files: dict[str, str]) -> tuple[Any, Any, Any]:
-        """Return (project, board, adapter_registry) for a JSON glob board."""
+        """Return (project, board, env) for a JSON glob board."""
         from dbt_charts.cli.filesystem_project import FilesystemProject
 
         for relpath, content in files.items():
@@ -813,8 +814,8 @@ class TestExecutorGlobErrorCodes:
             )
         )
         from dbt_charts.core.compile import compile as compile_board
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
         project = FilesystemProject(tmp_path)
@@ -824,16 +825,16 @@ class TestExecutorGlobErrorCodes:
         }
         board = compile_board(yaml.dump(board_yaml)).board
         assert board is not None
-        return project, board, build_adapter_registry(project)
+        return project, board, build_exec_env(project)
 
     def test_empty_glob_propagates_err_glob_empty_code(self, tmp_path: Path) -> None:
         """Executor.execute_query forwards ERR-GLOB-EMPTY when glob matches nothing."""
         from dbt_charts.core.diagnostics.codes_execute import ERR_GLOB_EMPTY
 
         project, board, registry = self._setup(tmp_path, {})
-        ex = Executor(
+        ex = Run(
             board,
-            adapter_registry=registry,
+            env=registry,
             query_registry={"q": board.queries["q"]},
             result_cache=TrivialDuckDBCache(),
         )
@@ -854,9 +855,9 @@ class TestExecutorGlobErrorCodes:
             f"data/{i:04d}/report.json": f'[{{"id": {i}}}]' for i in range(cap + 1)
         }
         project, board, registry = self._setup(tmp_path, files)
-        ex = Executor(
+        ex = Run(
             board,
-            adapter_registry=registry,
+            env=registry,
             query_registry={"q": board.queries["q"]},
             result_cache=TrivialDuckDBCache(),
         )
@@ -880,9 +881,9 @@ class TestExecutorGlobErrorCodes:
             "data/b/report.json": '[{"id": 2, "extra": "oops"}]',
         }
         project, board, registry = self._setup(tmp_path, files)
-        ex = Executor(
+        ex = Run(
             board,
-            adapter_registry=registry,
+            env=registry,
             query_registry={"q": board.queries["q"]},
             result_cache=TrivialDuckDBCache(),
         )

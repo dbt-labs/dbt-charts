@@ -38,8 +38,7 @@ from dbt_charts.core.fonts import (
     DBT_SANS_TABULAR_FONT_FAMILY,
     DBT_SERIF_OLDSTYLE_TABULAR_FONT_FAMILY,
 )
-from dbt_charts.core.text.format_d3 import NumberLocaleName
-from dbt_charts.core.text.magnitude_words import magnitude_words
+from dbt_charts.core.text.format_d3 import NumberLocaleName, magnitude_words
 from dbt_charts.core.text.numeral_scale import SharedScale, SuffixMode
 
 # Every (exponent, mode) the resolver's SuffixMode/exponent tables can

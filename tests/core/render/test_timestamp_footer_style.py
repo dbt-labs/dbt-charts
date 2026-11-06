@@ -20,12 +20,12 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import Project
 from dbt_charts.core.render import render
 
 from ..._results import rows_result
+from ..._run import Run, render_run
 
 _BOARD = """\
 title: Test board
@@ -40,11 +40,11 @@ rows: [t]
 def _render_svg(yaml: str, local_project: Callable[..., Project]) -> str:
     result = compile(yaml)
     assert result.board is not None
-    rendered = render(
+    rendered = render_run(
         result.board,
-        Executor(
+        Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
         ),
         format="svg",
     )
@@ -198,9 +198,9 @@ class TestDataFreshnessStamp:
         """
         result = compile(_BOARD_UTC_CLOCK)
         assert result.board is not None
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
         )
         from dbt_charts.core.compile.models.cache import CachePolicy
 
@@ -212,7 +212,7 @@ class TestDataFreshnessStamp:
             ("_seeded", aged, CachePolicy(enabled=True, ttl=None), True)
         ]
 
-        rendered = render(result.board, executor, format="svg")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
         assert isinstance(rendered.output, str)
         stamp = _timestamp_text(rendered.output)
         expected = aged.strftime("%H:%M %Z")  # authored format → "HH:MM UTC"
@@ -237,11 +237,11 @@ class TestDataFreshnessStamp:
             key = compute_cache_key(query)
             cache.put(*key, rows_result([{"n": 1}]), board_slug="test", query_name="q")
 
-            rendered = render(
+            rendered = render_run(
                 result.board,
-                Executor(
+                Run(
                     result.board,
-                    adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+                    env=build_exec_env(local_project(Path.cwd())),
                     result_cache=cache,
                 ),
                 format="svg",
@@ -357,11 +357,11 @@ def test_stamp_prints_in_the_board_zone(
 ) -> None:
     result = compile(_BOARD_UTC_CLOCK + "regional:\n  time_zone: America/New_York\n")
     assert result.board is not None
-    rendered = render(
+    rendered = render_run(
         result.board,
-        Executor(
+        Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             clock=lambda: datetime(2026, 7, 1, 12, 0, tzinfo=UTC),
         ),
         format="svg",

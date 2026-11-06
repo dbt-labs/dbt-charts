@@ -25,11 +25,12 @@ from dbt_charts.core.compile.models.source import (
     ResolvedSourceConfig,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-from dbt_charts.core.execute.adapters.dbt_profile import (
+from dbt_charts.core.execute.backends.dbt_profile import (
     _read_target_dict,
     resolve_target_type,
 )
+from dbt_charts.core.execute.env import ExecEnv, make_exec_env
+from dbt_charts.core.execute.plan_sources import resolve_query_source
 from dbt_charts.core.execute.source_resolver import DbtContext, DefaultSourceResolver
 
 _MULTI_CONNECTION = (
@@ -288,7 +289,7 @@ class TestSourceLessQueriesOnALakeComputeTarget:
 
     def _registry(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> tuple[AdapterRegistry, DbtContext]:
+    ) -> tuple[ExecEnv, DbtContext]:
         from dbt_charts.cli.filesystem_project import FilesystemProject
 
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
@@ -297,7 +298,7 @@ class TestSourceLessQueriesOnALakeComputeTarget:
             "name: analytics\nprofile: analytics\n"
         )
         context = DbtContext(dbt_project_path=tmp_path, target="lake")
-        return AdapterRegistry(
+        return make_exec_env(
             project=FilesystemProject(tmp_path), dbt_context=context
         ), context
 
@@ -312,8 +313,11 @@ class TestSourceLessQueriesOnALakeComputeTarget:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         registry, _ = self._registry(tmp_path, monkeypatch)
-        resolved = registry.resolve_query_source(
-            SqlQuery(sql="SELECT * FROM {{ ref('orders') }}", source="unknown")
+        resolved = resolve_query_source(
+            SqlQuery(sql="SELECT * FROM {{ ref('orders') }}", source="unknown"),
+            sources=registry.sources,
+            resolver=registry.resolver,
+            dbt_context=registry.dbt_context,
         )
         assert resolved is not None
         assert resolved.type == "lakecompute"
@@ -343,7 +347,7 @@ def test_a_rendered_value_that_turns_invalid_is_an_execution_error_without_the_c
     secret = "fake-credential-value-for-redaction"
     with (
         patch(
-            "dbt_charts.core.execute.adapters.dbt_profile._read_target_dict",
+            "dbt_charts.core.execute.backends.dbt_profile._read_target_dict",
             return_value={"type": "lakecompute", "token": secret, "warehouse": "w"},
         ),
         pytest.raises(ExecutionError) as excinfo,

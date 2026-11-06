@@ -17,10 +17,11 @@ from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.diagnostics import ERR_CHART_PAINTED_NO_MARKS
 from dbt_charts.core.diagnostics.codes_render import WARN_TABLE_HEADER_EXTRA_WRAP
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
 from dbt_charts.core.render.render_result import RenderResult
+
+from ..._run import Run
 
 _DATA_FORMATS = ("json", "text", "yaml", "data")
 
@@ -95,10 +96,10 @@ def _build_executor(
     board: Board,
     query_registry: dict[str, AnyQuery],
     project: FilesystemProject,
-) -> Executor:
-    return Executor(
+) -> Run:
+    return Run(
         board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=query_registry,
     )
 
@@ -118,7 +119,7 @@ def test_measurement_warnings_have_parity_across_formats(
 
     def _codes(format: str) -> Counter[str]:
         executor = _build_executor(board, result.query_registry, project)
-        output = render(board, executor, format=format)
+        output = render(board, executor.ctx, executor.ledger, format=format)
         return Counter(w.code for w in output.warnings)
 
     svg_codes = _codes("svg")
@@ -153,7 +154,7 @@ def test_painted_no_marks_error_reported_on_data_format_same_as_svg(
 
     def _render(format: str) -> RenderResult:
         executor = _build_executor(board, result.query_registry, project)
-        return render(board, executor, format=format)
+        return render(board, executor.ctx, executor.ledger, format=format)
 
     svg_result = _render("svg")
     svg_errors = {e.code for e in svg_result.chart_errors}
@@ -217,7 +218,7 @@ def test_render_first_is_unconditional_on_format(
 
     def _spy(
         board: Board,
-        executor: Executor,
+        executor: Run,
         variables: VariableValues,
         render_first: bool = True,
         *,
@@ -239,6 +240,6 @@ def test_render_first_is_unconditional_on_format(
     for current_format in ("svg", *_DATA_FORMATS):
         executor = _build_executor(board, result.query_registry, project)
         with patch.object(_board_resolve_mod, "build_resolved_board", _spy):
-            render(board, executor, format=current_format)
+            render(board, executor.ctx, executor.ledger, format=current_format)
 
     assert seen_render_first == dict.fromkeys(("svg", *_DATA_FORMATS), True)

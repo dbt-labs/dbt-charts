@@ -14,13 +14,11 @@ instead of shrinking below the floor and firing this warning.
 
 from __future__ import annotations
 
-from unittest.mock import Mock
-
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
-from ..._results import rows_schema
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 _CODE = "WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM"
 
@@ -36,18 +34,8 @@ def _rows(n_groups: int) -> list[dict[str, object]]:
 def _make_executor(
     board: object, query_registry: object, rows: list[dict[str, object]]
 ):
-    ok = Mock()
-    ok.is_success = True
-    ok.data = rows
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.return_value = ok
-    return Executor(
-        board, adapter_registry=mock_registry, query_registry=query_registry
-    )
+    mock_registry = scripted_env(ScriptedBackend(rows))
+    return Run(board, env=mock_registry, query_registry=query_registry)
 
 
 def _board_yaml(*, width: int) -> str:
@@ -77,7 +65,7 @@ def _render(yaml_source: str, n_groups: int) -> list[object]:
     result = compile(yaml_source)
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _rows(n_groups))
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
     return list(render_result.warnings)
 
 
@@ -176,7 +164,7 @@ rows:
     result = compile(yaml_source)
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, rows)
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
     warnings = list(render_result.warnings)
     codes = {w.code for w in warnings}
     assert _CODE not in codes, codes

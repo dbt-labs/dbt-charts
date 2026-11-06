@@ -79,6 +79,7 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
     bake_point_companions,
 )
+from dbt_charts.core.compile.resolve.chart.tick_values import numeric_domain_bounds
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
     affix_tick_label,
     ladderless_tick_label,
@@ -89,12 +90,14 @@ from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_LAYER_AXIS_STYLE_WITHOUT_POSITION,
     ERR_LAYER_AXIS_TITLE_WITHOUT_POSITION,
+    ERR_LAYER_OUTSIDE_PINNED_DOMAIN,
     ERR_LAYERS_AMBIGUOUS_Y_DOMAIN,
 )
 from dbt_charts.core.text.format_d3 import is_d3_si_spec
 
 __all__ = [
     "_check_layers_y_domain",
+    "_check_line_layers_in_domain",
     "_resolve_layer_inks",
     "_resolve_layer_list",
     "_resolve_one_layer",
@@ -591,6 +594,41 @@ def _check_layers_y_domain(
             chart_id=chart_id,
             domain=list(chart_domain),
         )
+
+
+def _check_line_layers_in_domain(
+    chart_id: str,
+    layers: Sequence[CartesianLayer],
+    chart_domain: tuple[int | float | str, int | float | str],
+    data: ChartRows,
+    base_query_name: str | None,
+    datasets: LayerDatasets,
+) -> None:
+    """Raise when a line layer's every value falls outside the pinned y domain.
+
+    The layer would paint off the plot: a blank chart with no warning. Callers
+    run this after ``_check_layers_y_domain``, so every layer shares the
+    chart's one y scale.
+    """
+    bounds = numeric_domain_bounds(chart_domain)
+    if bounds is None:
+        return
+    low, high = min(bounds), max(bounds)
+    for index, layer in enumerate(layers):
+        if layer.type != "line":
+            continue
+        values = _column_numeric_values(
+            _layer_rows(layer, data, base_query_name, datasets), layer.y
+        )
+        if values and all(v < low or v > high for v in values):
+            raise CompilationError.from_code(
+                ERR_LAYER_OUTSIDE_PINNED_DOMAIN,
+                chart_id=chart_id,
+                domain=list(chart_domain),
+                layer=f"layers[{index}] ({layer.y})",
+                low=min(values),
+                high=max(values),
+            )
 
 
 def _resolve_layer_list(

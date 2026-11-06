@@ -11,8 +11,7 @@ import pytest
 
 from dbt_charts.core.compile import compile, focus_on_chart
 from dbt_charts.core.compile.models.board.normalized import Board
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import Project
 from dbt_charts.core.render import render
 from dbt_charts.core.render.board_resolve import (
@@ -22,6 +21,7 @@ from dbt_charts.core.render.board_resolve import (
 from dbt_charts.core.render.board_to_dict import board_to_dict
 from dbt_charts.core.render.render_result import RenderResult
 
+from ..._run import Run
 from .._svg_render import pinned_clock
 
 _QUERIES = """
@@ -71,13 +71,13 @@ rows:
 
 def _executor(
     yaml: str, local_project: Callable[..., Project], base_dir: object = None
-) -> Executor:
+) -> Run:
     result = compile(yaml) if base_dir is None else compile(yaml, base_dir=base_dir)
     assert result.success, result.errors
     assert result.board is not None
-    return Executor(
+    return Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
         clock=pinned_clock,
     )
@@ -87,7 +87,7 @@ def _render(
     yaml: str, local_project: Callable[..., Project], fmt: str = "svg"
 ) -> RenderResult:
     executor = _executor(yaml, local_project)
-    return render(executor.board, executor, format=fmt)
+    return render(executor.board, executor.ctx, executor.ledger, format=fmt)
 
 
 def _plain(output: object) -> str:
@@ -113,7 +113,7 @@ def test_every_surface_reads_query_results(
     local_project: Callable[..., Project],
 ) -> None:
     executor = _executor(_FULL, local_project)
-    result = render(executor.board, executor, format="svg")
+    result = render(executor.board, executor.ctx, executor.ledger, format="svg")
     assert result.board_error is None, result.board_error
     assert not result.chart_errors, result.chart_errors
     assert isinstance(result.output, str)
@@ -431,12 +431,12 @@ charts:
     )
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
-    out = render(executor.board, executor, format="svg")
+    out = render(executor.board, executor.ctx, executor.ledger, format="svg")
     assert out.board_error is None, out.board_error
     assert not out.chart_errors, out.chart_errors
     assert "from source" in _plain(out.output)
@@ -485,9 +485,9 @@ rows:
 """
         ).board
         assert board is not None
-        executor = Executor(
+        executor = Run(
             board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=None,
         )
         resolved, _ = build_resolved_board(board, executor, {}, render_first=False)
@@ -669,9 +669,9 @@ def test_imported_kpi_support_label_reads_the_source_files_query(
     result = compile(board, base_dir=project.directory())
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
     resolved, _ = build_resolved_board(result.board, executor, {}, render_first=False)
@@ -692,9 +692,9 @@ def test_imported_chart_title_reads_the_source_files_query(
     result = compile(board, base_dir=project.directory())
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
     resolved, _ = build_resolved_board(result.board, executor, {}, render_first=False)
@@ -772,12 +772,12 @@ charts:
     )
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
-    out = render(executor.board, executor, format="svg")
+    out = render(executor.board, executor.ctx, executor.ledger, format="svg")
     assert out.board_error is None, out.board_error
     assert not out.chart_errors, out.chart_errors
     assert "from lib" in _plain(out.output)

@@ -76,9 +76,8 @@ def _make_executor(board: Any) -> Any:
     executor.execute_query_result.side_effect = lambda name, variables: rows_result(
         _execute_query(name, variables)
     )
-    executor.execute_chart.return_value = []
-    executor.execute_chart_result.return_value = rows_result([])
-    executor.execute_batch.return_value = {}
+    executor.execute_query.return_value = []
+    executor.execute_query_result.return_value = rows_result([])
     return executor
 
 
@@ -406,9 +405,8 @@ def test_overlay_layer_board_path_includes_non_primary_layer_data() -> None:
     executor.execute_query_result.side_effect = lambda name, variables: rows_result(
         _execute(name, variables)
     )
-    executor.execute_chart.return_value = []
-    executor.execute_chart_result.return_value = rows_result([])
-    executor.execute_batch.return_value = {}
+    executor.execute_query.return_value = []
+    executor.execute_query_result.return_value = rows_result([])
 
     board_style = resolve_style(get_theme_style(get_default_theme_name()))
 

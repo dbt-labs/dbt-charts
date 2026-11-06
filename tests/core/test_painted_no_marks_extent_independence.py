@@ -9,15 +9,14 @@ from __future__ import annotations
 
 import calendar
 from typing import Any
-from unittest.mock import Mock
 
 import pytest
 
 from dbt_charts.core.compile import compile as compile_board
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
-from .._results import rows_schema
+from .._run import Run
+from .._scripted_env import ScriptedBackend, scripted_env
 
 _BOARD = """
 queries:
@@ -50,22 +49,18 @@ def _month_end(index: int) -> str:
 def _render_blank(rows: list[dict[str, Any]]) -> list[str]:
     result = compile_board(_BOARD)
     assert result.success and result.board is not None, result.errors
-    query_result = Mock(
-        is_success=True,
-        data=rows,
-        schema=rows_schema(rows),
-        resolved_relations=None,
-        truncated_reason=None,
-    )
-    adapter_registry = Mock()
-    adapter_registry.project_file_sources.return_value = {}
-    adapter_registry.execute.return_value = query_result
-    executor = Executor(
+    env = scripted_env(ScriptedBackend(rows))
+    executor = Run(
         result.board,
-        adapter_registry=adapter_registry,
+        env=env,
         query_registry=result.query_registry,
     )
-    return [e.code for e in render(result.board, executor, format="svg").chart_errors]
+    return [
+        e.code
+        for e in render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).chart_errors
+    ]
 
 
 @pytest.mark.parametrize("n_points", [3, 11, 37])

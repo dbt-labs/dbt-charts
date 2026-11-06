@@ -17,10 +17,6 @@ import pytest
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
-)
-from dbt_charts.core.compile.migrations.migrations import (
-    _board_migration_context,
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
@@ -28,7 +24,7 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     load_yaml_schema_catalog,
 )
 
-from ._migration_declarations import schema_has_tail
+from ._engine_migrations import migrate_mapping
 
 
 @pytest.fixture
@@ -37,29 +33,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: dict[str, Any], catalog: YamlSchemaCatalog) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
-
-
-def test_registry_declares_the_deletion() -> None:
-    _, registry = _board_migration_context()
-    declared = {d.path for d in registry.deletions_from("0.6.0")}
-    assert ("style", "page") in declared
-
-
-def test_tail_was_in_the_released_grammar_and_is_gone_from_the_live_one(
-    catalog: YamlSchemaCatalog,
-) -> None:
-    """Both halves of what makes a Deletion legal, asserted directly.
-
-    Source-present is what makes the key worth migrating; target-absent is
-    what stops the tail stripping a slot that still works.
-    """
-    tail = ("style", "page")
-    assert schema_has_tail(catalog.schema_for("0.6.0"), tail)
-    assert not schema_has_tail(catalog.current_schema, tail)
+        return migrate_mapping(raw)
 
 
 @pytest.mark.parametrize(

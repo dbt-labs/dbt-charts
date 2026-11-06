@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-from .._lookup import collect_via_execute_query
+from .._lookup import render_via
 from ._svg_render import PINNED_RENDER_TIME
 
 # ---------------------------------------------------------------------------
@@ -44,14 +44,12 @@ def _make_mock_executor() -> Any:
     exc = MagicMock()
     exc.render_with_range_filters.return_value = None
     exc.execute_query.return_value = [{"cat": "A", "val": 10}]
-    exc.execute_batch.return_value = {}
     exc._query_results = {}
     # No cache in play here — the real Executor.cache_hit_ats contract is an
     # empty list until a persistent-cache hit occurs, which never happens
     # against this mock's adapter stand-in.
     exc.cache_hit_ats = []
     exc.rendered_at = PINNED_RENDER_TIME
-    collect_via_execute_query(exc)
     return exc
 
 
@@ -84,20 +82,18 @@ class TestRendererWiring:
 
     def test_render_produces_svg(self):
         """End-to-end smoke: render() produces valid SVG after wiring."""
-        from dbt_charts.core.render.renderer import render
 
         board = _compile_board()
         executor = _make_mock_executor()
-        result = render(board, executor, format="svg", variables={}).output
+        result = render_via(executor, board, format="svg", variables={}).output
         assert isinstance(result, str) and "<svg" in result
 
     def test_render_produces_html(self):
         """End-to-end: html format still works."""
-        from dbt_charts.core.render.renderer import render
 
         board = _compile_board()
         executor = _make_mock_executor()
-        result = render(board, executor, format="html", variables={}).output
+        result = render_via(executor, board, format="html", variables={}).output
         assert isinstance(result, str) and "<!DOCTYPE" in result
 
     def test_resolve_board_result_accessible(self):

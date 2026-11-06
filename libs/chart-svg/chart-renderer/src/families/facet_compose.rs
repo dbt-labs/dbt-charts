@@ -89,7 +89,8 @@ use crate::families::heatmap_facet::HeatmapXAxis;
 use crate::families::line::LineXAxis;
 use crate::families::scatter::PlainXAxis;
 use crate::families::scatter_axis::TemporalXAxis;
-use crate::families::multiples::{self, Panel};
+use ::bind::multiples::Panel;
+use crate::families::multiples;
 use crate::frame::ChartFrame;
 use measure::FontBook;
 use crate::vega_fit;
@@ -503,7 +504,7 @@ pub(crate) struct FacetSpec<'a> {
     /// already uses).
     pub(crate) family: &'a str,
     pub(crate) panels: &'a [Panel],
-    pub(crate) axes: &'a [multiples::PartitionAxis],
+    pub(crate) axes: &'a [::bind::multiples::PartitionAxis],
     pub(crate) panel_rows_n: usize,
     pub(crate) panel_cols_n: usize,
     pub(crate) row_axis_idx: Option<usize>,
@@ -876,7 +877,7 @@ fn compose_facet_at(
     let ghost_left = (has_mirror || spec.left_axis_only) && !spec.mirror_in_panel && row_axis.is_none();
     let ghost_right = has_mirror && !spec.mirror_in_panel && row_axis.is_some();
     let bg = spec.background;
-    let missing = multiples::empty_leading_cells(spec.panels.len(), panel_rows_n, panel_cols_n)?;
+    let missing = ::bind::multiples::empty_leading_cells(spec.panels.len(), panel_rows_n, panel_cols_n)?;
 
     // `extra_axis_px` (facet_extra_axis_width_px) budgets a narrowed per-panel
     // axis forced by `facet_independent_channels`. This is only an INITIAL
@@ -993,7 +994,7 @@ fn compose_facet_at(
     // SVG.
     let header_labels = |axis_idx: Option<usize>, expected: usize| -> Result<Vec<String>, Diagnostic> {
         let Some(idx) = axis_idx else { return Ok(Vec::new()) };
-        let values = multiples::axis_header_values(&spec.axes[idx], idx, spec.panels);
+        let values = ::bind::multiples::axis_header_values(&spec.axes[idx], idx, spec.panels);
         if values.len() != expected {
             return Err(format!(
                 "{}: multiples axis {:?} has {} populated values for a {expected}-track grid",

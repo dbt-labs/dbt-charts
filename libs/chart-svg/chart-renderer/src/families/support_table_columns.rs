@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use serde_json::Value;
 
-use crate::common::{slug_to_display, TAB_FONT};
+use crate::common::slug_to_display;
 use diagnostic::Diagnostic;
 use crate::families::support_table_strip::{
     build_cells, divider_line, entry_lines, label_font_resolved, link_cells, row_height, trailing_unit,
@@ -434,6 +434,7 @@ impl ColumnBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::TAB_FONT;
     use crate::families::support_table_strip::parse_config;
 
     fn test_fonts() -> FontBook {

@@ -1,4 +1,4 @@
-"""render_inspect_dashboard takes a pre-configured AdapterRegistry.
+"""render_inspect_dashboard takes a pre-configured ExecEnv.
 
 Registry construction (from the project's `dbt_charts.yml` sources) is the
 caller's job, not the renderer's.
@@ -14,7 +14,8 @@ from pathlib import Path
 import duckdb
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
+from dbt_charts.core.execute.plan_sources import list_sql_sources
 from dbt_charts.core.fonts import STATIC_FONT_URL_PREFIX
 from dbt_charts.core.inspect.renderer import render_inspect_dashboard
 
@@ -36,14 +37,14 @@ def test_render_inspect_dashboard_renders_against_injected_registry(
     con.close()
 
     project = local_project(tmp_path)
-    registry = build_adapter_registry(project)
-    registry.register_source("orders_db", {"type": "duckdb", "path": str(db_path)})
+    registry = build_exec_env(project)
+    registry.sources.register("orders_db", {"type": "duckdb", "path": str(db_path)})
 
     html = render_inspect_dashboard(
         _template("model"),
         {"model": "orders"},
         project=project,
-        adapter_registry=registry,
+        env=registry,
     )
 
     assert "orders" in html
@@ -57,14 +58,14 @@ def test_render_inspect_dashboard_with_no_configured_source_surfaces_error(
     embedded in the rendered page — no synthesize-from-connection fallback,
     no crash."""
     project = local_project(tmp_path)
-    registry = build_adapter_registry(project)
-    assert registry.list_sql_sources() == []
+    registry = build_exec_env(project)
+    assert list_sql_sources(registry.sources) == []
 
     html = render_inspect_dashboard(
         _template("model"),
         {"model": "orders"},
         project=project,
-        adapter_registry=registry,
+        env=registry,
     )
     # The tile wraps its message across lines: compare the words, not the markup.
     assert "No source profiles are configured" in " ".join(
@@ -79,13 +80,13 @@ def test_render_inspect_dashboard_standalone_embeds_fonts_instead_of_urls(
     font bytes inline, exactly like `dct render`'s own standalone path —
     not name a /static/fonts/ URL that resolves to nothing outside a host."""
     project = local_project(tmp_path)
-    registry = build_adapter_registry(project)
+    registry = build_exec_env(project)
 
     html = render_inspect_dashboard(
         _template("model"),
         {"model": "orders"},
         project=project,
-        adapter_registry=registry,
+        env=registry,
         standalone=True,
     )
 
@@ -100,13 +101,13 @@ def test_render_inspect_dashboard_default_still_names_font_urls(
     a live host that already mounts the prefix, and embedding would add
     ~0.5 MiB of base64 to every served page."""
     project = local_project(tmp_path)
-    registry = build_adapter_registry(project)
+    registry = build_exec_env(project)
 
     html = render_inspect_dashboard(
         _template("model"),
         {"model": "orders"},
         project=project,
-        adapter_registry=registry,
+        env=registry,
     )
 
     assert STATIC_FONT_URL_PREFIX in html

@@ -14,8 +14,8 @@ from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig, SQLiteSourceConfig
 from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_DUPLICATE_COLUMN
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters.base import RowFetchLimit
 from dbt_charts.core.execute.cache_composition import rows_from_result
+from dbt_charts.core.execute.query_result import RowFetchLimit
 from dbt_charts.core.execute.result import arrow_to_query_result
 
 from ..._backend_runner import DuckDBRunner, SqliteRunner

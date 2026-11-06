@@ -37,9 +37,7 @@ Regression tests for CRITICAL/HIGH review findings:
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
-from unittest.mock import Mock
 
 import duckdb
 import pytest
@@ -49,42 +47,40 @@ import sqlglot.expressions as exp
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as df_compile
 from dbt_charts.core.compile.compiler import compile_file
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
+from dbt_charts.core.compile.models.source import (
+    DbtTargetSourceConfig,
+    DuckDBSourceConfig,
+)
+from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
 from dbt_charts.core.execute.cache_backend import CacheHit
+from dbt_charts.core.execute.env import ExecEnv, build_exec_env
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
-from ..._results import rows_schema
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, backend_of, scripted_env
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
 
-def _adapter(*datasets: list[dict]) -> Mock:
-    """Mock adapter returning successive result sets on each execute() call."""
-    registry = Mock()
-    registry.project_file_sources.return_value = {}
-    results = []
-    for data in datasets:
-        r = Mock()
-        r.is_success = True
-        r.data = list(data)
-        r.schema = rows_schema(r.data)
-        r.resolved_relations = None
-        r.truncated_reason = None
-        results.append(r)
-    registry.execute.side_effect = results
-    registry.project.file_version = Mock(return_value="v1")
-    registry.project_file_sources = Mock(return_value={})
-    # Default dialect for the mocked source — individual tests override this
-    # to exercise dialect-specific tail-SQL rendering (mysql, bigquery, tsql).
-    registry.resolve_query_source.return_value = SimpleNamespace(type="duckdb")
-    return registry
+def _adapter(*datasets: list[dict], dialect: str = "duckdb") -> ExecEnv:
+    """An env whose backend returns successive result sets on each execute() call.
+
+    *dialect* is the source kind the queries resolve to; tail SQL is rendered for it.
+    """
+    source = (
+        DuckDBSourceConfig(type="duckdb", path=":memory:")
+        if dialect == "duckdb"
+        else DbtTargetSourceConfig(type=dialect)
+    )
+    return scripted_env(
+        ScriptedBackend(sequence=list(datasets), dialect=dialect), source=source
+    )
 
 
-def _executor(board_result, adapter, cache) -> Executor:
-    return Executor(
+def _executor(board_result, adapter: ExecEnv, cache) -> Run:
+    return Run(
         board_result.board,
-        adapter_registry=adapter,
+        env=adapter,
         query_registry=board_result.query_registry,
         result_cache=cache,
     )
@@ -143,8 +139,8 @@ class TestTailQueryWatermarkFilter:
         ad2 = _adapter(tail)
         _executor(result, ad2, cache).execute_query("q")
 
-        ad2.execute.assert_called_once()
-        call_query = ad2.execute.call_args[0][0]
+        backend_of(ad2).execute.assert_called_once()
+        call_query = backend_of(ad2).execute.call_args[0][1]
         sql_lower = call_query.sql.lower()
         # The tail SQL must reference the incremental column and the watermark value
         assert "ts" in sql_lower
@@ -165,9 +161,9 @@ class TestRenderServesStoredIncrementalRowsAsStored:
 
         adapter = _adapter([{"ts": 3, "val": 30}])
         executor = _executor(result, adapter, cache)
-        render(result.board, executor, format="json")
+        render(result.board, executor.ctx, executor.ledger, format="json")
 
-        adapter.execute.assert_not_called()
+        backend_of(adapter).execute.assert_not_called()
         assert executor.execute_query("q") == initial
 
 
@@ -233,7 +229,7 @@ class TestIncrementalFalseBypassesTailPath:
         # Second render: cache is warm, no adapter call expected
         ad2 = _adapter()  # no results — call would fail
         data = _executor(result, ad2, cache).execute_query("q")
-        ad2.execute.assert_not_called()
+        backend_of(ad2).execute.assert_not_called()
         assert data == rows
 
 
@@ -289,7 +285,7 @@ rows:
         ad2 = _adapter(rows_v2)
         data = _executor(result_v2, ad2, cache).execute_query("q")
         # Adapter must have been called (not served from cache or incremental)
-        ad2.execute.assert_called_once()
+        backend_of(ad2).execute.assert_called_once()
         assert sorted(data, key=lambda r: r["ts"]) == rows_v2
 
 
@@ -433,8 +429,8 @@ class TestDatetimeWatermark:
         ad2 = _adapter(tail)
         _executor(result, ad2, cache).execute_query("q")
 
-        ad2.execute.assert_called_once()
-        sql = ad2.execute.call_args[0][0].sql
+        backend_of(ad2).execute.assert_called_once()
+        sql = backend_of(ad2).execute.call_args[0][1].sql
         # Python repr of datetime looks like: datetime.datetime(2026, 8, 22, 12, 0)
         assert "datetime.datetime" not in sql
         assert "2026" in sql
@@ -450,8 +446,8 @@ class TestDatetimeWatermark:
         ad2 = _adapter(tail)
         _executor(result, ad2, cache).execute_query("q")
 
-        ad2.execute.assert_called_once()
-        sql = ad2.execute.call_args[0][0].sql
+        backend_of(ad2).execute.assert_called_once()
+        sql = backend_of(ad2).execute.call_args[0][1].sql
         assert "datetime.date" not in sql
         assert "2026" in sql
         # The watermark must survive the cache round-trip as a real DATE, not
@@ -477,8 +473,8 @@ class TestDatetimeWatermark:
         ad2 = _adapter(tail)
         _executor(result, ad2, cache).execute_query("q")
 
-        ad2.execute.assert_called_once()
-        sql = ad2.execute.call_args[0][0].sql
+        backend_of(ad2).execute.assert_called_once()
+        sql = backend_of(ad2).execute.call_args[0][1].sql
         assert "Decimal" not in sql
         assert "3.5" in sql
 
@@ -494,8 +490,8 @@ class TestDatetimeWatermark:
         ad2 = _adapter(tail)
         _executor(result, ad2, cache).execute_query("q")
 
-        ad2.execute.assert_called_once()
-        sql = ad2.execute.call_args[0][0].sql
+        backend_of(ad2).execute.assert_called_once()
+        sql = backend_of(ad2).execute.call_args[0][1].sql
         # Must not contain raw unescaped apostrophe in the literal context
         # Python repr of "a'b" is "a'b" — same string, but must be SQL-escaped
         assert "Decimal" not in sql and "datetime" not in sql
@@ -545,8 +541,8 @@ class TestTailUsesResolvedSql:
         ad2 = _adapter(tail_main)
         _executor(result, ad2, cache).execute_query("main")
 
-        ad2.execute.assert_called_once()
-        sql = ad2.execute.call_args[0][0].sql
+        backend_of(ad2).execute.assert_called_once()
+        sql = backend_of(ad2).execute.call_args[0][1].sql
         # Tail SQL must not contain unresolved Jinja
         assert "{{ queries" not in sql
 
@@ -585,9 +581,9 @@ rows:
         ad2 = _adapter(rows2)
         _executor(result, ad2, cache).execute_query("q")
 
-        ad2.execute.assert_called_once()
+        backend_of(ad2).execute.assert_called_once()
         # Full refresh SQL must equal the original, not a tail-wrapped one
-        call_sql = ad2.execute.call_args[0][0].sql
+        call_sql = backend_of(ad2).execute.call_args[0][1].sql
         assert "WHERE" not in call_sql.upper() or "_dct_base" not in call_sql
 
     def test_window_function_falls_back_to_full_refresh(self, tmp_path) -> None:
@@ -621,8 +617,8 @@ rows:
         ad2 = _adapter(rows2)
         _executor(result, ad2, cache).execute_query("q")
 
-        ad2.execute.assert_called_once()
-        call_sql = ad2.execute.call_args[0][0].sql
+        backend_of(ad2).execute.assert_called_once()
+        call_sql = backend_of(ad2).execute.call_args[0][1].sql
         assert "_dct_base" not in call_sql
 
     def test_order_by_query_falls_back_to_full_refresh(self, tmp_path) -> None:
@@ -652,8 +648,8 @@ rows:
         ad2 = _adapter(rows2)
         _executor(result, ad2, cache).execute_query("q")
 
-        ad2.execute.assert_called_once()
-        call_sql = ad2.execute.call_args[0][0].sql
+        backend_of(ad2).execute.assert_called_once()
+        call_sql = backend_of(ad2).execute.call_args[0][1].sql
         assert "_dct_base" not in call_sql
 
 
@@ -697,7 +693,7 @@ rows:
         for _ in range(2):
             with pytest.raises(QueryError, match="wrong_col"):
                 executor.execute_query("q")
-        assert ad2.execute.call_count == 0
+        assert backend_of(ad2).execute.call_count == 0
 
 
 # ─── HIGH-3a: Nested board explicit incremental: false overrides parent ───────
@@ -810,7 +806,7 @@ rows:
         result_no_inc = df_compile(board_no_inc)
         ad2 = _adapter(rows2)
         data = _executor(result_no_inc, ad2, cache).execute_query("q")
-        ad2.execute.assert_called_once()
+        backend_of(ad2).execute.assert_called_once()
         assert data == rows2
 
 
@@ -864,8 +860,8 @@ class TestFileSourceIncrementalDoesNotIntercept:
         import yaml
 
         from dbt_charts.cli.filesystem_project import FilesystemProject
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
         from dbt_charts.core.execute.file_source_materializer import (
             FileSourceMaterializer,
@@ -912,9 +908,9 @@ class TestFileSourceIncrementalDoesNotIntercept:
 
         # Render 1 (cold): materializer runs, results cached.
         mat1 = _CountingMaterializer(project)
-        ex1 = Executor(
+        ex1 = Run(
             board,
-            adapter_registry=build_adapter_registry(project, file_materializer=mat1),
+            env=build_exec_env(project, file_materializer=mat1),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
@@ -925,9 +921,9 @@ class TestFileSourceIncrementalDoesNotIntercept:
         # Render 2 (warm): must NOT raise "Unknown dialect 'csv'" — served
         # from the result cache exactly like a non-incremental query.
         mat2 = _CountingMaterializer(project)
-        ex2 = Executor(
+        ex2 = Run(
             board,
-            adapter_registry=build_adapter_registry(project, file_materializer=mat2),
+            env=build_exec_env(project, file_materializer=mat2),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
@@ -954,16 +950,14 @@ class TestDialectAwareTailPredicate:
         result = df_compile(_BOARD_INC)
 
         initial = [{"ts": 1, "val": 10}, {"ts": 2, "val": 20}]
-        ad1 = _adapter(initial)
-        ad1.resolve_query_source.return_value = SimpleNamespace(type=dialect_name)
+        ad1 = _adapter(initial, dialect=dialect_name)
         _executor(result, ad1, cache).execute_query("q")
 
-        ad2 = _adapter([{"ts": 3, "val": 30}])
-        ad2.resolve_query_source.return_value = SimpleNamespace(type=dialect_name)
+        ad2 = _adapter([{"ts": 3, "val": 30}], dialect=dialect_name)
         _executor(result, ad2, cache).execute_query("q")
 
-        ad2.execute.assert_called_once()
-        sql = ad2.execute.call_args[0][0].sql
+        backend_of(ad2).execute.assert_called_once()
+        sql = backend_of(ad2).execute.call_args[0][1].sql
         # Backtick-quoted per mysql/bigquery generation rules.
         assert "`ts`" in sql
         # Re-parsing under the *same* dialect must yield a Column comparison,
@@ -1005,17 +999,15 @@ rows:
         result = df_compile(board_yaml)
 
         rows = [{"ts": 1, "val": 10}, {"ts": 2, "val": 20}]
-        ad1 = _adapter(rows)
-        ad1.resolve_query_source.return_value = SimpleNamespace(type="mssql")
+        ad1 = _adapter(rows, dialect="mssql")
         _executor(result, ad1, cache).execute_query("q")
 
         rows2 = [{"ts": 1, "val": 10}, {"ts": 2, "val": 20}, {"ts": 3, "val": 30}]
-        ad2 = _adapter(rows2)
-        ad2.resolve_query_source.return_value = SimpleNamespace(type="mssql")
+        ad2 = _adapter(rows2, dialect="mssql")
         _executor(result, ad2, cache).execute_query("q")
 
-        ad2.execute.assert_called_once()
-        call_sql = ad2.execute.call_args[0][0].sql
+        backend_of(ad2).execute.assert_called_once()
+        call_sql = backend_of(ad2).execute.call_args[0][1].sql
         assert "_dct_base" not in call_sql
 
     def test_union_order_by_falls_back_to_full_refresh(self, tmp_path) -> None:
@@ -1045,8 +1037,8 @@ rows:
         ad2 = _adapter(rows2)
         _executor(result, ad2, cache).execute_query("q")
 
-        ad2.execute.assert_called_once()
-        call_sql = ad2.execute.call_args[0][0].sql
+        backend_of(ad2).execute.assert_called_once()
+        call_sql = backend_of(ad2).execute.call_args[0][1].sql
         assert "_dct_base" not in call_sql
 
     def test_bare_aggregate_falls_back_to_full_refresh(self, tmp_path) -> None:
@@ -1074,8 +1066,8 @@ rows:
         ad2 = _adapter(rows2)
         _executor(result, ad2, cache).execute_query("q")
 
-        ad2.execute.assert_called_once()
-        call_sql = ad2.execute.call_args[0][0].sql
+        backend_of(ad2).execute.assert_called_once()
+        call_sql = backend_of(ad2).execute.call_args[0][1].sql
         assert "_dct_base" not in call_sql
 
     def test_fetch_first_falls_back_to_full_refresh(self, tmp_path) -> None:
@@ -1109,8 +1101,8 @@ rows:
         ad2 = _adapter(rows2)
         _executor(result, ad2, cache).execute_query("q")
 
-        ad2.execute.assert_called_once()
-        call_sql = ad2.execute.call_args[0][0].sql
+        backend_of(ad2).execute.assert_called_once()
+        call_sql = backend_of(ad2).execute.call_args[0][1].sql
         assert "_dct_base" not in call_sql
 
 
@@ -1196,8 +1188,8 @@ class TestDecimalWatermarkThroughRealCache:
         ad2 = _adapter(tail)
         merged = _executor(result, ad2, cache).execute_query("q")
 
-        ad2.execute.assert_called_once()
-        sql = ad2.execute.call_args[0][0].sql
+        backend_of(ad2).execute.assert_called_once()
+        sql = backend_of(ad2).execute.call_args[0][1].sql
         assert "12345678901234567890" in sql
         assert len(merged) == 2
         assert Decimal("12345678901234567890") in {r["ts"] for r in merged}
@@ -1357,8 +1349,8 @@ class TestTzAwareDatetimeWatermark:
         ad2 = _adapter(tail)
         merged = _executor(result, ad2, cache).execute_query("q")
 
-        ad2.execute.assert_called_once()
-        sql = ad2.execute.call_args[0][0].sql
+        backend_of(ad2).execute.assert_called_once()
+        sql = backend_of(ad2).execute.call_args[0][1].sql
         predicate = sqlglot.parse_one(sql).find(exp.GTE)
         assert predicate is not None
         assert isinstance(predicate.expression, exp.Cast)
@@ -1386,26 +1378,28 @@ class TestUnparseableCachedTemporalKeyRaises:
 # ─── CRITICAL (round 4 regression): genuinely-VARCHAR incremental column ────
 
 
-class _SqlSpyRegistry:
-    """Wraps a real AdapterRegistry, recording each executed query's SQL.
+class _SqlSpyBackend:
+    """Wraps a real ``DuckDBBackend``, recording each executed query's SQL.
 
-    Everything except `execute` delegates straight through — this is a real
-    end-to-end render (real FilesystemProject, real DuckDB warehouse file,
-    real build_adapter_registry, real TrivialDuckDBCache), not a mock. The
-    spy exists only to let the test assert the tail predicate's shape
-    without re-parsing warehouse internals.
+    A real end-to-end render (real FilesystemProject, real DuckDB warehouse file,
+    real build_exec_env, real TrivialDuckDBCache); the spy exists only to let the
+    test assert the tail predicate's shape.
     """
 
-    def __init__(self, inner) -> None:
+    def __init__(self, inner: DuckDBBackend) -> None:
         self._inner = inner
+        self.param_style = inner.param_style
         self.sqls: list[str] = []
 
-    def __getattr__(self, name: str):
-        return getattr(self._inner, name)
-
-    def execute(self, query, *args, **kwargs):
+    def execute(self, source, query):
         self.sqls.append(query.sql)
-        return self._inner.execute(query, *args, **kwargs)
+        return self._inner.execute(source, query)
+
+    def interrupt(self) -> None:
+        self._inner.interrupt()
+
+    def close(self) -> None:
+        self._inner.close()
 
 
 def _varchar_events_project(tmp_path: Path, initial_values: list[str]):
@@ -1427,8 +1421,11 @@ def _varchar_events_project(tmp_path: Path, initial_values: list[str]):
     project = FilesystemProject(tmp_path)
     compiled = compile_file(project.path("charts/board.yml").read_board())
     assert compiled.board is not None, compiled.errors
-    registry = _SqlSpyRegistry(build_adapter_registry(project, profile_type="duckdb"))
-    return db_path, compiled, registry
+    spy = _SqlSpyBackend(DuckDBBackend(data_dir=tmp_path, read_only=True))
+    registry = build_exec_env(
+        project, profile_type="duckdb", extra_routes={"duckdb": spy}
+    )
+    return db_path, compiled, registry, spy
 
 
 def _insert_event(db_path: Path, value: str, val: int) -> None:
@@ -1447,7 +1444,7 @@ class TestVarcharIncrementalKeySurvivesRealCache:
     permanently (the persistent cache entry keeps its str keys).
 
     Driven through a real FilesystemProject + real DuckDB warehouse file +
-    real build_adapter_registry + real TrivialDuckDBCache — a mock adapter
+    real build_exec_env + real TrivialDuckDBCache — a mock adapter
     never runs the tail SQL through DuckDB's binder, so it cannot see this
     bug; only real execution can.
     """
@@ -1470,13 +1467,15 @@ class TestVarcharIncrementalKeySurvivesRealCache:
     def test_four_renders_succeed_with_string_literal_predicate(
         self, tmp_path, initial_values, new_values
     ) -> None:
-        db_path, compiled, registry = _varchar_events_project(tmp_path, initial_values)
+        db_path, compiled, registry, spy = _varchar_events_project(
+            tmp_path, initial_values
+        )
         cache = TrivialDuckDBCache(db_path=tmp_path / "cache.duckdb")
 
         def _render() -> list[dict]:
-            executor = Executor(
+            executor = Run(
                 compiled.board,
-                adapter_registry=registry,
+                env=registry,
                 query_registry=compiled.query_registry,
                 result_cache=cache,
             )
@@ -1489,7 +1488,7 @@ class TestVarcharIncrementalKeySurvivesRealCache:
             _insert_event(db_path, new_value, val=100 + i)
             merged = _render()
             assert len(merged) == 2 + i  # grows by one row each render
-            tail_sql = registry.sqls[-1]
+            tail_sql = spy.sqls[-1]
             predicate = sqlglot.parse_one(tail_sql).find(exp.GTE)
             assert predicate is not None, tail_sql
             assert isinstance(predicate.expression, exp.Literal)

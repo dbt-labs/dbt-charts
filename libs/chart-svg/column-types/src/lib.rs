@@ -8,10 +8,25 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::OnceLock;
 
 use serde::Deserialize;
 use diagnostic::{codes, Diagnostic};
 use serde_json::{json, Map, Value};
+
+/// Production's `_DATE_RE` (`core/utils.py`): ISO (`2024-03`, `2024-03-15`), US (`03/15/2024`), quarter
+/// (`Q1 2024`), the short and long month-day forms and a bare year. Pattern-based, not semantic: an
+/// impossible `\d{2}/\d{2}/\d{4}` still matches.
+pub fn is_date_like(text: &str) -> bool {
+    static DATE: OnceLock<regex::Regex> = OnceLock::new();
+    DATE.get_or_init(|| {
+        regex::Regex::new(
+            r"^(?:\d{4}-\d{2}(?:-\d{2})?|\d{2}/\d{2}/\d{4}|Q[1-4]\s+\d{4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}|\d{4})$",
+        )
+        .expect("a valid pattern")
+    })
+    .is_match(text.trim())
+}
 
 /// A declared column type. `Datetime` is naive wall-clock time, `DatetimeTz`
 /// an instant; `List` carries its element type and `Struct` its ordered fields.

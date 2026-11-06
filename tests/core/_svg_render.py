@@ -14,12 +14,13 @@ from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import Project
 from dbt_charts.core.render import render
 from dbt_charts.core.render.render_result import RenderResult
 from dbt_charts.core.render_format import RenderFormat
+
+from .._run import Run
 
 SAMPLE_BOARD_YAML = """
 title: Test Dashboard
@@ -56,13 +57,15 @@ def render_board_svg_result(
     script for a multi-page table)."""
     result = compile(yaml_content)
     assert result.success
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        env=build_exec_env(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
         clock=pinned_clock,
     )
-    return render(result.board, executor, format="svg", controls=controls)
+    return render(
+        result.board, executor.ctx, executor.ledger, format="svg", controls=controls
+    )
 
 
 def render_board_to_svg(

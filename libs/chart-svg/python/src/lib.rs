@@ -2,6 +2,8 @@
 //! `dbt_charts._engine`. Build/distribution notes:
 //! `libs/chart-svg/docs/laws-compile.md`'s Wheel section.
 
+mod board;
+
 use diagnostic::Diagnostic;
 use chart_renderer::families::table::width::{measure_natural_width, MeasurePayload};
 use chart_renderer::{render_measured, Payload};
@@ -177,6 +179,47 @@ fn language_for_time_locale(name: Option<&str>) -> &'static str {
     display_text::language::language_of_time_locale(name)
 }
 
+/// The d3-format locale names the engine vendors, sorted.
+#[pyfunction]
+fn number_locales() -> Vec<&'static str> {
+    display_text::locale::NUMBER_LOCALES.to_vec()
+}
+
+/// The d3-time-format locale names the engine vendors, sorted.
+#[pyfunction]
+fn time_locales() -> Vec<&'static str> {
+    display_text::locale::TIME_LOCALES.to_vec()
+}
+
+/// d3's number locale definition `tag` names, as JSON text; an unknown tag
+/// raises `ValueError`.
+#[pyfunction]
+fn number_locale(tag: &str) -> PyResult<&'static str> {
+    display_text::locale::number_locale(tag).map_err(PyValueError::new_err)
+}
+
+/// d3's time locale definition `tag` names, as JSON text; an unknown tag
+/// raises `ValueError`.
+#[pyfunction]
+fn time_locale(tag: &str) -> PyResult<&'static str> {
+    display_text::locale::time_locale(tag).map_err(PyValueError::new_err)
+}
+
+/// Number locale `tag`'s magnitude words, `(analytic, narrative)`: thousand,
+/// million, billion, trillion each; an unknown tag raises `ValueError`.
+#[pyfunction]
+fn magnitude_words(tag: &str) -> PyResult<([String; 4], [String; 4])> {
+    let words = display_text::locale::magnitude_words(tag).map_err(PyValueError::new_err)?;
+    Ok((words.analytic.clone(), words.narrative.clone()))
+}
+
+/// The index (0 Sunday) of the first weekday CLDR gives time locale `tag`'s
+/// region; an unknown tag raises `ValueError`.
+#[pyfunction]
+fn week_start(tag: &str) -> PyResult<usize> {
+    display_text::locale::week_start(tag).map_err(PyValueError::new_err)
+}
+
 /// Message `id` in `lang`: `n` picks a plural form and fills `{n}`, `args`
 /// fill the other placeholders. An unknown language or id, a missing or unused
 /// arg, or a plural message with no `n` raises `ValueError`.
@@ -227,10 +270,17 @@ fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(check_template, m)?)?;
     m.add_function(wrap_pyfunction!(languages, m)?)?;
     m.add_function(wrap_pyfunction!(language_for_time_locale, m)?)?;
+    m.add_function(wrap_pyfunction!(number_locales, m)?)?;
+    m.add_function(wrap_pyfunction!(time_locales, m)?)?;
+    m.add_function(wrap_pyfunction!(number_locale, m)?)?;
+    m.add_function(wrap_pyfunction!(time_locale, m)?)?;
+    m.add_function(wrap_pyfunction!(magnitude_words, m)?)?;
+    m.add_function(wrap_pyfunction!(week_start, m)?)?;
     m.add_function(wrap_pyfunction!(message, m)?)?;
     m.add_function(wrap_pyfunction!(plural_expr, m)?)?;
     m.add_function(wrap_pyfunction!(message_forms, m)?)?;
     m.add_function(wrap_pyfunction!(apply_case, m)?)?;
+    board::register(m)?;
     m.add("RenderDiagnosticError", m.py().get_type::<RenderDiagnosticError>())?;
     Ok(())
 }

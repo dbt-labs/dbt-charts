@@ -27,14 +27,14 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_INTERRUPTED
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.dialects import SQLDialect, get_dialect
-from dbt_charts.core.execute.adapters.base import QueryDurationExceeded
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+from dbt_charts.core.execute.backends.base import LIVENESS_SQL, source_config_hash
+from dbt_charts.core.execute.backends.dbt_adapter_factory import (
     AdapterNotInstalledError,
     ConnectionSetupFailed,
     cancel_open_queries,
 )
-from dbt_charts.core.execute.adapters.typed_fetch import fetch_typed
-from dbt_charts.core.execute.backends.base import LIVENESS_SQL, source_config_hash
+from dbt_charts.core.execute.backends.typed_fetch import fetch_typed
+from dbt_charts.core.execute.query_result import QueryDurationExceeded
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
 if TYPE_CHECKING:
@@ -86,7 +86,7 @@ class _SourcePool:
       pool's *own* persistent threads keeps connections warm across renders, so
       the first visit to a new filter reuses open warehouse sessions instead of
       reconnecting.  This is why the pool must outlive a single request — it lives
-      on the ``DbtBackend`` inside an ``AdapterRegistry`` that serve persists in
+      on the ``DbtBackend`` inside an ``ExecEnv`` that serve persists in
       ``app.state``.
 
     Pool adapters are built with ``register_macros=False``: raw SQL execution
@@ -330,7 +330,7 @@ class _SourcePool:
         if adapter is not None:
             return adapter
 
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         try:
             # This warehouse pool only handles network warehouses; DuckDB and

@@ -32,11 +32,11 @@ from dbt_charts.core.compile.models.source import (
     PostgresSourceConfig,
     ResolvedSourceConfig,
 )
-from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
 from dbt_charts.core.execute.backends.dbt_core import DbtBackend
 from dbt_charts.core.execute.compose import ResolvedQuery
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 
+from ..._run import Run
 from ..conftest import DbtHarness
 
 # Reaches the Jinja interpreter's globals from an ordinary expression. Inert as a
@@ -86,7 +86,7 @@ def _executor(
     yaml_body: str,
     local_project: Callable[..., FilesystemProject],
     source: dict[str, Any],
-) -> Executor:
+) -> Run:
     result = compile(yaml_body)
     assert result.success, [str(e) for e in result.errors]
     assert result.board is not None
@@ -94,7 +94,7 @@ def _executor(
     # sources is a cached_property; pre-populate its cache via the writable
     # instance dict (vars()), matching the sibling composed-query suite.
     vars(project)["sources"] = ProjectSourcesConfig(sources={"db": source})
-    return Executor(result.board, build_adapter_registry(project), use_cache=False)
+    return Run(result.board, build_exec_env(project), use_cache=False)
 
 
 class TestComposedQueryValuesAreNeverRendered:

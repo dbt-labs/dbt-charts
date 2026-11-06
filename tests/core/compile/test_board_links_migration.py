@@ -11,17 +11,17 @@ import pytest
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
     migrate_yaml_text,
     prepare_board_mapping,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.parse.parser import load_yaml_mapping
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     JsonObject,
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._engine_migrations import migrate_mapping
 
 pytestmark = pytest.mark.filterwarnings(
     "ignore::dbt_charts.core.compile.migrations.SchemaMigrationWarning"
@@ -34,10 +34,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: JsonObject, catalog: YamlSchemaCatalog) -> JsonObject:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 @pytest.mark.parametrize("value", [True, False])
@@ -98,9 +97,8 @@ def test_an_old_board_compiles_as_links_auto() -> None:
 
 
 def test_text_rewrite_moves_the_key(catalog: YamlSchemaCatalog) -> None:
-    _, registry = _board_migration_context()
     text = "title: t\nauto_link: true\nrows:\n  - c\n"
-    rewritten = migrate_yaml_text(text, catalog=catalog, registry=registry)
+    rewritten = migrate_yaml_text(text)
     mapping = load_yaml_mapping(rewritten)
     assert mapping["links"] == {"auto": True}
     assert "auto_link" not in mapping

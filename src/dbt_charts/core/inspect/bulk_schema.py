@@ -6,7 +6,7 @@ ordered ``{schema: {table: {column: type}}}`` tree. This replaces the per-schema
 ``list_tables`` relation walk (``1 + N`` metadata round-trips) that hangs AI
 prompt assembly on large warehouses.
 
-The query runs through the standard ``AdapterRegistry.execute`` path with
+The query runs through the standard ``run_query`` path with
 ``limit=None`` — the full column list is requested. If the
 ``execution.max_rows`` ceiling fires before the full result is fetched, a
 ``RuntimeError`` is raised (a truncated schema tree would silently omit
@@ -22,16 +22,18 @@ from typing import TYPE_CHECKING, Any
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.dialects import get_dialect
+from dbt_charts.core.execute.plan_sources import resolve_source_config
+from dbt_charts.core.execute.run import run_query
 
 if TYPE_CHECKING:
-    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
 
 # Ordered schema tree: schema -> table -> column -> type.
 SchemaTree = dict[str, dict[str, dict[str, str]]]
 
 # Raw warehouse credential dict / adapter row values — heterogeneous JSON-ish
 # scalars (str/int/bool/None), the same boundary as
-# AdapterRegistry.resolve_source_config's dict[str, Any].
+# plan_sources.resolve_source_config's dict[str, Any].
 _RawValues = Mapping[str, Any]  # type-state: explicit_any — warehouse-boundary values
 
 
@@ -91,7 +93,7 @@ def parse_bulk_table_rows(rows: Iterable[_RawValues]) -> dict[str, list[str]]:
     return tables
 
 
-def bulk_schema(source: str, adapter_registry: AdapterRegistry) -> SchemaTree:
+def bulk_schema(source: str, env: ExecEnv) -> SchemaTree:
     """Return the whole source's schema tree from a single warehouse query.
 
     Fails only through a narrow contract, so a best-effort caller can catch it
@@ -103,14 +105,14 @@ def bulk_schema(source: str, adapter_registry: AdapterRegistry) -> SchemaTree:
       * ``RuntimeError`` — the query returned or raised an error (any driver
         exception is normalized into this).
     """
-    source_config = adapter_registry.resolve_source_config(source)
+    source_config = resolve_source_config(env.sources, env.project, source)
     source_type = str(source_config.get("type"))
     dialect = get_dialect(source_type)
     scope = bulk_schema_scope(source_type, source_config)
     sql = dialect.bulk_schema_sql(scope)
 
     try:
-        result = adapter_registry.execute(SqlQuery(sql=sql, source=source, limit=None))
+        result = run_query(env, SqlQuery(sql=sql, source=source, limit=None))
     except DbtChartsError:
         raise
     except Exception as e:  # noqa: BLE001 — normalize driver errors to RuntimeError

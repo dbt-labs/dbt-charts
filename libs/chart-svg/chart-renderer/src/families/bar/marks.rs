@@ -1,11 +1,13 @@
 //! What a bar is drawn as: rects and rounded paths, the layers' bars, the baseline rules and the column geometry.
 
-use crate::common::{AxisStyle, FormatSlot, axis_title_text, row_num, row_str};
+use crate::common::{AxisStyle, FormatSlot, axis_title_text};
+use ::bind::rows::{row_num, row_str};
 use crate::contract::Reads;
 use diagnostic::Diagnostic;
 use crate::families::bar_hover_band::HoverBand;
 use crate::families::cartesian::BandScale;
-use crate::families::layers::{BarLayerMark, LayerClaim, LayerStack, OverlayBarLayer, OverlayLayer, layer_color_of, layer_color_promoted, layer_color_text, layer_color_values, layer_series_text, row_order_stack};
+use crate::families::layers::{BarLayerMark, LayerClaim, LayerStack, OverlayBarLayer, OverlayLayer, layer_series_text, row_order_stack};
+use ::bind::layers::{layer_color_of, layer_color_promoted, layer_color_text, layer_color_values};
 use crate::families::scatter_axis::TemporalXAxis;
 use crate::families::span::RangedBars;
 use crate::families::{span, support_table_strip};

@@ -30,13 +30,13 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.errors import (
     FormatError,
     RenderError,
 )
 
+from ..._run import Run
 from .._engine_render import render_chart_svg
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
@@ -64,14 +64,14 @@ charts:
 rows: []
 """
         result = compile(board_yaml)
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
         with pytest.raises(RenderError) as exc_info:
-            render(result.board, executor)
+            render(result.board, executor.ctx, executor.ledger)
 
         assert exc_info.value.code is ERR_NO_LAYOUT
 
@@ -90,14 +90,16 @@ class TestRenderFormatUnsupportedCarriesCode:
 text: "static text only"
 """
         result = compile(board_yaml)
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
         with pytest.raises(FormatError) as exc_info:
-            render(result.board, executor, format="not-a-real-format")
+            render(
+                result.board, executor.ctx, executor.ledger, format="not-a-real-format"
+            )
 
         assert exc_info.value.code is ERR_FORMAT_UNSUPPORTED
 
@@ -321,9 +323,9 @@ class TestRenderPublicEntryPointPreservesPerSiteCodes:
 text: "static"
 """
         result = compile(board_yaml)
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         injected = ChartDataError.from_code(
@@ -338,7 +340,9 @@ text: "static"
         from dbt_charts.core.render import renderer as renderer_module
 
         with patch.object(renderer_module, "render_board_svg", side_effect=injected):
-            render_result = render(result.board, executor, format="svg")
+            render_result = render(
+                result.board, executor.ctx, executor.ledger, format="svg"
+            )
 
         # The DbtChartsError reaches the caller as board_error with its original code;
         # the broad-except wrapper must NOT re-stamp it to ERR_INTERNAL.
@@ -371,9 +375,9 @@ rows:
   - rev
 """
         result = compile(board_yaml)
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
@@ -384,7 +388,9 @@ rows:
             "render_board_svg",
             side_effect=RuntimeError("simulated bug"),
         ):
-            render_result = render(result.board, executor, format="svg")
+            render_result = render(
+                result.board, executor.ctx, executor.ledger, format="svg"
+            )
 
         assert render_result.board_error is not None
         assert render_result.board_error.code == ERR_INTERNAL.code

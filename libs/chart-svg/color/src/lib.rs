@@ -100,6 +100,24 @@ fn bare_identifier_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"^[A-Za-z][A-Za-z0-9_-]*\n?$").unwrap())
 }
 
+fn authored_color_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(concat!(
+            r#"^(?:|#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|[A-Za-z_][A-Za-z0-9_-]*"#,
+            r#"|(?i:rgb|rgba|hsl|hsla|oklch|oklab|lab|lch|color|var)\([^;{}<>"'\\*\x00-\x1f\x7f]*\))$"#,
+        ))
+        .unwrap()
+    })
+}
+
+/// `core/colors.py::check_authored_color`: whether `value` is shaped like
+/// something a color field may hold (empty, hex, bare identifier, palette
+/// token or color function). A full match: a trailing newline is refused.
+pub fn is_authored_color(value: &str) -> bool {
+    authored_color_re().is_match(value) || (is_color_token(value) && !value.ends_with('\n'))
+}
+
 const CSS_RESERVED_UNREADABLE_KEYWORDS: &[&str] =
     &["currentcolor", "inherit", "initial", "unset", "revert"];
 

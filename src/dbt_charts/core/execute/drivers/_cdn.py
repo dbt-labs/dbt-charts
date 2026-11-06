@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.diagnostics.codes_execute import ERR_WAREHOUSE_RESULT_WARNING
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters.base import (
+from dbt_charts.core.execute.query_result import (
     WarehouseStatementError,
     redact_values,
 )
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     import nanoarrow as na
     from adbc_driver_manager import AdbcStatement, Error
 
-    from dbt_charts.core.execute.adapters.base import RowFetchLimit
+    from dbt_charts.core.execute.query_result import RowFetchLimit
 
 
 logger = logging.getLogger(__name__)

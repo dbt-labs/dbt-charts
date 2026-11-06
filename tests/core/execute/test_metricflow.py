@@ -30,11 +30,16 @@ from dbt_charts.core.compile.models.source import (
     DuckDBSourceConfig,
     MetricFlowConfig,
 )
-from dbt_charts.core.execute import Executor, metricflow
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute import metricflow
+from dbt_charts.core.execute.compose import semantic_layer
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.metricflow import SemanticLayer
 from dbt_charts.core.execute.plan import plan
+from dbt_charts.core.execute.plan_sources import resolve_query_source
+from dbt_charts.core.execute.run import run_query
 from dbt_charts.core.execute.semantic_bundle import SemanticDataset
+
+from ..._run import Run
 
 FRAGMENT = """\
 schema_version: v1
@@ -173,9 +178,13 @@ def _run(
 ) -> Any:
     """Run `sql` as a board query named `q`; the QueryResult."""
     result = _board(project, sql)
-    registry = build_adapter_registry(project)
-    return registry.execute(
-        result.board.queries["q"], variables or {}, board=result.board, query_name="q"
+    registry = build_exec_env(project)
+    return run_query(
+        registry,
+        result.board.queries["q"],
+        variables or {},
+        board=result.board,
+        query_name="q",
     )
 
 
@@ -237,9 +246,10 @@ def test_variable_in_a_dataset_query_binds(tmp_path: Path) -> None:
 
 @needs_metricflow
 def test_ad_hoc_sql_without_a_board_compiles(tmp_path: Path) -> None:
-    registry = build_adapter_registry(_project(tmp_path))
-    result = registry.execute(
-        SqlQuery(sql="SELECT AGG(invoiced_total) AS total FROM invoices", source="db")
+    registry = build_exec_env(_project(tmp_path))
+    result = run_query(
+        registry,
+        SqlQuery(sql="SELECT AGG(invoiced_total) AS total FROM invoices", source="db"),
     )
     assert _rows(result) == [(160.0,)]
 
@@ -353,10 +363,15 @@ def test_the_layer_is_reused_while_the_bundle_is_unchanged(
     project = _project(tmp_path)
 
     def layer() -> Any:
-        registry = build_adapter_registry(project)
-        source = registry.resolve_query_source(SqlQuery(sql="SELECT 1", source="db"))
+        registry = build_exec_env(project)
+        source = resolve_query_source(
+            SqlQuery(sql="SELECT 1", source="db"),
+            sources=registry.sources,
+            resolver=registry.resolver,
+            dbt_context=registry.dbt_context,
+        )
         assert source is not None
-        return registry.semantic_layer(source)
+        return semantic_layer(registry.project, source)
 
     first = layer()
     assert layer() is first
@@ -453,9 +468,9 @@ def test_a_changed_bundle_changes_the_cache_key(tmp_path: Path) -> None:
     result = _board(project, "SELECT AGG(invoiced_total) AS total FROM invoices")
 
     def key() -> tuple[str, str, str]:
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
             query_registry=result.query_registry,
         )
         return plan(executor.ctx, ["q"], {})[0].cache_key
@@ -519,9 +534,9 @@ def test_required_source_refuses_a_board_query_outside_the_bundle(
 
 @needs_metricflow
 def test_required_source_refuses_the_agent_execute_sql_path(tmp_path: Path) -> None:
-    registry = build_adapter_registry(_project(tmp_path, metricflow=REQUIRED))
+    registry = build_exec_env(_project(tmp_path, metricflow=REQUIRED))
     result = execute_query(
-        "SELECT COUNT(*) AS n FROM raw_events", source="db", adapter_registry=registry
+        "SELECT COUNT(*) AS n FROM raw_events", source="db", env=registry
     )
     assert not result.success
     assert result.error_code == "ERR-METRICFLOW-OUTSIDE-BUNDLE"
@@ -529,7 +544,7 @@ def test_required_source_refuses_the_agent_execute_sql_path(tmp_path: Path) -> N
     ok = execute_query(
         "SELECT AGG(invoiced_total) AS total FROM invoices",
         source="db",
-        adapter_registry=registry,
+        env=registry,
     )
     assert ok.success, ok.errors
     assert ok.data == [{"total": 160.0}]
@@ -580,9 +595,9 @@ def test_a_changed_required_flag_changes_the_cache_key(tmp_path: Path) -> None:
 
     def key(project: FilesystemProject) -> tuple[str, str, str]:
         result = _board(project, "SELECT COUNT(*) AS n FROM raw_events")
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
             query_registry=result.query_registry,
         )
         return plan(executor.ctx, ["q"], {})[0].cache_key

@@ -11,7 +11,7 @@ Public API:
 - ``RenderSuccess`` — successful render; carries the rendered output string.
 - ``RenderError`` — failed render; carries a ``BoardRenderResult`` ready for
   the server to pass to ``_render_structured_errors_html``.
-- ``render_registered_view(request_path, project, adapter_registry, ...)``
+- ``render_registered_view(request_path, project, env, ...)``
   — full pipeline. Returns ``None`` when no route matches (caller falls
   through to regular file routing). Returns ``RenderSuccess | RenderError``
   when a route matches, whether or not rendering succeeds.
@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from dbt_charts.core.execute.plan_sources import resolve_source_config
 from dbt_charts.core.registered_views.expander import (
     ExpansionError,
     TemplateLoadError,
@@ -38,8 +39,8 @@ if TYPE_CHECKING:
     from dbt_charts.core.board import BoardRenderResult
     from dbt_charts.core.compile.models.board.normalized import Board
     from dbt_charts.core.compile.models.query.normalized import AnyQuery
-    from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
     from dbt_charts.core.execute.cache_backend import QueryResultCache
+    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import Project
     from dbt_charts.core.render.board_links import LinkContext
 
@@ -90,11 +91,11 @@ RenderResult = RenderSuccess | RenderError
 
 @dataclass
 class _CompiledView:
-    """The board a registered view compiled to, ready for an Executor.
+    """The board a registered view compiled to, ready for a render context.
 
     Holds the output of steps 1-3 of the pipeline (match, pre-template
     queries, expand, compile) so step 4 (execute + render) can build the
-    ``Executor`` from it.
+    render context from it.
     """
 
     board: Board
@@ -103,14 +104,14 @@ class _CompiledView:
 
 def _compile_registered_view(
     request_path: str,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     result_cache: QueryResultCache | None,
 ) -> _CompiledView | RenderError | None:
     """Match, query, expand, and compile a registered view. Steps 1-3.
 
     Returns ``None`` when no registered route matches (caller falls through to
     regular file-based routing), a ``RenderError`` when any step fails, or the
-    compiled view ready for an ``Executor``.
+    compiled view ready for a render context.
     """
     from dbt_charts.core.board import BoardRenderResult
     from dbt_charts.core.compile import compile_authored_board
@@ -125,7 +126,7 @@ def _compile_registered_view(
     # --- Step 1: run pre-template queries ---
     try:
         query_results = run_registry_queries(
-            match.view, match.path_params, adapter_registry, cache=result_cache
+            match.view, match.path_params, env, cache=result_cache
         )
     except RegistryQueryError as exc:
         return RenderError(
@@ -139,7 +140,7 @@ def _compile_registered_view(
     # Routes below /data/<source>/ and /inspector/<source>/ have a `source`
     # path param, but only the leaf table/detail/column templates actually
     # call sql_identifier() — resolving the dialect eagerly here would touch
-    # the adapter registry (and can fail loudly) even for index-level routes
+    # the exec env (and can fail loudly) even for index-level routes
     # that never quote an identifier at all, 200->422ing a source-less
     # project's `/data/` and `/inspector/<source>/` pages. Passing a thunk
     # instead defers the resolve_source_config() call to the first
@@ -150,7 +151,9 @@ def _compile_registered_view(
         if source_param is None:
             return None
         try:
-            source_config = adapter_registry.resolve_source_config(source_param)
+            source_config = resolve_source_config(
+                env.sources, env.project, source_param
+            )
         except DbtChartsError as exc:
             raise ExpansionError(str(exc)) from exc
         source_type = source_config["type"]
@@ -206,7 +209,7 @@ def _compile_registered_view(
 def render_registered_view(
     request_path: str,
     project: Project,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     result_cache: QueryResultCache | None,
     max_workers: int | None = None,
     link_context: LinkContext | None = None,
@@ -224,7 +227,7 @@ def render_registered_view(
         request_path: Absolute URL path, e.g. ``"/data/snowflake/analytics/"``.
         project: The project handle, used by the file-source materializer to
             read project-local data files.
-        adapter_registry: Configured adapter registry with adapters for the
+        env: Configured exec env with adapters for the
             sources declared in the project.
         result_cache: Optional persistent query-result cache for the project.
         max_workers: Maximum parallel query workers. ``None`` uses the project
@@ -267,11 +270,12 @@ def render_registered_view(
     from dbt_charts.core.compile.image_assets import image_scope
     from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
     from dbt_charts.core.diagnostics.execution import ExecutionError
-    from dbt_charts.core.execute import Executor
+    from dbt_charts.core.execute.lookup import Ledger
+    from dbt_charts.core.execute.plan import make_context
     from dbt_charts.core.render import render
     from dbt_charts.core.render.errors import RenderError as RenderExecError
 
-    compiled = _compile_registered_view(request_path, adapter_registry, result_cache)
+    compiled = _compile_registered_view(request_path, env, result_cache)
     if compiled is None:
         return None
     if isinstance(compiled, RenderError):
@@ -279,16 +283,17 @@ def render_registered_view(
 
     # --- Step 4: execute + render ---
     try:
-        executor = Executor(
+        ctx = make_context(
             compiled.board,
-            adapter_registry=adapter_registry,
+            env,
             query_registry=compiled.query_registry,
             result_cache=result_cache,
         )
         with image_scope(project):
             render_result = render(
                 compiled.board,
-                executor,
+                ctx,
+                Ledger(),
                 format=format,
                 variables=request_variables,
                 max_workers=max_workers,

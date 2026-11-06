@@ -69,7 +69,7 @@ class QueryError(ExecutionError):
 
     Example:
         >>> try:
-        ...     executor.execute_query("broken_query")
+        ...     execute(ctx, ["broken_query"], {}).execute_query("broken_query", {})
         ... except QueryError as e:
         ...     print(f"Query failed: {e}")
     """
@@ -100,7 +100,7 @@ class AdapterError(ExecutionError):
 
     Example:
         >>> try:
-        ...     executor.execute_query("unknown_type_query")
+        ...     execute(ctx, ["unknown_type_query"], {}).execute_query("unknown_type_query", {})
         ... except AdapterError as e:
         ...     print(f"Adapter error: {e}")
     """
@@ -121,7 +121,7 @@ class ConnectionError(ExecutionError):
 
     Example:
         >>> try:
-        ...     executor.execute_query("db_query")
+        ...     execute(ctx, ["db_query"], {}).execute_query("db_query", {})
         ... except ConnectionError as e:
         ...     print(f"Connection failed: {e}")
     """
@@ -240,7 +240,7 @@ class UnparseableSqlError(ExecutionError):
             # Carried on .fields too (not just the plain attr) so the
             # position survives a QueryResult -> QueryError.from_code(**fields)
             # reconstruction, which only rebuilds attributes it's handed
-            # explicitly (see execute.adapters.base.handle_adapter_error).
+            # explicitly (see execute.query_result.handle_adapter_error).
             # `cause` goes in stringified: these fields reach Cloud's editor
             # through Diagnostic.model_dump(mode="json"), which raises on a
             # bare exception object.

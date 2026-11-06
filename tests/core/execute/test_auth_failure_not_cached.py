@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from typing import Any
-
 import pytest
 import yaml
 
 from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile import compile as compile_board
+from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_WAREHOUSE_AUTH,
     ERR_WAREHOUSE_CONNECTION,
@@ -17,45 +15,35 @@ from dbt_charts.core.diagnostics.codes_execute import (
 )
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.diagnostics.registry import ErrorCode
-from dbt_charts.core.execute.adapters.base import (
+from dbt_charts.core.execute.cache_backend import CachedQueryFailure
+from dbt_charts.core.execute.query_result import (
     QueryResult,
     classify_warehouse_error,
     connection_failure,
 )
-from dbt_charts.core.execute.cache_backend import CachedQueryFailure
-from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 
-class _ScriptedRegistry:
-    """Hands back the scripted results in order, one per execution."""
-
-    def __init__(self, *results: QueryResult) -> None:
-        self.results = list(results)
-        self.calls = 0
-        self.project_sources = SimpleNamespace(sources={})
-
-    def resolve_query_source(self, *args: Any, **kwargs: Any) -> None:
-        return None
-
-    def project_file_sources(self) -> dict[str, Any]:
-        return {}
-
-    def execute(self, *args: Any, **kwargs: Any) -> QueryResult:
-        self.calls += 1
-        return self.results.pop(0)
+_SOURCE = DuckDBSourceConfig(type="duckdb", path=":memory:")
 
 
-def _executor(registry: _ScriptedRegistry, cache: TrivialDuckDBCache) -> Executor:
+def _scripted(*results: QueryResult) -> ScriptedBackend:
+    """A backend that answers with the scripted results in order, one per execution."""
+    return ScriptedBackend(sequence=list(results))
+
+
+def _executor(backend: ScriptedBackend, cache: TrivialDuckDBCache) -> Run:
     document = {
         "queries": {"q": {"sql": "SELECT 1 AS v", "source": "wh"}},
         "charts": {"c": {"query": "q", "type": "table"}},
     }
     board = compile_board(yaml.dump(document)).board
     assert board is not None
-    return Executor(
+    return Run(
         board,
-        adapter_registry=registry,
+        env=scripted_env(backend, source=_SOURCE),
         query_registry={"q": board.queries["q"]},
         result_cache=cache,
     )
@@ -82,34 +70,34 @@ def test_credential_or_connection_failure_does_not_replay_once_fixed(
     failure: QueryResult, code: ErrorCode
 ) -> None:
     cache = TrivialDuckDBCache()
-    registry = _ScriptedRegistry(
+    backend = _scripted(
         failure, QueryResult(data=[{"v": 1}], schema=literal_schema([{"v": 1}]))
     )
 
     with pytest.raises(QueryError) as raised:
-        _executor(registry, cache).execute_query("q")
+        _executor(backend, cache).execute_query("q")
     assert raised.value.code is code
 
-    assert _executor(registry, cache).execute_query("q") == [{"v": 1}]
-    assert registry.calls == 2
+    assert _executor(backend, cache).execute_query("q") == [{"v": 1}]
+    assert backend.execute.call_count == 2
 
 
 def test_ordinary_query_failure_is_still_cached() -> None:
     cache = TrivialDuckDBCache()
-    registry = _ScriptedRegistry(
+    backend = _scripted(
         _failure("Resources exceeded during query execution", "bigquery"),
         QueryResult(data=[{"v": 1}], schema=literal_schema([{"v": 1}])),
     )
 
     with pytest.raises(QueryError) as raised:
-        _executor(registry, cache).execute_query("q")
+        _executor(backend, cache).execute_query("q")
     assert raised.value.code is ERR_WAREHOUSE_RUNTIME
 
     with pytest.raises(QueryError, match="Resources exceeded") as replayed:
-        _executor(registry, cache).execute_query("q")
+        _executor(backend, cache).execute_query("q")
     assert isinstance(replayed.value.__cause__, CachedQueryFailure)
     assert replayed.value.code is ERR_WAREHOUSE_RUNTIME
-    assert registry.calls == 1
+    assert backend.execute.call_count == 1
 
 
 @pytest.mark.parametrize(

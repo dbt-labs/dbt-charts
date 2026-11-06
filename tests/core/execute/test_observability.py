@@ -1,10 +1,10 @@
-"""Tests for notify_observers and AdapterRegistry injected-observer integration.
+"""Tests for notify_observers and ExecEnv injected-observer integration.
 
 Pins:
 - notify_observers fires each observer with normalized warehouse_type
 - None warehouse_type is normalized to "unknown"
 - a raising observer is isolated; others still fire
-- AdapterRegistry(observers=[...]).execute calls observer once per real adapter call
+- make_exec_env(observers=[...]).execute calls observer once per real adapter call
 - no-adapter short-circuit does not call observers
 - error path yields status "error"
 """
@@ -17,10 +17,11 @@ from pathlib import Path
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 from dbt_charts.core.execute.backends.base import BackendRegistry
 from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
+from dbt_charts.core.execute.env import make_exec_env
 from dbt_charts.core.execute.observability import WarehouseObserver, notify_observers
+from dbt_charts.core.execute.run import run_query
 
 _TEST_DB_SOURCES = ProjectSourcesConfig(
     sources={"test_db": {"type": "duckdb", "path": ":memory:"}}
@@ -77,13 +78,13 @@ def test_execute_invokes_observer_with_profile_type_status_and_duration(
     def capture(warehouse_type: str, status: str, duration: float) -> None:
         calls.append((warehouse_type, status, duration))
 
-    registry = AdapterRegistry(
+    registry = make_exec_env(
         project=local_project(tmp_path),
         project_sources=_TEST_DB_SOURCES,
         observers=[capture],
         backends=BackendRegistry({"duckdb": DuckDBBackend()}),
     )
-    result = registry.execute(_duckdb_select_one_query())
+    result = run_query(registry, _duckdb_select_one_query())
 
     assert result.error is None
     assert len(calls) == 1
@@ -97,12 +98,12 @@ def test_no_adapter_short_circuit_does_not_call_observer(
     local_project: Callable[..., FilesystemProject],
 ) -> None:
     calls: list[tuple[str, str, float]] = []
-    registry = AdapterRegistry(
+    registry = make_exec_env(
         project=local_project(Path()),
         observers=[lambda wt, s, d: calls.append((wt, s, d))],
     )
     # No adapters registered — execute will short-circuit
-    result = registry.execute(_duckdb_select_one_query())
+    result = run_query(registry, _duckdb_select_one_query())
 
     assert result.error is not None
     assert len(calls) == 0
@@ -112,7 +113,7 @@ def test_observer_status_is_error_on_failed_result(
     tmp_path, local_project: Callable[..., FilesystemProject]
 ) -> None:
     calls: list[tuple[str, str, float]] = []
-    registry = AdapterRegistry(
+    registry = make_exec_env(
         project=local_project(tmp_path),
         project_sources=_TEST_DB_SOURCES,
         observers=[lambda wt, s, d: calls.append((wt, s, d))],
@@ -120,7 +121,7 @@ def test_observer_status_is_error_on_failed_result(
     )
     # A query that will fail at execution time
     bad_query = SqlQuery(sql="SELECT * FROM nonexistent_table_xyz", source="test_db")
-    result = registry.execute(bad_query)
+    result = run_query(registry, bad_query)
 
     assert result.error is not None
     assert len(calls) == 1
@@ -138,14 +139,14 @@ def test_preparation_failure_is_reported_to_observers(
     tmp_path, local_project: Callable[..., FilesystemProject]
 ) -> None:
     calls: list[tuple[str, str, float]] = []
-    registry = AdapterRegistry(
+    registry = make_exec_env(
         project=local_project(tmp_path),
         project_sources=_TEST_DB_SOURCES,
         observers=[lambda wt, s, d: calls.append((wt, s, d))],
         backends=BackendRegistry({"duckdb": DuckDBBackend()}),
     )
 
-    result = registry.execute(SqlQuery(sql="DROP TABLE t", source="test_db"))
+    result = run_query(registry, SqlQuery(sql="DROP TABLE t", source="test_db"))
 
     assert result.error is not None
     assert [status for _, status, _ in calls] == ["error"]

@@ -47,11 +47,12 @@ rows:
 def _make_executor(
     board: Any, tmp_path: Path, local_project: Callable[..., Project]
 ) -> Any:
-    from dbt_charts.core.execute import Executor
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
 
-    registry = build_adapter_registry(local_project(tmp_path), read_only=True)
-    return Executor(board, adapter_registry=registry)
+    from ..._run import Run
+
+    registry = build_exec_env(local_project(tmp_path), read_only=True)
+    return Run(board, env=registry)
 
 
 # ---------------------------------------------------------------------------

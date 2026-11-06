@@ -12,13 +12,8 @@ import pytest
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
     collect_migration_notices,
-    migrate_mapping,
     migrate_yaml_text,
     prepare_board_mapping,
-)
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
-from dbt_charts.core.compile.migrations.versions.v0_10_0 import (
-    LEGEND_POSITION_EXPANSION,
 )
 from dbt_charts.core.compile.parse.parser import load_yaml_mapping
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
@@ -26,6 +21,8 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._engine_migrations import migrate_mapping
 
 pytestmark = pytest.mark.filterwarnings(
     "ignore::dbt_charts.core.compile.migrations.SchemaMigrationWarning"
@@ -38,10 +35,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: JsonObject, catalog: YamlSchemaCatalog) -> JsonObject:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 def _bar(position: Any) -> dict[str, Any]:
@@ -75,29 +71,6 @@ def _pie(position: Any) -> dict[str, Any]:
     }
 
 
-@pytest.mark.parametrize("old", sorted(LEGEND_POSITION_EXPANSION))
-def test_cartesian_scalar_expands_to_edge_align_overlay(
-    old: str, catalog: YamlSchemaCatalog
-) -> None:
-    migrated = _migrate(_bar(old), catalog)
-    assert migrated["charts"]["c"]["style"]["legend"]["position"] == dict(
-        LEGEND_POSITION_EXPANSION[old]
-    )
-
-
-@pytest.mark.parametrize("old", sorted(LEGEND_POSITION_EXPANSION))
-def test_pie_scalar_keeps_edge_and_align_and_drops_overlay(
-    old: str, catalog: YamlSchemaCatalog
-) -> None:
-    expected = {
-        leaf: value
-        for leaf, value in LEGEND_POSITION_EXPANSION[old].items()
-        if leaf != "overlay"
-    }
-    migrated = _migrate(_pie(old), catalog)
-    assert migrated["charts"]["p"]["style"]["legend"]["position"] == expected
-
-
 def test_family_theme_slot_migrates_per_family(catalog: YamlSchemaCatalog) -> None:
     raw: dict[str, Any] = {
         "title": "t",
@@ -123,18 +96,16 @@ def test_family_theme_slot_migrates_per_family(catalog: YamlSchemaCatalog) -> No
 def test_dropping_a_pie_corner_overlay_is_reported(
     catalog: YamlSchemaCatalog,
 ) -> None:
-    _, registry = _board_migration_context()
     with collect_migration_notices() as notices:
-        migrate_mapping(_pie("top-left"), catalog=catalog, registry=registry)
+        migrate_mapping(_pie("top-left"))
     assert any("overlay was dropped" in notice.message for notice in notices)
 
 
 def test_a_pie_cardinal_drops_its_pinned_defaults_silently(
     catalog: YamlSchemaCatalog,
 ) -> None:
-    _, registry = _board_migration_context()
     with collect_migration_notices() as notices:
-        migrate_mapping(_pie("bottom"), catalog=catalog, registry=registry)
+        migrate_mapping(_pie("bottom"))
     assert not any("overlay was dropped" in notice.message for notice in notices)
 
 
@@ -155,7 +126,6 @@ def test_prepare_board_mapping_migrates_an_old_board_without_dct_migrate() -> No
 def test_text_rewrite_expands_the_scalar_in_place(
     catalog: YamlSchemaCatalog,
 ) -> None:
-    _, registry = _board_migration_context()
     text = (
         "title: t\n"
         "charts:\n"
@@ -171,7 +141,7 @@ def test_text_rewrite_expands_the_scalar_in_place(
         "rows:\n"
         "  - c\n"
     )
-    rewritten = migrate_yaml_text(text, catalog=catalog, registry=registry)
+    rewritten = migrate_yaml_text(text)
     legend = load_yaml_mapping(rewritten)["charts"]["c"]["style"]["legend"]
     assert legend["position"] == {"edge": "bottom", "align": "end", "overlay": True}
     assert legend["direction"] == "horizontal"
@@ -181,7 +151,6 @@ def test_text_rewrite_expands_the_scalar_in_place(
 def test_text_rewrite_of_a_pie_corner_writes_edge_and_align(
     catalog: YamlSchemaCatalog,
 ) -> None:
-    _, registry = _board_migration_context()
     text = (
         "title: t\n"
         "charts:\n"
@@ -195,7 +164,7 @@ def test_text_rewrite_of_a_pie_corner_writes_edge_and_align(
         "rows:\n"
         "  - p\n"
     )
-    rewritten = migrate_yaml_text(text, catalog=catalog, registry=registry)
+    rewritten = migrate_yaml_text(text)
     assert load_yaml_mapping(rewritten)["charts"]["p"]["style"]["legend"] == {
         "position": {"edge": "top", "align": "start"}
     }
@@ -260,7 +229,6 @@ def test_a_sub_boards_theme_slot_migrates_once_per_family(
 
 
 def test_text_rewrite_reaches_a_sub_board(catalog: YamlSchemaCatalog) -> None:
-    _, registry = _board_migration_context()
     text = (
         "title: t\n"
         "rows:\n"
@@ -274,7 +242,7 @@ def test_text_rewrite_reaches_a_sub_board(catalog: YamlSchemaCatalog) -> None:
         "          legend:\n"
         "            position: top-left\n"
     )
-    rewritten = migrate_yaml_text(text, catalog=catalog, registry=registry)
+    rewritten = migrate_yaml_text(text)
     legend = load_yaml_mapping(rewritten)["rows"][0]["rows"][0]["style"]["legend"]
     assert legend["position"] == {"edge": "top", "align": "start", "overlay": True}
 

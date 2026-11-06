@@ -12,12 +12,14 @@ import pytest
 from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.compile import compile as df_compile
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.cache_backend import CacheHit, ResultRows
+from dbt_charts.core.execute.query_result import QueryResult
 from dbt_charts.core.execute.recording import BoardRecording, load_board_recording
 from dbt_charts.core.execute.result_codec import decode_result, encode_result
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
+from ..._run import Run
+from ..._scripted_env import backend_of
 from .test_cache_policy_enforcement import _board_yaml, _ok_adapter
 
 _SH, _QH, _VH = "s" * 16, "q" * 16, "v" * 16
@@ -127,21 +129,21 @@ def test_a_cache_hit_returns_the_schema_the_miss_wrote() -> None:
     try:
         compiled = df_compile(_board_yaml(""))
         adapter = _ok_adapter()
-        adapter.execute.return_value.data = [{"value": [Decimal("1.50")]}]
-        adapter.execute.return_value.schema = {
-            "value": _t("list", element=_t("decimal"))
-        }
+        backend_of(adapter).rows = QueryResult(
+            data=[{"value": [Decimal("1.50")]}],
+            schema={"value": _t("list", element=_t("decimal"))},
+        )
 
         def run() -> ResultRows:
-            return Executor(
+            return Run(
                 compiled.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=compiled.query_registry,
                 result_cache=cache,
             ).execute_query_result("q")
 
         miss, hit = run(), run()
-        assert adapter.execute.call_count == 1
+        assert backend_of(adapter).execute.call_count == 1
         assert hit == miss
         assert str(hit.rows[0]["value"][0]) == "1.50"
     finally:

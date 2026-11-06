@@ -33,15 +33,16 @@ from dbt_charts.core.compile.config import get_execution_config
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-from dbt_charts.core.execute.adapters.base import (
+from dbt_charts.core.execute.backends.base import BackendRegistry, source_config_hash
+from dbt_charts.core.execute.backends.dbt_core import DbtBackend
+from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.env import make_exec_env
+from dbt_charts.core.execute.query_result import (
     QueryDurationExceeded,
     QueryResult,
     RowFetchLimit,
 )
-from dbt_charts.core.execute.backends.base import BackendRegistry, source_config_hash
-from dbt_charts.core.execute.backends.dbt_core import DbtBackend
-from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.run import execute_resolved
 
 pytestmark = pytest.mark.usefixtures("typed_via_execute")
 
@@ -81,11 +82,12 @@ def _execute_resolved(
     source: dict[str, Any],
 ) -> QueryResult:
     """Send ``_prepared()`` to *source* through a registry routed to *sa*."""
-    registry = AdapterRegistry(
+    registry = make_exec_env(
         project=local_project(tmp_path),
         backends=BackendRegistry({source["type"]: sa}),
     )
-    return registry.execute_resolved(
+    return execute_resolved(
+        registry,
         _prepared(),
         SqlQuery(sql="SELECT 1"),
         source_config=DbtTargetSourceConfig(**source),
@@ -123,7 +125,7 @@ _DATABRICKS_SOURCE: dict[str, Any] = {
     "token": "t",
 }
 
-_BUILD_ADAPTER = "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter"
+_BUILD_ADAPTER = "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter"
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +222,7 @@ class TestConnectFailureDetection:
         the query" outcome. _ensure_connected() must force the handle open
         for every dialect so this is caught here instead.
         """
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import (
             ConnectionSetupFailed,
         )
 

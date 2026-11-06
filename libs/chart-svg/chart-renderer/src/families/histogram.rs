@@ -150,6 +150,9 @@ pub(crate) struct Resolved {
     /// Effective chart background — see `BarResolved::background` and
     /// `docs/laws-shared.md#background`.
     pub(crate) background: String,
+    /// The chart's opaque composited canvas: halo and knockout ink, where `background` may be `transparent`.
+    #[serde(deserialize_with = "crate::common::de_canvas")]
+    pub(crate) canvas: String,
     /// Legal and reachable on histogram (unlike `chart.layers`) — see the
     /// module doc.
     pub(crate) color: Option<String>,
@@ -270,7 +273,7 @@ mod tests {
     /// Renders in the en-US time vocabulary the fixtures' dates are drawn in; the
     /// engine entry point scopes the board's own.
     fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
-        let _en = crate::time_locale::en_us_scope();
+        let _en = ::bind::time_locale::en_us_scope();
         super::render(payload, fonts)
     }
 
@@ -448,7 +451,7 @@ mod tests {
             "title": null,
             "subtitle": null,
             "title_style": null,
-            "background": "#ffffff",
+            "background": "#ffffff", "canvas": "#ffffff",
             "color": color,
             "resolved_channels": color.map_or_else(
                 || serde_json::json!({}),

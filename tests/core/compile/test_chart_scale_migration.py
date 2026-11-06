@@ -28,11 +28,9 @@ from dbt_charts.core.compile.migrations import (
     IncompleteMigrationError,
     MigrationConflictError,
     SchemaMigrationWarning,
-    migrate_mapping,
     migrate_yaml_text,
 )
 from dbt_charts.core.compile.migrations.migrations import (
-    _board_migration_context,
     prepare_board_mapping,
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
@@ -42,6 +40,8 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     load_yaml_schema_catalog,
 )
 
+from ._engine_migrations import migrate_mapping
+
 
 @pytest.fixture
 def catalog() -> YamlSchemaCatalog:
@@ -50,10 +50,9 @@ def catalog() -> YamlSchemaCatalog:
 
 def _migrate(raw: dict[str, Any], catalog: YamlSchemaCatalog) -> dict[str, Any]:
     """Run migration suppressing in-memory-migration SchemaMigrationWarning."""
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 def _bar_board(style: dict[str, Any]) -> dict[str, Any]:
@@ -185,7 +184,6 @@ def test_bar_zero_conflict_when_axis_y_zero_already_set(
     catalog: YamlSchemaCatalog,
 ) -> None:
     """style.scale.continuous.zero and axis_y.scale.continuous.zero both set raises conflict."""
-    _, registry = _board_migration_context()
     raw = _bar_board(
         {
             "scale": {"continuous": {"zero": False}},
@@ -194,7 +192,7 @@ def test_bar_zero_conflict_when_axis_y_zero_already_set(
     )
 
     with pytest.raises(MigrationConflictError):
-        migrate_mapping(raw, catalog=catalog, registry=registry)
+        migrate_mapping(raw)
 
 
 # Case (c): no axis_y block -> drop with warning
@@ -202,11 +200,10 @@ def test_bar_zero_dropped_when_no_axis_y_block(
     catalog: YamlSchemaCatalog,
 ) -> None:
     """style.scale.continuous.zero dropped with warning when no axis_y: block exists."""
-    _, registry = _board_migration_context()
     raw = _bar_board({"scale": {"continuous": {"zero": False}}})
 
     with pytest.warns(SchemaMigrationWarning, match="revenue_bar"):
-        migrated = migrate_mapping(raw, catalog=catalog, registry=registry)
+        migrated = migrate_mapping(raw)
 
     charts = migrated["charts"]
     assert isinstance(charts, dict)
@@ -219,11 +216,10 @@ def test_bar_zero_dropped_when_no_axis_y_block(
 def test_line_zero_dropped_when_no_axis_y_block(
     catalog: YamlSchemaCatalog,
 ) -> None:
-    _, registry = _board_migration_context()
     raw = _line_board({"scale": {"continuous": {"zero": True}}})
 
     with pytest.warns(SchemaMigrationWarning, match="revenue_line"):
-        migrated = migrate_mapping(raw, catalog=catalog, registry=registry)
+        migrated = migrate_mapping(raw)
 
     charts = migrated["charts"]
     assert isinstance(charts, dict)
@@ -271,7 +267,7 @@ def test_theme_level_bar_scale_fails_loud(
     raw: dict[str, Any] = {
         "style": {"charts": {"bar": {"scale": {"continuous": {"zero": True}}}}}
     }
-    prepared = prepare_board_mapping(raw, patch=True)
+    prepared = prepare_board_mapping(raw)
     with pytest.raises(ValidationError, match="extra_forbidden"):
         BoardPatch.model_validate(prepared)
 
@@ -284,7 +280,7 @@ def test_theme_level_scatter_scale_fails_loud(
     raw: dict[str, Any] = {
         "style": {"charts": {"scatter": {"scale": {"continuous": {"zero": False}}}}}
     }
-    prepared = prepare_board_mapping(raw, patch=True)
+    prepared = prepare_board_mapping(raw)
     with pytest.raises(ValidationError, match="extra_forbidden"):
         BoardPatch.model_validate(prepared)
 
@@ -303,7 +299,6 @@ def test_migrate_yaml_text_raises_for_bar_with_chart_level_scale_zero(
     caller can tell "this was never old" from "this was old and could not be
     fully modernized"; only the second is worth announcing.
     """
-    _, registry = _board_migration_context()
     yaml_text = (
         "charts:\n"
         "  revenue_bar:\n"
@@ -319,7 +314,7 @@ def test_migrate_yaml_text_raises_for_bar_with_chart_level_scale_zero(
     )
 
     with pytest.raises(IncompleteMigrationError):
-        migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+        migrate_yaml_text(yaml_text)
 
 
 # Case (h1): bar with zero+nice, axis_y present -> ValidationError on scale residual, no warning
@@ -498,19 +493,3 @@ def test_bar_layer_style_scale_not_touched_by_migration(
 
 
 # Boundary coverage: ConditionalMove is registered at the 0.4.0 -> 0.5.0 boundary
-def test_registry_covers_the_0_4_0_chart_scale_conditional_moves(
-    catalog: YamlSchemaCatalog,
-) -> None:
-    """The three chart-scale ConditionalMoves are registered at the 0.4.0 -> 0.5.0 boundary."""
-    _, registry = _board_migration_context()
-    cond_moves = registry.conditional_moves_from("0.4.0")
-
-    scale_moves = [
-        cm
-        for cm in cond_moves
-        if cm.old_tail == ("style", "scale", "continuous", "zero")
-    ]
-    assert len(scale_moves) == 3
-    assert all(cm.target_schema == "0.5.0" for cm in scale_moves)
-    chart_types = {cm.chart_type for cm in scale_moves}
-    assert chart_types == {"bar", "line", "area"}

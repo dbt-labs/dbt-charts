@@ -39,10 +39,8 @@ use crate::families::color_scale::ContinuousColor;
 use d3rs::js_math::js_number_string;
 use crate::families::heatmap::{category_legend_entries, CategoryScale};
 use crate::families::color_scale::GradientAt;
-use crate::families::legend::{
-    color_channel_title, legend_fit_bounds, legend_origin, legend_slide, legend_title_text, slide_block,
-    symbol_legend, vega_legend, fold_symbol_limit, LegendConfig, LegendSymbol, VEGA_LEGEND_SYMBOL_LIMIT,
-};
+use crate::families::legend::{color_channel_title, legend_fit_bounds, legend_origin, legend_slide, legend_title_text, slide_block, symbol_legend, vega_legend, LegendConfig, LegendSymbol, VEGA_LEGEND_SYMBOL_LIMIT};
+use ::bind::legend::{fold_symbol_limit};
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::href::LinkOpen;
 use crate::layout::{Layout, Rect};
@@ -62,6 +60,9 @@ struct Resolved {
     subtitle: Option<String>,
     title_style: Option<TitleStyle>,
     background: String,
+    /// The chart's opaque composited canvas: halo and knockout ink, where `background` may be `transparent`.
+    #[serde(deserialize_with = "crate::common::de_canvas")]
+    canvas: String,
     legend: LegendConfig,
     field_labels: FieldLabels,
     #[serde(default)]
@@ -329,9 +330,9 @@ fn bind_choropleth(
         .then(|| display_text::slug_to_text(value_field).map(|t| r.field_labels.get(value_field).cloned().unwrap_or(t)))
         .transpose()?;
     let affixed = r.style.tooltip_format.has_affix();
-    let own_type = crate::families::temporal::infer_vega_type(types, rows, value_field)?;
+    let own_type = ::bind::temporal::infer_vega_type(types, rows, value_field)?;
     let mut overlay = Vec::new();
-    let coloring = if own_type == crate::families::temporal::VegaType::Quantitative {
+    let coloring = if own_type == ::bind::temporal::VegaType::Quantitative {
         let gradient = r
             .style
             .geoshape
@@ -359,7 +360,7 @@ fn bind_choropleth(
                 let value = value_title.as_deref().map(|t| r.style.tooltip_format.paint(n).map(|text| (t, text))).transpose()?;
                 affixed_label(value, lookup_row(Some(row))?)
             } else {
-                native_label((&title, crate::number_locale::d3_format("", n)?), lookup_row(Some(row))?)
+                native_label((&title, ::bind::formats::locale::d3_format("", n)?), lookup_row(Some(row))?)
             };
             overlay.push(Overlay { feature, fill: Some(scale.fill(n)), label });
         }
@@ -508,7 +509,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
                 fold_symbol_limit(entries.len(), r.legend.symbol_limit.unwrap_or(VEGA_LEGEND_SYMBOL_LIMIT) as usize)
             {
                 folded_label = label;
-                let folded = crate::families::legend::LegendEntry { label: &folded_label, ..entries[kept] };
+                let folded = crate::families::legend::LegendEntry { label: &folded_label, symbol: Some(LegendSymbol::Overflow), ..entries[kept] };
                 entries.truncate(kept);
                 entries.push(folded);
             }
@@ -570,10 +571,10 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         let attrs = r.link_open.open_attr().map_or(attrs.clone(), |open| attrs.set("data-dbt-link-open", open));
         r.link_open.target().map_or(attrs.clone(), |target| attrs.set("target", target))
     });
-    // A feature the projection draws nothing of (an `albersUsa` territory outside its insets) is
-    // still a mark, printed with an empty `d`.
+    // A feature the projection draws nothing of (an `albersUsa` territory outside its insets) has no
+    // mark: a path with no geometry is invalid output.
     let item_role = display_text::language::tr("aria.role_geoshape", None, &[])?;
-    let shape = |layer: usize, feature: usize, d: Option<&PathData>, label: Option<&str>, fill: Option<&str>| {
+    let shape = |layer: usize, feature: usize, d: &PathData, label: Option<&str>, fill: Option<&str>| {
         let mut attrs = Attrs::new();
         if let Some(label) = label {
             attrs = attrs
@@ -593,7 +594,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             }
         }
         let role = Role::Mark { layer, series: None, datum: Some(feature) };
-        let path = Node::path(role, d.cloned().unwrap_or_default(), attrs).translate(0.0, 0.0);
+        let path = Node::path(role, d.clone(), attrs).translate(0.0, 0.0);
         match &link_attrs {
             Some(attrs) => Node::new(Role::Chrome, attrs.clone(), Shape::Link(vec![path])),
             None => path,
@@ -615,14 +616,16 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         .iter()
         .zip(&paths)
         .enumerate()
-        .map(|(i, (_, d))| shape(0, i, d.as_ref(), None, mark.fill.as_deref()))
+        .filter_map(|(i, (_, d))| d.as_ref().map(|d| shape(0, i, d, None, mark.fill.as_deref())))
         .collect();
     let mut layers = vec![group(if layered { "layer_0_marks" } else { "marks" }, Some(&clip_ids[0]), false, background)?];
     if let Some(choropleth) = &bound.choropleth {
         let overlay = choropleth
             .overlay
             .iter()
-            .map(|o| shape(1, o.feature, paths[o.feature].as_ref(), Some(&o.label), o.fill.as_deref()))
+            .filter_map(|o| {
+                paths[o.feature].as_ref().map(|d| shape(1, o.feature, d, Some(&o.label), o.fill.as_deref()))
+            })
             .collect();
         layers.push(group("layer_1_marks", Some(&clip_ids[1]), true, overlay)?);
     }
@@ -633,7 +636,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     match &plan {
         Some(LegendPlan::Symbols { entries, legend }) => {
             let (dx, dy) = legend_slide(&r.id, &r.legend.position, legend, (plot_w, plot_h))?;
-            nodes.push(symbol_legend(entries, legend, &r.legend, default_symbol, leg_x + dx, leg_y + dy, false));
+            nodes.push(symbol_legend(entries, legend, &r.legend, default_symbol, leg_x + dx, leg_y + dy, false, r.canvas.as_str()));
         }
         Some(LegendPlan::Gradient { scale, ends }) => {
             let at = GradientAt::with_ends(&r.legend, None, scale, (plot_w, plot_h), *ends)?;

@@ -1,27 +1,69 @@
-//! Structured diagnostics: a registered code plus the params Python formats
-//! its message from. Rust carries no message text for a registered code.
+//! Structured diagnostics: a registered code plus the params its message is
+//! rendered from. The codes, their templates and a typed constructor per code
+//! are generated from `codes/*.yaml`; `Diagnostic::message` fills the template.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt;
 
+#[rustfmt::skip]
 pub mod codes;
+#[rustfmt::skip]
+pub mod diag;
+mod message;
 use d3rs::py_float::float_repr;
+pub use message::MessageError;
 
 use serde::Serialize;
 use serde_json::Value;
 
-/// A registered diagnostic code and the template params it formats;
-/// instances come only from the generated `codes.rs`.
-pub struct Code {
-    pub id: &'static str,
-    pub params: &'static [&'static str],
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Level {
+    Error,
+    Warning,
 }
 
+/// A registered diagnostic code: its level, title, message template and the
+/// template params (sorted) it formats; instances come only from the generated
+/// `codes.rs`. `fix` is a template for a warning and verbatim text for an error.
+pub struct Code {
+    pub id: &'static str,
+    pub level: Level,
+    pub title: &'static str,
+    pub params: &'static [&'static str],
+    pub template: &'static str,
+    pub fix: Option<&'static str>,
+}
+
+/// A byte range into the source text of the file a diagnostic is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SourceRange {
+    pub start: usize,
+    pub end: usize,
+}
+
+/// A location in the board model, one segment per key or index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ModelPath(pub Vec<String>);
+
+impl fmt::Display for ModelPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0.join("."))
+    }
+}
+
+/// The level comes from the code; `range` and `path` say where, and `related`
+/// carries the other spans the finding names.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Diagnostic {
     pub code: &'static str,
     pub params: BTreeMap<&'static str, Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<ModelPath>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub related: Vec<(SourceRange, String)>,
 }
 
 impl Diagnostic {
@@ -37,7 +79,41 @@ impl Diagnostic {
             params.keys().collect::<Vec<_>>(),
             code.params,
         );
-        Diagnostic { code: code.id, params }
+        Diagnostic {
+            code: code.id,
+            params,
+            range: None,
+            path: None,
+            related: Vec::new(),
+        }
+    }
+
+    pub fn at(mut self, range: SourceRange) -> Self {
+        self.range = Some(range);
+        self
+    }
+
+    pub fn at_path(mut self, path: ModelPath) -> Self {
+        self.path = Some(path);
+        self
+    }
+
+    pub fn relating(mut self, range: SourceRange, label: impl Into<String>) -> Self {
+        self.related.push((range, label.into()));
+        self
+    }
+
+    /// The registered code; `None` only for a diagnostic not built by `new`.
+    pub fn registered(&self) -> Option<&'static Code> {
+        codes::lookup(self.code)
+    }
+
+    /// The message rendered from the code's compiled-in template.
+    pub fn message(&self) -> Result<String, MessageError> {
+        let code = self
+            .registered()
+            .ok_or(MessageError::UnknownCode(self.code))?;
+        message::render(code.level, code.template, &self.params)
     }
 
     /// Adds a param the Python sink reads but the code's templates never
@@ -96,14 +172,14 @@ impl Diagnostic {
 #[cfg(any(test, feature = "test-support"))]
 impl PartialEq<String> for Diagnostic {
     fn eq(&self, other: &String) -> bool {
-        self.to_string() == *other
+        format!("{self}") == *other
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl PartialEq<&str> for Diagnostic {
     fn eq(&self, other: &&str) -> bool {
-        self.to_string() == *other
+        format!("{self}") == *other
     }
 }
 
@@ -137,14 +213,51 @@ impl From<&str> for Diagnostic {
 /// `repr()` of a JSON cell as Python prints the value it came from.
 pub fn py_repr(v: &Value) -> String {
     match v {
-        Value::String(s) if s.contains('\'') && !s.contains('"') => format!("\"{s}\""),
-        Value::String(s) => format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'")),
+        Value::String(s) => py_str_repr(s),
         Value::Bool(true) => "True".into(),
         Value::Bool(false) => "False".into(),
         Value::Null => "None".into(),
-        Value::Number(n) if n.is_f64() => float_repr(n.as_f64().expect("an f64 number")),
+        Value::Number(n) => match n.as_f64() {
+            Some(x) if n.is_f64() => float_repr(x),
+            _ => n.to_string(),
+        },
         other => other.to_string(),
     }
+}
+
+/// `repr(str)`. A character `str.isprintable()` rejects prints escaped; the
+/// control, space-separator and format characters are covered, not every
+/// unassigned or private-use code point (`mdsvg::css::python_repr` has the
+/// full table).
+pub fn py_str_repr(s: &str) -> String {
+    let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push(quote);
+    for c in s.chars() {
+        match c {
+            c if c == quote || c == '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c if !is_printable(c) => match c as u32 {
+                n if n < 0x100 => out.push_str(&format!("\\x{n:02x}")),
+                n if n < 0x10000 => out.push_str(&format!("\\u{n:04x}")),
+                n => out.push_str(&format!("\\U{n:08x}")),
+            },
+            c => out.push(c),
+        }
+    }
+    out.push(quote);
+    out
+}
+
+fn is_printable(c: char) -> bool {
+    !(c.is_control()
+        || (c.is_whitespace() && c != ' ')
+        || matches!(c as u32, 0xad | 0x200b..=0x200f | 0x202a..=0x202e | 0x2060..=0x2064 | 0xfeff))
 }
 
 /// `str()` of a JSON cell: the string itself, else its `repr()`.
@@ -187,6 +300,6 @@ pub fn warn(diagnostic: Diagnostic) {
 pub fn collect<T>(render: impl FnOnce() -> T) -> (T, Vec<Diagnostic>) {
     let outer = SINK.with(|sink| sink.replace(Some(Vec::new())));
     let result = render();
-    let warnings = SINK.with(|sink| sink.replace(outer)).expect("sink opened above");
+    let warnings = SINK.with(|sink| sink.replace(outer)).unwrap_or_default();
     (result, warnings)
 }

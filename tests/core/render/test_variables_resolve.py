@@ -25,14 +25,15 @@ from dbt_charts.core.compile.models.variable.authored import (
     VariableOptions,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_style
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
 from dbt_charts.core.render.variables_resolve import (
     format_variable_display_value,
     linked_variable_options,
     resolve_controls,
 )
+
+from ..._run import Run
 
 
 def _vs():
@@ -480,12 +481,14 @@ rows:
 def _render_strict(yaml_content: str) -> str:
     result = compile(yaml_content)
     assert result.success and result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        env=build_exec_env(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
     )
-    rendered = render(result.board, executor, variables={"metric": "strict"})
+    rendered = render(
+        result.board, executor.ctx, executor.ledger, variables={"metric": "strict"}
+    )
     assert rendered.board_error is None, rendered.board_error
     assert isinstance(rendered.output, str)
     svg = rendered.output
@@ -521,12 +524,12 @@ charts:
 def _render_with(yaml_content: str, variables: dict[str, Any]) -> str:
     result = compile(yaml_content)
     assert result.success and result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        env=build_exec_env(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
     )
-    rendered = render(result.board, executor, variables=variables)
+    rendered = render(result.board, executor.ctx, executor.ledger, variables=variables)
     assert rendered.board_error is None, rendered.board_error
     assert isinstance(rendered.output, str)
     return rendered.output

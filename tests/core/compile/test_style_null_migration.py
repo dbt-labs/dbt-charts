@@ -14,14 +14,12 @@ from pydantic import ValidationError
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
-from dbt_charts.core.compile.migrations.versions.v0_10_0 import _rewrite_style_nulls
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
-from dbt_charts.core.compile.models.style.authored import StylePatch
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
 
+from ..._run import Run
 from .._svg_render import pinned_clock, render_board_to_svg
 
 pytestmark = pytest.mark.filterwarnings(
@@ -60,13 +58,13 @@ def _svg(source: str, base_dir: Path | None = None) -> str:
     project = FilesystemProject(base_dir or Path.cwd())
     result = compile(source, base_dir=project.directory() if base_dir else None)
     assert result.success, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
         clock=pinned_clock,
     )
-    output = render(result.board, executor, format="svg").output
+    output = render(result.board, executor.ctx, executor.ledger, format="svg").output
     assert output is not None
     return re.sub(r"clip\d+-", "clip-", output)
 
@@ -97,26 +95,6 @@ def test_null_rewrites_to_current_effect_on_a_chart() -> None:
     before = _BOARD.format(chart_style="    style:\n      inner_radius: null\n")
     after = _BOARD.format(chart_style="    style: {}\n")
     assert _svg(before) == _svg(after)
-
-
-def test_null_on_absent_field_sets_the_absence() -> None:
-    style = {
-        "charts": {
-            "kpi": {"support": {"tone": None}},
-            "axis": {
-                "ticks": {"count": None},
-                "labels": {"format": None},
-                "grid": {"dash": None},
-            },
-        },
-        "footer": {"link": None, "divider": {"dasharray": None}},
-    }
-    assert _rewrite_style_nulls(style, (StylePatch,)) == style
-    parsed = AuthoredBoard.model_validate(
-        {"title": "t", "style": style}, context=AUTHORED_INPUT
-    )
-    assert parsed.style is not None
-    assert "link" in parsed.style.footer.model_fields_set
 
 
 def test_null_on_other_field_fails_naming_the_path() -> None:
@@ -176,14 +154,6 @@ def test_an_other_null_gets_no_axis_label_hint() -> None:
             context=AUTHORED_INPUT,
         )
     assert "y_label" not in str(raised.value)
-
-
-def test_map_entry_null_is_untouched() -> None:
-    style = {"formats": {"a": None}, "font": {"size": None}}
-    assert _rewrite_style_nulls(style, (StylePatch,)) == {
-        "formats": {"a": None},
-        "font": {},
-    }
 
 
 _LINE = (

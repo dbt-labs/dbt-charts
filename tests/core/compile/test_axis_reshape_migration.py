@@ -21,10 +21,8 @@ from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
     UnsupportedSchemaError,
     migrate_board_yaml_text,
-    migrate_mapping,
     migrate_yaml_text,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.parse.parser import load_yaml_mapping, parse_yaml
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
@@ -33,6 +31,8 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     load_yaml_schema_catalog,
 )
 
+from ._engine_migrations import migrate_mapping
+
 
 @pytest.fixture
 def catalog() -> YamlSchemaCatalog:
@@ -40,19 +40,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: JsonObject, catalog: YamlSchemaCatalog) -> JsonObject:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
-
-
-def test_registry_covers_the_0_3_1_transition(catalog: YamlSchemaCatalog) -> None:
-    _, registry = _board_migration_context()
-
-    moves = registry.transition_from("0.3.1")
-
-    assert moves
-    assert all(move.target_schema == "0.4.0" for move in moves)
+        return migrate_mapping(raw)
 
 
 def test_label_container_migrates_in_memory(catalog: YamlSchemaCatalog) -> None:
@@ -189,7 +179,6 @@ def test_yaml_text_migrates_scalar_leaves_preserving_comments(
     """The file-preserving writer only moves scalar block-mapping leaves
     (see migrate_yaml_text's docstring); every rule this test exercises
     relocates a single scalar rather than a whole mapping."""
-    _, registry = _board_migration_context()
     yaml_text = (
         "charts:\n"
         "  revenue:\n"
@@ -210,7 +199,7 @@ def test_yaml_text_migrates_scalar_leaves_preserving_comments(
         "rows: [revenue]\n"
     )
 
-    migrated = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+    migrated = migrate_yaml_text(yaml_text)
 
     assert "# keep this comment" in migrated
     doc = load_yaml_mapping(migrated)
@@ -229,7 +218,6 @@ def test_yaml_text_renames_the_label_container_in_place(
     share the same parent, axis_x) — renaming never relocates content, so
     the file-preserving writer handles it for any value shape, not just
     scalars: the nested angle stays untouched under the renamed key."""
-    _, registry = _board_migration_context()
     yaml_text = (
         "charts:\n"
         "  revenue:\n"
@@ -244,7 +232,7 @@ def test_yaml_text_renames_the_label_container_in_place(
         "rows: [revenue]\n"
     )
 
-    migrated = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+    migrated = migrate_yaml_text(yaml_text)
 
     doc = load_yaml_mapping(migrated)
     assert doc["charts"]["revenue"]["style"]["axis_x"] == {"labels": {"angle": -35}}
@@ -258,7 +246,6 @@ def test_yaml_text_rejects_a_move_to_a_genuinely_different_parent(
     an actual relocation (not a same-position rename): the scale reshape
     moves a value into a new nested container, so a non-scalar value there
     must still fail explicitly rather than silently reformatting."""
-    _, registry = _board_migration_context()
     yaml_text = (
         "charts:\n"
         "  revenue:\n"
@@ -274,7 +261,7 @@ def test_yaml_text_rejects_a_move_to_a_genuinely_different_parent(
     )
 
     with pytest.raises(MigrationError, match="only scalar"):
-        migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+        migrate_yaml_text(yaml_text)
 
 
 def test_yaml_text_renames_the_label_container_across_multiple_charts(
@@ -284,7 +271,6 @@ def test_yaml_text_renames_the_label_container_across_multiple_charts(
     chart, and rename_key_at_path re-parses yaml_text fresh on every call in
     the same loop -- renaming never changes line count, so each chart's
     rename stays correctly targeted regardless of how many precede it."""
-    _, registry = _board_migration_context()
     yaml_text = (
         "charts:\n"
         "  revenue:\n"
@@ -308,7 +294,7 @@ def test_yaml_text_renames_the_label_container_across_multiple_charts(
         "rows: [revenue, churn]\n"
     )
 
-    migrated = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+    migrated = migrate_yaml_text(yaml_text)
 
     doc = load_yaml_mapping(migrated)
     assert doc["charts"]["revenue"]["style"]["axis_x"] == {"labels": {"angle": -35}}

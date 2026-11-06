@@ -18,16 +18,16 @@ import pytest
 
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
     migrate_yaml_text,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.parse.parser import load_yaml_mapping
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._engine_migrations import migrate_mapping
 
 
 @pytest.fixture
@@ -36,21 +36,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: dict[str, Any], catalog: YamlSchemaCatalog) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
-
-
-def test_registry_covers_the_0_4_0_interactive_legend_deletions(
-    catalog: YamlSchemaCatalog,
-) -> None:
-    _, registry = _board_migration_context()
-    deletions = registry.deletions_from("0.4.0")
-
-    assert deletions
-    assert all(d.target_schema == "0.5.0" for d in deletions)
-    assert any(d.path[-1] == "interactive_legend" for d in deletions)
+        return migrate_mapping(raw)
 
 
 def test_chart_local_interactive_legend_stripped(catalog: YamlSchemaCatalog) -> None:
@@ -208,7 +196,6 @@ def test_nested_board_interactive_legend_stripped(catalog: YamlSchemaCatalog) ->
 
 def test_yaml_text_strips_interactive_legend_key(catalog: YamlSchemaCatalog) -> None:
     """The file-preserving writer removes interactive_legend from the YAML source."""
-    _, registry = _board_migration_context()
     yaml_text = (
         "charts:\n"
         "  sales:\n"
@@ -224,7 +211,7 @@ def test_yaml_text_strips_interactive_legend_key(catalog: YamlSchemaCatalog) -> 
         "rows: [sales]\n"
     )
 
-    migrated = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+    migrated = migrate_yaml_text(yaml_text)
 
     assert "interactive_legend" not in migrated
     assert "# keep this comment" in migrated
@@ -242,7 +229,6 @@ def test_yaml_text_strips_nested_board_interactive_legend(
     segments (rows.0.cols.0...) that set_board_values cannot address; tail-matching
     walks the document directly instead.
     """
-    _, registry = _board_migration_context()
     yaml_text = (
         "title: t\n"
         "rows:\n"
@@ -259,7 +245,7 @@ def test_yaml_text_strips_nested_board_interactive_legend(
         "                visible: true\n"
     )
 
-    migrated = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+    migrated = migrate_yaml_text(yaml_text)
 
     assert "interactive_legend" not in migrated
     assert "visible: true" in migrated

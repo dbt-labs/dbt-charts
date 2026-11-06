@@ -17,7 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from dbt_charts.core.column_types import literal_schema
-from dbt_charts.core.execute.adapters.base import QueryResult
+from dbt_charts.core.execute.query_result import QueryResult
 from dbt_charts.core.registered_views.expander import expand_registered_view
 from dbt_charts.core.registered_views.loader import load_builtin_registry
 from dbt_charts.core.registered_views.models import RegisteredView
@@ -531,7 +531,7 @@ class TestInspectorServerRoute:
     def test_inspector_source_returns_200(self, tmp_path: Path) -> None:
         """No source configured at all — inspector_source's template never
         calls sql_identifier(), so the lazy dialect resolver must never touch
-        the (empty) adapter registry."""
+        the (empty) exec env."""
         from fastapi.testclient import TestClient
 
         from dbt_charts.cli.filesystem_project import FilesystemProject
@@ -615,7 +615,7 @@ class TestInspectorServerRoute:
         app = create_server(FilesystemProject(tmp_path))
         with (
             patch(
-                "dbt_charts.core.execute.adapters.adapter_registry.AdapterRegistry.execute",
+                "dbt_charts.core.execute.run.run_route",
                 return_value=mock_result,
             ),
             TestClient(app, raise_server_exceptions=False) as client,
@@ -658,7 +658,7 @@ class TestInspectorServerRoute:
         app = create_server(FilesystemProject(tmp_path))
         with (
             patch(
-                "dbt_charts.core.execute.adapters.adapter_registry.AdapterRegistry.execute",
+                "dbt_charts.core.execute.run.run_route",
                 mock_execute,
             ),
             TestClient(app, raise_server_exceptions=False) as client,
@@ -671,7 +671,7 @@ class TestInspectorServerRoute:
         schema_executions = [
             call
             for call in mock_execute.call_args_list
-            if call.args and type(call.args[0]).__name__ == "SchemaQuery"
+            if len(call.args) > 2 and type(call.args[2]).__name__ == "SchemaQuery"
         ]
         assert len(schema_executions) == 1, (
             f"Expected one SchemaQuery execution, got {len(schema_executions)}"

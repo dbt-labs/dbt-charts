@@ -18,10 +18,11 @@ from pathlib import Path
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.colors import parse_css_color
 from dbt_charts.core.compile import compile as df_compile
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.board_resolve import build_resolved_board
 from dbt_charts.core.render.boards import render_board_svg
+
+from .._run import Run
 
 _YAML = """
 title: Root
@@ -51,9 +52,9 @@ def _resolve(tmp_path: Path):
     result = df_compile(_YAML)
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        build_adapter_registry(FilesystemProject(tmp_path)),
+        build_exec_env(FilesystemProject(tmp_path)),
         query_registry=result.query_registry,
     )
     return executor, build_resolved_board(result.board, executor, {})
@@ -140,9 +141,9 @@ def test_inside_bar_labels_paint_the_opaque_canvas_in_a_multi_chart_board(
     result = df_compile(_TWO_BAR_YAML)
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        build_adapter_registry(FilesystemProject(tmp_path)),
+        build_exec_env(FilesystemProject(tmp_path)),
         query_registry=result.query_registry,
     )
     resolved, render_cache = build_resolved_board(result.board, executor, {})

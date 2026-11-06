@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.execute.cache_backend import ResultRows
-from dbt_charts.core.execute.executor import utc_now
+from dbt_charts.core.execute.plan import utc_now
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.chart.normalized import Chart

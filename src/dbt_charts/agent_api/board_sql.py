@@ -26,12 +26,12 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_CACHE_SQL_FAILED,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.execute.cache_backend import QueryResultCache
 from dbt_charts.core.execute.cache_composition import CompositionError
-from dbt_charts.core.execute.executor import Executor
-from dbt_charts.core.execute.lookup import data_age
-from dbt_charts.core.execute.plan import CACHE_REF_JINJA_RE
+from dbt_charts.core.execute.env import ExecEnv
+from dbt_charts.core.execute.lookup import Ledger, data_age
+from dbt_charts.core.execute.plan import CACHE_REF_JINJA_RE, make_context
+from dbt_charts.core.execute.query_results import execute
 from dbt_charts.core.project import Project, board_identity
 from dbt_charts.core.validate import normalize_data_for_json
 
@@ -73,7 +73,7 @@ def execute_board_sql(
     sql: str,
     path: Path,
     project: Project,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     result_cache: QueryResultCache | None,
     variables: dict[str, Any] | None = None,
     limit: int = MAX_QUERY_LIMIT,
@@ -113,15 +113,18 @@ def execute_board_sql(
         failure = DbtChartsError.from_code(ERR_CACHE_NOT_ATTACHED, query=cache_refs[0])
         return _failed([str(failure)], ERR_CACHE_NOT_ATTACHED.code)
 
-    executor = Executor(
+    ctx = make_context(
         board,
-        adapter_registry=adapter_registry,
+        env,
         query_registry={**loaded.query_registry, ADHOC_QUERY: adhoc},
         result_cache=result_cache,
         board_slug=board_identity(str(loaded.path)),
     )
+    ledger = Ledger()
     try:
-        rows = executor.execute_query(ADHOC_QUERY, overrides)
+        rows = execute(ctx, [ADHOC_QUERY], overrides, ledger=ledger).execute_query(
+            ADHOC_QUERY, overrides
+        )
     except DbtChartsError as exc:
         return _failed([str(exc)], error_code_of(exc))
     except CompositionError as exc:
@@ -131,7 +134,7 @@ def execute_board_sql(
     now = datetime.now(UTC)
     refs: list[CacheRef] = []
     for name in cache_refs:
-        age = data_age(executor.ledger, name)
+        age = data_age(ledger, name)
         assert age is not None  # executing the composing query ran each upstream
         as_of, hit = age
         refs.append(

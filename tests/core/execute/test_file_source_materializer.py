@@ -28,9 +28,10 @@ from dbt_charts.core.compile.models.source import (
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_DUPLICATE_COLUMN
 from dbt_charts.core.diagnostics.execution import QueryError
-from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+from ..._run import Run
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -687,7 +688,7 @@ class TestExecutorIntegration:
     def test_executor_routes_file_source_sql_query(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """End-to-end: Executor.execute_query picks up a CSV file source."""
+        """End-to-end: Run.execute_query picks up a CSV file source."""
         csv_content = "month,revenue\nJan,1000\nFeb,1500\nMar,1200\n"
         project = _make_project(
             tmp_path, {"data/revenue.csv": csv_content}, local_project
@@ -715,13 +716,13 @@ charts:
         board = result.board
         assert board is not None
 
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
-        registry = build_adapter_registry(project)
+        registry = build_exec_env(project)
         cache = TrivialDuckDBCache()
-        executor = Executor(board, registry, result_cache=cache)
+        executor = Run(board, registry, result_cache=cache)
 
         rows = executor.execute_query("monthly")
         assert len(rows) == 3
@@ -761,19 +762,19 @@ charts:
     value: revenue
 """
         from dbt_charts.core.compile import compile as df_compile
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
         result = df_compile(board_yaml, base_dir=project.directory())
         assert result.success
         board = result.board
         assert board is not None
-        registry = build_adapter_registry(project)
+        registry = build_exec_env(project)
 
         # First render — v1 content
         cache = TrivialDuckDBCache()
-        executor = Executor(board, registry, result_cache=cache)
+        executor = Run(board, registry, result_cache=cache)
         rows_v1 = executor.execute_query("monthly")
         assert rows_v1[0]["revenue"] == 1000
 
@@ -782,11 +783,9 @@ charts:
 
         # Second render — same persistent cache, new file content.
         # Must return v2 rows, not stale v1 rows.
-        executor2 = Executor(
+        executor2 = Run(
             board,
-            build_adapter_registry(
-                project, file_materializer=FileSourceMaterializer(project)
-            ),
+            build_exec_env(project, file_materializer=FileSourceMaterializer(project)),
             result_cache=cache,
         )
         rows_v2 = executor2.execute_query("monthly")
@@ -895,13 +894,13 @@ charts:
         board = result.board
         assert board is not None
 
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
-        registry = build_adapter_registry(project)
+        registry = build_exec_env(project)
         cache = TrivialDuckDBCache()
-        executor = Executor(board, registry, result_cache=cache)
+        executor = Run(board, registry, result_cache=cache)
 
         rows = executor.execute_query("q")
         assert len(rows) == 2, f"Expected 2 rows, got error or wrong count: {rows}"

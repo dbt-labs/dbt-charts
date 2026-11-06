@@ -42,6 +42,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "bind"
+version = "0.0.1"
+dependencies = [
+ "board-types",
+ "column-types",
+ "d3rs",
+ "diagnostic",
+ "display-text",
+ "indexmap",
+ "jiff",
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -87,6 +103,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "board-types"
+version = "0.0.1"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "bytemuck"
 version = "1.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -123,6 +148,7 @@ name = "chart-renderer"
 version = "0.0.1"
 dependencies = [
  "base64",
+ "bind",
  "column-types",
  "d3rs",
  "dbt-charts-color",
@@ -159,6 +185,7 @@ name = "column-types"
 version = "0.0.1"
 dependencies = [
  "diagnostic",
+ "regex",
  "serde",
  "serde_json",
 ]
@@ -248,10 +275,39 @@ dependencies = [
  "chart-renderer",
  "diagnostic",
  "display-text",
+ "indexmap",
  "measure",
+ "migrate",
  "pyo3",
  "serde",
  "serde_json",
+ "yaml",
+]
+
+[[package]]
+name = "dbt-yaml"
+version = "0.10.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2cccb44b36701df40c689f5259cd5ed7d877126438cf583e8cc73b1ae40583da"
+dependencies = [
+ "dbt-yaml_derive",
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
+name = "dbt-yaml_derive"
+version = "0.10.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed8bda69ad477ad0b9a5d0d4918b3493de6eb996ab02eb50d72d1208c13dddf0"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -500,6 +556,8 @@ checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -651,6 +709,16 @@ name = "memo-map"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5449c8c750f1a07ea702bbd212bd999fceece9b3d1508b17023b3e174583124b"
+
+[[package]]
+name = "migrate"
+version = "0.0.1"
+dependencies = [
+ "fancy-regex",
+ "indexmap",
+ "serde_json",
+ "yaml",
+]
 
 [[package]]
 name = "minijinja"
@@ -1274,6 +1342,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1d386ff53b415b7fe27b50bb44679e2cc4660272694b7b6f3326d8480823a94"
 
 [[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
+
+[[package]]
 name = "usvg"
 version = "0.45.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1330,6 +1404,18 @@ name = "xmlwriter"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
+
+[[package]]
+name = "yaml"
+version = "0.0.1"
+dependencies = [
+ "d3rs",
+ "dbt-yaml",
+ "diagnostic",
+ "indexmap",
+ "regex",
+ "serde_json",
+]
 
 [[package]]
 name = "zlib-rs"

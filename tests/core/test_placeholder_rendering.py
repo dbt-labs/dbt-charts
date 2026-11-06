@@ -87,13 +87,15 @@ class TestPlaceholderIntegration:
 
     def test_renderer_detects_no_query_state(self, make_chart):
         """Renderer should detect charts without queries and use placeholders."""
-        from dbt_charts.core.execute.executor import Executor
+        from dbt_charts.core.execute.query_results import QueryResults
         from dbt_charts.core.render.chart.rendering import render_chart_item
 
         chart = make_chart("bar", query=None, query_name=None)
 
         # Mock executor that returns empty data for any query
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
         executor.execute_query.return_value = []
 
         rs, ctx = resolve_style_and_context(get_theme_style())
@@ -117,7 +119,7 @@ class TestPlaceholderIntegration:
 
     def test_renderer_uses_real_data_when_available(self, make_chart):
         """Renderer should use real data when query returns results."""
-        from dbt_charts.core.execute.executor import Executor
+        from dbt_charts.core.execute.query_results import QueryResults
         from dbt_charts.core.render.chart.rendering import render_chart_item
 
         chart = make_chart("bar", x="category", y="value")
@@ -128,7 +130,9 @@ class TestPlaceholderIntegration:
         ]
 
         # Mock executor that returns real data
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
         executor.execute_query.return_value = real_data
 
         rs, ctx = resolve_style_and_context(get_theme_style())

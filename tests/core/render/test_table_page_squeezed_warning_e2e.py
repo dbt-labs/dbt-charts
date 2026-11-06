@@ -9,13 +9,11 @@ and that a table whose slot fits its page stays silent.
 
 from __future__ import annotations
 
-from unittest.mock import Mock
-
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
-from ..._results import rows_schema
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 
 def _rows(n: int) -> list[dict[str, object]]:
@@ -25,18 +23,8 @@ def _rows(n: int) -> list[dict[str, object]]:
 def _make_executor(
     board: object, query_registry: object, rows: list[dict[str, object]]
 ):
-    ok = Mock()
-    ok.is_success = True
-    ok.data = rows
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.return_value = ok
-    return Executor(
-        board, adapter_registry=mock_registry, query_registry=query_registry
-    )
+    mock_registry = scripted_env(ScriptedBackend(rows))
+    return Run(board, env=mock_registry, query_registry=query_registry)
 
 
 def _board(slot_height: str) -> str:
@@ -65,7 +53,7 @@ def _warnings(board_yaml: str, n_rows: int):
     result = compile(board_yaml)
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _rows(n_rows))
-    return render(result.board, executor, format="svg").warnings
+    return render(result.board, executor.ctx, executor.ledger, format="svg").warnings
 
 
 def test_a_slot_too_short_for_the_page_warns() -> None:
@@ -115,7 +103,9 @@ def test_an_auto_sized_table_with_wrapping_rows_is_silent() -> None:
     result = compile(_AUTO_HEIGHT_WRAPPING)
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _wrapping_rows(30))
-    warnings = render(result.board, executor, format="svg").warnings
+    warnings = render(
+        result.board, executor.ctx, executor.ledger, format="svg"
+    ).warnings
 
     assert "WARN-TABLE-PAGE-SQUEEZED" not in {w.code for w in warnings}
 
@@ -143,7 +133,7 @@ rows:
     result = compile(board)
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _rows(3))
-    rendered = render(result.board, executor, format="svg")
+    rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     assert rendered.output is not None
     assert "row_3" in rendered.output

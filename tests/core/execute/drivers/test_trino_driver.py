@@ -24,8 +24,7 @@ from pydantic import ValidationError
 
 from dbt_charts.core.attribution import connection_identity
 from dbt_charts.core.compile.models.source import TrinoSourceConfig
-from dbt_charts.core.execute.adapters.base import resolve_effective_row_limit
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+from dbt_charts.core.execute.backends.dbt_adapter_factory import (
     AdapterNotInstalledError,
 )
 from dbt_charts.core.execute.drivers.trino import (
@@ -34,6 +33,7 @@ from dbt_charts.core.execute.drivers.trino import (
     open_trino,
     trino_connect_kwargs,
 )
+from dbt_charts.core.execute.query_result import resolve_effective_row_limit
 
 
 def _source(**fields: Any) -> TrinoSourceConfig:

@@ -30,6 +30,7 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     preferred_chart_width,
+    resolve_layer_labels,
 )
 from dbt_charts.core.compile.resolve.chart._table import (
     _EMPTY_TABLE_COLUMN_LINKS,
@@ -96,9 +97,9 @@ def resolve(
             needs a concrete width; other families retain the board-level default.
         datasets: Query-name keyed rows for own-query overlay layers. Callers without
             an executor may omit it; same-query layers still resolve from ``data``.
-        automatic_link_candidate: Executor-derived root-link candidate. Authored
+        automatic_link_candidate: Root-link candidate derived from the render context. Authored
             links retain precedence during construction.
-        table_column_links: Executor-derived FK-link candidates by column name.
+        table_column_links: FK-link candidates derived from the render context, by column name.
         table_column_rows: Factual column metadata used to protect a single row
             identity key from receiving a per-column FK link.
         filter_variables: Declared board variable names; a table column named
@@ -126,6 +127,9 @@ def resolve(
     assert chart_style_context.pre_style.fonts is not None
     normalized = expand_named_fonts(
         normalized, chart_style_context.pre_style.fonts, f"charts.{normalized.id}"
+    )
+    normalized = resolve_layer_labels(
+        normalized, display_text, chart_style_context.formats
     )
     effective_width = (
         float(width)

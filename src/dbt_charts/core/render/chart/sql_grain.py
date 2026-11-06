@@ -10,7 +10,7 @@ consumes ``resolve_cte_spine``, ``resolve_join_spine``, and
 Entry points:
   - ``resolve_cte_spine(tree)`` — resolve a single-CTE-wrap query to its base
     (schema, table), or ``_BAIL``. Pure AST walk, no adapter needed.
-  - ``resolve_join_spine(tree, adapter_registry)`` — resolve a JOIN query to
+  - ``resolve_join_spine(tree, fk_edges_of)`` — resolve a JOIN query to
     its spine (schema, table) via FK-edge proof, or ``_BAIL``.
   - ``build_col_output_alias_map(sql)`` — map base column names to their
     output names, traced through CTEs and subqueries, plus whether an
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import sqlglot.errors
@@ -33,8 +34,6 @@ from dbt_charts.core.column_refs import fold_relation_names, resolve_source
 
 if TYPE_CHECKING:
     from sqlglot.expressions import Expression as _SqlglotExpression
-
-    from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 
 # Sentinel used by private helpers to signal "bail — no location resolved".
 # Callers check `if not result` to detect it.
@@ -145,7 +144,7 @@ def resolve_cte_spine(tree: _SqlglotExpression) -> tuple[str, str] | tuple[()]:
 
 def resolve_join_spine(
     tree: _SqlglotExpression,
-    adapter_registry: AdapterRegistry,
+    fk_edges_of: Callable[[str], list[dict[str, str]]],
 ) -> tuple[str, str] | tuple[()]:
     """Resolve a JOIN query to its spine (schema, table) via FK proof, or _BAIL.
 
@@ -169,7 +168,7 @@ def resolve_join_spine(
 
     Args:
         tree: Parsed sqlglot AST (a Select node with joins).
-        adapter_registry: Executor adapter registry for FK-edge lookup.
+        fk_edges_of: Foreign-key edges of a bare table name.
 
     Returns:
         ``(schema, table)`` for the spine, or ``_BAIL``.
@@ -213,11 +212,7 @@ def resolve_join_spine(
     if not joins:
         return _BAIL
 
-    from dbt_charts.core.execute.adapters.schema_adapter import (  # noqa: PLC0415
-        fetch_fk_edges,
-    )
-
-    fk_edges = fetch_fk_edges(adapter_registry, spine_table)
+    fk_edges = fk_edges_of(spine_table)
     if not fk_edges:
         return _BAIL
 

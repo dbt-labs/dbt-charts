@@ -21,9 +21,10 @@ from pathlib import Path
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile, focus_on_chart
 from dbt_charts.core.compile.resolve.style.category_colors import CategoryColorScale
-from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.category_colors import plan_board_category_colors
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
+
+from ..._run import Run
 
 # A typed NULL needs a SQL source; a values column of only nulls has no type.
 _SOURCES_DIR = Path(tempfile.mkdtemp(prefix="dct-category-colors-"))
@@ -37,9 +38,9 @@ def _plan(yaml_content: str, focus: str | None = None) -> dict[str, CategoryColo
     result = compile(yaml_content, project_sources=project.sources)
     assert result.success and result.board is not None, result.errors
     board = result.board if focus is None else focus_on_chart(result.board, focus)
-    executor = Executor(
+    executor = Run(
         board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
     scales = plan_board_category_colors(board, executor, {}, {})

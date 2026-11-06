@@ -37,7 +37,7 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
 from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_inputs
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.project import Project
 from dbt_charts.core.render import (
     board_resolve as _board_resolve_mod,
@@ -58,8 +58,9 @@ from dbt_charts.core.render.warnings.pie_dominant_segment import (
     detect as detect_pie_dominant_segment,
 )
 
-from ..._lookup import collect_via_execute_query
+from ..._lookup import render_via
 from ..._results import rows_result
+from ..._run import Run
 from .._svg_render import PINNED_RENDER_TIME
 
 # Bound before any test patches the module attribute, so the per-chart patch
@@ -122,7 +123,7 @@ def _executor_good_bad(good_rows, bad_exc):
     Render reads each query through ``QueryResults``, which the pre-pass
     collects from this mock's ``execute_query_result``.
     """
-    mock = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    mock = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
 
     def _execute_query_side_effect(query_name, variables=None):
         if query_name == "q_good":
@@ -140,7 +141,6 @@ def _executor_good_bad(good_rows, bad_exc):
     mock.rendered_at = PINNED_RENDER_TIME
     # Collection reads each query through the mock's `execute_query`, so a
     # failing query is collected as that chart's error rather than raised.
-    collect_via_execute_query(mock)
     return mock
 
 
@@ -153,7 +153,9 @@ def test_render_returns_render_result():
     """render() must return a RenderResult, not raw str/bytes."""
     board = _compile_two_chart_board()
 
-    mock_executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    mock_executor = MagicMock(
+        spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+    )
     mock_executor.execute_query_result.return_value = rows_result([{"value": 42}])
     mock_executor.cache_hit_ats = []
     mock_executor.rendered_at = PINNED_RENDER_TIME
@@ -165,7 +167,7 @@ def test_render_returns_render_result():
             return_value=(build_resolved_board_static(board), {}),
         ),
     ):
-        result = render(board, mock_executor, format="json")
+        result = render_via(mock_executor, board, format="json")
 
     assert isinstance(result, RenderResult), (
         f"Expected RenderResult, got {type(result)}"
@@ -190,7 +192,7 @@ def test_one_runtime_failure_other_charts_render():
             return_value=(build_resolved_board_static(board), {}),
         ),
     ):
-        result = render(board, executor, format="json")
+        result = render_via(executor, board, format="json")
 
     assert isinstance(result, RenderResult)
     assert result.board_error is None
@@ -212,7 +214,7 @@ def test_missing_csv_file_code_reaches_chart_error():
             return_value=(build_resolved_board_static(board), {}),
         ),
     ):
-        result = render(board, executor, format="json")
+        result = render_via(executor, board, format="json")
 
     assert result.board_error is None
     assert len(result.chart_errors) == 1
@@ -258,7 +260,7 @@ def test_chart_render_error_isolated():
             return_value=(build_resolved_board_static(board), {}),
         ),
     ):
-        result = render(board, executor, format="json")
+        result = render_via(executor, board, format="json")
 
     assert result.board_error is None
     assert len(result.chart_errors) == 1
@@ -277,7 +279,7 @@ def test_chart_jinja_error_isolated():
             return_value=(build_resolved_board_static(board), {}),
         ),
     ):
-        result = render(board, executor, format="json")
+        result = render_via(executor, board, format="json")
 
     assert result.board_error is None
     assert len(result.chart_errors) == 1
@@ -296,12 +298,12 @@ def test_chart_internal_exception_isolated():
             return_value=(build_resolved_board_static(board), {}),
         ),
     ):
-        result = render(board, executor, format="json")
+        result = render_via(executor, board, format="json")
 
     assert result.board_error is None
     assert len(result.chart_errors) == 1
     assert result.chart_errors[0].code == ERR_INTERNAL.code
-    assert result.chart_errors[0].message == "RuntimeError: boom"
+    assert result.chart_errors[0].message == "boom (query: q_bad)"
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +314,7 @@ def test_chart_internal_exception_isolated():
 def test_render_chart_item_error_collector():
     """render_chart_item appends to error_collector on failure."""
     _chart = _make_chart("c1")
-    mock_exec = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    mock_exec = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     mock_exec.execute_query.side_effect = ExecutionError("timeout")
 
     rs, ctx = resolve_style_and_context(get_theme_style())
@@ -339,7 +341,7 @@ def test_render_chart_item_error_diagnostic_carries_authored_path():
     vocabulary as the SVG's data-authored-path attribute — the shared
     click-to-source grammar a source map can key into."""
     _chart = _make_chart("c1")
-    mock_exec = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    mock_exec = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     mock_exec.execute_query.side_effect = ExecutionError("timeout")
 
     rs, ctx = resolve_style_and_context(get_theme_style())
@@ -407,9 +409,8 @@ rows:
     assert board is not None
     chart = board.charts["borrowed"]
 
-    mock_exec = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    mock_exec = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     mock_exec.execute_query.side_effect = ExecutionError("timeout")
-    mock_exec.get_query_provenance.return_value = []
 
     rs, ctx = resolve_style_and_context(get_theme_style())
     collector: list[Diagnostic] = []
@@ -432,7 +433,7 @@ rows:
 def test_render_chart_item_no_collector_still_returns_error_block():
     """Without error_collector, render_chart_item still returns an error SVG."""
     _chart = _make_chart("c1")
-    mock_exec = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    mock_exec = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     mock_exec.execute_query.side_effect = ExecutionError("timeout")
 
     rs, ctx = resolve_style_and_context(get_theme_style())
@@ -527,11 +528,13 @@ def test_render_dashboard_chart_errors_populated(
     from unittest.mock import patch
 
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.render.render_result import RenderResult
 
-    # Fake adapter registry
-    mock_registry = MagicMock(spec=AdapterRegistry)
+    # Fake exec env
+    mock_registry = MagicMock(spec=ExecEnv)
+    mock_registry.sources = MagicMock()
+    mock_registry.sources.all.return_value = {}
 
     yaml_content = _TWO_CHART_YAML
 
@@ -548,11 +551,11 @@ def test_render_dashboard_chart_errors_populated(
     project = local_project(tmp_path)
     with (
         patch("dbt_charts.core.board.render", return_value=render_result),
-        patch("dbt_charts.core.board.Executor"),
+        patch("dbt_charts.core.board.make_context"),
     ):
         result = render_dashboard(
             board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
-            adapter_registry=mock_registry,
+            env=mock_registry,
             format="json",
             project=project,
             result_cache=None,
@@ -574,10 +577,10 @@ def test_render_dashboard_chart_error_gets_range_from_compile_source_map(
     """
     from dbt_charts.core.board import render_dashboard
     from dbt_charts.core.compile.compiler import compile as compile_fn
-    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.render.render_result import RenderResult
 
-    mock_registry = MagicMock(spec=AdapterRegistry)
+    mock_registry = MagicMock(spec=ExecEnv)
 
     compile_result = compile_fn(_TWO_CHART_YAML, file="board.yaml")
     assert compile_result.success, compile_result.errors
@@ -592,11 +595,11 @@ def test_render_dashboard_chart_error_gets_range_from_compile_source_map(
 
     with (
         patch("dbt_charts.core.board.render", return_value=render_result),
-        patch("dbt_charts.core.board.Executor"),
+        patch("dbt_charts.core.board.make_context"),
     ):
         result = render_dashboard(
             compile_result=compile_result,
-            adapter_registry=mock_registry,
+            env=mock_registry,
             format="json",
             project=local_project(tmp_path),
             result_cache=None,
@@ -625,11 +628,11 @@ def test_render_dashboard_status_ok_for_clean_render(
 ):
     """A clean render (no chart_errors) reports status == 'ok'."""
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
     from dbt_charts.core.render.render_result import RenderResult
 
-    mock_registry = MagicMock(spec=AdapterRegistry)
+    mock_registry = MagicMock(spec=ExecEnv)
     render_result = RenderResult(
         output='{"id": "test", "title": "Two Charts", "items": []}',
     )
@@ -637,11 +640,11 @@ def test_render_dashboard_status_ok_for_clean_render(
     project = local_project(tmp_path)
     with (
         patch("dbt_charts.core.board.render", return_value=render_result),
-        patch("dbt_charts.core.board.Executor"),
+        patch("dbt_charts.core.board.make_context"),
     ):
         result = render_dashboard(
             board=InMemoryBoard(_TWO_CHART_YAML, path=project.path("charts/_t.yml")),
-            adapter_registry=mock_registry,
+            env=mock_registry,
             format="json",
             project=project,
             result_cache=None,
@@ -657,15 +660,17 @@ def test_render_dashboard_status_failed_when_compile_fails(
     """A board that fails to compile reports status == 'failed', never
     'partial' or 'ok' — no output was produced."""
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
 
-    mock_registry = MagicMock(spec=AdapterRegistry)
+    mock_registry = MagicMock(spec=ExecEnv)
+    mock_registry.sources = MagicMock()
+    mock_registry.sources.all.return_value = {}
     project = local_project(tmp_path)
 
     result = render_dashboard(
         board=InMemoryBoard("not: [valid, yaml: :", path=project.path("charts/_t.yml")),
-        adapter_registry=mock_registry,
+        env=mock_registry,
         format="json",
         project=project,
         result_cache=None,
@@ -686,11 +691,11 @@ def test_render_dashboard_board_error_preserves_walked_data_payload(
     this test, render_dashboard's board_error branch dropped it on the floor.
     """
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
     from dbt_charts.core.render.render_result import RenderResult
 
-    mock_registry = MagicMock(spec=AdapterRegistry)
+    mock_registry = MagicMock(spec=ExecEnv)
     wrapped = RenderError.from_code(ERR_INTERNAL, message="draw exploded")
     render_result = RenderResult(
         output='{"id": "test", "title": "Two Charts", "items": []}',
@@ -700,11 +705,11 @@ def test_render_dashboard_board_error_preserves_walked_data_payload(
     project = local_project(tmp_path)
     with (
         patch("dbt_charts.core.board.render", return_value=render_result),
-        patch("dbt_charts.core.board.Executor"),
+        patch("dbt_charts.core.board.make_context"),
     ):
         result = render_dashboard(
             board=InMemoryBoard(_TWO_CHART_YAML, path=project.path("charts/_t.yml")),
-            adapter_registry=mock_registry,
+            env=mock_registry,
             format="json",
             project=project,
             result_cache=None,
@@ -723,7 +728,9 @@ def test_render_dashboard_board_error_preserves_walked_data_payload(
 def test_build_resolved_board_chart_data_error_degrades_to_board_error() -> None:
     """ChartDataError raised from build_resolved_board must degrade to board_error, not escape render()."""
     board = _compile_two_chart_board()
-    mock_executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    mock_executor = MagicMock(
+        spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+    )
     mock_executor.rendered_at = PINNED_RENDER_TIME
 
     with (
@@ -735,7 +742,7 @@ def test_build_resolved_board_chart_data_error_degrades_to_board_error() -> None
             ),
         ),
     ):
-        result = render(board, mock_executor, format="json")
+        result = render_via(mock_executor, board, format="json")
 
     assert isinstance(result, RenderResult)
     assert result.board_error is not None
@@ -744,7 +751,9 @@ def test_build_resolved_board_chart_data_error_degrades_to_board_error() -> None
 def test_build_resolved_board_unexpected_exception_degrades_to_board_error() -> None:
     """Bare RuntimeError from build_resolved_board degrades to board_error wrapping ERR_INTERNAL."""
     board = _compile_two_chart_board()
-    mock_executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    mock_executor = MagicMock(
+        spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+    )
     mock_executor.rendered_at = PINNED_RENDER_TIME
 
     with (
@@ -754,7 +763,7 @@ def test_build_resolved_board_unexpected_exception_degrades_to_board_error() -> 
             side_effect=RuntimeError("boom"),
         ),
     ):
-        result = render(board, mock_executor, format="json")
+        result = render_via(mock_executor, board, format="json")
 
     assert isinstance(result, RenderResult)
     assert result.board_error is not None
@@ -773,16 +782,15 @@ def test_render_dashboard_survives_build_resolved_board_chart_data_error(
     pins the public-API envelope contract.
     """
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
 
-    mock_registry = MagicMock(spec=AdapterRegistry)
+    mock_registry = MagicMock(spec=ExecEnv)
+    mock_registry.sources = MagicMock()
+    mock_registry.sources.all.return_value = {}
     project = local_project(tmp_path)
-    mock_executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    mock_executor.rendered_at = PINNED_RENDER_TIME
 
     with (
-        patch("dbt_charts.core.board.Executor", return_value=mock_executor),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -793,7 +801,7 @@ def test_render_dashboard_survives_build_resolved_board_chart_data_error(
     ):
         result = render_dashboard(
             board=InMemoryBoard(_TWO_CHART_YAML, path=project.path("charts/_t.yml")),
-            adapter_registry=mock_registry,
+            env=mock_registry,
             format="json",
             project=project,
             result_cache=None,
@@ -927,7 +935,7 @@ def _resolve_stage_executor(rows_by_query: dict[str, list[dict[str, object]]]):
     Unlike ``_executor_good_bad``, nothing here raises: the failure must come
     out of chart *resolution*, which is what the sizing pass runs.
     """
-    mock = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    mock = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     mock.execute_query.side_effect = lambda name, variables=None, **_kw: rows_by_query[
         name
     ]
@@ -935,7 +943,6 @@ def _resolve_stage_executor(rows_by_query: dict[str, list[dict[str, object]]]):
         rows_result(rows_by_query[name])
     )
     # Collect through the mock's `execute_query_result`, as the real pre-pass does.
-    collect_via_execute_query(mock)
     mock.cache_hit_ats = []
     mock.rendered_at = PINNED_RENDER_TIME
     return mock
@@ -943,8 +950,7 @@ def _resolve_stage_executor(rows_by_query: dict[str, list[dict[str, object]]]):
 
 def _render_real_resolve(board, executor, format: str = "svg") -> RenderResult:
     """Render through the REAL build_resolved_board — no patched board resolver."""
-    with patch.object(Executor, "run_misses"):
-        return render(board, executor, format=format)
+    return render_via(executor, board, format=format)
 
 
 def _raise_at_resolve(exc: BaseException):
@@ -1321,7 +1327,7 @@ def _real_executor_with_failing_query(
     """
     from dbt_charts.cli.filesystem_project import FilesystemProject
     from dbt_charts.core.execute import run as _run_mod
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
 
     _write_duckdb_project(tmp_path)
     board_path = tmp_path / "charts" / "board.yml"
@@ -1332,9 +1338,9 @@ def _real_executor_with_failing_query(
     assert result.success, result.errors
     assert result.board is not None
 
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
 
@@ -1476,7 +1482,7 @@ def test_emit_board_artifact_reports_failure_for_a_query_error(
     from dbt_charts.agent_api.board_artifact import emit_board_artifact
     from dbt_charts.cli.filesystem_project import FilesystemProject
     from dbt_charts.core.execute import run as _run_mod
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
 
     def _make_error() -> QueryError:
         err = QueryError("simulated query failure", "q_bad")
@@ -1492,7 +1498,7 @@ def test_emit_board_artifact_reports_failure_for_a_query_error(
             tmp_path / "out" / "board.artifact.json",
             tmp_path / "out" / "board.recording.json",
             project=project,
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
         )
 
     assert result.success is False
@@ -1534,20 +1540,20 @@ def test_missing_required_variables_stays_board_fatal(
     per-chart isolation inside the sizing pass should soften it into a tile.
     """
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
 
     project = local_project(tmp_path)
     executor = _resolve_stage_executor({"q_good": [{"value": 42}]})
 
     with (
-        patch("dbt_charts.core.board.Executor", return_value=executor),
+        patch("dbt_charts.core.board.make_context", return_value=executor),
     ):
         result = render_dashboard(
             board=InMemoryBoard(
                 _REQUIRED_VARIABLE_YAML, path=project.path("charts/_t.yml")
             ),
-            adapter_registry=MagicMock(spec=AdapterRegistry),
+            env=MagicMock(spec=ExecEnv),
             format="json",
             project=project,
             result_cache=None,
@@ -1563,20 +1569,20 @@ def test_executor_construction_failure_stays_board_fatal(
 ) -> None:
     """An executor that cannot be built is fatal — there is nothing to isolate."""
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
 
     project = local_project(tmp_path)
 
     with patch(
-        "dbt_charts.core.board.Executor",
+        "dbt_charts.core.board.make_context",
         side_effect=ExecutionError("no warehouse"),
     ):
         result = render_dashboard(
             board=InMemoryBoard(
                 _HEALTHY_PLUS_PIE_YAML, path=project.path("charts/_t.yml")
             ),
-            adapter_registry=MagicMock(spec=AdapterRegistry),
+            env=MagicMock(spec=ExecEnv),
             format="json",
             project=project,
             result_cache=None,
@@ -1609,7 +1615,7 @@ def test_board_level_draw_failure_still_returns_data_format_payload() -> None:
             side_effect=RenderError.from_code(ERR_INTERNAL, message="draw exploded"),
         ),
     ):
-        result = render(board, executor, format="json")
+        result = render_via(executor, board, format="json")
 
     assert result.board_error is not None
     assert result.output is not None
@@ -1637,7 +1643,7 @@ def test_data_format_walk_exception_becomes_board_error_not_raise() -> None:
         ),
         patch.object(_renderer_mod, "_data_format_renderer", return_value=_boom),
     ):
-        result = render(board, executor, format="json")
+        result = render_via(executor, board, format="json")
 
     assert result.board_error is not None
     assert result.board_error.code == ERR_INTERNAL.code
@@ -1670,7 +1676,7 @@ def test_draw_board_error_takes_priority_over_walk_board_error() -> None:
         ),
         patch.object(_renderer_mod, "_data_format_renderer", return_value=_boom),
     ):
-        result = render(board, executor, format="json")
+        result = render_via(executor, board, format="json")
 
     assert result.board_error is not None
     assert result.board_error.message == "draw exploded"
@@ -1865,11 +1871,11 @@ def test_render_dashboard_emits_structural_lint_warning(
     runs on result.warnings inside validate_compiled_queries.
     """
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
     from dbt_charts.core.render.render_result import RenderResult
 
-    mock_registry = MagicMock(spec=AdapterRegistry)
+    mock_registry = MagicMock(spec=ExecEnv)
     render_result = RenderResult(
         output='{"id": "test", "title": "Cartesian Board", "items": []}'
     )
@@ -1877,13 +1883,13 @@ def test_render_dashboard_emits_structural_lint_warning(
     project = local_project(tmp_path)
     with (
         patch("dbt_charts.core.board.render", return_value=render_result),
-        patch("dbt_charts.core.board.Executor"),
+        patch("dbt_charts.core.board.make_context"),
     ):
         result = render_dashboard(
             board=InMemoryBoard(
                 _CARTESIAN_JOIN_YAML, path=project.path("charts/cartesian.yml")
             ),
-            adapter_registry=mock_registry,
+            env=mock_registry,
             format="json",
             project=project,
             result_cache=None,
@@ -1906,11 +1912,11 @@ def test_render_dashboard_dct_ignore_moves_lint_to_suppressed(
 ):
     """A ``-- dct:ignore`` comment suppresses the lint warning into suppressed_warnings."""
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
     from dbt_charts.core.render.render_result import RenderResult
 
-    mock_registry = MagicMock(spec=AdapterRegistry)
+    mock_registry = MagicMock(spec=ExecEnv)
     render_result = RenderResult(
         output='{"id": "test", "title": "Cartesian Board", "items": []}'
     )
@@ -1918,13 +1924,13 @@ def test_render_dashboard_dct_ignore_moves_lint_to_suppressed(
     project = local_project(tmp_path)
     with (
         patch("dbt_charts.core.board.render", return_value=render_result),
-        patch("dbt_charts.core.board.Executor"),
+        patch("dbt_charts.core.board.make_context"),
     ):
         result = render_dashboard(
             board=InMemoryBoard(
                 _CARTESIAN_JOIN_IGNORED_YAML, path=project.path("charts/cartesian.yml")
             ),
-            adapter_registry=mock_registry,
+            env=mock_registry,
             format="json",
             project=project,
             result_cache=None,
@@ -2020,17 +2026,17 @@ def test_reversed_spark_bar_is_isolated_to_its_own_card(
     spark_bar test calls render_spark_bar_svg directly and so cannot see
     this at all.
     """
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
 
     result = compile(_REVERSED_SPARK_BAR_YAML)
     assert result.success, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
     )
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     assert render_result.board_error is None, (
         "one bad spark_bar must not become a board-level failure"
@@ -2103,17 +2109,17 @@ def test_spark_bar_numeric_verdict_is_independent_of_max_bars(
     ``max_bars: 15`` the identical data rendered fine. A presentational cap
     decided whether the board errored. Both charts must now render.
     """
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
 
     result = compile(_MAX_BARS_SCOPE_YAML)
     assert result.success, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
     )
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     codes = [d.code for d in render_result.chart_errors]
     assert codes == [], (

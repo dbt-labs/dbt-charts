@@ -20,7 +20,7 @@ from dbt_charts.core.render.warnings import (
     line_joins_missing_periods as detector,
 )
 
-from ..._results import rows_schema
+from ..._scripted_env import ScriptedBackend, scripted_env
 from ...core._board_utils import (
     make_test_resolved_board,
     make_test_resolved_chart,
@@ -166,11 +166,11 @@ def test_silent_on_other_chart_types(chart_type: str) -> None:
 
 
 def test_the_warning_surfaces_from_render() -> None:
-    from unittest.mock import Mock
 
     from dbt_charts.core.compile import compile
-    from dbt_charts.core.execute import Executor
     from dbt_charts.core.render import render
+
+    from ..._run import Run
 
     result = compile(
         "title: Probe\n"
@@ -179,19 +179,9 @@ def test_the_warning_surfaces_from_render() -> None:
         "rows:\n  - c\n"
     )
     assert result.success and result.board is not None, result.errors
-    ok = Mock()
-    ok.is_success = True
-    ok.data = _months(1, 2, 3, 6, 7)
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    registry = Mock()
-    registry.project_file_sources.return_value = {}
-    registry.execute.return_value = ok
-    executor = Executor(
-        result.board, adapter_registry=registry, query_registry=result.query_registry
-    )
+    registry = scripted_env(ScriptedBackend(_months(1, 2, 3, 6, 7)))
+    executor = Run(result.board, env=registry, query_registry=result.query_registry)
 
-    rendered = render(result.board, executor, format="svg")
+    rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     assert [w.code for w in rendered.warnings] == [WARN_LINE_JOINS_MISSING_PERIODS.code]

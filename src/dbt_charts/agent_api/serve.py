@@ -372,7 +372,7 @@ def _check_boards(
 ) -> list[CheckedBoard]:
     """Render every board as the text check, under the server's own settings.
 
-    The registry comes from ``build_serve_registry``, the server's own, and the
+    The env comes from ``build_serve_env``, the server's own, and the
     cache from the same settings, so a board passes here exactly when the
     server can render it.
     """
@@ -382,9 +382,9 @@ def _check_boards(
     )
     from dbt_charts.agent_api.cache import project_cache_ctx
     from dbt_charts.agent_api.project_session import ProjectSession
-    from dbt_charts.core.serve.server import build_serve_registry
+    from dbt_charts.core.serve.server import build_serve_env
 
-    registry = build_serve_registry(
+    env = build_serve_env(
         project,
         dialect=settings.dialect,
         target=settings.target,
@@ -398,8 +398,8 @@ def _check_boards(
         ProjectSession.from_project(
             project,
             cache=cache,
-            adapter_registry=registry,
-            owns_registry=True,
+            env=env,
+            owns_env=True,
         ) as session,
     ):
         for relpath, url in urls.items():

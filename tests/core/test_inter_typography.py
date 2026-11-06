@@ -15,8 +15,7 @@ from dbt_charts.core.compile.config import (
     reset_config,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_style
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
 from dbt_charts.core.render.chart_interactivity import (
     hover_runtime_attributes,
@@ -25,6 +24,8 @@ from dbt_charts.core.render.chart_interactivity import (
 from dbt_charts.core.render.converters.pdf import to_pdf
 from dbt_charts.core.render.converters.png import to_png
 from dbt_charts.core.render.placeholder import add_placeholder_overlay
+
+from .._run import Run
 
 TEST_YAML = """
 title: Test Dashboard
@@ -60,12 +61,12 @@ def _render_svg(
 ) -> str:
     result = compile(yaml_content)
     assert result.success
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
     )
-    return render(result.board, executor, format="svg").output
+    return render(result.board, executor.ctx, executor.ledger, format="svg").output
 
 
 _FONT_FAMILY = "'Inter Variable', Inter, system-ui, sans-serif"

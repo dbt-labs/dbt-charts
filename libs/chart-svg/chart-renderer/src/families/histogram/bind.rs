@@ -7,11 +7,12 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{histogram_bins_by, Bin, Resolved};
-use crate::common::{axis_title_text, format_y_label, row_num, MirrorGhost};
+use crate::common::{axis_title_text, format_y_label, MirrorGhost};
+use ::bind::rows::{row_num};
 use diagnostic::Diagnostic;
 use crate::families::color_scale::ContinuousColor;
 use crate::families::legend;
-use crate::families::temporal::{infer_vega_type, VegaType};
+use ::bind::temporal::{infer_vega_type, VegaType};
 use crate::{BoardStyle, Padding, Payload};
 
 /// A bound histogram: the resolved chart as deserialized, with what the data derives from it.
@@ -220,7 +221,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
                     && v.abs() < 1.0
                     && d3rs::format::parse_parts(spec).is_ok_and(|p| p.type_ == 's');
                 let spec = if plain_below_one { d3rs::format::sub_unit_specs(spec)?.0 } else { spec.to_string() };
-                crate::number_locale::d3_format(&spec, v).map_err(|e| format!("histogram tooltip format: {e}"))
+                ::bind::formats::locale::d3_format(&spec, v).map_err(|e| format!("histogram tooltip format: {e}"))
             };
             let x_spec = x_slot.expect("a populated axis has its label format (checked above)").spec.as_str();
             let span = format!("{} \u{2013} {}", fmt(x_spec, bin.start)?, fmt(x_spec, bin.end)?);
@@ -388,7 +389,7 @@ fn stack_color(
             None if gradient_mode => "",
             None => return Ok(d3rs::js_math::js_number_string(v)),
         };
-        crate::number_locale::d3_format(spec, v).map_err(|e| format!("histogram color tooltip format: {e}"))
+        ::bind::formats::locale::d3_format(spec, v).map_err(|e| format!("histogram color tooltip format: {e}"))
     };
     let extent = |values: &[Option<f64>]| {
         values.iter().flatten().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &v| (lo.min(v), hi.max(v)))
@@ -442,7 +443,7 @@ fn nominal_color(
 ) -> Result<(StackColor, Vec<Option<usize>>), String> {
     let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     for row in rows.iter().filter(|row| row.get(cf).is_some_and(|v| !v.is_null())) {
-        *counts.entry(crate::common::row_str(row, cf)).or_default() += 1;
+        *counts.entry(::bind::rows::row_str(row, cf)).or_default() += 1;
     }
     let mut ranked: Vec<(String, usize)> = counts.into_iter().collect();
     ranked.sort_by(|(a, na), (b, nb)| nb.cmp(na).then_with(|| a.cmp(b)));
@@ -471,7 +472,7 @@ fn nominal_color(
             if row.get(cf).is_none_or(Value::is_null) {
                 return Some(0);
             }
-            let value = crate::common::row_str(row, cf);
+            let value = ::bind::rows::row_str(row, cf);
             Some(base + ranked.iter().position(|(name, _)| *name == value).expect("every colored row is counted"))
         })
         .collect();
@@ -495,7 +496,7 @@ fn ordinal_color(
     binned_rows: &[&serde_json::Map<String, Value>],
 ) -> (StackColor, Vec<Option<usize>>) {
     let value_of = |row: &serde_json::Map<String, Value>| {
-        row.get(cf).filter(|v| !v.is_null()).map(|_| crate::common::row_str(row, cf))
+        row.get(cf).filter(|v| !v.is_null()).map(|_| ::bind::rows::row_str(row, cf))
     };
     let mut ascending: Vec<Option<String>> = binned_rows.iter().map(|row| value_of(row)).collect();
     ascending.sort();
@@ -535,7 +536,7 @@ fn legend_entries(
 ) -> Vec<(String, String)> {
     let order: Vec<usize> = match &legend.values {
         Some(authored) if authored.is_empty() => Vec::new(),
-        Some(authored) => crate::families::legend::resolve_legend_values(authored, names, None),
+        Some(authored) => ::bind::legend::resolve_legend_values(authored, names, None),
         None => (0..names.len()).collect(),
     };
     order.into_iter().map(|i| (names[i].to_string(), fill(names[i]))).collect()

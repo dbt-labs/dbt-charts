@@ -43,12 +43,10 @@ use crate::common::{
 use crate::contract;
 use diagnostic::{warn, Diagnostic};
 use crate::families::color_scale::{ContinuousColor, GradientAt};
-use crate::families::legend::{
-    color_channel_title, fold_symbol_limit, legend_fit_bounds, legend_origin, stack_legends, symbol_legend, vega_default_legend,
-    vega_legend, LegendConfig, LegendEntry, LegendSymbol, SizeLegend, SizePaint, SizeRows, VEGA_LEGEND_SYMBOL_LIMIT,
-};
+use crate::families::legend::{color_channel_title, legend_fit_bounds, legend_origin, stack_legends, symbol_legend, vega_default_legend, vega_legend, LegendConfig, LegendEntry, LegendSymbol, SizeLegend, SizePaint, SizeRows, VEGA_LEGEND_SYMBOL_LIMIT};
+use ::bind::legend::{fold_symbol_limit};
 use crate::families::heatmap::date_cell_day;
-use crate::families::temporal::{infer_vega_type, VegaType};
+use ::bind::temporal::{infer_vega_type, VegaType};
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::href::LinkOpen;
 use crate::layout::{Layout, Rect};
@@ -87,6 +85,9 @@ struct Resolved {
     subtitle: Option<String>,
     title_style: Option<TitleStyle>,
     background: String,
+    /// The chart's opaque composited canvas: halo and knockout ink, where `background` may be `transparent`.
+    #[serde(deserialize_with = "crate::common::de_canvas")]
+    canvas: String,
     legend: LegendConfig,
     field_labels: FieldLabels,
     #[serde(default)]
@@ -218,7 +219,7 @@ fn valid_number(value: Option<&Value>) -> Option<f64> {
     match value {
         Some(Value::Number(n)) => n.as_f64(),
         Some(Value::Bool(b)) => Some(f64::from(u8::from(*b))),
-        Some(Value::String(s)) => crate::common::js_string_to_number(s).filter(|n| n.is_finite()),
+        Some(Value::String(s)) => ::bind::rows::js_string_to_number(s).filter(|n| n.is_finite()),
         _ => None,
     }
 }
@@ -255,8 +256,8 @@ fn coordinate_fields<'a>(payload: &Payload, r: &'a Resolved) -> Result<Option<(&
 fn quantitative_text(value: Option<&Value>) -> Result<String, String> {
     match value {
         None | Some(Value::Null) => Ok("null".into()),
-        Some(Value::Number(n)) => crate::number_locale::d3_format("", n.as_f64().expect("a JSON number is an f64")),
-        Some(cell) => crate::number_locale::d3_format("", js_cell::number(Some(cell))),
+        Some(Value::Number(n)) => ::bind::formats::locale::d3_format("", n.as_f64().expect("a JSON number is an f64")),
+        Some(cell) => ::bind::formats::locale::d3_format("", js_cell::number(Some(cell))),
     }
 }
 
@@ -317,7 +318,7 @@ fn count_ladder(max: f64) -> Vec<f64> {
 fn size_ladder(max: f64, collapse: bool) -> Result<(Vec<f64>, Vec<String>), String> {
     if collapse {
         let values = count_ladder(max);
-        let labels = values.iter().map(|&v| crate::number_locale::d3_format("d", v)).collect::<Result<_, _>>()?;
+        let labels = values.iter().map(|&v| ::bind::formats::locale::d3_format("d", v)).collect::<Result<_, _>>()?;
         return Ok((values, labels));
     }
     // A zero tick would draw a circle of no area, unless a zero domain gives every value the middle of the range.
@@ -515,7 +516,7 @@ fn bind_marks(
                 let day = row.get(field).and_then(date_cell_day).expect("filtered above");
                 if affixed { affixed_date_label(day, scale.is_aware()) } else { crate::families::heatmap::legend_date_label(day, scale.is_aware()) }
             }
-            Some(Coloring::Gradient { .. }) => crate::number_locale::d3_format("", number(row, field, "color")?),
+            Some(Coloring::Gradient { .. }) => ::bind::formats::locale::d3_format("", number(row, field, "color")?),
             _ => row.get(field).map(|cell| list_text(cell, affixed)).ok_or_else(|| format!("point_map: a row lacks the field {field:?}")),
         }
     };
@@ -539,7 +540,7 @@ fn bind_marks(
         Some(f) => Some(color_channel_title(f, &r.legend, &r.field_labels)?),
         None => None,
     };
-    let fmt = |v: f64| crate::number_locale::d3_format("", v);
+    let fmt = |v: f64| ::bind::formats::locale::d3_format("", v);
     let default_area = r.style.point_mark.size;
     let mut points = Vec::new();
     if r.collapse {
@@ -843,7 +844,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
                 .collect();
             if let Some((kept, label)) = fold_symbol_limit(entries.len(), VEGA_LEGEND_SYMBOL_LIMIT as usize) {
                 folded_label = label;
-                let folded = LegendEntry { label: &folded_label, ..entries[kept] };
+                let folded = LegendEntry { label: &folded_label, symbol: Some(LegendSymbol::Overflow), ..entries[kept] };
                 entries.truncate(kept);
                 entries.push(folded);
             }
@@ -1023,7 +1024,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         Some(Coloring::Categories { .. }) => {
             let legend = symbol_legend_layout.as_ref().expect("built with the categories");
             let off = offsets.next().expect("one block per legend");
-            nodes.push(symbol_legend(&symbol_entries, legend, &legend_cfg, LegendSymbol::FilledCircle, leg_x, leg_y + off, false));
+            nodes.push(symbol_legend(&symbol_entries, legend, &legend_cfg, LegendSymbol::FilledCircle, leg_x, leg_y + off, false, r.canvas.as_str()));
         }
         Some(Coloring::Gradient { scale, title }) => {
             let at = gradient_at(plot_w, plot_h)?.expect("a gradient coloring");

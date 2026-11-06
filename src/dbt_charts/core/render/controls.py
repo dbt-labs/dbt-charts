@@ -80,6 +80,7 @@ _CONTROLS_RUNTIME_WORDS = (
     "sort_date_ascending",
     "sort_date_descending",
     "clear_sort",
+    "remove_value",
     "search",
     "search_values",
     "select_all",
@@ -106,6 +107,7 @@ _PATTERN_PLACEHOLDERS = {
     "range_same_month": ("start_day", "end_day", "month", "year"),
     "page_range": ("first", "last", "total"),
     "show_only_selected": ("n",),
+    "remove_value": ("value",),
     "selection_summary": ("first", "n"),
 }
 

@@ -85,6 +85,9 @@ pub(crate) struct Head {
     subtitle: Option<String>,
     title_style: Option<TitleStyle>,
     pub(crate) background: String,
+    /// The chart's opaque composited canvas: halo and knockout ink, where `background` may be `transparent`.
+    #[serde(deserialize_with = "crate::common::de_canvas")]
+    pub(crate) canvas: String,
     #[serde(default)]
     resolved_channels: std::collections::HashMap<String, Channel>,
     /// The authored `color:` field; a wide fold's own series field is not it.
@@ -97,7 +100,7 @@ pub(crate) struct Head {
     #[serde(default)]
     wide_measures: Vec<String>,
     #[serde(default)]
-    multiples: Option<crate::families::multiples::MultiplesConfig>,
+    multiples: Option<::bind::multiples::MultiplesConfig>,
     #[serde(default)]
     palette: Vec<String>,
     field_labels: crate::common::FieldLabels,
@@ -174,8 +177,8 @@ impl Head {
         // A wide fold split by a color dimension names a series per dimension value: none without rows.
         let mut series = if self.color.is_some() { Vec::new() } else { self.wide_measures.clone() };
         series.sort();
-        let labels = display_text::wide_measure_labels_for(&self.wide_measures, &self.field_labels)?;
-        let names: Vec<String> = series.iter().map(|s| crate::common::wide_series_display(s, &labels)).collect();
+        let labels = display_text::wide_measure_labels(&self.wide_measures, &self.field_labels)?.labels;
+        let names: Vec<String> = series.iter().map(|s| ::bind::wide::wide_series_display(s, &labels)).collect();
         let pane = crate::families::cartesian::rail_pane_width(&names, &sl.font_family, sl.font_size, &sl.font_weight, fonts, chart_w)?;
         // `_correct_concat_overshoot` works in whole pixels: the pane's width rounds up.
         Ok(pane.ceil() + el.label_offset)
@@ -194,7 +197,7 @@ impl Head {
             return Ok(None);
         }
         let gap_px = sl.gap_px.ok_or("zero-row rail: series_label.gap_px absent (theme required)")?;
-        let labels = display_text::wide_measure_labels_for(&self.wide_measures, &self.field_labels)?;
+        let labels = display_text::wide_measure_labels(&self.wide_measures, &self.field_labels)?.labels;
         let mut domain = self.wide_measures.clone();
         domain.sort();
         let series = self
@@ -202,7 +205,7 @@ impl Head {
             .iter()
             .map(|measure| {
                 let ink = crate::common::series_ink(measure, &domain, series_palette, &sl.dark_companion_palette, &[], None)?;
-                Ok((crate::common::wide_series_display(measure, &labels), ink))
+                Ok((::bind::wide::wide_series_display(measure, &labels), ink))
             })
             .collect::<Result<Vec<_>, String>>()?;
         let font = (sl.font_family.clone(), sl.font_size, sl.font_weight.clone(), sl.font_style.clone().unwrap_or_else(|| "normal".into()));
@@ -479,12 +482,12 @@ impl Head {
         } else if wide {
             let mut series = self.wide_measures.clone();
             series.sort();
-            let labels = display_text::wide_measure_labels_for(&self.wide_measures, &self.field_labels)?;
+            let labels = display_text::wide_measure_labels(&self.wide_measures, &self.field_labels)?.labels;
             series
                 .iter()
                 .map(|name| {
                     let fill = crate::common::series_color(name, &series, series_palette, None, &crate::pattern::PatternPlan::default())?.into_color();
-                    Ok((crate::common::wide_series_display(name, &labels), fill))
+                    Ok((::bind::wide::wide_series_display(name, &labels), fill))
                 })
                 .collect::<Result<_, String>>()?
         } else if color.is_none() {

@@ -39,7 +39,7 @@
 //! stack's axis as a percentage regardless of any authored format).
 //!
 //! A wide (`y: [a, b]`) chart unfolds into long rows once, at the top of
-//! `render`, before any other law runs — see `common::unfold_wide_rows`'s
+//! `render`, before any other law runs — see `bind::wide::unfold_wide_rows`'s
 //! doc comment. Everything downstream (grouped sub-bands, top legend,
 //! palette) runs unchanged, same as an authored `color:` chart.
 //!
@@ -79,10 +79,8 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::common::{
-    row_num, row_str,
-    AxisStyle, ChartSort, FormatSlot, MarkLabels, StyleChannel, TitleStyle,
-};
+use crate::common::{AxisStyle, FormatSlot, MarkLabels, StyleChannel, TitleStyle};
+use ::bind::rows::{row_num, row_str, ChartSort};
 use crate::families::empty_cartesian::ValueAxis;
 use crate::families::support_table_strip;
 use crate::families::color_scale::ContinuousColor;
@@ -95,6 +93,9 @@ use crate::Payload;
 
 // Fixed chrome (title + value axis label row) in pixels — matches _LAYOUT_CHROME_PX in Python.
 pub(crate) const CHROME_PX: f64 = 72.0;
+// Vertical air above and below a horizontal bar's category label in its band. `axis_x.labels.padding`
+// is the label-to-axis gap there (horizontal), so it must not size the band.
+pub(crate) const BAND_LABEL_LEADING: f64 = 6.0;
 // Default quartile tick grid for a `stack = "normalize"` value axis —
 // matches `_NORMALIZE_QUARTILE_TICKS` in `emitters/bar.py`.
 pub(crate) const NORMALIZE_QUARTILE_TICKS: [f64; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
@@ -191,12 +192,12 @@ pub(crate) struct BarResolved {
     /// (#7167) — see `common::category_scale_for`/`series_color`.
     #[serde(default)]
     category_colors: Vec<crate::common::CategoryColorScale>,
-    multiples: Option<crate::families::multiples::MultiplesConfig>,
+    multiples: Option<::bind::multiples::MultiplesConfig>,
     /// Baked small-multiples partition dimensions (`resolved.panel_axes`) —
     /// present exactly when `multiples` is (resolve bakes one `PartitionAxis`
     /// per `multiples.rows`/`multiples.columns` field actually authored).
     #[serde(default)]
-    panel_axes: Vec<crate::families::multiples::PartitionAxis>,
+    panel_axes: Vec<::bind::multiples::PartitionAxis>,
     #[serde(default)]
     wide_measures: Vec<String>,
     /// Column each bar starts from (`resolved/bar.py`); absent, bars start at
@@ -340,7 +341,7 @@ struct BarStyle {
     endpoint_labels: EndpointLabels,
     /// Author-facing stack ordering: `value` (the default when `None`,
     /// largest global sum first), `data`, or `alphabetical`. Any other
-    /// string is refused by `common::sorted_series_by_stack_order`.
+    /// string is refused by `bind::stack::sorted_series_by_stack_order`.
     #[serde(default)]
     stack_order: Option<String>,
     #[serde(default)]
@@ -442,20 +443,23 @@ impl ContinuousWidth {
     }
 }
 
-/// A time bucket's bar as `(left, width)`: its inner `band_width` share, each edge
-/// offset half a pixel by Vega-Lite (inward on a bucket narrower than a quarter
-/// pixel). `start` and `end` are the bucket's pixel edges.
+/// A time bucket's bar as `(left, width)`: its inner `band_width` share, offset
+/// by Vega-Lite so it is `span * band_width - 1` wide. A bucket whose bar would be
+/// under a pixel wide draws whole, a pixel wide at least, so a dense series stays
+/// visible instead of thinning to a hairline. `start` and `end` are the bucket's
+/// pixel edges.
 pub(crate) fn bucket_bar_extent(start: f64, end: f64, band_width: f64) -> (f64, f64) {
     let span = (end - start).abs();
+    if span * band_width - 1.0 < MIN_BAR_PX {
+        return (start.min(end), span.max(MIN_BAR_PX));
+    }
     let edge = (1.0 - band_width) / 2.0;
-    let narrow = (0.25 - span).max(0.0) * 0.5;
-    let (from, to) = if span < 0.25 {
-        (start + (1.0 - edge) * span + 0.5 + narrow, start + edge * span + 0.5 - narrow)
-    } else {
-        (start + (1.0 - edge) * span, start + edge * span + 1.0)
-    };
+    let (from, to) = (start + (1.0 - edge) * span, start + edge * span + 1.0);
     (from.min(to), (to - from).abs())
 }
+
+/// The narrowest a bucket's bar draws, in pixels.
+pub(crate) const MIN_BAR_PX: f64 = 1.0;
 
 /// The share of a bucket a bar spans when no `band_width` is authored.
 pub(crate) const DEFAULT_BAND_WIDTH: f64 = 0.8;
@@ -592,7 +596,7 @@ fn overlap_errors(r: &BarResolved, payload: &Payload) -> Result<(), Diagnostic> 
     if r.orientation == "vertical" {
         let banded = matches!(
             x_resolution(&r, &payload.rows)?.resolution.vl_type,
-            crate::families::temporal::VegaType::Nominal | crate::families::temporal::VegaType::Ordinal
+            ::bind::temporal::VegaType::Nominal | ::bind::temporal::VegaType::Ordinal
         );
         if !banded {
             return Err(Diagnostic::new(&codes::ERR_BAR_OVERLAP_CONTINUOUS_AXIS, [("axis", Value::from("x")), ("chart_id", chart_id())]));
@@ -607,7 +611,7 @@ fn overlap_errors(r: &BarResolved, payload: &Payload) -> Result<(), Diagnostic> 
         ));
     }
     // `_count_series`: the distinct color values, one for a chart with none.
-    let n_series = if wide { crate::common::wide_series_names(&r.wide_measures, r.color.as_deref(), &payload.rows).len() } else { crate::common::color_domain_of(&payload.rows, &series).len().max(1) };
+    let n_series = if wide { ::bind::wide::wide_series_names(&r.wide_measures, r.color.as_deref(), &payload.rows).len() } else { ::bind::rows::color_domain_of(&payload.rows, &series).len().max(1) };
     if fraction > 0.0 && n_series != 2 {
         return Err(Diagnostic::new(&codes::ERR_BAR_OVERLAP_SERIES_COUNT, [("chart_id", chart_id()), ("n_series", Value::from(n_series))]));
     }
@@ -697,7 +701,7 @@ impl BarResolved {
             .iter()
             .filter(|name| !name.is_empty())
             .map(|name| {
-                let value = crate::common::js_string_to_number(name).ok_or_else(|| format!("bar: numeric color value {name:?} is not a number"))?;
+                let value = ::bind::rows::js_string_to_number(name).ok_or_else(|| format!("bar: numeric color value {name:?} is not a number"))?;
                 Ok((name.clone(), format.paint_tick(value)?))
             })
             .collect()
@@ -776,14 +780,14 @@ pub(crate) fn min_gap(mut xs: Vec<f64>) -> f64 {
 fn x_resolution(
     r: &BarResolved,
     chart_rows: &[serde_json::Map<String, Value>],
-) -> Result<crate::families::x_type::FilledX, String> {
-    let normalized = crate::families::temporal::normalize_labeled_temporal(&r.column_types, chart_rows, &r.x)?;
+) -> Result<::bind::x_type::FilledX, String> {
+    let normalized = ::bind::temporal::normalize_labeled_temporal(&r.column_types, chart_rows, &r.x)?;
     let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
-    crate::families::x_type::resolve_filled_x(
+    ::bind::x_type::resolve_filled_x(
         &r.column_types,
         &normalized,
         &r.x,
-        &crate::families::x_type::XAxis::of(&r.style.axis_x),
+        &r.style.axis_x.x_axis(),
         "bar",
         false,
         &panel_fields,
@@ -846,7 +850,7 @@ mod tests {
     /// Renders in the en-US time vocabulary the fixtures' dates are drawn in; the
     /// engine entry point scopes the board's own.
     fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
-        let _en = crate::time_locale::en_us_scope();
+        let _en = ::bind::time_locale::en_us_scope();
         super::render(payload, fonts)
     }
 
@@ -2074,7 +2078,7 @@ mod tests {
         /// centers.
         #[test]
         fn a_line_layer_over_a_continuous_time_x_vertexes_on_its_instants() {
-            let _locale = crate::time_locale::en_us_scope();
+            let _locale = ::bind::time_locale::en_us_scope();
             let rows = [("2020-01-05", 10.0, 5.0), ("2020-01-06", 20.0, 6.0), ("2023-08-29", 30.0, 7.0), ("2023-08-30", 25.0, 8.0)];
             let mut payload_json = payload_with_layer(&rows, line_layer_json("#dea628"));
             payload_json["resolved"]["style"]["axis_x"]["fill"] = serde_json::json!("null");
@@ -2094,7 +2098,7 @@ mod tests {
         /// at each bucket's middle, the bars' centers, not at the bucket start its rows carry (issue #80).
         #[test]
         fn a_line_layer_over_bucketed_time_bars_vertexes_on_the_bar_centers() {
-            let _locale = crate::time_locale::en_us_scope();
+            let _locale = ::bind::time_locale::en_us_scope();
             let months: Vec<String> = (0..61).map(|m| format!("{}-{:02}-01", 2020 + m / 12, m % 12 + 1)).collect();
             let rows: Vec<(&str, f64, f64)> = months.iter().map(|m| (m.as_str(), 30.0, 20.0)).collect();
             let mut payload_json = payload_with_layer(&rows, line_layer_json("#dea628"));
@@ -2996,7 +3000,7 @@ mod tests {
         /// `width(8, Inter stand-in) + VALUE_AXIS_BREATHING_ROOM(4) = 12`.
         #[test]
         fn a_layer_axis_uses_the_themed_label_padding_not_the_base_s_val_on_right_hack() {
-            let _locale = crate::time_locale::en_us_scope();
+            let _locale = ::bind::time_locale::en_us_scope();
             let mut payload_json = payload_with_layer(
                 &[("Jan", 1000.0, 3.1), ("Feb", 1500.0, 3.4), ("Mar", 1200.0, 4.2)],
                 dual_axis_layer_json(),
@@ -3127,7 +3131,7 @@ mod tests {
         /// law never reaches the layer.
         #[test]
         fn a_dual_axis_layer_s_labels_start_anchor_at_the_theme_padding() {
-            let _locale = crate::time_locale::en_us_scope();
+            let _locale = ::bind::time_locale::en_us_scope();
             let payload_json = payload_with_layer(
                 &[("Jan", 1000.0, 3.1), ("Feb", 1500.0, 3.4), ("Mar", 1200.0, 4.2)],
                 dual_axis_layer_json(),
@@ -4459,7 +4463,7 @@ mod tests {
     /// though the theme hides the axis's ticks.
     #[test]
     fn a_bucketed_time_axis_spans_each_bucket_and_draws_its_opener_ticks() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let svg = render(&make_payload(make_time_payload(&months_from_2000(72))), &test_fonts()).expect("renders");
         let ext = bar_extents(&svg);
         assert_eq!(ext.len(), 72);
@@ -4491,7 +4495,7 @@ mod tests {
     /// Year labels over monthly bars on a UTC time axis sit between their boundary ticks, not on a tick.
     #[test]
     fn a_time_axis_centers_year_labels_between_their_boundary_ticks() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let svg = render(&make_payload(make_time_payload(&months_from_2000(72))), &test_fonts()).expect("renders");
         let ticks = tick_xs(&svg);
         assert_eq!(ticks.len(), 7, "six years framed by seven boundaries: {ticks:?}");
@@ -4505,7 +4509,7 @@ mod tests {
     /// every fifth, on their ticks.
     #[test]
     fn a_long_time_axis_thins_year_labels_on_their_ticks() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(288));
         p["width"] = serde_json::json!(300.0);
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -4517,10 +4521,26 @@ mod tests {
         assert!(!svg.contains(">2001</text>"), "an unthinned year label");
     }
 
+    /// 288 monthly bars in a 300px card leave each month about one pixel: the bars draw at least a pixel
+    /// wide, touching, and without the border halo that would paint over them.
+    #[test]
+    fn bars_narrower_than_a_pixel_draw_a_pixel_wide_with_no_halo() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let mut p = make_time_payload(&months_from_2000(288));
+        p["width"] = serde_json::json!(300.0);
+        p["resolved"]["style"]["mark"]["border"] = serde_json::json!({"color": "#ffffff", "width": 1.0, "radius": 0.0});
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        let ext = bar_extents(&svg);
+        assert_eq!(ext.len(), 288);
+        assert!(ext.iter().all(|(_, w)| *w >= 1.0), "a bar under a pixel wide: {ext:?}");
+        assert!(ext.windows(2).all(|pair| pair[1].0 - (pair[0].0 + pair[0].1) <= 1e-6), "a gap between neighboring bars");
+        assert!(!svg.contains("stroke=\"#ffffff\""), "a halo on a bar too narrow for one");
+    }
+
     /// Interval boundary ticks sit inside the plot, and the floor rule reaches under the outermost one.
     #[test]
     fn interval_boundary_ticks_sit_inside_the_plot_under_the_floor_rule() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let svg = render(&make_payload(make_time_payload(&months_from_2000(72))), &test_fonts()).expect("renders");
         let plot_left: f64 = svg.split("<g transform=\"translate(").nth(1).unwrap().split(',').next().unwrap().parse().unwrap();
         let ticks: Vec<f64> = tick_xs(&svg).into_iter().map(|x| x - plot_left).collect();
@@ -4538,7 +4558,7 @@ mod tests {
     /// gap between quarters (positions relative to the bar step, the axis and the bars paint in different frames).
     #[test]
     fn a_band_axis_centers_quarter_labels_under_their_bars_with_ticks_in_the_gaps() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(24));
         p["resolved"]["style"]["axis_x"]["labels"]["time_unit"] = serde_json::json!("yearquarter");
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -4555,7 +4575,7 @@ mod tests {
     /// clipped first period too.
     #[test]
     fn a_strip_column_sits_under_its_period_centered_label() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let months_from = |first: usize, n: usize| -> Vec<String> { months_from_2000(first + n).split_off(first) };
         let quarters = {
             let mut p = make_time_payload(&months_from(1, 23));
@@ -4574,7 +4594,7 @@ mod tests {
     /// data: every cell under a year label prints that year's January, never a later year's.
     #[test]
     fn a_strip_column_under_a_stepped_year_label_prints_that_years_first_month() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let months: Vec<String> = (2..182).map(|i| format!("{}-{:02}-01", 1998 + i / 12, i % 12 + 1)).collect();
         for width in [300.0, 400.0, 500.0] {
             let mut p = make_time_payload(&months);
@@ -4599,7 +4619,7 @@ mod tests {
     /// An authored `labels.align` keeps interval labels on their ticks rather than centering them on the period.
     #[test]
     fn an_authored_label_align_keeps_band_quarter_labels_on_the_ticks() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(24));
         p["resolved"]["style"]["axis_x"]["labels"]["time_unit"] = serde_json::json!("yearquarter");
         p["resolved"]["style"]["axis_x"]["labels"]["align"] = serde_json::json!("left");
@@ -4613,7 +4633,7 @@ mod tests {
     /// An authored tick cadence keeps labels on their ticks for every family, bars included.
     #[test]
     fn an_authored_tick_count_keeps_band_quarter_labels_on_the_ticks() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(24));
         p["resolved"]["style"]["axis_x"]["labels"]["time_unit"] = serde_json::json!("yearquarter");
         p["resolved"]["style"]["axis_x"]["ticks"]["count"] = serde_json::json!(8.0);
@@ -4628,7 +4648,7 @@ mod tests {
     /// never thinned, so none is hidden.
     #[test]
     fn interval_labels_over_a_bottom_strip_are_never_parity_hidden() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(48));
         p["width"] = serde_json::json!(100.0);
         p["resolved"]["style"]["axis_x"]["labels"]["tilt_increments"] = serde_json::json!([0.0]);
@@ -4646,7 +4666,7 @@ mod tests {
     /// their bars rather than centering on a coarser period.
     #[test]
     fn an_authored_month_format_keeps_its_labels_on_their_bars() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(36));
         p["width"] = serde_json::json!(300.0);
         p["resolved"]["style"]["axis_x"]["labels"]["format"] = serde_json::json!("%b %Y");
@@ -4658,7 +4678,7 @@ mod tests {
     /// Label period equal to the data grain stays on its own bar.
     #[test]
     fn a_band_axis_keeps_equal_grain_labels_on_their_bars() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let svg = render(&make_payload(make_time_payload(&months_from_2000(12))), &test_fonts()).expect("renders");
         let step = bar_extents(&svg)[1].0 - bar_extents(&svg)[0].0;
         assert!((label_x(&svg, "Mar") - label_x(&svg, "Jan") - 2.0 * step).abs() < 1.0);
@@ -4675,31 +4695,31 @@ mod tests {
     /// Rows the query returned out of order draw the bars the ordered rows do.
     #[test]
     fn unordered_rows_draw_the_bars_of_ordered_rows() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let ordered = [("2024-03-01T08:00:00", 3.0), ("2024-03-02T09:30:00", 5.0), ("2024-03-04T07:15:00", 4.0), ("2024-03-09T12:00:00", 9.0)];
         let shuffled = [ordered[2], ordered[0], ordered[3], ordered[1]];
         let draw = |rows: &[(&str, f64)]| render(&dated_bars(rows), &test_fonts()).expect("renders");
-        assert_eq!(crate::time_axis::testing::geometry(&draw(&ordered)), crate::time_axis::testing::geometry(&draw(&shuffled)));
+        assert_eq!(::bind::time_axis::testing::geometry(&draw(&ordered)), ::bind::time_axis::testing::geometry(&draw(&shuffled)));
     }
 
     /// Two spellings of one instant seat in the order their text sorts, whatever order the rows come in.
     #[test]
     fn spellings_of_one_instant_seat_the_same_in_any_row_order() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let ordered = [("2024-03-01", 3.0), ("2024-03-01T00:00:00Z", 5.0), ("2024-03-05T12:00:00", 4.0), ("2024-03-09", 9.0)];
         let shuffled = [ordered[1], ordered[3], ordered[0], ordered[2]];
         let draw = |rows: &[(&str, f64)]| render(&dated_bars(rows), &test_fonts()).expect("renders");
-        assert_eq!(crate::time_axis::testing::geometry(&draw(&ordered)), crate::time_axis::testing::geometry(&draw(&shuffled)));
+        assert_eq!(::bind::time_axis::testing::geometry(&draw(&ordered)), ::bind::time_axis::testing::geometry(&draw(&shuffled)));
     }
 
     /// An offset timestamp sits where its UTC spelling does.
     #[test]
     fn an_offset_timestamp_bar_sits_where_its_utc_spelling_does() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let offset = [("2024-03-01T23:30:00-05:00", 3.0), ("2024-03-03T01:00:00+05:30", 5.0), ("2024-03-04T08:00:00+0100", 4.0)];
         let utc = [("2024-03-02T04:30:00Z", 3.0), ("2024-03-02T19:30:00Z", 5.0), ("2024-03-04T07:00:00Z", 4.0)];
         let draw = |rows: &[(&str, f64)]| render(&dated_bars(rows), &test_fonts()).expect("renders");
-        assert_eq!(crate::time_axis::testing::geometry(&draw(&offset)), crate::time_axis::testing::geometry(&draw(&utc)));
+        assert_eq!(::bind::time_axis::testing::geometry(&draw(&offset)), ::bind::time_axis::testing::geometry(&draw(&utc)));
     }
 
     /// A time x value that is no date refuses by the code every x-axis family raises.
@@ -4720,7 +4740,7 @@ mod tests {
     /// An authored x domain may end on a timestamp, which the UTC scale takes as the instant it is.
     #[test]
     fn an_authored_timestamp_domain_sets_the_time_scale() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut json = make_time_payload(&months_from_2000(72));
         json["resolved"]["style"]["axis_x"]["scale"]["continuous"]["domain"] = serde_json::json!(["2000-01-01T12:00:00", "2006-01-01T12:00:00"]);
         render(&make_payload(json), &test_fonts()).expect("renders");
@@ -4729,7 +4749,7 @@ mod tests {
     /// A band x whose grain detection tolerated a value that is no date keeps it as a category.
     #[test]
     fn a_band_x_keeps_a_value_that_is_no_date_as_a_category() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut cats: Vec<(String, f64)> = (1..=12).map(|m| (format!("2024-{m:02}-01"), 10.0 + f64::from(m))).collect();
         cats.push(("Unknown".to_string(), 5.0));
         let refs: Vec<(&str, f64)> = cats.iter().map(|(c, v)| (c.as_str(), *v)).collect();
@@ -4764,7 +4784,7 @@ mod tests {
     /// (31 days) over n, whatever the bucket's own length.
     #[test]
     fn grouped_series_on_a_time_axis_share_one_offset_step() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let svg = render(&make_payload(make_time_series_payload("none")), &test_fonts()).expect("renders");
         let fills = bar_fills(&svg);
         assert_eq!(fills.len(), 144);
@@ -4778,7 +4798,7 @@ mod tests {
     /// A stacked series piles in one bar per bucket, so every sub-bar shares the unsplit bucket width.
     #[test]
     fn stacked_series_on_a_time_axis_share_the_bucket_bar() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let svg = render(&make_payload(make_time_series_payload("zero")), &test_fonts()).expect("renders");
         let ext = bar_extents(&svg);
         assert_eq!(ext.len(), 72);
@@ -4790,7 +4810,7 @@ mod tests {
     /// width, not the authored radius.
     #[test]
     fn a_thin_time_stack_outline_rounds_to_a_quarter_of_its_width() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_series_payload("zero");
         p["resolved"]["style"]["mark"]["border"] = serde_json::json!({"width": 1.0, "color": "#FFFFFF", "radius": 2.0});
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -4810,7 +4830,7 @@ mod tests {
     /// midpoint anchor is no series value, so it stays name-only.
     #[test]
     fn endpoint_labels_on_grouped_series_over_a_time_axis_draw_the_rail() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let rail = |stack: &str| {
             let mut p = make_time_series_payload(stack);
             p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "label_offset": 6.0, "height": 20.0});
@@ -4834,7 +4854,7 @@ mod tests {
     /// Value labels beside a `timeFormat` expression speak the format at every tick, on the point scale's categories.
     #[test]
     fn value_labels_beside_a_time_format_expr_speak_it_at_every_category_tick() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = with_value_labels(make_time_payload(&months_from_2000(72)));
         p["resolved"]["style"]["axis_x"]["labels"]["expr"] = serde_json::json!("timeFormat(datum.value, '%m/%y')");
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -4956,7 +4976,7 @@ mod tests {
     /// An authored size centers a bucketed bar on its bucket at the literal width.
     #[test]
     fn an_authored_size_centers_a_bucketed_bar_on_its_bucket() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(72));
         p["resolved"]["style"]["mark"]["size"] = serde_json::json!(3.0);
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -4975,7 +4995,7 @@ mod tests {
     /// that still labels by the curated ladder over the span, not d3's full month names.
     #[test]
     fn a_dropped_grain_axis_labels_by_the_ladder_not_full_month_names() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let dates: Vec<String> = ["2025-08-03","2025-08-31","2025-09-30","2025-10-31","2025-11-30","2025-12-31","2026-01-31","2026-02-28","2026-03-31","2026-04-30","2026-05-31","2026-06-30","2026-07-31","2026-08-31"].map(String::from).to_vec();
         let svg = render(&make_payload(make_time_payload(&dates)), &test_fonts()).expect("renders");
         for name in ["August", "September", "October", "December"] {
@@ -4990,7 +5010,7 @@ mod tests {
     /// steps, one label per tick, where d3 would have ticked every twenty.
     #[test]
     fn a_dropped_grain_year_axis_steps_the_ladder_horizontally() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let dates: Vec<String> = ["1800", "1900", "1950", "2000", "2025"].map(|y| format!("{y}-01-01")).to_vec();
         let mut p = make_time_payload(&dates);
         p["width"] = serde_json::json!(360.0);
@@ -5007,7 +5027,7 @@ mod tests {
     /// ladder's one width: the clamp over the closest pair of distinct dates.
     #[test]
     fn irregular_dates_sit_on_their_instants_at_one_width() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let dates: Vec<String> =
             ["2024-01-03", "2024-01-10", "2024-02-14", "2024-03-02", "2024-05-21", "2024-06-09"].map(String::from).to_vec();
         let svg = render(&make_payload(make_time_payload(&dates)), &test_fonts()).expect("renders");
@@ -5030,7 +5050,7 @@ mod tests {
     /// A negative bucket hangs below the zero baseline on the signed value ladder.
     #[test]
     fn a_negative_value_on_a_time_axis_draws_below_the_baseline() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(72));
         p["rows"][3]["revenue"] = serde_json::json!(-5.0);
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -5041,7 +5061,7 @@ mod tests {
 
     #[test]
     fn a_ranged_bar_on_a_time_axis_draws_one_bar_per_bucket() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(72));
         p["resolved"]["y_start"] = serde_json::json!("start");
         for row in p["rows"].as_array_mut().unwrap() {
@@ -5054,7 +5074,7 @@ mod tests {
     /// A second row of one bucket stacks over the first, where the bar chart's stack groups by the bucket.
     #[test]
     fn two_rows_in_one_bucket_stack() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(72));
         p["rows"].as_array_mut().unwrap().push(serde_json::json!({"product": "2000-02-01", "revenue": 5.0}));
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -5063,7 +5083,7 @@ mod tests {
 
     #[test]
     fn two_rows_at_one_instant_stack() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let dates: Vec<String> =
             ["2024-01-03", "2024-01-10", "2024-02-14", "2024-03-02", "2024-05-21", "2024-05-21"].map(String::from).to_vec();
         let svg = render(&make_payload(make_time_payload(&dates)), &test_fonts()).expect("renders");
@@ -5074,7 +5094,7 @@ mod tests {
     /// month does inside it rather than at the plot's left edge.
     #[test]
     fn a_date_filtered_bar_pins_its_domain_to_the_range() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let plain = bar_extents(&render(&make_payload(make_time_payload(&months_from_2000(72))), &test_fonts()).expect("renders"));
         let mut p = make_time_payload(&months_from_2000(72));
         p["resolved"]["x_date_range"] = serde_json::json!({"start": "1999-01-01", "end": "2007-01-01"});
@@ -5087,7 +5107,7 @@ mod tests {
     /// its stack total sums the rows of that date.
     #[test]
     fn a_time_axis_tooltip_names_the_rows_own_date() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_payload(&["2024-01-03".to_string(), "2024-01-10".to_string(), "2024-02-14".to_string(), "2024-03-02".to_string()]);
         p["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.0f");
         p["resolved"]["style"]["axis_x"]["time_unit"] = serde_json::json!("yearmonth");
@@ -5104,7 +5124,7 @@ mod tests {
     /// day apart would tick the calendar.
     #[test]
     fn timestamps_within_a_day_label_the_clock() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let dates: Vec<String> = (0..24).map(|h| format!("2024-03-05T{h:02}:00:00")).collect();
         let mut p = make_time_payload(&dates);
         p["resolved"]["style"]["axis_x"]["type"] = serde_json::json!("temporal");
@@ -5119,7 +5139,7 @@ mod tests {
     /// bars, which only an unlayered bar declares, are absent.
     #[test]
     fn a_genuine_zero_leaves_the_bar_no_hover_band() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let hover = |zero: bool| {
             let mut p = make_time_payload(&months_from_2000(72));
             p["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.0f");
@@ -5140,7 +5160,7 @@ mod tests {
     /// With one date there is no pair to size a bar from: it takes the width ceiling, centered.
     #[test]
     fn a_single_instant_draws_one_bar_at_the_width_ceiling() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let svg = render(&make_payload(make_time_payload(&["2000-01-03".to_string()])), &test_fonts()).expect("renders");
         let bars = bar_extents(&svg);
         assert_eq!(bars.len(), 1);
@@ -5150,7 +5170,7 @@ mod tests {
     /// A time of day is a fraction of its day: two instants a half day apart sit a half day's pixels apart.
     #[test]
     fn timestamps_sit_at_their_instant_within_a_day() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let dates: Vec<String> =
             ["2024-01-03T06:00:00", "2024-01-03T18:00:00", "2024-02-14T00:00:00"].map(String::from).to_vec();
         let bars = bar_extents(&render(&make_payload(make_time_payload(&dates)), &test_fonts()).expect("renders"));
@@ -5163,7 +5183,7 @@ mod tests {
     /// A measure with no number leaves the time axis and no bars.
     #[test]
     fn a_time_axis_with_no_numeric_measure_draws_no_bars() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(72));
         for row in p["rows"].as_array_mut().unwrap() {
             row["revenue"] = serde_json::Value::Null;
@@ -7093,7 +7113,7 @@ mod tests {
             "style": {
                 "axis_x": {
                     "grid": {"visible": false, "threshold": null, "width": 1.0, "color": "#D0D3D9", "opacity": 1.0},
-                    "ticks": {"color": "#EDEFF2", "visible": true, "count": 6.0},
+                    "ticks": {"color": "#EDEFF2", "visible": false, "count": 6.0},
                     "labels": {
                         "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"},
                         "padding": 6.0, "min_gap": 4.0, "format": null, "visible": true, "align": "left"
@@ -7191,7 +7211,7 @@ mod tests {
     #[test]
     fn horizontal_bar_over_a_temporal_x_headers_its_tooltip_by_the_detected_grain() {
         use serde_json::json;
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut payload_json = make_horizontal_payload();
         payload_json["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
         payload_json["rows"] = json!([
@@ -7292,7 +7312,7 @@ mod tests {
         assert!(volume < revenue);
     }
 
-    /// The wide legend paints each measure's label (`wide_measure_labels_for`),
+    /// The wide legend paints each measure's label (`wide_measure_labels`),
     /// an authored `field_labels` entry verbatim; the raw column name never.
     #[test]
     fn wide_bar_legend_paints_measure_labels_on_both_orientations() {
@@ -8590,7 +8610,7 @@ mod tests {
     /// An authored `timeFormat(datum.value, F)` on a time axis speaks `F` of every tick's instant.
     #[test]
     fn a_time_format_label_expr_speaks_its_format_at_every_tick() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(72));
         p["resolved"]["style"]["axis_x"]["labels"]["expr"] = serde_json::json!("timeFormat(datum.value, '%m/%y')");
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -8600,7 +8620,7 @@ mod tests {
     /// The expression evaluator composes builtins: an upper-cased, concatenated date text.
     #[test]
     fn a_composed_label_expr_evaluates_at_every_tick() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(72));
         p["resolved"]["style"]["axis_x"]["labels"]["expr"] =
             serde_json::json!("'Q' + (quarter(datum.value) + 1) + upper(timeFormat(datum.value, ' %y'))");
@@ -8677,7 +8697,7 @@ mod tests {
     /// `≤7 days`/`8–30 days`, never the raw `"1 · ≤7 days"`.
     #[test]
     fn authored_labels_expr_rewrites_category_labels_before_drawing() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         use serde_json::json;
         let mut payload_json =
             make_vertical_payload(&[("1 · ≤7 days", 800.0), ("2 · 8–30 days", 600.0)], false);
@@ -8990,6 +9010,41 @@ mod tests {
         }
     }
 
+    /// `axis_x.labels.visible: false` on a horizontal bar: the category names
+    /// down the side paint nothing and the plot grows into their gutter.
+    #[test]
+    fn hidden_category_labels_free_their_gutter_on_a_horizontal_bar() {
+        use serde_json::json;
+        for position in ["left", "right"] {
+            let payload_with = |visible: bool| {
+                let mut payload_json = make_horizontal_payload();
+                payload_json["resolved"]["style"]["axis_y"]["position"] = json!(position);
+                payload_json["resolved"]["style"]["axis_x"]["labels"]["visible"] = json!(visible);
+                payload_json
+            };
+            let shown_svg = render(&make_payload(payload_with(true)), &test_fonts()).expect("renders");
+            let hidden_svg = render(&make_payload(payload_with(false)), &test_fonts()).expect("renders");
+            let widths = |svg: &str| gridline_positions(svg, "x1").into_iter().fold(0.0_f64, f64::max);
+            assert!(shown_svg.contains(">Alpha</text>"), "{position}: control paints category labels: {shown_svg}");
+            assert!(!hidden_svg.contains(">Alpha<") && !hidden_svg.contains(">Beta<"), "{position}: category labels painted: {hidden_svg}");
+            assert!(widths(&hidden_svg) > widths(&shown_svg), "{position}: plot did not widen: {} -> {}", widths(&shown_svg), widths(&hidden_svg));
+        }
+    }
+
+    /// The mirror's ghost copy of the category axis paints no names under `labels.visible: false`.
+    #[test]
+    fn hidden_category_labels_leave_no_name_on_the_mirror_ghost() {
+        use serde_json::json;
+        let make = |visible: bool| {
+            let mut payload_json = make_horizontal_payload();
+            payload_json["resolved"]["style"]["axis_y"]["mirror"] = json!(true);
+            payload_json["resolved"]["style"]["axis_x"]["labels"]["visible"] = json!(visible);
+            render(&make_payload(payload_json), &test_fonts()).expect("renders")
+        };
+        assert_eq!(make(true).matches(">Alpha</text>").count(), 2, "control paints both copies");
+        assert_eq!(make(false).matches(">Alpha<").count(), 0);
+    }
+
     /// Vega anchors an axis label at `sign * ((tickSize if ticks visible else
     /// 0) + labelPadding)` (`dbt_charts/core/utils.py:853-860`), so a visible
     /// tick pushes the right axis's label gutter out by `tick length` and the
@@ -9108,7 +9163,7 @@ mod tests {
     /// this fact regardless of the actual x shape.
     #[test]
     fn vertical_bar_standard_date_with_no_detected_bucket_formats_a_full_header() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         use serde_json::json;
         let mut payload_json = make_vertical_payload(
             &[
@@ -9253,7 +9308,7 @@ mod tests {
     #[test]
     fn a_fiscal_quarter_start_on_the_board_clock_keeps_its_band() {
         use serde_json::json;
-        let _tokyo = crate::time_zone::zone_scope("Asia/Tokyo");
+        let _tokyo = ::bind::time_zone::zone_scope("Asia/Tokyo");
         let cats = [("2024-03-31T15:00:00Z", 100.0), ("2024-06-30T15:00:00Z", 130.0)];
         let mut payload_json = make_vertical_payload(&cats, false);
         payload_json["resolved"]["x"] = json!("month");
@@ -9310,7 +9365,7 @@ mod tests {
     #[test]
     fn a_month_start_category_on_the_board_clock_heads_its_tooltip_with_its_month() {
         use serde_json::json;
-        let _tokyo = crate::time_zone::zone_scope("Asia/Tokyo");
+        let _tokyo = ::bind::time_zone::zone_scope("Asia/Tokyo");
         let cats = [("2023-12-31T15:00:00Z", 100.0), ("2024-01-31T15:00:00Z", 130.0), ("2024-02-29T15:00:00Z", 90.0)];
         let mut payload_json = make_vertical_payload(&cats, false);
         payload_json["resolved"]["orientation"] = json!("horizontal");
@@ -10201,6 +10256,11 @@ mod tests {
         // Production themes bake `ticks.visible: false` on the value axis.
         let mut axis_y = axis.clone();
         axis_y["ticks"]["visible"] = json!(false);
+        let mut axis = axis;
+        axis["ticks"]["visible"] = json!(orientation == "vertical");
+        if orientation == "horizontal" {
+            axis["position"] = json!(null);
+        }
 
         let resolved = json!({
             "link_open": "page",
@@ -10473,11 +10533,74 @@ mod tests {
         assert!(!svg.contains("rotate("), "{svg}");
     }
 
-    /// The rail arm: one label per series in the pane right of the plot,
-    /// anchored at the LAST column's cumulative segment midpoints, painted
-    /// in the companion ink of the series' palette slot. Fixture stacks:
-    /// A: y 0..30, x 30..40; B: y 0..15, x 15..20 — last column is B, so
-    /// y anchors at 7.5 and x at 17.5 (y's label sits below x's).
+    /// A last column whose total is too small to hold the rail's labels (a partial final period) does not
+    /// anchor the rail: it falls back to the latest column with a meaty total, so each label sits beside
+    /// its own segment instead of collapsing into a stack. Column B stands in for the last full period.
+    #[test]
+    fn a_stacked_rail_steps_back_from_a_partial_final_column() {
+        let rail_ys = |extra_tiny_column: bool| {
+            let mut p = make_rail_payload();
+            if extra_tiny_column {
+                for (series, val) in [("x", 0.05), ("y", 0.15)] {
+                    p["rows"].as_array_mut().unwrap().push(serde_json::json!({"cat": "C", "series": series, "val": val}));
+                }
+            }
+            let svg = render(&make_payload(p), &test_fonts()).expect("rail bar renders");
+            [">y<", ">x<"].map(|needle| {
+                let pos = svg.find(needle).unwrap_or_else(|| panic!("{needle} missing: {svg}"));
+                let tag = &svg[svg[..pos].rfind("<text").unwrap()..pos];
+                tag.split("y=\"").nth(1).unwrap().split('"').next().unwrap().parse::<f64>().unwrap()
+            })
+        };
+        let full = rail_ys(false);
+        let with_partial = rail_ys(true);
+        assert!(full.iter().zip(&with_partial).all(|(a, b)| (a - b).abs() < 0.5), "{full:?} vs {with_partial:?}");
+    }
+
+    /// The rail anchors at the latest column whose TOTAL has meat (a quarter of the median column total), so
+    /// a partial or empty final period steps back while a thin or zero segment inside a full column stays put.
+    /// Each case is the `(a, b)` segments per column and the column the rail anchors to.
+    #[test]
+    fn a_stacked_rail_anchors_on_the_latest_column_with_a_meaty_total() {
+        use super::domain::stacked_rail_anchors;
+        let cases: [(&str, &[(f64, f64)], usize); 9] = [
+            ("partial final period, all segments thin", &[(60., 40.), (70., 30.), (65., 35.), (2., 1.)], 2),
+            ("one thin slice in a full column", &[(60., 40.), (70., 30.), (99., 1.)], 2),
+            ("a zero segment in a full column", &[(60., 40.), (70., 30.), (100., 0.)], 2),
+            ("low-volume series, every column small", &[(2., 1.), (3., 1.), (1., 2.), (2., 2.)], 3),
+            ("final column empty", &[(60., 40.), (70., 30.), (0., 0.)], 1),
+            ("every column empty", &[(0., 0.), (0., 0.)], 1),
+            ("ramp-up: early columns thin, last is full", &[(1., 1.), (2., 1.), (60., 40.), (70., 30.)], 3),
+            ("final total just under the quarter-median line", &[(40., 40.), (40., 40.), (40., 40.), (9., 10.)], 2),
+            ("final total exactly at the quarter-median line", &[(40., 40.), (40., 40.), (40., 40.), (10., 10.)], 3),
+        ];
+        for (name, cols, expected) in cases {
+            let cat_domain: Vec<String> = (0..cols.len()).map(|i| format!("c{i}")).collect();
+            let stack_order = vec!["a".to_string(), "b".to_string()];
+            let data_map: HashMap<(String, String), f64> = cols
+                .iter()
+                .enumerate()
+                .flat_map(|(i, &(a, b))| [((format!("c{i}"), "a".to_string()), a), ((format!("c{i}"), "b".to_string()), b)])
+                .collect();
+            let anchors = stacked_rail_anchors(&cat_domain, &stack_order, &data_map, false, None).expect("anchors");
+            let (a, b) = cols[expected];
+            assert_eq!(anchors, [("a".to_string(), a / 2.0), ("b".to_string(), a + b / 2.0)], "{name}");
+        }
+    }
+
+    /// A series with no datum in the anchor column anchors at its own latest column before it, not at a
+    /// zero-height span in a column it skips.
+    #[test]
+    fn a_stacked_rail_anchors_a_gappy_series_at_its_own_latest_column_before_the_anchor() {
+        use super::domain::stacked_rail_anchors;
+        let cat_domain: Vec<String> = (0..4).map(|i| format!("c{i}")).collect();
+        let stack_order = vec!["a".to_string(), "b".to_string()];
+        let data: [(usize, &str, f64); 7] = [(0, "a", 60.), (0, "b", 40.), (1, "a", 100.), (2, "a", 100.), (3, "a", 2.), (3, "b", 1.), (2, "a", 100.)];
+        let data_map: HashMap<(String, String), f64> = data.iter().map(|&(i, series, v)| ((format!("c{i}"), series.to_string()), v)).collect();
+        let anchors = stacked_rail_anchors(&cat_domain, &stack_order, &data_map, false, None).expect("anchors");
+        assert_eq!(anchors, [("a".to_string(), 50.0), ("b".to_string(), 80.0)]);
+    }
+
     /// A normalized category with no share (every value 0) anchors its rail labels at
     /// the baseline, as `_stacked_midpoints` does, rather than at a NaN share.
     #[test]
@@ -11184,7 +11307,7 @@ mod tests {
     /// line wraps with the value leading, and one too long for two keeps its value and cuts line two.
     #[test]
     fn a_grouped_bar_rail_wraps_then_drops_the_value() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let render_named = |name: &str| {
             let mut p = make_time_series_payload("none");
             p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "label_offset": 6.0, "height": 20.0});
@@ -11376,6 +11499,135 @@ mod tests {
             vec![("y".to_string(), "#3164a3".to_string()), ("x".to_string(), "#779bc9".to_string())],
             "authored order (y, x) wins over alphabetical (x, y); fills follow the board slot: {svg}"
         );
+    }
+
+    /// A stacked bar's legend lists the stack's series in the stack's order unless `style.legend.values` names its
+    /// entries: they then show in that order, on a horizontal and a vertical stack alike.
+    #[test]
+    fn stacked_legend_honors_an_authored_values_order() {
+        use serde_json::json;
+        let legend_labels = |orientation: &str, values: Option<serde_json::Value>| {
+            let mut payload_json = make_stacked_payload(orientation, "zero");
+            payload_json["resolved"]["legend"]["visible"] = json!(true);
+            if let Some(values) = values {
+                payload_json["resolved"]["legend"]["values"] = values;
+            }
+            let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
+            svg.match_indices(&format!("width=\"{LEGEND_SWATCH}\""))
+                .map(|(pos, _)| legend_label_text(&svg[pos..(pos + 500).min(svg.len())]).to_string())
+                .collect::<Vec<_>>()
+        };
+        for orientation in ["horizontal", "vertical"] {
+            let stack_order = legend_labels(orientation, None);
+            let mut reversed = stack_order.clone();
+            reversed.reverse();
+            assert_eq!(legend_labels(orientation, Some(json!(reversed))), reversed, "{orientation}: values reorder the legend");
+            assert_eq!(legend_labels(orientation, Some(json!(["y"]))), ["y"], "{orientation}: values narrow the legend");
+        }
+    }
+
+    /// A floating legend paints over a vertical bar's marks, not under them where the plot hides it; a
+    /// horizontal bar's resolved legend never floats (the resolver decides), so it sits in a strip above
+    /// the first bar.
+    #[test]
+    fn an_overlay_legend_clears_the_bars() {
+        use serde_json::json;
+        for orientation in ["horizontal", "vertical"] {
+            let mut payload_json = make_stacked_payload(orientation, "zero");
+            payload_json["resolved"]["legend"]["visible"] = json!(true);
+            let overlay = orientation == "vertical";
+            payload_json["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": overlay});
+            let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
+            let legend_at = svg.find("role-legend\"").expect("legend");
+            let last_bar_at = svg.rfind("fill=\"#779bc9\"/>").expect("bars");
+            if orientation == "vertical" {
+                assert!(legend_at > last_bar_at, "the overlay legend is painted under the bars");
+                continue;
+            }
+            let swatch_bottom = svg[legend_at..].split("<rect x=\"").nth(1).map(|rect| {
+                let y: f64 = rect.split("y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+                y + LEGEND_SWATCH
+            }).expect("a swatch");
+            let plot_top: f64 = svg[legend_at..].split("<g transform=\"translate(").nth(1).unwrap().split(',').nth(1).unwrap().split(')').next().unwrap().trim().parse().unwrap();
+            let top_bar_y = plot_top + rects(&svg).into_iter().filter(|m| m.fill() == "#3164a3").map(|m| m.attr("y").unwrap().parse::<f64>().unwrap()).fold(f64::INFINITY, f64::min);
+            assert!(swatch_bottom <= top_bar_y, "the legend ({swatch_bottom}) reaches the first bar ({top_bar_y})");
+        }
+    }
+
+    /// A top legend whose entries do not fit one row at their natural width wraps into as many rows as it
+    /// takes, each label whole; one that fits stays a single row.
+    #[test]
+    fn a_top_legend_wraps_before_it_cuts_a_label() {
+        use serde_json::json;
+        let render_legend = |series: &[&str], width: f64| {
+            let mut payload_json = make_stacked_payload("horizontal", "zero");
+            payload_json["width"] = json!(width);
+            payload_json["resolved"]["legend"]["visible"] = json!(true);
+            payload_json["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false});
+            payload_json["rows"] = json!(series.iter().map(|s| json!({"cat": "A", "series": s, "val": 10.0})).collect::<Vec<_>>());
+            let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
+            let at = svg.find("role-legend\"").expect("legend");
+            let swatch_ys: Vec<String> = svg[at..]
+                .split("<rect x=\"")
+                .skip(1)
+                .filter(|rect| rect.contains(&format!("width=\"{LEGEND_SWATCH}\"")))
+                .map(|rect| rect.split("y=\"").nth(1).unwrap().split('"').next().unwrap().to_string())
+                .collect();
+            (svg, swatch_ys)
+        };
+        let names = ["No sync attempt", "Sync attempted", "Initial sync", "Incremental volume", "Trial"];
+        let (svg, ys) = render_legend(&names, 408.0);
+        assert_eq!(ys.len(), 5);
+        let mut rows = ys.clone();
+        rows.dedup();
+        assert!(rows.len() >= 2, "five long entries stay on one row: {ys:?}");
+        assert!(!svg.contains('…'), "a label was cut: {svg}");
+        for name in names {
+            assert!(svg.contains(&format!(">{name}</text>")), "{name} missing");
+        }
+        let (_, ys) = render_legend(&["Trial", "Sync"], 408.0);
+        assert_eq!(ys.len(), 2);
+        assert_eq!(ys[0], ys[1], "a legend that fits wraps anyway: {ys:?}");
+    }
+
+    /// A wrapped legend row is sized from the room the category labels leave: the same three entries
+    /// share one row beside short labels and wrap, still inside the card, beside long ones.
+    #[test]
+    fn a_top_legend_wraps_to_the_room_the_category_labels_leave() {
+        use serde_json::json;
+        let render_legend = |cat: &str| {
+            let mut payload_json = make_stacked_payload("horizontal", "zero");
+            payload_json["width"] = json!(408.0);
+            payload_json["resolved"]["legend"]["visible"] = json!(true);
+            payload_json["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false});
+            payload_json["rows"] = json!(["Initial sync", "Sync attempted", "Incremental volume"]
+                .iter()
+                .map(|s| json!({"cat": cat, "series": s, "val": 10.0}))
+                .collect::<Vec<_>>());
+            let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
+            let at = svg.find("role-legend\"").expect("legend");
+            let swatch_ys: Vec<String> = svg[at..]
+                .split("<rect x=\"")
+                .skip(1)
+                .filter(|rect| rect.contains(&format!("width=\"{LEGEND_SWATCH}\"")))
+                .map(|rect| rect.split("y=\"").nth(1).unwrap().split('"').next().unwrap().to_string())
+                .collect();
+            let label_end = svg[at..]
+                .split("role-legend-label")
+                .skip(1)
+                .map(|label| {
+                    let x: f64 = label.split("<text x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+                    let text = label.split("fill=\"#").nth(1).unwrap().split('>').nth(1).unwrap().split('<').next().unwrap();
+                    x + test_fonts().measure_shaped(text, TEST_FONT, 11.0).unwrap()
+                })
+                .fold(0.0, f64::max);
+            (swatch_ys, label_end)
+        };
+        let (short_ys, _) = render_legend("A");
+        assert!(short_ys.windows(2).all(|pair| pair[0] == pair[1]), "short labels leave room for one row: {short_ys:?}");
+        let (long_ys, label_end) = render_legend("A category label about one hundred and fifty pixels wide");
+        assert!(long_ys.windows(2).any(|pair| pair[0] != pair[1]), "long labels still left one row: {long_ys:?}");
+        assert!(label_end <= 408.0, "the wrapped legend runs past the card: {label_end}");
     }
 
     /// `grouped_legend_domain` must fold-match case and `-`/`_`/space
@@ -11994,7 +12246,7 @@ mod tests {
     /// flat, as production draws them.
     #[test]
     fn temporal_category_labels_never_take_the_ordinal_ladder() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         use serde_json::json;
         let dates = [
             "2025-01-06", "2025-02-03", "2025-03-03", "2025-03-31", "2025-04-28", "2025-05-26",
@@ -12127,7 +12379,7 @@ mod tests {
     /// 62 coarse buckets, past the 60-bucket cap: a time axis too.
     #[test]
     fn the_scaffold_gate_follows_production_s_budget_fill_and_authored_grain_branches() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         use serde_json::json;
         let bar_xs = |p: serde_json::Value| -> Vec<f64> {
             let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -12944,6 +13196,42 @@ mod tests {
                 ("y".into(), "#3164a3".into()),
             ]
         );
+    }
+
+    /// A side legend taller than its card folds at the count that fits, closing on a
+    /// "+N more" note that names what it holds back; no entry is dropped silently. The note has no
+    /// swatch and starts at the swatch column's left edge, not the label column.
+    #[test]
+    fn a_side_legend_taller_than_the_card_folds_into_an_overflow_row() {
+        use serde_json::json;
+        for (orientation, subtitle) in [("vertical", None), ("horizontal", None), ("vertical", Some("A subtitle")), ("horizontal", Some("A subtitle"))] {
+            let mut payload_json = make_stacked_payload(orientation, "zero");
+            payload_json["resolved"]["subtitle"] = json!(subtitle);
+            let names: Vec<String> = (1..=25).map(|n| format!("Series {n:02}")).collect();
+            payload_json["rows"] = names.iter().map(|n| json!({"cat": "A", "series": n, "val": 1.0})).collect();
+            payload_json["resolved"]["palette"] = names.iter().map(|_| json!("#3164a3")).collect();
+            payload_json["resolved"]["legend"]["visible"] = json!(true);
+            payload_json["resolved"]["legend"]["direction"] = json!("vertical");
+            payload_json["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false});
+            payload_json["resolved"]["stacked_domain_max"] = json!(25.0);
+            let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
+            let marks_h: f64 = svg.split(" height=\"").nth(1).and_then(|r| r.split('"').next()).expect("svg height").parse().expect("number");
+            let attr = |g: &str, name: &str| -> f64 { g.split(&format!(" {name}=\"")).nth(1).and_then(|r| r.split('"').next()).expect("attribute").parse().expect("number") };
+            let label_rows: Vec<(f64, &str)> = svg
+                .split("role-legend-label")
+                .skip(1)
+                .map(|g| (attr(g, "y"), g.split('>').nth(2).and_then(|t| t.split('<').next()).expect("label text")))
+                .collect();
+            let (_, folded) = label_rows.last().expect("legend labels");
+            let held_back: usize = folded.strip_prefix('+').and_then(|t| t.strip_suffix(" more")).expect(folded).parse().expect("a count");
+            let symbols = svg.split("role-legend-symbol").count() - 1;
+            assert_eq!(symbols, label_rows.len() - 1, "{orientation}: the overflow note has no swatch: {svg}");
+            let label_xs: Vec<f64> = svg.split("role-legend-label").skip(1).map(|g| attr(g, "x")).collect();
+            let symbol_left = svg.split("role-legend-symbol").nth(1).map(|g| attr(g, "x")).expect("a swatch");
+            assert!(label_xs.last().unwrap() < &label_xs[0] && (label_xs.last().unwrap() - symbol_left).abs() < 6.0, "{orientation}: the note starts at the swatch column: {label_xs:?} vs {symbol_left}");
+            assert_eq!(label_rows.len() - 1 + held_back, 25, "{orientation} {folded}: every series is a row or counted in the overflow row");
+            assert!(label_rows.iter().all(|(y, _)| *y <= marks_h), "{orientation}: every row, the overflow row included, sits inside the card: {svg}");
+        }
     }
 
     /// `stack: center` floats each category's stack to the middle of the
@@ -14969,6 +15257,29 @@ mod tests {
             assert!(svg.contains("ghost_marks"), "the mirror's invisible rule layer: {svg}");
         }
 
+        /// `labels.visible: false` paints no category name on any copy of the axis: the row headers,
+        /// the mirror's right-edge copy, and a right-hand category axis's edge copy.
+        #[test]
+        fn hidden_category_labels_leave_no_name_on_any_facet_axis_copy() {
+            for (case, edit) in [
+                ("row header", (|_: &mut serde_json::Value| {}) as fn(&mut serde_json::Value)),
+                ("mirror ghost copy", |p| p["resolved"]["style"]["axis_y"]["mirror"] = json!(true)),
+                ("right-edge copy", |p| p["resolved"]["style"]["axis_y"]["position"] = json!("right")),
+            ] {
+                let make = |visible: bool| {
+                    let mut payload_json = horizontal_facet_payload(json!({"rows": "panel", "columns": null, "scale": "shared"}));
+                    edit(&mut payload_json);
+                    payload_json["resolved"]["style"]["axis_x"]["labels"]["visible"] = json!(visible);
+                    rendered(payload_json)
+                };
+                assert!(text_count(&make(true), "North") >= 2, "{case}: control paints names");
+                let hidden = make(false);
+                for category in ["North", "South", "East"] {
+                    assert_eq!(text_count(&hidden, category), 0, "{case}: {category} painted: {hidden}");
+                }
+            }
+        }
+
         /// A facet repeats a category across its panels, and production's default
         /// horizontal sort folds the repeats with a sum (`vl_sort_op`). The data
         /// ranks differently under sum, min and max.
@@ -16768,7 +17079,7 @@ mod tests {
         /// `url(#id)` resolves to the first match in the composed document.
         #[test]
         fn a_stroked_temporal_multiples_bar_clips_each_panel_to_its_own_bar() {
-            let _locale = crate::time_locale::en_us_scope();
+            let _locale = ::bind::time_locale::en_us_scope();
             let months = months_from_2000(72);
             let mut payload_json = make_time_payload(&months);
             payload_json["resolved"]["multiples"] = json!({"rows": "region", "columns": null, "scale": "shared"});
@@ -17325,13 +17636,14 @@ mod tests {
 
         const BAR_FILL: &str = "fill=\"#3164a3\"";
 
-        /// Background before the bars, Foreground after them and before either axis.
+        /// Background before the bars, Foreground after them and after the x axis, so a rule on the
+        /// plot edge covers the ticks.
         fn assert_plane_order(svg: &str) {
             let background = at(svg, "annotations-background");
             let foreground = at(svg, "annotations-foreground");
             let bar = at(svg, BAR_FILL);
-            let axis = at(svg, "data-dct-role=\"x-axis\"").min(at(svg, "data-dct-role=\"y-axis\""));
-            assert!(background < bar && bar < foreground && foreground < axis, "{svg}");
+            let axis = at(svg, "data-dct-role=\"x-axis\"");
+            assert!(background < bar && bar < axis && axis < foreground, "{svg}");
         }
 
         /// The first `<rect>` of the Background group: `(x, y, width, height)`.
@@ -17349,7 +17661,8 @@ mod tests {
             let attr = |name: &str| -> f64 {
                 clip.split(&format!(" {name}=\"")).nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
             };
-            (attr("width"), attr("height"))
+            let pad = -attr("x");
+            (attr("width") - 2.0 * pad, attr("height") - 2.0 * pad)
         }
 
         fn plot_top(svg: &str) -> f64 {

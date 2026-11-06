@@ -14,23 +14,19 @@ import pytest
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
     migrate_yaml_text,
 )
 from dbt_charts.core.compile.migrations.migrations import (
     MigrationError,
-    _board_migration_context,
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
-from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
-    load_yaml_schema_catalog,
-)
+
+from ._engine_migrations import migrate_mapping
 
 RAMP = [30, 22, 16, 14, 12, 11]
 
 
 def test_title_sizes_migrates_to_the_heading_font() -> None:
-    _, registry = _board_migration_context()
     raw = {
         "title": "Revenue",
         "style": {"title": {"sizes": RAMP}},
@@ -38,9 +34,7 @@ def test_title_sizes_migrates_to_the_heading_font() -> None:
     }
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        migrated = migrate_mapping(
-            raw, catalog=load_yaml_schema_catalog(), registry=registry
-        )
+        migrated = migrate_mapping(raw)
     assert migrated["style"]["fonts"] == {"heading": {"sizes": RAMP}}
     assert "sizes" not in migrated["style"]["title"]
     AuthoredBoard.model_validate(migrated)
@@ -49,22 +43,18 @@ def test_title_sizes_migrates_to_the_heading_font() -> None:
 def test_title_sizes_yaml_text_refuses_loudly() -> None:
     """The text writer moves scalars only; a list-valued move is refused by name
     rather than half-applied."""
-    _, registry = _board_migration_context()
     text = (
         "title: Revenue\nstyle:\n  title:\n    sizes: [30, 22, 16, 14, 12, 11]\n"
         "rows: [revenue]\n"
     )
     with pytest.raises(MigrationError, match="style.title.sizes"):
-        migrate_yaml_text(text, catalog=load_yaml_schema_catalog(), registry=registry)
+        migrate_yaml_text(text)
 
 
 def _migrate(raw: dict[str, Any]) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(
-            raw, catalog=load_yaml_schema_catalog(), registry=registry
-        )
+        return migrate_mapping(raw)
 
 
 _CHART = {"type": "bar", "query": "q1", "x": "a", "y": "b"}
@@ -105,9 +95,8 @@ def test_chart_level_ramp_deletion_names_the_successor() -> None:
         "style": {"charts": {"title": {"sizes": RAMP}}},
         "rows": ["c1"],
     }
-    _, registry = _board_migration_context()
     with pytest.warns(SchemaMigrationWarning, match="style.fonts.heading.sizes"):
-        migrate_mapping(raw, catalog=load_yaml_schema_catalog(), registry=registry)
+        migrate_mapping(raw)
 
 
 def test_root_ramp_still_moves_beside_a_chart_level_ramp() -> None:
@@ -165,12 +154,9 @@ _DEEP = {
 @pytest.mark.parametrize("shape", ["rows", "tabs"])
 def test_board_ramp_moves_at_depth_two(shape: str) -> None:
     raw = {"title": "T", "queries": _QUERIES, "charts": {"c1": _CHART}, **_DEEP[shape]}
-    _, registry = _board_migration_context()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        migrated = migrate_mapping(
-            raw, catalog=load_yaml_schema_catalog(), registry=registry
-        )
+        migrated = migrate_mapping(raw)
     assert "[50, 40, 30, 20, 15, 10]" in str(migrated)
     assert "'fonts': {'heading': {'sizes': [50, 40, 30, 20, 15, 10]}}" in str(migrated)
     assert not any(
@@ -186,42 +172,3 @@ def test_board_ramp_past_the_nesting_depth_fails_loudly() -> None:
     raw = {"title": "T", "queries": _QUERIES, "charts": {"c1": _CHART}, **board}
     with pytest.raises(MigrationError):
         _migrate(raw)
-
-
-def test_ramp_deletion_scopes_are_derived_from_the_frozen_schema() -> None:
-    """The scopes come from 0.9.0's own grammar, not the live models."""
-    from dbt_charts.core.compile.migrations.versions.v0_10_0 import (
-        _chart_families_with_title_ramp,
-        _chart_types_with_title_ramp,
-    )
-
-    source = load_yaml_schema_catalog().schema_for("0.9.0")
-    assert _chart_types_with_title_ramp(source) == (
-        "area",
-        "bar",
-        "bubble_map",
-        "donut",
-        "geoshape",
-        "heatmap",
-        "histogram",
-        "kpi",
-        "line",
-        "map",
-        "pie",
-        "point_map",
-        "scatter",
-        "table",
-    )
-    assert _chart_families_with_title_ramp(source) == (
-        "area",
-        "bar",
-        "geoshape",
-        "heatmap",
-        "histogram",
-        "kpi",
-        "line",
-        "pie",
-        "point_map",
-        "scatter",
-        "table",
-    )

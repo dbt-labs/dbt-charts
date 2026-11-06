@@ -1,6 +1,6 @@
 """A file-source query runs through one materializer and one execute path.
 
-``Executor.execute_query`` and ``AdapterRegistry.execute`` (the entry point
+``Executor.execute_query`` and ``ExecEnv.execute`` (the entry point
 ``dct query`` uses) must return the same rows for the same file source, and the
 registry's materializer must be the only one built.
 """
@@ -15,9 +15,11 @@ import yaml
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.execute.adapters import AdapterRegistry, build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import ExecEnv, build_exec_env, close_env
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
+from dbt_charts.core.execute.run import run_query
+
+from ..._run import Run
 
 _BOARD_YAML = """
 title: File Source Board
@@ -45,22 +47,20 @@ def _project(tmp_path: Path) -> FilesystemProject:
     return FilesystemProject(tmp_path)
 
 
-def _executor(registry: AdapterRegistry, board_yaml: str = _BOARD_YAML) -> Executor:
+def _executor(registry: ExecEnv, board_yaml: str = _BOARD_YAML) -> Run:
     result = compile_board(board_yaml)
     assert result.success, result.errors
     board = result.board
     assert board is not None
-    return Executor(
-        board, adapter_registry=registry, query_registry=dict(board.queries)
-    )
+    return Run(board, env=registry, query_registry=dict(board.queries))
 
 
 def test_injected_materializer_serves_executor_and_registry(tmp_path: Path) -> None:
     project = _project(tmp_path)
     materializer = FileSourceMaterializer(project)
-    registry = build_adapter_registry(project, file_materializer=materializer)
+    registry = build_exec_env(project, file_materializer=materializer)
 
-    via_registry = registry.execute(SqlQuery(sql=_SQL, source="shop"))
+    via_registry = run_query(registry, SqlQuery(sql=_SQL, source="shop"))
     via_executor = _executor(registry).execute_query("q")
 
     assert via_registry.error is None
@@ -80,12 +80,12 @@ def test_default_local_registry_builds_one_materializer(
         original_init(self, project)
 
     monkeypatch.setattr(FileSourceMaterializer, "__init__", counting_init)
-    registry = build_adapter_registry(project)
+    registry = build_exec_env(project)
     assert builds == []
 
     via_executor = _executor(registry).execute_query("q")
-    via_registry = registry.execute(SqlQuery(sql=_SQL, source="shop"))
-    registry.close()
+    via_registry = run_query(registry, SqlQuery(sql=_SQL, source="shop"))
+    close_env(registry)
 
     assert [r["id"] for r in via_executor] == [1, 2]
     assert [r["id"] for r in via_registry.data] == [1, 2]
@@ -97,7 +97,7 @@ def test_executor_honors_the_row_ceiling_on_a_file_source(
 ) -> None:
     project = _project(tmp_path)
     monkeypatch.setattr("dbt_charts.core.compile.config.resolve_max_rows", lambda: 1)
-    executor = _executor(build_adapter_registry(project))
+    executor = _executor(build_exec_env(project))
 
     rows = executor.execute_query("q")
 

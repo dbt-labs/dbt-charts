@@ -2,7 +2,7 @@
 
 Coverage:
     - DuckDB adapter end-to-end: bound params reach the DuckDB backend unchanged
-    - AdapterRegistry params passthrough
+    - ExecEnv params passthrough
     - execute_query: malicious variable value is bound, never interpolated into SQL
 """
 
@@ -19,6 +19,7 @@ from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.execute.arrow_ingest import table
 from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.run import run_query
 
 pytestmark = pytest.mark.usefixtures("typed_via_execute")
 
@@ -48,29 +49,28 @@ class TestAdapterParamsPassthrough:
 
         assert mock_execute.call_args[0][1].params == ("North",)
 
-    def test_adapter_registry_passes_params_through(
-        self, local_project: FilesystemProject
-    ):
-        """AdapterRegistry hands pre-rendered params to the backend as bindings."""
+    def test_exec_env_passes_params_through(self, local_project: FilesystemProject):
+        """ExecEnv hands pre-rendered params to the backend as bindings."""
         from unittest.mock import MagicMock
 
         import nanoarrow as na
         import pyarrow as pa
 
         from dbt_charts.core.compile.models.source import DuckDBSourceConfig
-        from dbt_charts.core.execute.adapters import AdapterRegistry
         from dbt_charts.core.execute.backends.base import BackendRegistry
+        from dbt_charts.core.execute.env import make_exec_env
         from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
         backend = MagicMock()
         backend.param_style = INLINE_PLACEHOLDERS
         backend.execute.return_value = na.Array(pa.table({"n": [1]}))
-        registry = AdapterRegistry(
+        registry = make_exec_env(
             project=local_project(Path()),
             backends=BackendRegistry({"duckdb": backend}),
         )
 
-        registry.execute(
+        run_query(
+            registry,
             SqlQuery(sql="SELECT 1", source="db"),
             variables={},
             params=["test"],
@@ -94,7 +94,8 @@ class TestExecuteQueryParameterization:
         would fail.
         """
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
+
+        from ..._run import Run
 
         yaml_content = """\
 title: Test
@@ -123,13 +124,11 @@ rows:
             sources={"duckdb": {"type": "duckdb", "path": ":memory:"}}
         )
 
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
-        registry = build_adapter_registry(project)
+        registry = build_exec_env(project)
 
-        backend = registry._backends.for_source(  # noqa: SLF001
-            DuckDBSourceConfig(type="duckdb")
-        )
+        backend = registry.backends.for_source(DuckDBSourceConfig(type="duckdb"))
 
         captured_calls: list[tuple[str, list]] = []
 
@@ -140,9 +139,9 @@ rows:
         malicious = "'; DROP TABLE users; --"
 
         with patch.object(backend, "execute", side_effect=capture_duckdb):
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=registry,
+                env=registry,
                 query_registry=result.query_registry,
                 use_cache=False,
             )
@@ -180,8 +179,9 @@ class TestPlaceholderShapedLiteralsThroughExecutor:
 
         from dbt_charts.core.compile import compile
         from dbt_charts.core.compile.config import ProjectSourcesConfig
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env, close_env
+
+        from ..._run import Run
 
         result = compile(yaml_content)
         assert result.success, result.errors
@@ -200,7 +200,7 @@ class TestPlaceholderShapedLiteralsThroughExecutor:
                 }
             }
         )
-        registry = build_adapter_registry(project)
+        registry = build_exec_env(project)
 
         captured: list[str] = []
         mock_table = MagicMock()
@@ -214,18 +214,18 @@ class TestPlaceholderShapedLiteralsThroughExecutor:
 
         try:
             with patch(
-                "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+                "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
                 return_value=mock_adapter,
             ):
-                executor = Executor(
+                executor = Run(
                     result.board,
-                    adapter_registry=registry,
+                    env=registry,
                     query_registry=result.query_registry,
                     use_cache=False,
                 )
                 exec_result = executor.execute_query(query_name, variables)
         finally:
-            registry.close()
+            close_env(registry)
 
         # execute_query returns rows and raises QueryError on failure.
         assert isinstance(exec_result, list)

@@ -7,7 +7,7 @@
 
 use crate::constants::bar::{HOVER_BAND_EXTEND_FRACTION, HOVER_BAND_TRIGGER_FRACTION};
 use d3rs::scale::Continuous;
-use crate::common::row_num;
+use ::bind::rows::row_num;
 use crate::contract::{aria_attrs, mark_group, ItemRole};
 use scene::{Attrs, Node, PathData, Role};
 use serde_json::{Map, Value};
@@ -63,7 +63,7 @@ impl HoverBand {
         let mut totals: HashMap<String, f64> = HashMap::new();
         for row in rows {
             if let Some(v) = row_num(row, measure) {
-                *totals.entry(crate::common::row_str(row, cat_field)).or_insert(0.0) += v.max(0.0);
+                *totals.entry(::bind::rows::row_str(row, cat_field)).or_insert(0.0) += v.max(0.0);
             }
         }
         let domain_max = stacked_domain_max.unwrap_or_else(|| totals.values().copied().fold(0.0_f64, f64::max));
@@ -72,12 +72,12 @@ impl HoverBand {
         }
         let mut carriers: HashMap<String, String> = HashMap::new();
         for row in rows {
-            let cat = crate::common::row_str(row, cat_field);
+            let cat = ::bind::rows::row_str(row, cat_field);
             if carriers.contains_key(&cat) || totals.get(&cat).is_none_or(|t| t / domain_max >= HOVER_BAND_TRIGGER_FRACTION) {
                 continue;
             }
             if !matches!(row.get(series_field), None | Some(Value::Null)) {
-                carriers.insert(cat, crate::common::row_str(row, series_field));
+                carriers.insert(cat, ::bind::rows::row_str(row, series_field));
             }
         }
         (!carriers.is_empty()).then(|| HoverBand { gate: Gate::Carriers(carriers), rows: Vec::new() })

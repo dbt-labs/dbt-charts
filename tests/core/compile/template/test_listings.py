@@ -14,14 +14,15 @@ from dbt_charts.core.board_listings import resolve_listings
 from dbt_charts.core.compile import compile as compile_text
 from dbt_charts.core.compile.compiler import CompileResult, compile_file
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.recording import record_board
 from dbt_charts.core.project import Project
 from dbt_charts.core.render import render
 from dbt_charts.core.render.board_replay import render_board_from_artifact
 from dbt_charts.core.render.board_resolve import build_resolved_board
 from dbt_charts.core.render.render_result import RenderResult
+
+from ...._run import Run
 
 INDEX = """\
 title: Home
@@ -58,13 +59,13 @@ def _render(project: Project, relpath: str = "charts/index.yml") -> RenderResult
     result = _compile(project, relpath)
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
         clock=lambda: datetime(2001, 2, 3, tzinfo=UTC),
     )
-    return render(result.board, executor, format="svg")
+    return render(result.board, executor.ctx, executor.ledger, format="svg")
 
 
 def test_glob_boards_lists_matching_boards_with_titles(
@@ -218,12 +219,12 @@ def test_board_without_location_fails_the_render(
     result = compile_text("text: \"{{ glob_boards('*') }}\"\n")
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(_project(in_memory_project, INDEX)),
+        env=build_exec_env(_project(in_memory_project, INDEX)),
         query_registry=result.query_registry,
     )
-    rendered = render(result.board, executor, format="svg")
+    rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert rendered.board_error is not None
     assert rendered.board_error.code == "ERR-TEXT-LISTING-PATTERN"
 
@@ -234,13 +235,13 @@ def test_replay_rejects_a_listing_board_before_rendering(
     project = _project(in_memory_project, INDEX)
     result = _compile(project)
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
     resolved, _ = build_resolved_board(result.board, executor, {})
-    recording = record_board(resolved, executor, {})
+    recording = record_board(resolved, executor.results(list(resolved.queries), {}), {})
     with pytest.raises(DbtChartsError) as exc:
         render_board_from_artifact(resolved, recording, {})
     assert exc.value.code.code == "ERR-BOARD-RECORDING-MISMATCH"

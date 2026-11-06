@@ -13,7 +13,7 @@ from dbt_charts.core.execute.chart_resolution import (
     collect_layer_datasets,
     collect_shared_y_datasets,
 )
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.query_results import QueryResults
 
 
 def test_collects_each_primary_scale_query_once() -> None:
@@ -33,7 +33,7 @@ def test_collects_each_primary_scale_query_once() -> None:
     )
     base_rows = [{"month": "2024-01", "actual": 70.5}]
     goal_rows = [{"month": "2024-01", "goal": 250.0, "target": 225.0}]
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = goal_rows
 
     datasets = collect_shared_y_datasets(chart, base_rows, executor, {})
@@ -69,7 +69,7 @@ def test_a_pinned_layer_leaves_every_layer_off_the_primary_scale(
         }
     )
     base_rows = [{"month": "2024-01", "actual": 70.5}]
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
 
     datasets = collect_shared_y_datasets(chart, base_rows, executor, {})
 
@@ -98,7 +98,7 @@ def test_collects_a_right_axis_span_layer_query() -> None:
         }
     )
     side_rows = [{"month": "2024-01", "cost": 5.0, "budget": 3.0}]
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = side_rows
 
     datasets = collect_shared_y_datasets(chart, [], executor, {})
@@ -126,7 +126,7 @@ def test_a_right_axis_layer_query_is_executed_only_when_read() -> None:
         }
     )
     right_rows = [{"month": "2024-01", "benchmark": 0.5}]
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = right_rows
 
     datasets = collect_layer_datasets(chart, [], executor, {})

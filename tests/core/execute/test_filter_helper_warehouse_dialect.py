@@ -24,11 +24,11 @@ from dbt_charts.core.compile.models.source import (
     PostgresSourceConfig,
     ResolvedSourceConfig,
 )
-from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
 from dbt_charts.core.execute.backends.dbt_core import DbtBackend
 from dbt_charts.core.execute.compose import ResolvedQuery
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 
+from ..._run import Run
 from ..conftest import DbtHarness
 
 PG_SOURCE = {
@@ -90,7 +90,7 @@ def test_registry_composition_path(
     assert result.board is not None
     project = local_project(Path.cwd())
     vars(project)["sources"] = ProjectSourcesConfig(sources={"db": PG_SOURCE})
-    executor = Executor(result.board, build_adapter_registry(project), use_cache=False)
+    executor = Run(result.board, build_exec_env(project), use_cache=False)
 
     executor.execute_query("composed", {})
 

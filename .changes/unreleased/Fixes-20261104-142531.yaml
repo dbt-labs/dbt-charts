@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'Agent write_file refuses to overwrite a file that changed since the agent read it.'
+time: 2026-11-04T14:25:31.212154-08:00

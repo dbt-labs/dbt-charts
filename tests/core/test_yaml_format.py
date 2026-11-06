@@ -11,31 +11,36 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
+from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.compile.models.board.normalized import Board, Layout, LayoutItem
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.execute.cache_backend import ResultRows
-from dbt_charts.core.execute.executor import Executor
-from dbt_charts.core.render.renderer import render
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.render.yaml_format import render_board_yaml
 
-from .._lookup import collect_via_execute_query
+from .._lookup import render_via
+from .._results import rows_result, rows_schema
+from .._run import Run
 from ._board_utils import _default_chart_style_context, _default_resolved_style
 from ._svg_render import PINNED_RENDER_TIME
 
 
-def _make_executor(data: list[dict]) -> MagicMock:
+def _make_executor(
+    data: list[dict], schema: dict[str, ColumnType] | None = None
+) -> MagicMock:
     """Create a mock executor that returns the given data for any chart.
 
     ``cache_hit_ats`` must be a real (empty) list, not the default MagicMock
     attribute: render() now draws the board for every format (not just svg),
     and the svg footer/timestamp code iterates this attribute directly.
     """
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.render_with_range_filters.return_value = None
-    executor.execute_query_result.return_value = ResultRows(data, {})
+    executor.execute_query_result.return_value = ResultRows(
+        data, schema if schema is not None else rows_schema(data)
+    )
     executor.cache_hit_ats = []
     executor.rendered_at = PINNED_RENDER_TIME
-    collect_via_execute_query(executor)
     return executor
 
 
@@ -62,7 +67,7 @@ class TestYamlFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="yaml").output
+        result = render_via(executor, board, format="yaml").output
 
         parsed = yaml.safe_load(result)
         assert parsed["title"] == "Test Board"
@@ -76,7 +81,7 @@ class TestYamlFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="yaml").output
+        result = render_via(executor, board, format="yaml").output
 
         parsed = yaml.safe_load(result)
         chart_def = parsed["charts"]["rev_chart"]
@@ -91,7 +96,7 @@ class TestYamlFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="yaml").output
+        result = render_via(executor, board, format="yaml").output
 
         parsed = yaml.safe_load(result)
         assert "queries" in parsed
@@ -108,7 +113,7 @@ class TestYamlFormat:
         board = _make_board([chart1, chart2])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="yaml").output
+        result = render_via(executor, board, format="yaml").output
 
         parsed = yaml.safe_load(result)
         assert "rows" in parsed
@@ -122,7 +127,7 @@ class TestYamlFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="yaml").output
+        result = render_via(executor, board, format="yaml").output
 
         parsed = yaml.safe_load(result)
         chart_def = parsed["charts"]["kpi_rev"]
@@ -146,7 +151,7 @@ class TestYamlFormat:
         )
         board = _make_board([chart])
 
-        result = render(board, _make_executor(data), format="yaml").output
+        result = render_via(_make_executor(data), board, format="yaml").output
 
         chart_def = yaml.safe_load(result)["charts"]["kpi_rev"]
         assert chart_def["support"] == {"value": "change"}
@@ -167,7 +172,7 @@ class TestYamlFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="yaml").output
+        result = render_via(executor, board, format="yaml").output
 
         parsed = yaml.safe_load(result)
         assert "collapse" not in parsed["charts"]["pads"]
@@ -186,7 +191,7 @@ class TestYamlFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="yaml").output
+        result = render_via(executor, board, format="yaml").output
 
         parsed = yaml.safe_load(result)
         assert parsed["charts"]["pads"]["collapse"] is True
@@ -200,7 +205,7 @@ class TestYamlFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="yaml").output
+        result = render_via(executor, board, format="yaml").output
 
         compile_result = compile(result)
         assert not compile_result.errors, (
@@ -238,7 +243,7 @@ class TestYamlFormat:
             "dbt_charts.core.render.yaml_format.board_to_dict",
             return_value={"title": "Broken", "items": [failed_item]},
         ):
-            result = render(board, executor, format="yaml").output
+            result = render_via(executor, board, format="yaml").output
 
         parsed = yaml.safe_load(result)
         assert parsed["charts"]["rev"]["type"] == "callout"
@@ -361,8 +366,8 @@ rows: [card]
         assert compiled.board is not None, [e.message for e in compiled.errors]
 
         executor = _make_executor([{"m": 1, "v": 2}])
-        executor.execute_query_result.return_value = ResultRows([{"m": 1, "v": 2}], {})
-        result = render(compiled.board, executor, format="yaml").output
+        executor.execute_query_result.return_value = rows_result([{"m": 1, "v": 2}])
+        result = render_via(executor, compiled.board, format="yaml").output
 
         recompiled = compile(result)
         assert not recompiled.errors, (
@@ -403,7 +408,7 @@ rows: [card]
         )
         executor = _make_executor(data)
 
-        result = render(outer_board, executor, format="yaml").output
+        result = render_via(executor, outer_board, format="yaml").output
 
         parsed = yaml.safe_load(result)
         assert parsed["title"] == "Outer Board"
@@ -423,16 +428,17 @@ rows: [card]
         def _pick_data(
             query_name: str, *_args: object, **_kwargs: object
         ) -> ResultRows:
-            return ResultRows(data1 if query_name == "q1" else data2, {})
+            return rows_result(data1 if query_name == "q1" else data2)
 
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
         executor.render_with_range_filters.return_value = None
         executor.execute_query_result.side_effect = _pick_data
         executor.cache_hit_ats = []
         executor.rendered_at = PINNED_RENDER_TIME
-        collect_via_execute_query(executor)
 
-        result = render(board, executor, format="yaml").output
+        result = render_via(executor, board, format="yaml").output
 
         parsed = yaml.safe_load(result)
         assert "q1" in parsed["queries"]
@@ -447,7 +453,7 @@ rows: [card]
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="yaml", max_rows_per_query=2).output
+        result = render_via(executor, board, format="yaml", max_rows_per_query=2).output
 
         parsed = yaml.safe_load(result)
         assert parsed["queries"]["q"]["rows"] == [data[0], data[4]]
@@ -461,7 +467,7 @@ rows: [card]
     def test_no_cap_emits_no_truncation_note(self, make_chart):
         data = [{"month": "m1", "revenue": 1}]
         board = _make_board([make_chart("bar", x="month", y="revenue")])
-        result = render(board, _make_executor(data), format="yaml").output
+        result = render_via(_make_executor(data), board, format="yaml").output
         assert "rows" in result
         assert not result.startswith("#")
 
@@ -495,9 +501,11 @@ def test_exotic_warehouse_scalars_are_safe_loadable_and_recompile(make_chart):
     ]
     chart = make_chart("table", query_name="q", id="tbl")
     board = _make_board([chart])
-    executor = _make_executor(data)
+    executor = _make_executor(
+        data, {column: ColumnType(kind="string") for column in data[0]}
+    )
 
-    result = render(board, executor, format="yaml").output
+    result = render_via(executor, board, format="yaml").output
 
     parsed = yaml.safe_load(result)  # raises ConstructorError on !!python/object tags
     row = parsed["queries"]["q"]["rows"][0]
@@ -525,7 +533,9 @@ def test_safe_dump_rejects_a_type_clean_value_does_not_normalize(make_chart):
     trip.
     """
     board = _make_board([make_chart("table", query_name="q", id="tbl")])
-    executor = _make_executor([{"payload": bytearray(b"\x00\x01")}])
+    executor = _make_executor(
+        [{"payload": bytearray(b"\x00\x01")}], {"payload": ColumnType(kind="string")}
+    )
 
     with pytest.raises(yaml.representer.RepresenterError):
         render_board_yaml(board, executor, {})
@@ -571,16 +581,16 @@ rows:
 
     from dbt_charts.cli.filesystem_project import FilesystemProject
     from dbt_charts.core.compile import compile
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
 
     compiled = compile(source)
     assert compiled.board is not None
-    executor = Executor(
+    executor = Run(
         compiled.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        env=build_exec_env(FilesystemProject(Path.cwd())),
         query_registry=compiled.query_registry,
     )
-    round_tripped = render(compiled.board, executor, format="yaml").output
+    round_tripped = render_via(executor, compiled.board, format="yaml").output
     assert "sign_placement" not in round_tripped, round_tripped
     for svg in (render_board_to_svg(source), render_board_to_svg(round_tripped)):
         assert "ERR-" not in svg, svg

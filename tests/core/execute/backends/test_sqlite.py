@@ -16,6 +16,7 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.execute.run import run_query
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -547,14 +548,14 @@ class TestSqliteBackendDataDir:
 
 
 class TestSqliteRegistryRouting:
-    """AdapterRegistry routes sqlite sources to SqliteBackend."""
+    """ExecEnv routes sqlite sources to SqliteBackend."""
 
-    def test_sqlite_query_via_adapter_registry(
+    def test_sqlite_query_via_env(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """A sqlite source query routes to SqliteBackend and returns data."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
         db_path = _make_sqlite_db(tmp_path)
@@ -562,10 +563,10 @@ class TestSqliteRegistryRouting:
             f"sources:\n  mydb:\n    type: sqlite\n    path: {db_path}\n"
         )
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project)
+        registry = build_exec_env(project)
 
         query = SqlQuery(sql="SELECT id, label FROM items ORDER BY id", source="mydb")
-        result = registry.execute(query)
+        result = run_query(registry, query)
 
         assert result.error is None
         assert result.data == [
@@ -576,17 +577,17 @@ class TestSqliteRegistryRouting:
     def test_sqlite_via_registry_register_source(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """AdapterRegistry.execute routes a sqlite source_config to SqliteBackend."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        """ExecEnv.execute routes a sqlite source_config to SqliteBackend."""
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
         db_path = _make_sqlite_db_with_users(tmp_path)
-        registry = build_adapter_registry(local_project(tmp_path))
-        registry.register_source("mydb", {"type": "sqlite", "path": str(db_path)})
+        registry = build_exec_env(local_project(tmp_path))
+        registry.sources.register("mydb", {"type": "sqlite", "path": str(db_path)})
 
         query = SqlQuery(sql="SELECT COUNT(*) AS n FROM users", source="mydb")
-        result = registry.execute(query)
+        result = run_query(registry, query)
         assert result.error is None, f"Unexpected error: {result.error}"
         assert result.data[0]["n"] == 2
 
@@ -777,18 +778,16 @@ class TestDftSchemaWithSQLite:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """LayeredSchemaResolver.list_tables works for a SQLite-backed source."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
         from dbt_charts.core.inspect.resolver import LayeredSchemaResolver
 
         db_path = _make_sqlite_db_with_users(tmp_path)
-        registry = build_adapter_registry(local_project(tmp_path))
-        registry.register_source("mydb", {"type": "sqlite", "path": str(db_path)})
+        registry = build_exec_env(local_project(tmp_path))
+        registry.sources.register("mydb", {"type": "sqlite", "path": str(db_path)})
 
-        resolver = LayeredSchemaResolver(
-            adapter_registry=registry, project=local_project(tmp_path)
-        )
+        resolver = LayeredSchemaResolver(env=registry, project=local_project(tmp_path))
         result = resolver.list_tables(source="mydb", schema="main")
         tables = (
             result.get("sources", {})
@@ -806,8 +805,8 @@ class TestDftSchemaWithSQLite:
         """Resolver resolves relative SQLite path against project_root."""
         import sqlite3 as _sqlite3
 
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
         from dbt_charts.core.inspect.resolver import LayeredSchemaResolver
 
@@ -819,11 +818,11 @@ class TestDftSchemaWithSQLite:
         conn.commit()
         conn.close()
 
-        registry = build_adapter_registry(local_project(tmp_path))
-        registry.register_source("shop", {"type": "sqlite", "path": "data/test.sqlite"})
-        resolver = LayeredSchemaResolver(
-            adapter_registry=registry, project=local_project(tmp_path)
+        registry = build_exec_env(local_project(tmp_path))
+        registry.sources.register(
+            "shop", {"type": "sqlite", "path": "data/test.sqlite"}
         )
+        resolver = LayeredSchemaResolver(env=registry, project=local_project(tmp_path))
         result = resolver.list_tables(source="shop", schema="main")
         tables = (
             result.get("sources", {})

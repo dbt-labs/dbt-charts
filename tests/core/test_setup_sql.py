@@ -15,12 +15,12 @@ from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.compile.normalize.queries import normalize_query
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.lookup import cache_outcome
 from dbt_charts.core.execute.plan import cache_key
 
 from .._results import rows_result
+from .._run import Run
 from ._board_utils import make_test_board
 from .conftest import DbtHarness
 
@@ -224,9 +224,9 @@ class TestSetupSqlExecution:
             queries=queries,
             sources={"db": {"type": "duckdb", "path": ":memory:"}},
         )
-        executor = Executor(
+        executor = Run(
             board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             use_cache=False,
         )
         data = executor.execute_query("derived", {})
@@ -273,7 +273,7 @@ class TestSetupSqlConnectionSharing:
         mock_adapter.connections.get_thread_connection.return_value.state = "open"
 
         with patch(
-            "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+            "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
             return_value=mock_adapter,
         ):
             adapter = DbtHarness(local_project(Path("/tmp")), profile_type="postgres")
@@ -298,7 +298,7 @@ class TestSetupSqlConnectionSharing:
         assert mock_adapter.execute.call_args[1]["fetch"] is True
 
 
-def _mock_adapter_registry():
+def _mock_env():
     """Return a mock registry that captures executed SQL."""
     executed: list[tuple[str, ...]] = []
 
@@ -312,7 +312,7 @@ def _mock_adapter_registry():
         return result
 
     registry = Mock()
-    registry.project_file_sources.return_value = {}
+    registry.sources.all.return_value = {}
     registry.execute.side_effect = capture
     return registry, executed
 
@@ -326,9 +326,9 @@ class TestSetupSqlCacheKey:
         """Result cache entries must diverge when setup_sql changes."""
         board = make_test_board(id="test", title="test", queries={}, sources={})
         result_cache = Mock()
-        executor = Executor(
+        executor = Run(
             board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             result_cache=result_cache,
         )
 
@@ -423,7 +423,7 @@ class TestSetupSqlMutatingGuard:
         )
         mock_dbt_adapter = MagicMock()
         with patch(
-            "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+            "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
             return_value=mock_dbt_adapter,
         ):
             result = adapter.execute(query, source_config=source_config)

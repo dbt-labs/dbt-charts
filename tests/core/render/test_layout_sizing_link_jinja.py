@@ -26,7 +26,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.render.layout_sizing import SizingRenderCtx, _require_resolved
 
 _ROWS = [
@@ -58,7 +58,7 @@ def _make_ctx() -> SizingRenderCtx:
 
 
 def _make_executor() -> MagicMock:
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
     executor.render_with_range_filters.return_value = None
     executor.execute_query.return_value = _ROWS

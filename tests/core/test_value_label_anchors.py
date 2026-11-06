@@ -7,15 +7,14 @@ a sparse line) give way to a dot at each labeled point; authored points stay.
 from __future__ import annotations
 
 import re
-from unittest.mock import Mock
 
 import pytest
 
 from dbt_charts.core.compile import CompileResult, compile
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import RenderResult, render
 
-from .._results import rows_schema
+from .._run import Run
+from .._scripted_env import ScriptedBackend, scripted_env
 
 _ROWS = [{"m": f"2026-0{i}-01", "v": v} for i, v in enumerate([5, 9, 4, 12, 8], 1)]
 _MULTI_ROWS = [
@@ -46,19 +45,9 @@ rows: [{{rows: [c]}}]
 
 def _run(result: CompileResult, rows: list[dict[str, object]]) -> RenderResult:
     assert result.board is not None
-    ok = Mock()
-    ok.is_success = True
-    ok.data = rows
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    registry = Mock()
-    registry.project_file_sources.return_value = {}
-    registry.execute.return_value = ok
-    executor = Executor(
-        result.board, adapter_registry=registry, query_registry=result.query_registry
-    )
-    return render(result.board, executor, format="svg")
+    registry = scripted_env(ScriptedBackend(rows))
+    executor = Run(result.board, env=registry, query_registry=result.query_registry)
+    return render(result.board, executor.ctx, executor.ledger, format="svg")
 
 
 def _render(chart_body: str, rows: list[dict[str, object]], kind: str = "line") -> str:

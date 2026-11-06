@@ -10,7 +10,7 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import render_dashboard
 from dbt_charts.core.compile.format import inferred_number_format
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import InMemoryBoard
 
 _BOARD = """
@@ -57,7 +57,7 @@ def test_table_prints_year_and_hugeint_sum_plain(
     result = render_dashboard(
         board=InMemoryBoard(_BOARD, path=project.path("charts/_t.yml")),
         project=project,
-        adapter_registry=build_adapter_registry(project, read_only=False),
+        env=build_exec_env(project, read_only=False),
         result_cache=None,
         format="text",
     )

@@ -6,7 +6,7 @@ use super::funcs::{self, Support, TABLE};
 use super::{EvalError, Expr, Tick, Val};
 
 fn lines(src: &str, value: Val, label: &str, index: f64) -> Result<Vec<String>, EvalError> {
-    let _locale = crate::time_locale::active_time_locale().is_err().then(crate::time_locale::en_us_scope);
+    let _locale = ::bind::time_locale::active_time_locale().is_err().then(::bind::time_locale::en_us_scope);
     Expr::parse(src)?.eval_lines(&Tick { value, label, index })
 }
 
@@ -301,7 +301,7 @@ fn toDate_keeps_three_digits_of_a_longer_fraction_like_v8() {
 
 #[test]
 fn time_formats_speak_the_boards_time_locale() {
-    crate::time_locale::with_time_locale(&crate::time_locale::de_de(), || {
+    ::bind::time_locale::with_time_locale(&::bind::time_locale::de_de(), || {
         assert_eq!(text("timeFormat(toDate('2024-01-15'), '%B %b %A %a')", ""), "Januar Jan Montag Mo");
         assert_eq!(text("timeFormat(toDate('2024-03-02'), '%x')", ""), "02.03.2024");
         assert_eq!(text("monthFormat(2)", ""), "März");
@@ -311,10 +311,10 @@ fn time_formats_speak_the_boards_time_locale() {
 
 #[test]
 fn local_time_reads_the_board_zone_over_aware_instants_and_utc_stays_utc() {
-    let _zone = crate::time_zone::zone_scope("America/New_York");
-    let _locale = crate::time_locale::en_us_scope();
+    let _zone = ::bind::time_zone::zone_scope("America/New_York");
+    let _locale = ::bind::time_locale::en_us_scope();
     let at = "toDate('2024-03-10T07:30:00Z')";
-    crate::time_zone::with_expression_local(true, || {
+    ::bind::time_zone::with_expression_local(true, || {
         assert_eq!(text(&format!("timeFormat({at}, '%H:%M %Z')"), ""), "03:30 -0400");
         assert_eq!(text(&format!("utcFormat({at}, '%H:%M %Z')"), ""), "07:30 +0000");
         assert_eq!(text(&format!("hours({at}) + ':' + utchours({at})"), ""), "3:7");
@@ -324,9 +324,9 @@ fn local_time_reads_the_board_zone_over_aware_instants_and_utc_stays_utc() {
 
 #[test]
 fn local_offsets_and_constructors_follow_the_board_zone() {
-    let _zone = crate::time_zone::zone_scope("America/New_York");
-    let _locale = crate::time_locale::en_us_scope();
-    crate::time_zone::with_expression_local(true, || {
+    let _zone = ::bind::time_zone::zone_scope("America/New_York");
+    let _locale = ::bind::time_locale::en_us_scope();
+    ::bind::time_zone::with_expression_local(true, || {
         assert_eq!(text("timezoneoffset(toDate('2024-03-10T07:30:00Z')) + ''", ""), "240");
         // 02:30 never happens on March 10 in New York: JavaScript reads it as 03:30 EDT.
         assert_eq!(text("hours(datetime(2024, 2, 10, 2, 30)) + ':' + utchours(datetime(2024, 2, 10, 2, 30))", ""), "3:7");
@@ -345,8 +345,8 @@ fn local_offsets_and_constructors_follow_the_board_zone() {
 
 #[test]
 fn a_local_hour_sequence_starts_on_the_board_zone_hour() {
-    let _zone = crate::time_zone::zone_scope("Asia/Kolkata");
-    crate::time_zone::with_expression_local(true, || {
+    let _zone = ::bind::time_zone::zone_scope("Asia/Kolkata");
+    ::bind::time_zone::with_expression_local(true, || {
         // Kolkata is UTC+05:30: its hours start at :30 UTC.
         assert_eq!(text("utcminutes(timeSequence('hours', toDate('2024-03-10T06:10:00Z'), toDate('2024-03-10T09:00:00Z'))[0]) + ''", ""), "30");
         assert_eq!(text("minutes(timeSequence('hours', toDate('2024-03-10T06:10:00Z'), toDate('2024-03-10T09:00:00Z'))[1]) + ''", ""), "0");
@@ -801,16 +801,16 @@ fn pluck_of_an_array_charges_each_value_it_reads() {
 #[test]
 fn a_time_scale_over_aware_instants_ticks_the_board_zones_midnights() {
     use super::scales::{Kind, Scale};
-    let _la = crate::time_zone::zone_scope("America/Los_Angeles");
+    let _la = ::bind::time_zone::zone_scope("America/Los_Angeles");
     const DAY: f64 = 864e5;
     let hours = |kind: Kind| -> Vec<f64> {
         let scale = Scale::new(kind, vec![Val::Date(19_783.0 * DAY), Val::Date(19_788.0 * DAY)], vec![Val::Num(0.0), Val::Num(1.0)]);
         let ticks = scale.ticks(5.0).unwrap().unwrap();
         ticks.into_iter().map(|t| if let Val::Date(ms) = t { ms.rem_euclid(DAY) / 36e5 } else { panic!("a date tick") }).collect()
     };
-    let local = crate::time_zone::with_expression_local(true, || hours(Kind::Time));
+    let local = ::bind::time_zone::with_expression_local(true, || hours(Kind::Time));
     assert!(local.len() > 2 && local.iter().all(|&h| h == 8.0), "Pacific midnights are 08:00 UTC: {local:?}");
-    let utc = crate::time_zone::with_expression_local(true, || hours(Kind::Utc));
+    let utc = ::bind::time_zone::with_expression_local(true, || hours(Kind::Utc));
     assert!(utc.iter().all(|&h| h == 0.0), "{utc:?}");
     assert!(hours(Kind::Time).iter().all(|&h| h == 0.0), "a naive axis reads its wall clock as UTC");
 }

@@ -6,7 +6,7 @@ Purpose: Execute a RegisteredView's ``queries:`` block before its template
 The public API is:
 - ``materialize_path_params(spec, path_params)`` — replace ``{{ path.X }}``
   placeholders with literal route path param values.
-- ``run_registry_queries(view, path_params, adapter_registry, ...)`` — execute
+- ``run_registry_queries(view, path_params, env, ...)`` — execute
   all queries declared in the view's ``queries:`` block and return a
   ``dict[name, QueryResult]`` for the template context.
 
@@ -32,10 +32,11 @@ from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.normalize.queries import normalize_query
 from dbt_charts.core.compile.template.query_result import QueryResult
 from dbt_charts.core.execute.cache_backend import CacheHit, ResultRows
+from dbt_charts.core.execute.run import run_query
 
 if TYPE_CHECKING:
-    from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
     from dbt_charts.core.execute.cache_backend import QueryResultCache
+    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.registered_views.models import RegisteredView
 
 logger = logging.getLogger(__name__)
@@ -111,7 +112,7 @@ def materialize_path_params(
 def run_registry_queries(
     view: RegisteredView,
     path_params: dict[str, str],
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     cache: QueryResultCache | None = None,
     *,
     slow_query_threshold_s: float = DEFAULT_SLOW_QUERY_THRESHOLD_S,
@@ -122,7 +123,7 @@ def run_registry_queries(
     1. Materialized: ``{{ path.X }}`` placeholders replaced with values from
        ``path_params``.
     2. Normalized: validated with ``normalize_query`` (same path as board queries).
-    3. Executed: run via ``adapter_registry.execute``.
+    3. Executed: run via ``run_query``.
     4. Wrapped: result becomes a ``QueryResult``.
 
     Results are returned as a ``dict[name, QueryResult]`` — the
@@ -132,10 +133,10 @@ def run_registry_queries(
     Args:
         view: The registered view whose ``queries:`` block to run.
         path_params: Route path params (e.g. from ``RouteMatch.path_params``).
-        adapter_registry: An ``AdapterRegistry`` with adapters for the query
+        env: An ``ExecEnv`` with adapters for the query
             types declared in the view (e.g. ``type: schema``, ``type: sql``).
         cache: Optional content-addressed result cache. When provided, a cache
-            hit skips ``adapter_registry.execute`` entirely. ``None`` disables
+            hit skips ``run_query`` entirely. ``None`` disables
             caching (existing behavior). Pass the serve cache instance so
             ``/data/`` results share the same file and TTL as dashboard queries.
         slow_query_threshold_s: Emit a ``logging.warning`` when a single
@@ -172,7 +173,7 @@ def run_registry_queries(
             query = normalize_query(
                 query_name,
                 spec,
-                sources=adapter_registry.project.sources.sources,
+                sources=env.project.sources.sources,
             )
         except CompilationError as exc:
             raise RegistryQueryError(
@@ -183,7 +184,7 @@ def run_registry_queries(
                 f"Query normalization failed ({context}): {exc}"
             ) from exc
 
-        # Step 3: Execute via the adapter registry (with optional cache).
+        # Step 3: Execute via the exec env (with optional cache).
         # query.cache is the resolved policy (project cascade root, since
         # registered views author no per-query cache: block today): false
         # opts the query out of both read and write, matching board queries.
@@ -196,7 +197,7 @@ def run_registry_queries(
             # query content. No board context here, so board_sources is omitted.
             # File sources are intentionally NOT handled on this path. A SqlQuery
             # against a file source can now succeed through
-            # adapter_registry.execute when a materializer is configured — it no
+            # run_query when a materializer is configured — it no
             # longer fails loudly at the SQL adapter — but every pre-template
             # query registry.yaml ships today is `type: schema`, which stays
             # refused for file sources unconditionally regardless of a
@@ -214,9 +215,7 @@ def run_registry_queries(
                 continue
 
         start = time.monotonic()
-        result = adapter_registry.execute(
-            query, variables=None, board=None, query_name=query_name
-        )
+        result = run_query(env, query, query_name=query_name)
         elapsed = time.monotonic() - start
 
         if elapsed > slow_query_threshold_s:

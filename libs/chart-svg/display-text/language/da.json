@@ -54,6 +54,7 @@
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}.–{end_day}. {month} {year}",
   "controls.reset": "Nulstil",
+  "controls.remove_value": "Fjern {value}",
   "controls.search": "Søg",
   "controls.search_values": "Søg i værdier",
   "controls.select_all": "Vælg alle",

@@ -38,7 +38,7 @@ def test_every_database_source_type_has_a_dbt_adapter():
     """A database source type that is authorable must be executable: validation
     must not pass a type that execution rejects as unsupported."""
     from dbt_charts.core.compile.models.source import _SOURCE_TYPE_MAP
-    from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+    from dbt_charts.core.execute.backends.dbt_adapter_factory import (
         SUPPORTED_ADAPTER_TYPES,
     )
     from dbt_charts.core.execute.drivers import DRIVER_SOURCE_TYPES

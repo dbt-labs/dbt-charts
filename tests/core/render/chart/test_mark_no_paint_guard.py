@@ -33,8 +33,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.render.chart.mark_extents import (
     all_marks_degenerate,
     mark_extents,
@@ -43,6 +43,7 @@ from dbt_charts.core.render.chart.rendering import render_chart_item
 
 from ...._paths import DBT_CHARTS_DIR
 from ...._results import rows_result
+from ...._run import Run
 
 EXAMPLES_DIR = DBT_CHARTS_DIR / "examples"
 
@@ -50,7 +51,7 @@ _RESOLVED_STYLE = resolve_style(get_theme_style())
 _CHART_CTX = resolve_chart_style_context(get_theme_style())
 
 
-def _link_examples_board_chart(chart_id: str) -> tuple[Chart, Executor]:
+def _link_examples_board_chart(chart_id: str) -> tuple[Chart, Run]:
     project = FilesystemProject(EXAMPLES_DIR / "playground")
     board_path = project.root / "charts" / "reference" / "link-examples.yml"
     result = compile_yaml(
@@ -61,10 +62,10 @@ def _link_examples_board_chart(chart_id: str) -> tuple[Chart, Executor]:
     assert result.success, result.errors
     board = result.board
     assert board is not None
-    executor = Executor(
+    executor = Run(
         board,
         query_registry=result.query_registry,
-        adapter_registry=build_adapter_registry(
+        env=build_exec_env(
             project,
             read_only=True,
             allow_external_access_in_readonly=True,
@@ -127,7 +128,7 @@ def test_guard_fires_and_routes_through_the_error_card() -> None:
         theta="val",
         color="kind",
     )
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
     executor.execute_query_result.return_value = rows_result(data)
 
@@ -188,13 +189,13 @@ def test_guard_message_states_the_measured_card_width(tmp_path: Path) -> None:
     project = FilesystemProject(tmp_path)
     result = compile_yaml(yaml_text, base_dir=project.directory())
     assert result.success, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
 
-    out = render(result.board, executor, format="svg")
+    out = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     errors = [e for e in out.chart_errors if e.code == "ERR-CHART-PAINTED-NO-MARKS"]
     assert len(errors) == 4
@@ -208,7 +209,7 @@ def _render_chart(
     **chart_kwargs: Any,
 ) -> str:
     chart = make_chart(chart_type, **chart_kwargs)
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
     executor.execute_query_result.return_value = rows_result(data)
     svg, _height = render_chart_item(

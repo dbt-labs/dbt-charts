@@ -10,11 +10,11 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
 
 from .._backend_runner import DuckDBRunner
+from .._run import Run
 
 _MEMORY_DUCKDB_SOURCES = ProjectSourcesConfig(
     sources={"test_profile": {"type": "duckdb", "path": ":memory:"}}
@@ -47,10 +47,10 @@ rows:
         assert result.board is not None
 
         # Create executor with SQL adapter
-        executor = Executor(
+        executor = Run(
             result.board,
             query_registry=result.query_registry,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
 
         # Execute query directly
@@ -86,9 +86,9 @@ rows:
         assert result.success
         assert result.board is not None
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
@@ -133,17 +133,21 @@ rows:
         assert result.success
         assert result.board is not None
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
-        svg_output = render(result.board, executor, format="svg").output
+        svg_output = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(svg_output, str)
         assert "<svg" in svg_output
 
-        html_output = render(result.board, executor, format="html").output
+        html_output = render(
+            result.board, executor.ctx, executor.ledger, format="html"
+        ).output
         assert isinstance(html_output, str)
         assert "<!DOCTYPE html>" in html_output
 
@@ -198,9 +202,9 @@ rows:
         assert result.success
         assert result.board is not None
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 

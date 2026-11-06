@@ -16,6 +16,7 @@ pub mod font_files;
 pub mod fonts;
 pub mod reservation;
 pub mod weighted;
+pub mod shaped;
 pub mod wrap;
 mod column_demand;
 mod label_widths;

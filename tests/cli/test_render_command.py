@@ -943,7 +943,7 @@ class TestRenderCommandWalkRootWhenNoProjectDir:
     def test_render_command_from_yaml_uses_walk_root_when_no_project_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """With project_dir=None, ProjectSession's adapter registry is built from the cwd-walked root."""
+        """With project_dir=None, ProjectSession's exec env is built from the cwd-walked root."""
         board_yaml = (
             _FIXTURE_DIR / "no-warehouse-board" / "charts" / "board.yml"
         ).read_text()
@@ -963,13 +963,13 @@ class TestRenderCommandWalkRootWhenNoProjectDir:
             "dbt_charts.cli._project.find_dct_root",
             _find_dct_root,
         )
-        original_build = project_mod.build_adapter_registry
+        original_build = project_mod.build_exec_env
 
         def spy_build(project: FilesystemProject, **kwargs: Any) -> Any:
             captured.append(project)
             return original_build(project, **kwargs)
 
-        monkeypatch.setattr(project_mod, "build_adapter_registry", spy_build)
+        monkeypatch.setattr(project_mod, "build_exec_env", spy_build)
 
         with contextlib.suppress(SystemExit):
             render_mod.render_command_from_yaml(
@@ -978,7 +978,7 @@ class TestRenderCommandWalkRootWhenNoProjectDir:
                 project_dir=None,
             )
 
-        assert captured, "build_adapter_registry was not called"
+        assert captured, "build_exec_env was not called"
         assert captured[0].root == sentinel, (
             f"Expected sentinel walk root but got {captured[0]!r}; "
             "project_dir=None must use the cwd-walked root"

@@ -108,7 +108,7 @@ def _handle_query(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, An
             project=session.project,
             vars=variables,
             limit=_query.MAX_QUERY_LIMIT,
-            adapter_registry=session.adapter_registry,
+            env=session.env,
         ).model_dump(mode="json", exclude_none=True)
         hint = BOARD_QUERY_HINT
     elif parsed.board is not None:
@@ -122,7 +122,7 @@ def _handle_query(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, An
             variables=variables,
             source=parsed.source or ctx.default_source,
             limit=_query.MAX_QUERY_LIMIT,
-            adapter_registry=session.adapter_registry,
+            env=session.env,
             lenient_variables=parsed.lenient_variables,
         ).model_dump(mode="json", exclude_none=True)
         hint = SQL_QUERY_HINT
@@ -137,7 +137,7 @@ def _handle_find_queries(
     return _find_queries.find_queries(
         session.project,
         session.cache,
-        session.adapter_registry,
+        session.env,
         parsed.text,
         parsed.limit,
     ).model_dump(mode="json", exclude_none=True)
@@ -241,38 +241,26 @@ def _handle_get_diagnostic_code(
 
 def _handle_read_file(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, Any]:
     parsed = _files.ReadFileArgs.model_validate(args)
-    result = _files.read_file(parsed.path, project=ctx.project_session.project)
-    # Only a read that produced content licenses a later overwrite — a
-    # not-found or unreadable path tells the agent nothing about what it would
-    # be replacing.
-    if result.success:
-        ctx.files_read.add(parsed.path)
-    return result.model_dump(mode="json", exclude_none=True)
+    return _files.read_file(
+        parsed.path, project=ctx.project_session.project
+    ).model_dump(mode="json", exclude_none=True)
 
 
 def _handle_write_file(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, Any]:
     parsed = _files.WriteFileArgs.model_validate(args)
-    refusal = _files.refuse_blind_overwrite(
-        parsed.path, ctx.project_session.project, ctx.files_read
-    )
-    if refusal is not None:
-        return refusal.model_dump(mode="json", exclude_none=True)
-    result = _files.write_file(
-        parsed.path, parsed.content, project=ctx.project_session.project
-    )
-    # The agent has now seen these bytes — it wrote them. Without this, the
-    # build-render-fix-resave loop refuses the agent its own file one step
-    # later, for content nobody else could have changed.
-    if result.success:
-        ctx.files_read.add(parsed.path)
-    return result.model_dump(mode="json", exclude_none=True)
+    return _files.write_file(
+        parsed.path,
+        parsed.content,
+        project=ctx.project_session.project,
+        expected_sha256=parsed.expected_sha256,
+    ).model_dump(mode="json", exclude_none=True)
 
 
 def _handle_apply_patch(
     args: dict[str, Any], ctx: DbtChartsAIContext
 ) -> dict[str, Any]:
-    # Like edit, deliberately does NOT license a later whole-file overwrite: the
-    # agent is shown a diff it wrote, not the file.
+    # Returns no content_sha256, so it does not license a later whole-file
+    # overwrite: the agent is shown a diff it wrote, not the file.
     return _files.apply_patch(
         _files.PatchOperation.model_validate(args), ctx.project_session.project
     ).model_dump(mode="json", exclude_none=True)

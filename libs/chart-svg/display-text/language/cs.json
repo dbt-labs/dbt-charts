@@ -54,6 +54,7 @@
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}.–{end_day}. {month} {year}",
   "controls.reset": "Obnovit",
+  "controls.remove_value": "Odebrat {value}",
   "controls.search": "Hledat",
   "controls.search_values": "Hledat hodnoty",
   "controls.select_all": "Vybrat vše",

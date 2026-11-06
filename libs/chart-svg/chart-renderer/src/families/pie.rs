@@ -79,6 +79,9 @@ struct Resolved {
     /// Effective chart background — see `BarResolved::background` and
     /// `docs/laws-shared.md#background`.
     background: String,
+    /// The chart's opaque composited canvas: halo and knockout ink, where `background` may be `transparent`.
+    #[serde(deserialize_with = "crate::common::de_canvas")]
+    canvas: String,
     palette: Vec<String>,
     dark_companion_stops: Vec<String>,
     /// `(pinned color, ink)` pairs for the `category_colors` pins outside the
@@ -542,7 +545,7 @@ mod tests {
                 "identity_field": "category",
                 "title": null,
                 "title_style": null,
-                "background": "#FAFAFA",
+                "background": "#FAFAFA", "canvas": "#FAFAFA",
                 "palette": ["#3164a3", "#779bc9", "#ad9c7f"],
                 "dark_companion_stops": ["#183253", "#3c4d65"], "pin_companions": [],
                 "outer_fraction": 0.9,
@@ -671,7 +674,7 @@ mod tests {
     /// and `(0.4)` is `40\u{202f}%`, the locale's percent sign with its narrow no-break space.
     #[test]
     fn attached_table_share_takes_the_board_number_locale() {
-        let shares = crate::number_locale::with_number_locale(&crate::number_locale::fr_fr(), || {
+        let shares = ::bind::formats::locale::with_number_locale(&::bind::formats::locale::fr_fr(), || {
             share_cells(&[40.0, 0.5])
         });
         assert_eq!(shares, ["40\u{202f}%", "1\u{202f}%"]);
@@ -768,6 +771,16 @@ mod tests {
         p["resolved"]["field_labels"] = json!({"category": "Department"});
         let labeled = render(&make_payload(p), &test_fonts()).expect("renders");
         assert!(labeled.contains(">Department<") && !labeled.contains(">Category<"), "{labeled}");
+    }
+
+    /// A floating legend sits over the wheel's frame: its labels carry the chart's opaque canvas as an outline.
+    #[test]
+    fn a_floating_legend_outlines_its_labels_in_the_canvas() {
+        let mut p = legend_pie_payload("right", "center", "vertical");
+        p["resolved"]["canvas"] = json!("#123456");
+        p["resolved"]["legend"]["position"]["overlay"] = json!(true);
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        assert!(svg.contains("fill=\"#123456\" stroke=\"#123456\" stroke-width=\"5\" stroke-linejoin=\"round\" aria-hidden=\"true\""), "{svg}");
     }
 
     /// `chart_interactivity.js`'s `RECEDE_ROLES` matches `arc`
@@ -1245,7 +1258,7 @@ mod tests {
         });
         // The wheel renders at the theme's view height (the sweep envelope's
         // board_style.continuous_height), never at the slot height.
-        payload_json["board_style"] = json!({ "text_mark_font": {"family": "sans-serif", "size": 11.0},"continuous_height": 300.0, "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()});
+        payload_json["board_style"] = json!({ "text_mark_font": {"family": "sans-serif", "size": 11.0},"continuous_height": 300.0, "format_locale": ::bind::formats::locale::en_us_wire(), "time_locale": ::bind::time_locale::en_us_wire()});
         payload_json
     }
 
@@ -1529,7 +1542,7 @@ mod tests {
     #[test]
     fn attached_table_missing_continuous_height_errors() {
         let mut payload_json = make_pie_payload_with_attached_table("bottom", "");
-        payload_json["board_style"] = json!({ "text_mark_font": {"family": "sans-serif", "size": 11.0},"format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()});
+        payload_json["board_style"] = json!({ "text_mark_font": {"family": "sans-serif", "size": 11.0},"format_locale": ::bind::formats::locale::en_us_wire(), "time_locale": ::bind::time_locale::en_us_wire()});
         let payload = make_payload(payload_json);
         let err = render(&payload, &test_fonts()).expect_err("no view height to render the wheel at");
         assert!(err.contains("continuous_height"), "{err}");
@@ -1711,8 +1724,8 @@ mod tests {
     fn a_placeholder_fades_the_wheel_and_paints_the_overlay() {
         let mut json = make_pie_payload(Value::Null);
         json["board_style"] = json!({ "text_mark_font": {"family": "sans-serif", "size": 11.0},
-            "format_locale": crate::number_locale::en_us_wire(),
-            "time_locale": crate::time_locale::en_us_wire(),
+            "format_locale": ::bind::formats::locale::en_us_wire(),
+            "time_locale": ::bind::time_locale::en_us_wire(),
             "placeholder": {
                 "opacity": 0.4,
                 "overlay": {
@@ -2215,27 +2228,27 @@ mod tests {
         assert_eq!(wheel_center(&svg), (16.0 + 568.0 / 2.0, 16.0 + 400.0 / 2.0), "{svg}");
     }
 
-    /// `symbolLimit` (theme 20): vega-encode's `LegendEntries` keeps the
-    /// first `limit - 1` entries and folds the rest into one "…N entries"
-    /// row (`w.length - (limit - 1)`) that carries the next domain value's
-    /// own swatch — here the 20th value's palette slot.
+    /// `symbolLimit` (theme 20) keeps the first `limit - 1` entries and folds the rest into one
+    /// "+N more" note (`w.length - (limit - 1)`) with no swatch, starting at the swatch column.
     #[test]
-    fn symbol_limit_folds_the_overflow_into_an_entries_row() {
+    fn symbol_limit_folds_the_overflow_into_a_swatchless_more_note() {
         let mut p = legend_pie_payload("right", "start", "vertical");
         p["rows"] = json!((0..22).map(|n| json!({"category": format!("C{n}"), "revenue": 10.0})).collect::<Vec<_>>());
         let svg = render(&make_payload(p), &test_fonts()).unwrap();
         let swatches = legend_swatches(&svg);
-        assert_eq!(swatches.len(), 20, "{svg}");
+        assert_eq!(swatches.len(), 19, "the note draws no swatch: {svg}");
         assert_eq!(swatches[18].1, "C18");
-        // 22 values, 19 kept: 3 folded into the last row, which paints the
-        // 20th value's color (palette index 19 % 3).
-        assert_eq!(swatches[19], ("#779bc9".to_string(), "\u{2026}3 entries".to_string()), "{svg}");
+        let note_x = |label: &str| -> f64 {
+            let before = &svg[..svg.find(&format!(">{label}</text>")).unwrap_or_else(|| panic!("{label}: {svg}"))];
+            before.rsplit(" x=\"").next().unwrap().split('"').next().unwrap().parse().unwrap()
+        };
+        assert!(note_x("+3 more") < note_x("C18") - 10.0, "the note starts at the swatch column: {svg}");
 
         let mut at_limit = legend_pie_payload("right", "start", "vertical");
         at_limit["rows"] = json!((0..20).map(|n| json!({"category": format!("C{n}"), "revenue": 10.0})).collect::<Vec<_>>());
         let svg = render(&make_payload(at_limit), &test_fonts()).unwrap();
         assert_eq!(legend_swatches(&svg).len(), 20);
-        assert!(!svg.contains("entries"), "an exactly-full legend folds nothing: {svg}");
+        assert!(!svg.contains(" more<"), "an exactly-full legend folds nothing: {svg}");
     }
 
     /// `labelLimit` (theme 200): a wider label is truncated with an

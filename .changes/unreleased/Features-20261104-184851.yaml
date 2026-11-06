@@ -1,0 +1,3 @@
+kind: Features
+body: The Markdown extension takes a `variables` option for a page's variables, and no longer prints the frontmatter of a page with charts.
+time: 2026-11-04T18:48:51.796694-09:00

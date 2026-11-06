@@ -8,13 +8,13 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 
 use super::{validate_line_layers, LineResolved};
-use crate::common::{is_year_shaped, row_str};
+use ::bind::rows::{is_year_shaped, row_str};
 use diagnostic::Diagnostic;
 use crate::families::layers::OverlayLayer;
-use crate::families::multiples;
-use crate::families::temporal::{TimePart, TimeUnit, VegaType};
-use crate::families::x_type::XResolution;
-use crate::time_axis::{Grain, TimeAxis};
+use ::bind::temporal::{VegaType};
+use ::bind::temporal::{TimePart, TimeUnit};
+use ::bind::x_type::XResolution;
+use ::bind::time_axis::{Grain, TimeAxis};
 use crate::Payload;
 
 /// A line or area chart bound to its rows.
@@ -104,7 +104,7 @@ pub fn bind(payload: &Payload, draw_areas: bool) -> Result<Bound<'_>, Diagnostic
     // The value axis fits what a legend view draws; resolve baked its bounds and ladder off every row.
     if let Some(narrowed) = r.legend_view.clone().and_then(|view| view.narrowed(&prepared, r.color.as_deref().expect("a legend view needs a color field"))) {
         if narrowed.refits_axes() {
-            let shown: Vec<f64> = narrowed.payload.rows.iter().filter_map(|row| crate::common::row_num(row, &r.y)).collect();
+            let shown: Vec<f64> = narrowed.payload.rows.iter().filter_map(|row| ::bind::rows::row_num(row, &r.y)).collect();
             if r.stack.is_some() {
                 crate::legend_view::unbake(&mut r.style.axis_y, true);
             } else {
@@ -180,7 +180,7 @@ fn key_revisits(r: &LineResolved, overlays: &[OverlayLayer], payload: &mut Paylo
     for (i, row) in payload.rows.iter_mut().enumerate() {
         let x = match row.get(&r.x) {
             None | Some(Value::Null) => return Err(format!("line {:?}: connect needs an x on every row; row {} has none", r.id, i + 1).into()),
-            Some(v) => crate::common::cell_str(Some(v)),
+            Some(v) => ::bind::rows::cell_str(Some(v)),
         };
         if x.parse::<f64>().is_err() {
             return Err(format!("line {:?}: connect needs a quantitative x, but row {} has {x:?}", r.id, i + 1).into());
@@ -194,7 +194,7 @@ fn key_revisits(r: &LineResolved, overlays: &[OverlayLayer], payload: &mut Paylo
         }
         // Links and labels read the cell as the query wrote it, not the join key.
         if let Some(raw) = row.insert(r.x.clone(), Value::String(key)) {
-            row.insert(crate::common::RAW_X.to_string(), raw);
+            row.insert(::bind::wide::RAW_X.to_string(), raw);
         }
     }
     Ok(domain)
@@ -210,15 +210,15 @@ fn x_axis(r: &LineResolved, payload: &Payload, overlays: &[OverlayLayer], draw_a
         r.style.line_mark.curve.as_deref()
     };
     let fam = if draw_areas { "area" } else { "line" };
-    // The one x-type law (`x_type::resolve_cartesian_x_type`) decides the grain
+    // The one x-type law (`::bind::x_type::resolve_cartesian_x_type`) decides the grain
     // and whether x is a category; the labeled-bucket and year rewrites run
     // ahead of it exactly as production's emitters apply them.
-    let law_rows = crate::families::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, x_field)?;
-    let law = crate::families::x_type::resolve_cartesian_x_type(
+    let law_rows = ::bind::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, x_field)?;
+    let law = ::bind::x_type::resolve_cartesian_x_type(
         &payload.schema.rows,
         &law_rows,
         x_field,
-        &crate::families::x_type::XAxis::of(&r.style.axis_x),
+        &r.style.axis_x.x_axis(),
         fam,
         // A multi-measure chart's axis is built without the curve.
         curve_name == Some("step") && r.wide_measures.is_empty(),
@@ -236,14 +236,14 @@ fn x_axis(r: &LineResolved, payload: &Payload, overlays: &[OverlayLayer], draw_a
     // by their bucket and drops the rest, though the row still counts toward the y domain.
     let is_dates = is_year_shaped(&payload.schema.rows, domain_rows, x_field)?
         || law.vl_type == VegaType::Temporal
-        || matches!(crate::families::temporal::infer_vega_type(&payload.schema.rows, domain_rows, x_field)?, VegaType::Temporal | VegaType::Ordinal);
+        || matches!(::bind::temporal::infer_vega_type(&payload.schema.rows, domain_rows, x_field)?, VegaType::Temporal | VegaType::Ordinal);
     let unit: Option<TimeUnit> = match law.grain {
-        crate::families::x_type::Grain::Calendar(tu) => Some(tu),
+        ::bind::x_type::Grain::Calendar(tu) => Some(tu),
         _ => None,
     };
     // A time-part axis (`monthofyear`, ...) collapses every date onto the part's own cycle.
     let part: Option<TimePart> = match law.grain {
-        crate::families::x_type::Grain::Part(part) => Some(part),
+        ::bind::x_type::Grain::Part(part) => Some(part),
         _ => None,
     };
     // A band x: nominal or ordinal after the x-type law, which a literal `step` flips a
@@ -269,7 +269,7 @@ fn x_axis(r: &LineResolved, payload: &Payload, overlays: &[OverlayLayer], draw_a
         let layer_x = overlay.x().unwrap_or(x_field.as_str());
         let layer_rows = crate::families::layers::resolve_layer_rows(payload, overlay.query_name(), r.query_name.as_deref(), fam)?;
         let layer_types = crate::families::layers::resolve_layer_types(payload, overlay.query_name(), r.query_name.as_deref(), fam)?;
-        let normalized = crate::families::temporal::normalize_labeled_temporal(layer_types, layer_rows, layer_x)?;
+        let normalized = ::bind::temporal::normalize_labeled_temporal(layer_types, layer_rows, layer_x)?;
         time.rewrite(
             layer_rows
                 .iter()
@@ -306,22 +306,22 @@ fn rekey_to_enclosing_buckets(r: &LineResolved, payload: &Payload, draw_areas: b
     if payload.rows.is_empty() {
         return Ok(None);
     }
-    let normalized = crate::families::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, &r.x)?;
+    let normalized = ::bind::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, &r.x)?;
     let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
-    let filled = crate::families::x_type::resolve_filled_x(
+    let filled = ::bind::x_type::resolve_filled_x(
         &payload.schema.rows,
         &normalized,
         &r.x,
-        &crate::families::x_type::XAxis::of(&r.style.axis_x),
+        &r.style.axis_x.x_axis(),
         if draw_areas { "area" } else { "line" },
         curve == Some("step"),
         &panel_fields,
     )?;
-    let (Some(tu @ TimeUnit::YearQuarter), crate::families::x_type::Grain::Calendar(_)) = (filled.filled, filled.resolution.grain) else {
+    let (Some(tu @ TimeUnit::YearQuarter), ::bind::x_type::Grain::Calendar(_)) = (filled.filled, filled.resolution.grain) else {
         return Ok(None);
     };
     let fiscal = r.style.axis_x.fiscal_year_start_month;
-    let axis = crate::time_axis::TimeAxis::over(payload.rows.iter().filter_map(|row| row.get(&r.x).and_then(Value::as_str)));
+    let axis = ::bind::time_axis::TimeAxis::over(payload.rows.iter().filter_map(|row| row.get(&r.x).and_then(Value::as_str)));
     let mut changed = false;
     let rows: Vec<_> = payload
         .rows
@@ -332,10 +332,10 @@ fn rekey_to_enclosing_buckets(r: &LineResolved, payload: &Payload, draw_areas: b
                 .get(&r.x)
                 .and_then(Value::as_str)
                 .and_then(|text| axis.date(text))
-                .and_then(|date| crate::families::temporal::off_anchor_bucket_start(date, tu, fiscal));
+                .and_then(|date| ::bind::temporal::off_anchor_bucket_start(date, tu, fiscal));
             if let Some(start) = start {
                 if let Some(raw) = row.insert(r.x.clone(), Value::String(start)) {
-                    row.insert(crate::common::RAW_X.to_string(), raw);
+                    row.insert(::bind::wide::RAW_X.to_string(), raw);
                 }
                 changed = true;
             }
@@ -357,14 +357,14 @@ fn fill_calendar_buckets(r: &LineResolved, payload: &Payload, draw_areas: bool) 
         return Ok(None);
     }
     let axis = &r.style.axis_x;
-    let normalized = crate::families::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, &r.x)?;
+    let normalized = ::bind::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, &r.x)?;
     let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
     let mark = if draw_areas { "area" } else { "line" };
-    let filled = crate::families::x_type::resolve_filled_x(
+    let filled = ::bind::x_type::resolve_filled_x(
         &payload.schema.rows,
         &normalized,
         &r.x,
-        &crate::families::x_type::XAxis::of(axis),
+        &axis.x_axis(),
         mark,
         curve == Some("step"),
         &panel_fields,
@@ -377,9 +377,9 @@ fn fill_calendar_buckets(r: &LineResolved, payload: &Payload, draw_areas: bool) 
     // nothing is left to cross-join over (`gap_fill_ordinal_time_per_panel`).
     let dims: Vec<&str> = r.color.as_deref().into_iter().filter(|c| !panel_fields.contains(c)).collect();
     let mut rows = Vec::with_capacity(normalized.len());
-    for panel in multiples::regroup(&r.panel_axes, &normalized)? {
+    for panel in ::bind::multiples::regroup(&r.panel_axes, &normalized)? {
         let mut completed =
-            crate::families::temporal::complete_ordinal_rows(&panel.rows, &r.x, &dims, tu, fill, axis.fiscal_year_start_month)?;
+            ::bind::temporal::complete_ordinal_rows(&panel.rows, &r.x, &dims, tu, fill, axis.fiscal_year_start_month)?;
         // `regroup` strips the partition columns; the pooled rows carry them back.
         for row in &mut completed {
             for (field, value) in panel_fields.iter().zip(&panel.key) {
@@ -414,15 +414,15 @@ fn unfold_wide(r: &mut LineResolved, payload: &Payload) -> Result<WideFold, Stri
     // A wide chart always renders solid: production's dash encoding lives only
     // in `_apply_line_color_encoding`, which the folded arm never reaches
     // (`emitters/line.py:462`).
-    let series = crate::common::wide_series_names(&r.wide_measures, r.color.as_deref(), &payload.rows);
+    let series = ::bind::wide::wide_series_names(&r.wide_measures, r.color.as_deref(), &payload.rows);
     let cloned = payload
-        .with_inputs(payload.resolved.clone(), crate::common::unfold_wide_rows(&payload.rows, &r.wide_measures, r.color.as_deref()))
-        .with_row_types(crate::common::unfold_wide_types(&payload.schema.rows, &r.wide_measures)?);
+        .with_inputs(payload.resolved.clone(), ::bind::wide::unfold_wide_rows(&payload.rows, &r.wide_measures, r.color.as_deref()))
+        .with_row_types(::bind::wide::unfold_wide_types(&payload.schema.rows, &r.wide_measures)?);
     r.series_from_measures = r.color.is_none();
     r.prefold_rows = payload.rows.clone();
-    r.link_color = Some(r.color.clone().unwrap_or_else(|| crate::common::WIDE_KEY_FIELD.to_string()));
+    r.link_color = Some(r.color.clone().unwrap_or_else(|| ::bind::wide::WIDE_KEY_FIELD.to_string()));
     r.link_y = r.wide_measures[0].clone();
-    r.color = Some(crate::common::WIDE_LABEL_FIELD.to_string());
-    let labels = display_text::wide_measure_labels_for(&r.wide_measures, &r.field_labels)?;
+    r.color = Some(::bind::wide::WIDE_LABEL_FIELD.to_string());
+    let labels = display_text::wide_measure_labels(&r.wide_measures, &r.field_labels)?.labels;
     Ok(WideFold { payload: Some(cloned), series, labels })
 }

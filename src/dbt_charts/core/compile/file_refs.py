@@ -381,9 +381,7 @@ def read_section(
                 ref, f"{path.relpath!r} — not a YAML mapping", ref_path
             )
         with migration_notice_file(path.relpath):
-            # A ref target may be a queries-only file, which AuthoredBoard's
-            # layout requirement would mark stale on every compile.
-            migrated = prepare_board_mapping(raw, patch=True)
+            migrated = prepare_board_mapping(raw)
         if memo is not None:
             memo[path.relpath] = migrated
     # Callers rewrite fields of what they import; the memo must stay pristine.

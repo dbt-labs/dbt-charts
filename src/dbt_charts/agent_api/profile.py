@@ -14,7 +14,8 @@ from typing import Any
 from dbt_charts.agent_api.query import MAX_QUERY_LIMIT, execute_query
 from dbt_charts.core.compile.normalize.queries import is_file_source_ref
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.execute.adapters import AdapterRegistry
+from dbt_charts.core.execute.env import ExecEnv
+from dbt_charts.core.execute.plan_sources import resolve_source_config
 from dbt_charts.core.inspect.db_types import (
     is_complex,
     is_numeric,
@@ -66,7 +67,7 @@ _GRAINS = (
 def profile_source(
     source: str,
     *,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     wanted: Sequence[str] = (),
 ) -> str:
     """Profile *source* (a named file source or a CSV/JSON/Parquet path).
@@ -79,7 +80,9 @@ def profile_source(
     """
     inline = is_file_source_ref(source)
     try:
-        config = {} if inline else adapter_registry.resolve_source_config(source)
+        config = (
+            {} if inline else resolve_source_config(env.sources, env.project, source)
+        )
     except DbtChartsError as exc:
         raise ValueError(str(exc)) from exc
     kind = (
@@ -99,7 +102,7 @@ def profile_source(
             sql,
             source=source,
             limit=MAX_QUERY_LIMIT,
-            adapter_registry=adapter_registry,
+            env=env,
         )
         if not result.success:
             raise ValueError("; ".join(result.errors))

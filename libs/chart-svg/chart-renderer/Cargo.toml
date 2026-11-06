@@ -10,6 +10,7 @@ d3rs = { path = "../d3rs" }
 mdsvg = { path = "../mdsvg" }
 display-text = { path = "../display-text" }
 diagnostic = { path = "../diagnostic" }
+bind = { path = "../bind" }
 column-types = { path = "../column-types" }
 dbt-charts-color = { path = "../color" }
 measure = { path = "../measure" }
@@ -39,4 +40,5 @@ jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bun
 libm = "0.2.16"
 
 [dev-dependencies]
+bind = { path = "../bind", features = ["test-support"] }
 diagnostic = { path = "../diagnostic", features = ["test-support"] }

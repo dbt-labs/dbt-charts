@@ -232,7 +232,7 @@ impl Selection {
     }
 
     /// `entries`, each receded and linked as the series `keys` names it: the raw value its marks
-    /// link by. An entry with no key (a layer, a y title, a "…N entries" fold) is no series: it
+    /// link by. An entry with no key (a layer, a y title, a "+N more" fold) is no series: it
     /// never recedes and links nowhere.
     pub(crate) fn legend<'a>(&'a self, entries: Vec<LegendEntry<'a>>, keys: &[Option<&'a str>]) -> Vec<LegendEntry<'a>> {
         assert_eq!(entries.len(), keys.len(), "one key per legend entry");

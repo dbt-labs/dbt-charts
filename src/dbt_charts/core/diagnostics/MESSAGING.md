@@ -1,7 +1,8 @@
 # Diagnostic messaging standards
 
 Rules for authoring a new `ErrorCode` or `WarningCode` in
-`dbt_charts/core/diagnostics/codes_*.py`. Both are `DiagnosticCode` subclasses
+`libs/chart-svg/diagnostic/codes/<domain>.yaml`; the `codes_*.py` modules are
+generated from it. Both are `DiagnosticCode` subclasses
 registered on the same `REGISTRY` and share every rule below except where
 called out. The full reference these rules produce is rendered from `REGISTRY`
 by `render_reference.py` when the docs site builds, and published as the docs
@@ -13,10 +14,10 @@ site's Error Reference and Warning Reference pages.
 `WarningCode` — both all caps, hyphen-separated, no domain segment in the
 string. `DESCRIPTION` names the specific failure or condition, not the fix
 (`KPI-MULTIROW`, not `FIX-YOUR-QUERY`). The domain still matters — it lives
-on `DiagnosticCode.domain`, set from the file the code is registered in
-(`codes_compile.py` → `compile`, `codes_render.py` → `render`,
-`codes_execute.py` → `execute`, `codes_serve.py` → `serve`,
-`codes_query.py` → `query`) — but two codes that would only differ by domain
+on `DiagnosticCode.domain`, set from the file the code is authored in
+(`compile.yaml` → `compile`, `render.yaml` → `render`,
+`execute.yaml` → `execute`, `serve.yaml` → `serve`,
+`query.yaml` → `query`) — but two codes that would only differ by domain
 are the same failure and must merge into one code, not grow a
 domain-qualified pair. Constructing the code raises if its prefix doesn't
 match its level (`ERR-` for `error`, `WARN-` for `warning`) — enforced by
@@ -88,15 +89,15 @@ audience:
 
 ## Adding a code
 
-1. Register it in the domain's `codes_*.py` via `REGISTRY.register(ErrorCode(...))`
-   or `REGISTRY.register(WarningCode(...))`.
-2. Import it in `diagnostics/__init__.py` if any other module needs the constant
-   (side-effect registration happens on import either way).
-3. The docs site's Error/Warning Reference pages render from `REGISTRY`, so
+1. Add it to the domain's `libs/chart-svg/diagnostic/codes/<domain>.yaml`:
+   `code`, `level`, `title`, `template` (the message), `fix` (required for a
+   warning), `doc`, `docs_topic`, and optionally `summary`, `hint` (the name of
+   a callable in `hints.py`) or `redundant`.
+2. Regenerate: `uv run python libs/chart-svg/src/chart_svg_dev/gen_diagnostic_codes.py`.
+   It writes the Rust codes and typed constructors, the Python `codes_*.py`
+   and the message fixture. `libs/chart-svg/tests/test_diagnostic_codes.py`
+   fails while any of them is stale.
+3. Import the generated constant in `diagnostics/__init__.py` if any other
+   module needs it (side-effect registration happens on import either way).
+4. The docs site's Error/Warning Reference pages render from `REGISTRY`, so
    they need nothing regenerated.
-4. For a `compile`- or `render`-domain code, regenerate the Rust code tables:
-   `uv run python libs/chart-svg/src/chart_svg_dev/gen_diagnostic_codes.py`.
-   `test_generated_codes_are_up_to_date` in
-   `libs/chart-svg/tests/test_diagnostic_codes.py` fails while
-   `libs/chart-svg/diagnostic/src/codes.rs` and
-   `libs/chart-svg/compile/src/codes.rs` are stale.

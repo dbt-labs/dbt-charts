@@ -66,6 +66,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
 )
 from dbt_charts.core.compile.resolve.chart._layers import (
     _check_layers_y_domain,
+    _check_line_layers_in_domain,
     _resolve_layer_inks,
     _resolve_layer_list,
 )
@@ -546,6 +547,14 @@ def _resolve_line(
     )
     if authored_y_domain is not None:
         _check_layers_y_domain(normalized.id, resolved_layers, authored_y_domain)
+        _check_line_layers_in_domain(
+            normalized.id,
+            normalized.layers,
+            authored_y_domain,
+            data,
+            normalized.query_name,
+            datasets,
+        )
     _ck = _cartesian_kwargs(
         normalized,
         chart_local_style_context,

@@ -20,6 +20,8 @@ import duckdb
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.compile.config import ProjectSourcesConfig
+from dbt_charts.core.execute.source_registry import SourceRegistry
 from dbt_charts.core.project import Project
 from dbt_charts.core.registered_views.render_pipeline import (
     RenderError,
@@ -44,11 +46,11 @@ def project_with_duckdb(
     return local_project(tmp_path)
 
 
-def _make_adapter_registry(project: Project) -> object:
-    """Build a real adapter registry for the given project."""
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+def _make_env(project: Project) -> object:
+    """Build a real exec env for the given project."""
+    from dbt_charts.core.execute.env import build_exec_env
 
-    return build_adapter_registry(
+    return build_exec_env(
         project,
         read_only=False,
         allow_external_access_in_readonly=False,
@@ -61,11 +63,11 @@ def _make_adapter_registry(project: Project) -> object:
 class TestRenderRegisteredViewNoMatch:
     def test_unknown_path_returns_none(self, project_with_duckdb: Project) -> None:
         """A path that matches no registered route returns None."""
-        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        env = _make_env(project_with_duckdb)
         result = render_registered_view(
             request_path="/no/such/path/",
             project=project_with_duckdb,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
         )
         assert result is None
@@ -76,11 +78,11 @@ class TestRenderRegisteredViewSuccess:
         self, project_with_duckdb: Project
     ) -> None:
         """GET /data/ with a real source produces a RenderSuccess with HTML."""
-        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        env = _make_env(project_with_duckdb)
         result = render_registered_view(
             request_path="/data/",
             project=project_with_duckdb,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
         )
         assert result is not None
@@ -92,11 +94,11 @@ class TestRenderRegisteredViewSuccess:
         self, project_with_duckdb: Project
     ) -> None:
         """GET /data/wh/ with a known source produces a RenderSuccess with HTML."""
-        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        env = _make_env(project_with_duckdb)
         result = render_registered_view(
             request_path="/data/wh/",
             project=project_with_duckdb,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
         )
         assert result is not None
@@ -114,13 +116,13 @@ class TestRenderRegisteredViewLinkContext:
         """
         from dbt_charts.core.render.board_links import LinkContext
 
-        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        env = _make_env(project_with_duckdb)
 
         # Without root: links are root-relative /data/...
         no_root = render_registered_view(
             request_path="/data/",
             project=project_with_duckdb,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
         )
         assert isinstance(no_root, RenderSuccess)
@@ -131,7 +133,7 @@ class TestRenderRegisteredViewLinkContext:
         with_root = render_registered_view(
             request_path="/data/",
             project=project_with_duckdb,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
             link_context=LinkContext(root="/myorg/myproject/d"),
         )
@@ -145,11 +147,11 @@ class TestRenderRegisteredViewLinkContext:
         """link_context with empty root (dct serve boards-at-root) leaves links unchanged."""
         from dbt_charts.core.render.board_links import LinkContext
 
-        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        env = _make_env(project_with_duckdb)
         result = render_registered_view(
             request_path="/data/",
             project=project_with_duckdb,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
             link_context=LinkContext(root=""),
         )
@@ -162,11 +164,11 @@ class TestRenderRegisteredViewUnknownSource:
         self, project_with_duckdb: Project
     ) -> None:
         """An unknown source name returns a RenderError with a BoardRenderResult."""
-        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        env = _make_env(project_with_duckdb)
         result = render_registered_view(
             request_path="/data/bogus/",
             project=project_with_duckdb,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
         )
         assert result is not None
@@ -194,12 +196,12 @@ class TestRenderRegisteredViewSourceTypeIsNotADialect:
     (out of scope here — see the task worksheet's Context section).
     """
 
-    class _StubAdapterRegistry:
+    class _StubExecEnv:
         def __init__(self, source_type: str) -> None:
-            self._source_type = source_type
-
-        def resolve_source_config(self, source: str) -> dict[str, str]:
-            return {"type": self._source_type}
+            self.sources = SourceRegistry(
+                ProjectSourcesConfig(sources={"bq": {"type": source_type}})
+            )
+            self.project = None
 
     @pytest.mark.parametrize("source_type", ["dbt_profile", "csv"])
     def test_non_dialect_source_type_raises_expansion_error_not_value_error(
@@ -227,7 +229,7 @@ class TestRenderRegisteredViewSourceTypeIsNotADialect:
             render_registered_view(
                 request_path="/data/bq/",
                 project=project_with_duckdb,
-                adapter_registry=self._StubAdapterRegistry(source_type),
+                env=self._StubExecEnv(source_type),
                 result_cache=None,
             )
         resolve_dialect = captured["resolve_dialect"]
@@ -248,9 +250,11 @@ class TestRenderRegisteredViewResolvesSourceDialect:
     source's dialect when invoked.
     """
 
-    class _StubAdapterRegistry:
-        def resolve_source_config(self, source: str) -> dict[str, str]:
-            return {"type": "bigquery"}
+    class _StubExecEnv:
+        sources = SourceRegistry(
+            ProjectSourcesConfig(sources={"bq": {"type": "bigquery"}})
+        )
+        project = None
 
     def test_bigquery_source_dialect_reaches_expander(
         self,
@@ -275,7 +279,7 @@ class TestRenderRegisteredViewResolvesSourceDialect:
             render_registered_view(
                 request_path="/data/bq/",
                 project=project_with_duckdb,
-                adapter_registry=self._StubAdapterRegistry(),
+                env=self._StubExecEnv(),
                 result_cache=None,
             )
         resolve_dialect = captured["resolve_dialect"]
@@ -296,11 +300,11 @@ class TestRenderRegisteredViewFragmentFormat:
     ) -> None:
         """dct serve's caller passes no format/controls -- must keep getting
         the standalone HTML page it always got (no regression)."""
-        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        env = _make_env(project_with_duckdb)
         result = render_registered_view(
             request_path="/data/",
             project=project_with_duckdb,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
         )
         assert isinstance(result, RenderSuccess)
@@ -311,11 +315,11 @@ class TestRenderRegisteredViewFragmentFormat:
     ) -> None:
         """Cloud requests format='svg' to get the same bare-SVG fragment shape
         board_view already puts inside #dashboard-content -- no <html>/<body>."""
-        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        env = _make_env(project_with_duckdb)
         result = render_registered_view(
             request_path="/data/",
             project=project_with_duckdb,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
             format="svg",
             controls=True,
@@ -330,11 +334,11 @@ class TestRenderRegisteredViewFragmentFormat:
     ) -> None:
         """The board's own title, so a host doesn't have to re-derive it by
         parsing a data-dbt-page-title attribute out of the rendered output."""
-        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        env = _make_env(project_with_duckdb)
         result = render_registered_view(
             request_path="/data/wh/",
             project=project_with_duckdb,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
             format="svg",
             controls=True,
@@ -362,16 +366,16 @@ class TestRenderRegisteredViewFragmentFormat:
         render_pkg = sys.modules["dbt_charts.core.render"]
         captured: dict[str, object] = {}
 
-        def spy(board: object, executor: object, **kwargs: object) -> object:
+        def spy(board: object, ctx: object, ledger: object, **kwargs: object) -> object:
             captured.update(kwargs)
-            return real_render(board, executor, **kwargs)  # type: ignore[arg-type]
+            return real_render(board, ctx, ledger, **kwargs)  # type: ignore[arg-type]
 
         monkeypatch.setattr(render_pkg, "render", spy)
-        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        env = _make_env(project_with_duckdb)
         result = render_registered_view(
             request_path="/data/",
             project=project_with_duckdb,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
             format="svg",
             controls=True,
@@ -408,7 +412,11 @@ class TestRenderRegisteredViewPayloadErrorsGate:
         )
 
         def fake_render(
-            board: object, executor: object, format: str = "html", **kwargs: object
+            board: object,
+            ctx: object,
+            ledger: object,
+            format: str = "html",
+            **kwargs: object,
         ) -> RenderResult:
             if format == "svg":
                 return RenderResult(
@@ -426,12 +434,12 @@ class TestRenderRegisteredViewPayloadErrorsGate:
             )
 
         monkeypatch.setattr(render_pkg, "render", fake_render)
-        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        env = _make_env(project_with_duckdb)
 
         yaml_result = render_registered_view(
             request_path="/data/",
             project=project_with_duckdb,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
             format="yaml",
         )
@@ -443,7 +451,7 @@ class TestRenderRegisteredViewPayloadErrorsGate:
         svg_result = render_registered_view(
             request_path="/data/",
             project=project_with_duckdb,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
             format="svg",
         )
@@ -479,7 +487,7 @@ class TestRenderRegisteredViewYamlFormat:
         contract.
         """
         from dbt_charts.core.compile import compile as compile_yaml
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         db_path = tmp_path / "wh.duckdb"
         conn = duckdb.connect(str(db_path))
@@ -491,13 +499,13 @@ class TestRenderRegisteredViewYamlFormat:
         )
         (tmp_path / "charts").mkdir()
         project = local_project(tmp_path)
-        # read_only=True (build_adapter_registry's own default, and what dct
-        # serve/Cloud use for /data/ browsing) — not _make_adapter_registry's
+        # read_only=True (build_exec_env's own default, and what dct
+        # serve/Cloud use for /data/ browsing) — not _make_env's
         # read_only=False: the table route's schema pre-query and its main SQL
         # query both open the same DuckDB file, and DuckDB refuses a second
         # connection to one file with a different read_only setting than an
         # already-open connection.
-        adapter_registry = build_adapter_registry(
+        env = build_exec_env(
             project,
             read_only=True,
             profile_type="duckdb",
@@ -507,7 +515,7 @@ class TestRenderRegisteredViewYamlFormat:
         result = render_registered_view(
             request_path="/data/wh/main/tickets/",
             project=project,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
             format="yaml",
         )
@@ -537,7 +545,7 @@ class TestRenderRegisteredViewYamlFormat:
         would freeze on the template's default (unfiltered) rows instead of
         the one the user drilled into."""
         from dbt_charts.core.compile import compile as compile_yaml
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         db_path = tmp_path / "wh.duckdb"
         conn = duckdb.connect(str(db_path))
@@ -549,7 +557,7 @@ class TestRenderRegisteredViewYamlFormat:
         )
         (tmp_path / "charts").mkdir()
         project = local_project(tmp_path)
-        adapter_registry = build_adapter_registry(
+        env = build_exec_env(
             project,
             read_only=True,
             profile_type="duckdb",
@@ -559,7 +567,7 @@ class TestRenderRegisteredViewYamlFormat:
         result = render_registered_view(
             request_path="/data/wh/main/tickets/",
             project=project,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
             format="yaml",
             request_variables={"status": "open"},
@@ -595,16 +603,16 @@ class TestRenderRegisteredViewThreadsVariables:
 
         captured: dict[str, object] = {}
 
-        def spy(board: object, executor: object, **kwargs: object) -> object:
+        def spy(board: object, ctx: object, ledger: object, **kwargs: object) -> object:
             captured.update(kwargs)
-            return real_render(board, executor, **kwargs)  # type: ignore[arg-type]
+            return real_render(board, ctx, ledger, **kwargs)  # type: ignore[arg-type]
 
         monkeypatch.setattr(render_pkg, "render", spy)
-        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        env = _make_env(project_with_duckdb)
         result = render_registered_view(
             request_path="/inspector/wh/main/orders/",
             project=project_with_duckdb,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
             request_variables={"_details_probe": "true"},
         )

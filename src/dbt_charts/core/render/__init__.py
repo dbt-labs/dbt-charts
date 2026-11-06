@@ -12,7 +12,7 @@ Main Entry Points:
 
 The render stage:
 1. Takes a Board (from compile stage)
-2. Uses Executor to fetch data lazily as needed
+2. Reads query rows from the collected ``QueryResults``
 3. Generates Vega-Lite specs for charts
 4. Produces output in requested format
 

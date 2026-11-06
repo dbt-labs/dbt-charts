@@ -19,14 +19,14 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_INTERRUPTED
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.dialects import SQLDialect, get_dialect
-from dbt_charts.core.execute.adapters.base import (
+from dbt_charts.core.execute.backends.base import LIVENESS_SQL, source_config_hash
+from dbt_charts.core.execute.backends.dbt_adapter_factory import ConnectionSetupFailed
+from dbt_charts.core.execute.drivers.base import DriverConnection, open_driver
+from dbt_charts.core.execute.query_result import (
     QueryDurationExceeded,
     RowFetchLimit,
     resolve_effective_row_limit,
 )
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import ConnectionSetupFailed
-from dbt_charts.core.execute.backends.base import LIVENESS_SQL, source_config_hash
-from dbt_charts.core.execute.drivers.base import DriverConnection, open_driver
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
 if TYPE_CHECKING:

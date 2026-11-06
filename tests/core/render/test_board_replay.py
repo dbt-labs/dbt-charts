@@ -25,8 +25,8 @@ from dbt_charts.core.compile.resolve.chart.label_data import (
     pie_presentation_fingerprint,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.execute.recording import (
     BoardRecording,
     load_board_recording,
@@ -42,6 +42,7 @@ from dbt_charts.core.render.boards import render_board_svg
 from dbt_charts.core.render.controls import interactive_controls
 
 from ..._results import rows_result
+from ..._run import Run
 from ..._svg_normalize import normalize_same_run_svg
 from .._pooled_table import visible_svg
 from .._svg_render import PINNED_RENDER_TIME
@@ -105,9 +106,9 @@ def _live(tmp_path: Path, board: str = _YAML) -> tuple[bytes, BoardRecording, st
     assert result.board is not None
 
     project = FilesystemProject(tmp_path)
-    executor = Executor(
+    executor = Run(
         result.board,
-        build_adapter_registry(project),
+        build_exec_env(project),
         query_registry=result.query_registry,
     )
     variables: dict[str, object] = {}
@@ -122,7 +123,9 @@ def _live(tmp_path: Path, board: str = _YAML) -> tuple[bytes, BoardRecording, st
         background=None if background == "transparent" else background,
         render_cache=render_cache,
     )
-    recording = record_board(resolved, executor, variables)
+    recording = record_board(
+        resolved, executor.results(list(resolved.queries), variables), variables
+    )
     return dump_board_artifact(resolved), recording, live_svg
 
 
@@ -130,9 +133,9 @@ def _pie_live(tmp_path: Path) -> tuple[bytes, BoardRecording, str]:
     result = compile_board(_PIE_YAML)
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        build_adapter_registry(FilesystemProject(tmp_path)),
+        build_exec_env(FilesystemProject(tmp_path)),
         query_registry=result.query_registry,
     )
     variables: dict[str, object] = {}
@@ -147,7 +150,9 @@ def _pie_live(tmp_path: Path) -> tuple[bytes, BoardRecording, str]:
     )
     return (
         dump_board_artifact(resolved),
-        record_board(resolved, executor, variables),
+        record_board(
+            resolved, executor.results(list(resolved.queries), variables), variables
+        ),
         live_svg,
     )
 
@@ -166,9 +171,9 @@ def test_pie_attachment_round_trips_in_board_artifact(tmp_path: Path) -> None:
     result = compile_board(_PIE_YAML)
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        build_adapter_registry(FilesystemProject(tmp_path)),
+        build_exec_env(FilesystemProject(tmp_path)),
         query_registry=result.query_registry,
     )
     resolved, _render_cache = build_resolved_board(result.board, executor, {})
@@ -426,9 +431,9 @@ def _paginated_table_live(
     result = compile_board(_PAGINATED_TABLE_YAML)
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        build_adapter_registry(FilesystemProject(tmp_path)),
+        build_exec_env(FilesystemProject(tmp_path)),
         query_registry=result.query_registry,
     )
     resolved, render_cache = build_resolved_board(result.board, executor, variables)
@@ -443,7 +448,9 @@ def _paginated_table_live(
         )
     return (
         dump_board_artifact(resolved),
-        record_board(resolved, executor, variables),
+        record_board(
+            resolved, executor.results(list(resolved.queries), variables), variables
+        ),
         live_svg,
     )
 
@@ -506,8 +513,8 @@ cols: [c1, c2]
     assert result.success, result.errors
     assert result.board is not None
 
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    executor.execute_chart.return_value = []
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
+    executor.execute_query.return_value = []
     executor.cache_hit_ats = []
     executor.rendered_at = PINNED_RENDER_TIME
     variables: dict[str, object] = {}
@@ -547,9 +554,9 @@ def test_artifact_replay_does_not_double_paint_an_unstyled_nested_boards_tint(
     assert result.success, result.errors
     assert result.board is not None
 
-    executor = Executor(
+    executor = Run(
         result.board,
-        build_adapter_registry(FilesystemProject(tmp_path)),
+        build_exec_env(FilesystemProject(tmp_path)),
         query_registry=result.query_registry,
     )
     variables: dict[str, object] = {}
@@ -562,7 +569,9 @@ def test_artifact_replay_does_not_double_paint_an_unstyled_nested_boards_tint(
         background=None if background == "transparent" else background,
         render_cache=render_cache,
     )
-    recording = record_board(resolved, executor, variables)
+    recording = record_board(
+        resolved, executor.results(list(resolved.queries), variables), variables
+    )
     artifact_bytes = dump_board_artifact(resolved)
 
     reloaded = load_board_artifact(artifact_bytes)

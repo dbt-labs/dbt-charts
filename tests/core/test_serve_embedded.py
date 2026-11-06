@@ -32,19 +32,19 @@ def test_build_embedded_server_keeps_local_authoring_posture(tmp_path: Path) -> 
 
     Standalone `dct serve` tightened to strict read-only, but the embedded
     preview must agree with its authoring session (opened with
-    LOCAL_AUTHORING_REGISTRY_KWARGS) so a clickable render URL against a project
+    LOCAL_AUTHORING_ENV_KWARGS) so a clickable render URL against a project
     using SQL file readers works when the tool-side render did.
     """
-    from dbt_charts.core.execute.adapters import LOCAL_AUTHORING_REGISTRY_KWARGS
+    from dbt_charts.core.execute.env import LOCAL_AUTHORING_ENV_KWARGS
 
     server, listener = build_embedded_server(
         FilesystemProject(tmp_path), port_hint=18795
     )
     listener.close()
     app_state = server.config.app.state
-    assert app_state.read_only is LOCAL_AUTHORING_REGISTRY_KWARGS["read_only"]
+    assert app_state.read_only is LOCAL_AUTHORING_ENV_KWARGS["read_only"]
     assert app_state.allow_external_access_in_readonly is True
-    assert app_state.duckdb_config == LOCAL_AUTHORING_REGISTRY_KWARGS["duckdb_config"]
+    assert app_state.duckdb_config == LOCAL_AUTHORING_ENV_KWARGS["duckdb_config"]
 
 
 def test_build_embedded_server_closes_the_watch_on_shutdown(tmp_path: Path) -> None:

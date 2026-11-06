@@ -1,6 +1,6 @@
 """Live-Postgres integration coverage for the EXPLAIN warehouse-check tier.
 
-The EXPLAIN tier's unit tests fake the adapter registry, so nothing there
+The EXPLAIN tier's unit tests fake the exec env, so nothing there
 proves a real engine accepts `EXPLAIN <authored sql>` through the real
 dbt-postgres adapter, rejects a dropped column through it, or that a
 connect-time fault stays "unchecked". This module runs against the session's
@@ -20,7 +20,7 @@ from pytest_postgresql.executors import PostgreSQLExecutor
 
 from dbt_charts.agent_api.validate import ValidateResult, validate_paths
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 
 _BOARD = """\
 title: Orders
@@ -94,11 +94,11 @@ def _cluster_project(
 
 def _validate(root: Path) -> ValidateResult:
     project = FilesystemProject(root)
-    registry = build_adapter_registry(project)
+    registry = build_exec_env(project)
     results = validate_paths(
         [root / "charts" / "board.yaml"],
         project=project,
-        adapter_registry=registry,
+        env=registry,
     )
     assert len(results) == 1
     return results[0]

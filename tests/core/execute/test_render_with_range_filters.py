@@ -17,11 +17,18 @@ import yaml
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_yaml
 from dbt_charts.core.compile.config import ProjectSourcesConfig
-from dbt_charts.core.compile.template.parameterized import DateRangeFilter
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.compile.template.parameterized import (
+    DateRangeFilter,
+    render_parameterized_with_queries,
+)
 from dbt_charts.core.execute.date_range_axis import proven_range
-from dbt_charts.core.execute.plan import render_with_range_filters
+from dbt_charts.core.execute.env import build_exec_env
+from dbt_charts.core.execute.plan import (
+    _render_with_range_filters,
+    render_with_range_filters,
+)
+
+from ..._run import Run
 
 _RANGE = {"date_range": ["2026-03-01", "2026-03-31"]}
 _FILTERED = "WHERE {{ filter_date_range('created_at', date_range) }}"
@@ -53,14 +60,14 @@ def _executor(
     yaml_text: str,
     project: FilesystemProject,
     sources: dict[str, Any] | None = None,
-) -> Executor:
+) -> Run:
     result = compile_yaml(
         yaml_text, project_sources=ProjectSourcesConfig(sources=sources or {})
     )
     assert result.success and result.board is not None, result.errors
-    return Executor(
+    return Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
 
@@ -132,9 +139,9 @@ def test_declared_source_reports_its_range_without_resolving_it(
         local_project(tmp_path),
         {"wh": {"type": "duckdb", "path": ":memory:"}},
     )
-    registry = executor.adapter_registry
-    with patch.object(
-        registry, "resolve_query_source", side_effect=socket.gaierror("no dns")
+    with patch(
+        "dbt_charts.core.execute.plan.resolve_query_source",
+        side_effect=socket.gaierror("no dns"),
     ):
         rendered = render_with_range_filters(executor.ctx, "q", _RANGE)
     assert rendered is not None
@@ -152,12 +159,10 @@ def test_source_less_query_reports_its_range_through_the_implicit_dbt_profile(
         local_project(tmp_path),
         {"p": {"type": "dbt_profile"}},
     )
-    registry = executor.adapter_registry
-    assert registry.project_sources.implicit_source is not None
+    registry = executor.ctx.env
+    assert registry.sources.runtime_config().implicit_source is not None
     source_less = executor.board.queries["q"].model_copy(update={"source": None})
-    rendered = registry.render_with_range_filters(
-        source_less, _RANGE, board=executor.board
-    )
+    rendered = _render_with_range_filters(executor.ctx, "q", source_less, _RANGE)
     assert rendered is not None
     sql, dialect, filters = rendered
     assert "FROM orders WHERE" in sql
@@ -208,11 +213,11 @@ def test_a_query_without_a_range_filter_is_not_rendered(
         local_project(tmp_path),
         {"wh": {"type": "duckdb", "path": ":memory:"}},
     )
-    with patch.object(
-        executor.adapter_registry, "render_with_range_filters"
-    ) as registry_render:
+    with patch(
+        "dbt_charts.core.execute.plan.render_parameterized_with_queries"
+    ) as render_sql:
         assert render_with_range_filters(executor.ctx, "q", _RANGE) is None
-    registry_render.assert_not_called()
+    render_sql.assert_not_called()
 
 
 def test_the_derivation_is_memoized_per_query_and_variables(
@@ -223,9 +228,9 @@ def test_the_derivation_is_memoized_per_query_and_variables(
         local_project(tmp_path),
         {"wh": {"type": "duckdb", "path": ":memory:"}},
     )
-    registry = executor.adapter_registry
-    with patch.object(
-        registry, "render_with_range_filters", wraps=registry.render_with_range_filters
+    with patch(
+        "dbt_charts.core.execute.plan.render_parameterized_with_queries",
+        wraps=render_parameterized_with_queries,
     ) as spy:
         first = render_with_range_filters(executor.ctx, "q", _RANGE)
         assert render_with_range_filters(executor.ctx, "q", _RANGE) == first

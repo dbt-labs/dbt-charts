@@ -24,7 +24,7 @@ from dbt_charts.core.render.chart.text_truncation import (
 from dbt_charts.core.render.warnings import axis_title_truncated as detector
 from dbt_charts.core.render.warnings.base import WarningContext
 
-from ..._results import rows_schema
+from ..._scripted_env import ScriptedBackend, scripted_env
 from ...core._board_utils import make_test_resolved_board, make_test_resolved_chart
 
 # A title long enough to exceed two wrapped lines at a narrow extent.
@@ -170,20 +170,11 @@ def test_render_dashboard_fires_warning_for_truncated_axis_title(
     A board with an over-long y_label → WARN_AXIS_TITLE_TRUNCATED in result.warnings.
     A board with a short y_label → no WARN_AXIS_TITLE_TRUNCATED.
     """
-    from unittest.mock import Mock
 
     from dbt_charts.core.board import render_dashboard
     from dbt_charts.core.project import InMemoryBoard
 
-    ok = Mock()
-    ok.is_success = True
-    ok.data = [{"month": "Jan", "revenue": 5}]
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    registry = Mock()
-    registry.execute.return_value = ok
-    registry.project_file_sources.return_value = {}
+    registry = scripted_env(ScriptedBackend([{"month": "Jan", "revenue": 5}]))
 
     project = local_project(tmp_path)
     long_label = (
@@ -211,7 +202,7 @@ rows:
     )
     result = render_dashboard(
         board=truncated_board,
-        adapter_registry=registry,
+        env=registry,
         format="json",
         project=project,
         result_cache=None,
@@ -246,7 +237,7 @@ rows:
     )
     horizontal_result = render_dashboard(
         board=horizontal_board,
-        adapter_registry=registry,
+        env=registry,
         format="json",
         project=project,
         result_cache=None,
@@ -284,7 +275,7 @@ rows:
     )
     clean_result = render_dashboard(
         board=clean_board,
-        adapter_registry=registry,
+        env=registry,
         format="json",
         project=project,
         result_cache=None,
@@ -297,21 +288,12 @@ def test_truncated_titles_warn_once_per_chart_and_field(
     tmp_path, local_project
 ) -> None:
     """A chart renders once to size and once to paint; only the paint speaks."""
-    from unittest.mock import Mock
 
     from dbt_charts.core.board import render_dashboard
     from dbt_charts.core.diagnostics import WARN_CHART_TITLE_TRUNCATED
     from dbt_charts.core.project import InMemoryBoard
 
-    ok = Mock()
-    ok.is_success = True
-    ok.data = [{"month": "Jan", "revenue": 5}]
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    registry = Mock()
-    registry.execute.return_value = ok
-    registry.project_file_sources.return_value = {}
+    registry = scripted_env(ScriptedBackend([{"month": "Jan", "revenue": 5}]))
 
     project = local_project(tmp_path)
     long_text = (
@@ -339,7 +321,7 @@ rows:
     )
     result = render_dashboard(
         board=board,
-        adapter_registry=registry,
+        env=registry,
         format="json",
         project=project,
         result_cache=None,

@@ -332,13 +332,13 @@ def test_check_and_server_get_their_registry_from_the_same_settings(
     from dbt_charts.core.serve import server as server_mod
 
     seen: list[dict[str, Any]] = []
-    real = server_mod.build_adapter_registry
+    real = server_mod.build_exec_env
 
     def spy(project: Any, **kwargs: Any) -> Any:
         seen.append(kwargs)
         return real(project, **kwargs)
 
-    monkeypatch.setattr(server_mod, "build_adapter_registry", spy)
+    monkeypatch.setattr(server_mod, "build_exec_env", spy)
     monkeypatch.setenv("DBT_TARGET", "prod")
     fs_project = FilesystemProject(project)
 

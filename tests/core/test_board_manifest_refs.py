@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import render_dashboard
-from dbt_charts.core.execute.adapters import AdapterRegistry
+from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.project import InMemoryBoard
 from dbt_charts.core.render.render_result import RenderResult
 
@@ -142,16 +142,16 @@ def test_manifest_missing_warning_in_full_render_arm(
     check_manifest_refs from the full-render arm of board.py makes this test fail.
     """
     project = local_project(tmp_path)
-    mock_registry = MagicMock(spec=AdapterRegistry)
+    mock_registry = MagicMock(spec=ExecEnv)
     render_result = RenderResult(output='{"id": "test", "title": "Board", "items": []}')
 
     with (
         patch("dbt_charts.core.board.render", return_value=render_result),
-        patch("dbt_charts.core.board.Executor"),
+        patch("dbt_charts.core.board.make_context"),
     ):
         result = render_dashboard(
             board=InMemoryBoard(_BOARD_WITH_REF, path=project.path("charts/_t.yml")),
-            adapter_registry=mock_registry,
+            env=mock_registry,
             format="json",
             project=project,
             result_cache=None,

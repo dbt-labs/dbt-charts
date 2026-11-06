@@ -29,12 +29,12 @@ from dbt_charts.core.compile.compiler import compile as compile_board
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.board_resolve import build_resolved_board
 from dbt_charts.core.render.boards import render_board_svg
 from dbt_charts.core.render.prose import render_prose_svg
 
+from .._run import Run
 from ._prose_plan import full_width_plan
 
 # Recovering "space above the heading" means undoing the baseline's own offset
@@ -196,9 +196,9 @@ def _render_board(yaml_text: str) -> tuple[str, float]:
         result = compile_board(yaml_text)
         assert result.success, result.errors
         assert result.board is not None
-        executor = Executor(
+        executor = Run(
             result.board,
-            build_adapter_registry(FilesystemProject(Path(tmp))),
+            build_exec_env(FilesystemProject(Path(tmp))),
             query_registry=result.query_registry,
         )
         variables: dict[str, object] = {}

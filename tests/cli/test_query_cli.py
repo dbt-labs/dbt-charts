@@ -507,6 +507,25 @@ class TestQueryCommonErrors:
         assert len(parsed.errors) > 0
         assert parsed.error_code == "ERR-SOURCE-NOT-FOUND"
 
+    def test_a_dbt_project_without_profiles_yml_prints_its_code(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        for name in ("DBT_PROFILES_DIR", "DBT_PROFILE", "DBT_TARGET"):
+            monkeypatch.delenv(name, raising=False)
+        project = tmp_path / "shop"
+        project.mkdir()
+        (project / "dbt_project.yml").write_text("name: shop\nprofile: shop_profile\n")
+
+        result = runner.invoke(
+            app, ["query", "shop_profile", "SELECT 1", "--project-dir", str(project)]
+        )
+
+        assert result.exit_code == 1
+        assert "ERR-DBT-PROFILE-UNRESOLVED" in result.output
+
     def test_a_two_defect_board_prints_the_code_once(self, board_dir: Path) -> None:
         (board_dir / "broken.yaml").write_text(
             "source: db\nqueries:\n  q:\n    sql: select 1\n"

@@ -439,7 +439,7 @@ fn identity_parts(header: &str, series: Option<&str>, order: Option<i64>) -> Vec
 fn bar_aria_label_text(t: &BarTooltip, value_s: &str) -> Result<String, String> {
     let mut parts = identity_parts(t.header, t.series, t.order);
     if let Some(pct) = t.percent {
-        let pct_s = crate::number_locale::d3_format(".0%", pct)
+        let pct_s = ::bind::formats::locale::d3_format(".0%", pct)
             .map_err(|e| format!("bar: tooltip percent format: {e}"))?;
         parts.push(format!("%: {pct_s}"));
     }
@@ -570,7 +570,7 @@ pub fn pie_aria_label(t: &PieTooltip) -> Result<String, String> {
     if let Some(header) = t.header {
         parts.push(format!("{ROLE_HEADER_SWATCHED}{header}"));
     }
-    let share_s = crate::number_locale::d3_format(".0%", t.share)
+    let share_s = ::bind::formats::locale::d3_format(".0%", t.share)
         .map_err(|e| format!("pie: tooltip share format: {e}"))?;
     parts.push(format!("%: {share_s}"));
     let value_s = t.value_format.paint(t.value).map_err(|e| format!("pie: tooltip value {e}"))?;
@@ -705,7 +705,7 @@ pub fn heatmap_aria_label(t: &HeatmapTooltip) -> Result<String, String> {
 pub fn tooltip_header_text(
     cat: &str,
     date: Option<(i32, u8, u8)>,
-    detected_tu: Option<crate::families::temporal::TimeUnit>,
+    detected_tu: Option<::bind::temporal::TimeUnit>,
     is_standard_date: bool,
     grain_format: Option<crate::families::temporal::AuthoredTimeFormat>,
 ) -> Result<String, String> {
@@ -1069,12 +1069,12 @@ mod tests {
     /// a temporal x header built from `temporal::tooltip_header_date`.
     #[test]
     fn temporal_header_matches_the_corpus() {
-        let _en = crate::time_locale::en_us_scope();
+        let _en = ::bind::time_locale::en_us_scope();
         let header = crate::families::temporal::tooltip_header_date(
             2024,
             2,
             1,
-            Some(crate::families::temporal::TimeUnit::YearMonth),
+            Some(::bind::temporal::TimeUnit::YearMonth),
         ).unwrap();
         let t = BarTooltip {
             header: &header,
@@ -1094,8 +1094,8 @@ mod tests {
     /// A bucketed grain formats through it regardless of `is_standard_date`.
     #[test]
     fn tooltip_header_text_formats_a_detected_bucket() {
-        let _en = crate::time_locale::en_us_scope();
-        use crate::families::temporal::TimeUnit;
+        let _en = ::bind::time_locale::en_us_scope();
+        use ::bind::temporal::TimeUnit;
         assert_eq!(
             tooltip_header_text("2024-02-01", Some((2024, 2, 1)), Some(TimeUnit::YearMonth), false, None).unwrap(),
             "Feb 2024"
@@ -1108,8 +1108,9 @@ mod tests {
     /// at the detected grain only.
     #[test]
     fn tooltip_header_text_paints_a_redefined_grain() {
-        let _locale = crate::time_locale::en_us_scope();
-        use crate::families::temporal::{AuthoredTimeFormat, TimeUnit};
+        let _locale = ::bind::time_locale::en_us_scope();
+        use crate::families::temporal::{AuthoredTimeFormat};
+        use ::bind::temporal::{TimeUnit};
         let spec = AuthoredTimeFormat::parse("test", Some("%b '%y")).unwrap();
         assert_eq!(
             tooltip_header_text("2024-02-01", Some((2024, 2, 1)), Some(TimeUnit::YearMonth), false, spec).unwrap(),
@@ -1127,15 +1128,15 @@ mod tests {
     /// never the raw ISO string.
     #[test]
     fn tooltip_header_text_formats_a_standard_date_with_no_detected_bucket() {
-        let _en = crate::time_locale::en_us_scope();
+        let _en = ::bind::time_locale::en_us_scope();
         // The date the axis reads: an offset timestamp's day in the board zone, a naive one as written.
         let header = |text: &str| {
-            let date = crate::time_axis::testing::dates(&[text]).date[0];
+            let date = ::bind::time_axis::testing::dates(&[text]).date[0];
             tooltip_header_text(text, date, None, true, None).unwrap()
         };
         assert_eq!(header("2025-04-27"), "27 Apr 2025");
         assert_eq!(header("2024-03-10T23:00:00-05:00"), "11 Mar 2024", "on a UTC board, March 11");
-        let _zone = crate::time_zone::zone_scope("America/New_York");
+        let _zone = ::bind::time_zone::zone_scope("America/New_York");
         assert_eq!(header("2024-03-02T03:00:00Z"), "1 Mar 2024");
         assert_eq!(header("2024-03-02T03:00:00"), "2 Mar 2024");
     }

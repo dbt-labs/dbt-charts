@@ -14,8 +14,6 @@ Pins:
 
 from __future__ import annotations
 
-from unittest.mock import Mock
-
 import pytest
 
 from dbt_charts.core.column_types import literal_schema
@@ -23,10 +21,11 @@ from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.normalize.variables import OPTION_COUNT_COLUMN
 from dbt_charts.core.diagnostics.codes_execute import ERR_VARIABLE_OPTIONS_FAILED
 from dbt_charts.core.diagnostics.execution import QueryError
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.execute.collect import collect_all_query_names
+from dbt_charts.core.execute.query_result import QueryResult
 
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 from .conftest import compile_with_board_sources
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -294,25 +293,25 @@ class TestColumnOptionUsesNamedQueryCache:
         result = compile_with_board_sources(_RENDER_CACHE_YAML)
         assert result.success
 
-        registry = Mock()
-        registry.project_file_sources.return_value = {}
-        registry.database_file_version.return_value = ""
-        registry.execute.return_value = QueryResult(
-            data=[{"name": "East"}], schema=literal_schema([{"name": "East"}])
+        registry_backend = ScriptedBackend(
+            QueryResult(
+                data=[{"name": "East"}], schema=literal_schema([{"name": "East"}])
+            )
         )
-        executor = Executor(board=result.board, adapter_registry=registry)
+        registry = scripted_env(registry_backend)
+        executor = Run(board=result.board, env=registry)
 
         # First render: pre-execute all queries (what renderer.py does)
         all_names = collect_all_query_names(result.board)
         executor.run_misses(executor.lookup(all_names), 8)
 
-        calls_after_first_render = registry.execute.call_count
+        calls_after_first_render = registry_backend.execute.call_count
 
         # Second render: same pre-execute — the column-option query is cached
         executor.run_misses(executor.lookup(all_names), 8)
 
         # The adapter must not have been called again for the column option query
-        assert registry.execute.call_count == calls_after_first_render
+        assert registry_backend.execute.call_count == calls_after_first_render
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -354,10 +353,9 @@ class TestFailingColumnOptionQuery:
 
         result = compile_with_board_sources(_FAILING_OPTIONS_YAML)
         assert result.success
-        registry = Mock()
-        registry.project_file_sources.return_value = {}
-        registry.database_file_version.return_value = ""
-        executor = Executor(board=result.board, adapter_registry=registry)
+        registry_backend = ScriptedBackend()
+        registry = scripted_env(registry_backend)
+        executor = Run(board=result.board, env=registry)
         executor.ledger.errors["_var_options_region"] = QueryError(
             "no such table: regions"
         )
@@ -375,8 +373,8 @@ class TestFailingColumnOptionQuery:
         result = compile_with_board_sources(_FAILING_OPTIONS_YAML)
         assert result.success
 
-        def adapter_execute(query, variables=None, **kw):
-            if "regions" in getattr(query, "sql", ""):
+        def adapter_execute(_source, query):
+            if "regions" in query.sql:
                 return QueryResult(
                     data=None, error=QueryError("no such table: regions")
                 )
@@ -384,13 +382,11 @@ class TestFailingColumnOptionQuery:
                 data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
             )
 
-        registry = Mock()
-        registry.project_file_sources.return_value = {}
-        registry.execute.side_effect = adapter_execute
-        registry.database_file_version.return_value = ""
-        executor = Executor(board=result.board, adapter_registry=registry)
+        registry_backend = ScriptedBackend(side_effect=adapter_execute)
+        registry = scripted_env(registry_backend)
+        executor = Run(board=result.board, env=registry)
 
-        rendered = render(result.board, executor, format="svg")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
 
         assert rendered.output is None
         assert rendered.board_error is not None

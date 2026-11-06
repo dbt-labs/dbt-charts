@@ -56,7 +56,7 @@ def test_render_inspect_dashboard_does_not_call_resolve_jinja(
     local_project: Callable[..., FilesystemProject],
 ) -> None:
     """After M2 the renderer must not import or call resolve_jinja_template."""
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
     from dbt_charts.core.inspect.renderer import render_inspect_dashboard
 
     template_text = _template_text("model")
@@ -65,6 +65,6 @@ def test_render_inspect_dashboard_does_not_call_resolve_jinja(
         template_text,
         {"model": "orders"},
         project=project,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
     )
     assert isinstance(html, str)

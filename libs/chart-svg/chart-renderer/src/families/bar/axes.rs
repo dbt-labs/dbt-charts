@@ -6,7 +6,8 @@ use crate::common::{AxisStyle, format_y_label};
 use crate::families::axis_caption::AxisCaption;
 use crate::families::cartesian::{BandScale};
 use d3rs::scale::Continuous;
-use crate::families::temporal::{AuthoredTimeFormat, LabelUnit, TemporalLabel, TimeUnit};
+use crate::families::temporal::{AuthoredTimeFormat, LabelUnit, TemporalLabel};
+use ::bind::temporal::{TimeUnit};
 use crate::vega_fit;
 
 use measure::FontBook;
@@ -235,7 +236,7 @@ pub(super) fn cadence_ratio(r: &BarResolved) -> Result<f64, String> {
 /// no label and so gets no tick.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn bar_temporal_labels(
-    domain: &crate::time_axis::Dates,
+    domain: &::bind::time_axis::Dates,
     data_tu: TimeUnit,
     unit: LabelUnit,
     ax_x: &AxisStyle,

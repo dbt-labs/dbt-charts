@@ -7,9 +7,10 @@ from pathlib import Path
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import compile as compile_board
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
+
+from .._run import Run
 
 
 def text_format_board(
@@ -48,12 +49,12 @@ def chart_error_codes(yaml: str) -> list[str]:
     result = compile_board(yaml)
     board = result.board
     assert result.success and board is not None
-    executor = Executor(
+    executor = Run(
         board,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        env=build_exec_env(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
     )
-    rendered = render(board, executor, format="svg")
+    rendered = render(board, executor.ctx, executor.ledger, format="svg")
     return sorted({e.code for e in rendered.chart_errors})
 
 

@@ -126,9 +126,9 @@ def profiled_project(
 
 
 def _render(project: FilesystemProject, path: str) -> str:
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
 
-    registry = build_adapter_registry(
+    registry = build_exec_env(
         project,
         read_only=False,
         allow_external_access_in_readonly=False,
@@ -139,7 +139,7 @@ def _render(project: FilesystemProject, path: str) -> str:
     result = render_registered_view(
         request_path=path,
         project=project,
-        adapter_registry=registry,
+        env=registry,
         result_cache=None,
     )
     assert result is not None, path
@@ -196,10 +196,10 @@ def test_shipped_inspect_template_renders_curated(
     transition panel — this surface embeds chart errors in the HTML, so the
     marker scan is load-bearing here (unlike registered views, which return
     RenderError)."""
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
     from dbt_charts.core.inspect.renderer import render_inspect_dashboard
 
-    registry = build_adapter_registry(
+    registry = build_exec_env(
         profiled_project,
         read_only=False,
         allow_external_access_in_readonly=False,
@@ -212,7 +212,7 @@ def test_shipped_inspect_template_renders_curated(
         template_yaml,
         {"model": "orders", "column": column},
         project=profiled_project,
-        adapter_registry=registry,
+        env=registry,
     )
     assert html, template_name
     lowered = html.lower()

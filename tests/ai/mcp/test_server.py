@@ -64,7 +64,7 @@ def make_context(tmp_path: Path):
 
 @pytest.fixture
 def mcp_server(make_context):
-    """A constructed MCP server bound to a scratch adapter registry.
+    """A constructed MCP server bound to a scratch exec env.
 
     Used by the surface, schema-shape, and resource/tool advertisement
     tests — none of them need anything project-specific, just a
@@ -363,10 +363,10 @@ class TestRunServerPortPropagation:
         monkeypatch.setattr("mcp.server.stdio.stdio_server", _stub_stdio_factory)
 
         # Stub ProjectSession.from_project so run_server doesn't build a real
-        # adapter registry for the injected project.
+        # exec env for the injected project.
         class _StubProject:
             project = local_project(tmp_path)
-            adapter_registry = object()
+            env = object()
 
             def refresh(self) -> None: ...
 
@@ -452,7 +452,7 @@ class TestRunServerPreviewStartupFailure:
 
         class _StubProject:
             project = local_project(tmp_path)
-            adapter_registry = object()
+            env = object()
 
             def __enter__(self) -> "_StubProject":
                 return self
@@ -805,7 +805,7 @@ class TestRunServerOwnsProjectSessionWithRefresh:
 
         class _FakeProject:
             project = local_project(tmp_path)
-            adapter_registry = object()
+            env = object()
 
             def refresh(self) -> None: ...
 
@@ -889,14 +889,14 @@ class TestRunServerOwnsProjectSessionWithRefresh:
         restarting the server."""
         from dbt_charts.ai.context import DbtChartsAIContext
         from dbt_charts.ai.tools import dispatch_tool_call
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         refresh_calls: list[str] = []
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
 
         class _SpyProjectSession:
             project = local_project(tmp_path)
-            adapter_registry = registry
+            env = registry
 
             def refresh(self) -> None:
                 refresh_calls.append("refresh")

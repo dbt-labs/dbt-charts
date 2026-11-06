@@ -8,8 +8,8 @@ same source name with different credentials must produce different hashes
 (so they don't share cache entries when their DB-side row-level access
 differs); but a password rotation alone must NOT invalidate the cache.
 
-`source_identity(source)` is the single transformation. The executor calls
-it (via `compute_source_hash`) after resolving named source references
+`source_identity(source)` is the single transformation. `compute_source_hash` calls
+it after resolving named source references
 through the project's `board.sources` map.
 
 See also:

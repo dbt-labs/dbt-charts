@@ -376,6 +376,14 @@ def resolve_daterange_presets(
     }
 
 
+class MultiselectValue(list[Any]):  # type-state: explicit_any — members keep types
+    """A multiselect's selection at render; text prints it as a natural list."""
+
+
+class DaterangeValue(list[str]):
+    """A daterange's ``[start, end]`` at render; text refuses to print it whole."""
+
+
 def normalize_render_values(
     values: VariableValues, registry: dict[str, Variable], clock: BoardClock
 ) -> VariableValues:
@@ -401,16 +409,17 @@ def normalize_render_values(
     for name, var in registry.items():
         raw = values.get(name)
         if var.input == "multiselect":
-            normalized[name] = coerce_multiselect(
-                UNSET_MULTISELECT if raw is None else raw
+            normalized[name] = MultiselectValue(
+                coerce_multiselect(UNSET_MULTISELECT if raw is None else raw)
             )
-        elif (
-            var.input == "daterange"
-            and isinstance(raw, str)
-            and not variable_value_is_absent(raw)
-        ):
-            _require_preset(name, raw)
-            normalized[name] = resolve_daterange_preset_iso(raw, clock)
+        elif var.input == "daterange":
+            if isinstance(raw, str) and not variable_value_is_absent(raw):
+                _require_preset(name, raw)
+                normalized[name] = DaterangeValue(
+                    resolve_daterange_preset_iso(raw, clock)
+                )
+            elif isinstance(raw, (list, tuple)):
+                normalized[name] = DaterangeValue(raw)
     return normalized
 
 

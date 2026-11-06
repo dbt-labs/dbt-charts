@@ -4,14 +4,14 @@ after it: the title band, the render, the ink inset and the warning detectors.""
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import Mock
 
 import pytest
 
 from dbt_charts.core.board import render_dashboard
+from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.project import InMemoryBoard
 
-from .._results import rows_schema
+from .._scripted_env import ScriptedBackend, scripted_env
 
 ROWS = [
     {"segment": "North America", "sessions": 40},
@@ -58,18 +58,8 @@ GRID_BOARD = BOARD.replace(
 )
 
 
-def _registry(rows: list[dict[str, Any]]) -> Mock:
-    ok = Mock()
-    ok.is_success = True
-    ok.data = rows
-    ok.schema = rows_schema(ok.data)
-    ok.column_descriptions = None
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    registry = Mock()
-    registry.execute.return_value = ok
-    registry.project_file_sources.return_value = {}
-    return registry
+def _registry(rows: list[dict[str, Any]]) -> ExecEnv:
+    return scripted_env(ScriptedBackend(rows))
 
 
 @pytest.mark.parametrize("source", [BOARD, ROWS_BOARD, NESTED_BOARD, GRID_BOARD])
@@ -89,7 +79,7 @@ def test_the_size_stage_decides_each_placed_pie_once(
     project = local_project(tmp_path)
     render_dashboard(
         board=InMemoryBoard(source, path=project.path("charts/_t.yml")),
-        adapter_registry=_registry(ROWS),
+        env=_registry(ROWS),
         format="svg",
         project=project,
         result_cache=None,
@@ -121,7 +111,7 @@ def _guard_warnings(rows: str, tmp_path, local_project) -> list[Any]:
         board=InMemoryBoard(
             GUARD_BOARD.format(rows=rows), path=project.path("charts/_t.yml")
         ),
-        adapter_registry=_registry(ROWS),
+        env=_registry(ROWS),
         format="svg",
         project=project,
         result_cache=None,
@@ -174,7 +164,7 @@ def _warning_codes(width: int, tmp_path, local_project) -> set[str]:
         board=InMemoryBoard(
             LEGEND_BOARD.format(width=width), path=project.path("charts/_t.yml")
         ),
-        adapter_registry=_registry(ROWS),
+        env=_registry(ROWS),
         format="svg",
         project=project,
         result_cache=None,
@@ -240,7 +230,7 @@ def test_a_legend_value_is_reported_while_any_placement_draws_the_legend(
     project = local_project(tmp_path)
     result = render_dashboard(
         board=InMemoryBoard(TWO_PLACEMENTS_BOARD, path=project.path("charts/_t.yml")),
-        adapter_registry=_registry(ROWS),
+        env=_registry(ROWS),
         format="svg",
         project=project,
         result_cache=None,
@@ -252,8 +242,9 @@ def test_a_mode_left_on_the_layout_item_by_an_earlier_pass_is_decided_afresh() -
     """Like every sizing field, the item's mode belongs to one pass: a board
     rendered twice sizes its pies twice, not once."""
     from dbt_charts.core.compile import compile
-    from dbt_charts.core.execute import Executor
     from dbt_charts.core.render import render
+
+    from .._run import Run
 
     yaml = """
 title: Mix
@@ -273,12 +264,10 @@ rows:
     result = compile(yaml)
     assert result.success and result.board is not None, result.errors
     registry = _registry(ROWS)
-    executor = Executor(
-        result.board, adapter_registry=registry, query_registry=result.query_registry
-    )
+    executor = Run(result.board, env=registry, query_registry=result.query_registry)
     item = result.board.layout.items[0]
     item.pie_mode = "full_table"
-    render(result.board, executor, format="svg")
+    render(result.board, executor.ctx, executor.ledger, format="svg")
     assert item.pie_mode == "direct"
 
 
@@ -286,17 +275,18 @@ def _placed_pie_modes(yaml: str, rows: list[dict[str, Any]]) -> list[str | None]
     """Render ``yaml`` and return the mode the size stage left on each placed pie."""
     from dbt_charts.core.compile import compile
     from dbt_charts.core.compile.models.board.normalized import Layout
-    from dbt_charts.core.execute import Executor
     from dbt_charts.core.render import render
+
+    from .._run import Run
 
     result = compile(yaml)
     assert result.success and result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=_registry(rows),
+        env=_registry(rows),
         query_registry=result.query_registry,
     )
-    render(result.board, executor, format="svg")
+    render(result.board, executor.ctx, executor.ledger, format="svg")
 
     def walk(layout: Layout) -> list[str | None]:
         found: list[str | None] = []
@@ -395,7 +385,7 @@ grid:
     project = local_project(tmp_path)
     result = render_dashboard(
         board=InMemoryBoard(yaml, path=project.path("charts/_t.yml")),
-        adapter_registry=_registry(_MANY_SLICES),
+        env=_registry(_MANY_SLICES),
         format="svg",
         project=project,
         result_cache=None,

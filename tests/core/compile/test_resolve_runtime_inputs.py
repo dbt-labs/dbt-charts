@@ -363,3 +363,27 @@ def test_resolve_raw_display_text_keeps_jinja_literal() -> None:
         display_text="raw",
     )
     assert resolved.title == "{{ region }} revenue"
+
+
+def test_layer_label_renders_jinja_like_the_title() -> None:
+    chart = _chart(
+        {
+            "id": "trend",
+            "type": "line",
+            "query": SqlQuery(sql="select * from main.trend", source="warehouse"),
+            "x": "month",
+            "y": "rate",
+            "layers": [
+                {"type": "line", "y": "median", "label": "Median {{ median }}%"}
+            ],
+        }
+    )
+    rows = [{"month": "2026-01-01", "rate": 31.0, "median": 39.0}]
+
+    resolved = resolve(
+        chart, rows, _style(), display_text=DisplayTextInputs({"median": 39}, {})
+    )
+    static = resolve(chart, rows, _style(), display_text="raw")
+
+    assert resolved.layers[0].label == "Median 39%"
+    assert static.layers[0].label == "Median {{ median }}%"

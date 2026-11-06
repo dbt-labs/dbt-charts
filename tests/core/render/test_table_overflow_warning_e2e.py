@@ -14,13 +14,12 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
-from unittest.mock import Mock
 
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
-from ..._results import rows_schema
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 
 def _rows(n: int) -> list[dict[str, object]]:
@@ -39,18 +38,8 @@ def _rows(n: int) -> list[dict[str, object]]:
 def _make_executor(
     board: object, query_registry: object, rows: list[dict[str, object]]
 ):
-    ok = Mock()
-    ok.is_success = True
-    ok.data = rows
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.return_value = ok
-    return Executor(
-        board, adapter_registry=mock_registry, query_registry=query_registry
-    )
+    mock_registry = scripted_env(ScriptedBackend(rows))
+    return Run(board, env=mock_registry, query_registry=query_registry)
 
 
 _NARROW = """
@@ -96,7 +85,7 @@ def test_narrow_table_warns() -> None:
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _rows(5))
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     codes = {w.code for w in render_result.warnings}
     assert "WARN-TABLE-COLUMNS-OVERFLOW" in codes, (
@@ -116,7 +105,7 @@ def test_roomy_table_silent() -> None:
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _rows(5))
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     codes = {w.code for w in render_result.warnings}
     assert "WARN-TABLE-COLUMNS-OVERFLOW" not in codes
@@ -130,7 +119,7 @@ def test_non_svg_format_reports_same_warning_as_svg() -> None:
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _rows(5))
 
-    render_result = render(result.board, executor, format="json")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="json")
 
     codes = {w.code for w in render_result.warnings}
     assert "WARN-TABLE-COLUMNS-OVERFLOW" in codes
@@ -181,7 +170,7 @@ def test_overflowing_table_never_paints_past_its_slot() -> None:
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _wide_rows(5))
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     assert "WARN-TABLE-COLUMNS-OVERFLOW" in {w.code for w in render_result.warnings}
     assert isinstance(render_result.output, str)

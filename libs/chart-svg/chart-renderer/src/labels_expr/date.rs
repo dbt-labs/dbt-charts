@@ -26,7 +26,7 @@ pub fn to_date_string(ms: f64) -> String {
 pub fn parse_date(s: &str) -> Res<f64> {
     // The parser tokenizes the whole string first: a token and its word take about 130 bytes.
     super::val::charge(s.len().saturating_mul(130))?;
-    match crate::js_date::parse_ms_zoned(s) {
+    match ::bind::js_date::parse_ms_zoned(s) {
         Some((ms, true)) => Ok(ms),
         Some((wall, false)) => from_local_wall(wall),
         None => Ok(f64::NAN),
@@ -41,7 +41,7 @@ pub fn to_local_wall(ms: f64) -> Res<f64> {
 
 /// The instant a local wall clock names: the inverse of [`to_local_wall`].
 pub fn from_local_wall(wall: f64) -> Res<f64> {
-    crate::time_zone::expression_local_instant_ms(wall).map_err(EvalError::Unmodeled)
+    ::bind::time_zone::expression_local_instant_ms(wall).map_err(EvalError::Unmodeled)
 }
 
 /// Vega's multi-scale `timeFormat(date)` (no format string): the coarsest unit the instant sits on, by
@@ -74,9 +74,9 @@ pub fn multi_format(raw: f64, utc: bool, overrides: &[(String, String)], locale:
     time_format(&chosen, ms, utc, locale)
 }
 
-/// JavaScript's local offset at `ms` (`crate::time_zone::expression_local_offset_ms`).
+/// JavaScript's local offset at `ms` (`bind::time_zone::expression_local_offset_ms`).
 pub fn local_offset_ms(ms: f64) -> Res<f64> {
-    crate::time_zone::expression_local_offset_ms(ms).map_err(EvalError::Unmodeled)
+    ::bind::time_zone::expression_local_offset_ms(ms).map_err(EvalError::Unmodeled)
 }
 
 /// `timeFormat(spec)(date)` / `utcFormat(spec)(date)`: local time reads the

@@ -76,6 +76,10 @@ from dbt_charts.core.compile.template.query_result import (
     QueryResults,
     underscore_access_error,
 )
+from dbt_charts.core.compile.template.variables import (
+    DaterangeValue,
+    MultiselectValue,
+)
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_QUERY_DIALECT_MIXED,
@@ -84,6 +88,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
 from dbt_charts.core.diagnostics.codes_execute import ERR_SQL_DIALECT_UNSUPPORTED
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_TEXT_EMPTY_SEQUENCE,
+    ERR_TEXT_MAPPING_VALUE,
     ERR_TEXT_NULL_COMPARISON,
     ERR_TEXT_TYPE_ERROR,
 )
@@ -132,7 +137,28 @@ class _TextUndefined(_LenientUndefined):
         super().__init__(hint, obj, name, exc)
 
 
-_jinja_env_text = _BoardTextEnvironment(undefined=_TextUndefined)
+def _print_text_value(
+    value: Any,  # type-state: explicit_any — any template value
+) -> Any:  # type-state: explicit_any — the value Jinja prints
+    """Print a multiselect as a natural list ("A, B, and C"); refuse what has no
+    single reading: a mapping, a nested list, a daterange."""
+    if isinstance(value, Mapping):
+        raise ChartDataError.from_code(ERR_TEXT_MAPPING_VALUE, kind="mapping")
+    if isinstance(value, DaterangeValue):
+        raise ChartDataError.from_code(ERR_TEXT_MAPPING_VALUE, kind="date range")
+    if not isinstance(value, MultiselectValue):
+        return value
+    if any(isinstance(item, (Mapping, list, tuple)) for item in value):
+        raise ChartDataError.from_code(ERR_TEXT_MAPPING_VALUE, kind="nested list")
+    names = [str(item) for item in value]
+    if len(names) <= 2:
+        return " and ".join(names)
+    return f"{', '.join(names[:-1])}, and {names[-1]}"
+
+
+_jinja_env_text = _BoardTextEnvironment(
+    undefined=_TextUndefined, finalize=_print_text_value
+)
 
 # {{ queries.X }} inline ref and {{ queries.X.cache }} cache-read ref patterns.
 # Shared by dependency detection and inline substitution so the two stay in sync.

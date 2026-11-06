@@ -16,11 +16,21 @@ import pytest
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.template.query_result import QueryResult
+    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.registered_views.router import RouteMatch
 
+from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve.chart.link_keys import plan_link_keys
+from dbt_charts.core.execute.link_schema import LinkProbe
+from dbt_charts.core.execute.plan import make_context
 from dbt_charts.core.project import Project
+
+
+def _probe(env: ExecEnv) -> LinkProbe:
+    board = compile("title: Probe").board
+    assert board is not None
+    return LinkProbe(make_context(board, env))
 
 
 def _sql_query(sql: str, source: str = "dw") -> SqlQuery:
@@ -269,7 +279,7 @@ class TestSourceSchemaTableBailConditions:
     """
 
     def test_multi_join_returns_empty(self) -> None:
-        """source_schema_table itself always bails on JOINs (no adapter_registry
+        """source_schema_table itself always bails on JOINs (no env
         param) — fail-closed, unaffected by this file's FK-proven JOIN
         resolution which lives in _loc_for_query instead."""
         from dbt_charts.core.render.chart.automatic_link import source_schema_table
@@ -495,9 +505,10 @@ class TestCteAliasTracking:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "tickets.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -528,11 +539,11 @@ charts:
 """
         result = compile(board_yaml)
         assert result.board is not None, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        return render(result.board, executor, format="html").output
+        return render(result.board, executor.ctx, executor.ledger, format="html").output
 
     def test_cte_pass_through_emits_drill(
         self, tmp_path, local_project: Callable[..., Project]
@@ -616,13 +627,14 @@ charts:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.registered_views.render_pipeline import (
             RenderSuccess,
             render_registered_view,
         )
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "tickets.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -655,9 +667,9 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
         project = local_project(tmp_path)
-        adapter_registry = build_adapter_registry(project)
-        executor = Executor(result.board, adapter_registry=adapter_registry)
-        html = render(result.board, executor, format="html").output
+        env = build_exec_env(project)
+        executor = Run(result.board, env=env)
+        html = render(result.board, executor.ctx, executor.ledger, format="html").output
         assert isinstance(html, str)
 
         # Pull the emitted param+value straight out of the rendered row link
@@ -669,7 +681,7 @@ charts:
         detail_result = render_registered_view(
             request_path="/data/dw/main/tickets/detail/",
             project=project,
-            adapter_registry=adapter_registry,
+            env=env,
             result_cache=None,
             request_variables={param: value},
         )
@@ -734,9 +746,10 @@ charts:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "tickets.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -769,11 +782,11 @@ charts:
 """
         result = compile(board_yaml)
         assert result.board is not None, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        html = render(result.board, executor, format="html").output
+        html = render(result.board, executor.ctx, executor.ledger, format="html").output
         assert isinstance(html, str)
 
         assert "/data/dw/main/tickets/detail/?id=" not in html, (
@@ -796,9 +809,10 @@ charts:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "tickets.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -831,11 +845,11 @@ charts:
 """
         result = compile(board_yaml)
         assert result.board is not None, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        html = render(result.board, executor, format="html").output
+        html = render(result.board, executor.ctx, executor.ledger, format="html").output
         assert isinstance(html, str)
 
         assert "/data/dw/main/tickets/detail/" not in html, (
@@ -856,9 +870,10 @@ charts:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "tickets.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -891,11 +906,11 @@ charts:
 """
         result = compile(board_yaml)
         assert result.board is not None, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        html = render(result.board, executor, format="html").output
+        html = render(result.board, executor.ctx, executor.ledger, format="html").output
         assert isinstance(html, str)
 
         assert "/data/dw/main/tickets/detail/?id=" not in html, (
@@ -925,9 +940,10 @@ charts:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "line_items.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -960,11 +976,11 @@ charts:
 """
         result = compile(board_yaml)
         assert result.board is not None, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        html = render(result.board, executor, format="html").output
+        html = render(result.board, executor.ctx, executor.ledger, format="html").output
         assert isinstance(html, str)
 
         assert "/data/dw/main/line_items/detail/" not in html, (
@@ -998,7 +1014,7 @@ class TestJoinGrainResolution:
         import yaml
 
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render.chart.automatic_link import _loc_for_query
 
         db_path = tmp_path / "sales.sqlite"
@@ -1042,13 +1058,13 @@ class TestJoinGrainResolution:
         target_dir.mkdir()
         (target_dir / "manifest.json").write_text(json.dumps(manifest))
 
-        adapter_registry = build_adapter_registry(local_project(tmp_path))
+        env = build_exec_env(local_project(tmp_path))
 
         query = SqlQuery(
             sql="SELECT o.id, c.name FROM main.orders o JOIN main.customers c ON o.cust_id = c.id",
             source="dw",
         )
-        loc = _loc_for_query(query, adapter_registry)
+        loc = _loc_for_query(query, _probe(env))
         assert loc == ("dw", "main", "orders"), f"Expected spine table, got {loc}"
 
     def test_join_with_mixed_case_alias_in_on_clause_resolves(
@@ -1069,7 +1085,7 @@ class TestJoinGrainResolution:
         import yaml
 
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render.chart.automatic_link import _loc_for_query
 
         db_path = tmp_path / "sales.sqlite"
@@ -1113,14 +1129,14 @@ class TestJoinGrainResolution:
         target_dir.mkdir()
         (target_dir / "manifest.json").write_text(json.dumps(manifest))
 
-        adapter_registry = build_adapter_registry(local_project(tmp_path))
+        env = build_exec_env(local_project(tmp_path))
 
         query = SqlQuery(
             sql="SELECT o.id, c.name FROM main.orders o"
             " JOIN main.customers c ON O.cust_id = c.id",
             source="dw",
         )
-        loc = _loc_for_query(query, adapter_registry)
+        loc = _loc_for_query(query, _probe(env))
         assert loc == ("dw", "main", "orders"), f"Expected spine table, got {loc}"
 
     def test_join_with_parenthesized_on_clause_resolves(
@@ -1136,7 +1152,7 @@ class TestJoinGrainResolution:
         import yaml
 
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render.chart.automatic_link import _loc_for_query
 
         db_path = tmp_path / "sales.sqlite"
@@ -1180,14 +1196,14 @@ class TestJoinGrainResolution:
         target_dir.mkdir()
         (target_dir / "manifest.json").write_text(json.dumps(manifest))
 
-        adapter_registry = build_adapter_registry(local_project(tmp_path))
+        env = build_exec_env(local_project(tmp_path))
 
         query = SqlQuery(
             sql="SELECT o.id, c.name FROM main.orders o"
             " JOIN main.customers c ON (o.cust_id = c.id)",
             source="dw",
         )
-        loc = _loc_for_query(query, adapter_registry)
+        loc = _loc_for_query(query, _probe(env))
         assert loc == ("dw", "main", "orders"), f"Expected spine table, got {loc}"
 
     def test_join_with_unrelated_cte_bails(
@@ -1206,7 +1222,7 @@ class TestJoinGrainResolution:
         import yaml
 
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render.chart.automatic_link import _loc_for_query
 
         db_path = tmp_path / "sales.sqlite"
@@ -1250,7 +1266,7 @@ class TestJoinGrainResolution:
         target_dir.mkdir()
         (target_dir / "manifest.json").write_text(json.dumps(manifest))
 
-        adapter_registry = build_adapter_registry(local_project(tmp_path))
+        env = build_exec_env(local_project(tmp_path))
 
         query = SqlQuery(
             sql="WITH thresholds AS (SELECT 100 AS min_amount)"
@@ -1258,7 +1274,7 @@ class TestJoinGrainResolution:
             " JOIN main.customers c ON o.cust_id = c.id",
             source="dw",
         )
-        assert not _loc_for_query(query, adapter_registry)
+        assert not _loc_for_query(query, _probe(env))
 
     def test_join_with_aggregate_function_bails_despite_fk_proof(
         self, tmp_path, local_project: Callable[..., Project]
@@ -1277,7 +1293,7 @@ class TestJoinGrainResolution:
         import yaml
 
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render.chart.automatic_link import _loc_for_query
 
         db_path = tmp_path / "sales.sqlite"
@@ -1321,7 +1337,7 @@ class TestJoinGrainResolution:
         target_dir.mkdir()
         (target_dir / "manifest.json").write_text(json.dumps(manifest))
 
-        adapter_registry = build_adapter_registry(local_project(tmp_path))
+        env = build_exec_env(local_project(tmp_path))
 
         query = SqlQuery(
             sql=(
@@ -1330,7 +1346,7 @@ class TestJoinGrainResolution:
             ),
             source="dw",
         )
-        assert not _loc_for_query(query, adapter_registry)
+        assert not _loc_for_query(query, _probe(env))
 
     def test_join_no_matching_fk_edge_bails(
         self, tmp_path, local_project: Callable[..., Project]
@@ -1341,7 +1357,7 @@ class TestJoinGrainResolution:
         import yaml
 
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render.chart.automatic_link import _loc_for_query
 
         db_path = tmp_path / "sales.sqlite"
@@ -1355,14 +1371,14 @@ class TestJoinGrainResolution:
         (tmp_path / "dbt_charts.yml").write_text(yaml.dump(sources_yaml))
         # No manifest written → no FK edges
 
-        adapter_registry = build_adapter_registry(local_project(tmp_path))
+        env = build_exec_env(local_project(tmp_path))
 
         query = SqlQuery(
             sql="SELECT o.id, c.name FROM main.orders o JOIN main.customers c ON o.cust_id = c.id",
             source="dw",
         )
         # Even though column name is "id" on both sides, no FK edge → bail
-        assert not _loc_for_query(query, adapter_registry)
+        assert not _loc_for_query(query, _probe(env))
 
     def test_join_on_unrelated_columns_bails_despite_fk_target_match(
         self, tmp_path, local_project: Callable[..., Project]
@@ -1382,7 +1398,7 @@ class TestJoinGrainResolution:
         import yaml
 
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render.chart.automatic_link import _loc_for_query
 
         db_path = tmp_path / "sales.sqlite"
@@ -1428,7 +1444,7 @@ class TestJoinGrainResolution:
         target_dir.mkdir()
         (target_dir / "manifest.json").write_text(json.dumps(manifest))
 
-        adapter_registry = build_adapter_registry(local_project(tmp_path))
+        env = build_exec_env(local_project(tmp_path))
 
         query = SqlQuery(
             sql=(
@@ -1437,7 +1453,7 @@ class TestJoinGrainResolution:
             ),
             source="dw",
         )
-        assert not _loc_for_query(query, adapter_registry)
+        assert not _loc_for_query(query, _probe(env))
 
     def test_reverse_direction_join_bails_fan_out_not_provable(
         self, tmp_path, local_project: Callable[..., Project]
@@ -1457,7 +1473,7 @@ class TestJoinGrainResolution:
         import yaml
 
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render.chart.automatic_link import _loc_for_query
 
         db_path = tmp_path / "sales.sqlite"
@@ -1501,7 +1517,7 @@ class TestJoinGrainResolution:
         target_dir.mkdir()
         (target_dir / "manifest.json").write_text(json.dumps(manifest))
 
-        adapter_registry = build_adapter_registry(local_project(tmp_path))
+        env = build_exec_env(local_project(tmp_path))
 
         query = SqlQuery(
             sql=(
@@ -1510,7 +1526,7 @@ class TestJoinGrainResolution:
             ),
             source="dw",
         )
-        assert not _loc_for_query(query, adapter_registry)
+        assert not _loc_for_query(query, _probe(env))
 
     def test_two_joins_one_unprovable_bails_ambiguous(
         self, tmp_path, local_project: Callable[..., Project]
@@ -1527,7 +1543,7 @@ class TestJoinGrainResolution:
         import yaml
 
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render.chart.automatic_link import _loc_for_query
 
         db_path = tmp_path / "sales.sqlite"
@@ -1579,7 +1595,7 @@ class TestJoinGrainResolution:
         target_dir.mkdir()
         (target_dir / "manifest.json").write_text(json.dumps(manifest))
 
-        adapter_registry = build_adapter_registry(local_project(tmp_path))
+        env = build_exec_env(local_project(tmp_path))
 
         query = SqlQuery(
             sql=(
@@ -1589,7 +1605,7 @@ class TestJoinGrainResolution:
             ),
             source="dw",
         )
-        assert not _loc_for_query(query, adapter_registry)
+        assert not _loc_for_query(query, _probe(env))
 
     def test_join_with_fk_emits_drill_in_render(
         self, tmp_path, local_project: Callable[..., Project]
@@ -1601,9 +1617,10 @@ class TestJoinGrainResolution:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "sales.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -1668,11 +1685,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        html = render(result.board, executor, format="html").output
+        html = render(result.board, executor.ctx, executor.ledger, format="html").output
         assert isinstance(html, str)
 
         assert "/data/dw/main/orders/detail/" in html, (
@@ -1703,9 +1720,10 @@ charts:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "sales.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -1770,11 +1788,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        html = render(result.board, executor, format="html").output
+        html = render(result.board, executor.ctx, executor.ledger, format="html").output
         assert isinstance(html, str)
 
         assert "/data/dw/main/orders/detail/?id=" not in html, (
@@ -1882,7 +1900,7 @@ def _setup_sqlite_project(tmp_path) -> tuple[str, str]:
     """Set up a minimal project with a SQLite source registered at the project level.
 
     Returns (db_path_str, source_name) where the source is registered in
-    dbt_charts.yml so build_adapter_registry(local_project(tmp_path)) can resolve it.
+    dbt_charts.yml so build_exec_env(local_project(tmp_path)) can resolve it.
     The SQLiteSchemaSource (used by the LayeredSchemaResolver) can then profile
     the table via pragma_table_info without requiring a dbt adapter.
     """
@@ -1952,19 +1970,20 @@ charts:
           → table renderer emits cell-link href.
         """
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         _db_path, source_name = _setup_sqlite_project(tmp_path)
         result = compile(self._board_yaml(source_name))
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="html")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="html")
         html = rendered.output
         assert isinstance(html, str)
 
@@ -1982,19 +2001,20 @@ charts:
     ) -> None:
         """When links.auto is off (default), the table chart emits no cell-link href."""
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         _db_path, source_name = _setup_sqlite_project(tmp_path)
         result = compile(self._board_yaml(source_name, automatic_link=False))
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="html")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="html")
         html = rendered.output
         assert isinstance(html, str)
 
@@ -2020,10 +2040,11 @@ charts:
         real.
         """
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
         from dbt_charts.core.render.chart import automatic_link as automatic_link_mod
+
+        from ...._run import Run
 
         _db_path, source_name = _setup_sqlite_project(tmp_path)
 
@@ -2031,9 +2052,7 @@ charts:
         def _fake_fk_links(*_a: object, **_k: object) -> dict[str, str]:
             return {"id": "/data/dw/main/orders/detail/?id={{ id }}"}
 
-        monkeypatch.setattr(
-            automatic_link_mod, "fk_column_links_from_executor", _fake_fk_links
-        )
+        monkeypatch.setattr(automatic_link_mod, "fk_column_links", _fake_fk_links)
 
         board_yaml = f"""\
 title: "Orders"
@@ -2058,11 +2077,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        html = render(result.board, executor, format="html").output
+        html = render(result.board, executor.ctx, executor.ledger, format="html").output
         assert isinstance(html, str)
 
         # The FK path fired (baked columns) — otherwise this test is a no-op.
@@ -2133,27 +2152,30 @@ charts:
         requests) rather than from the ephemeral per-executor cursor cache.
         """
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         _db_path, source_name = _setup_sqlite_project(tmp_path)
         result = compile(self._board_yaml(source_name))
         assert result.board is not None, result.errors
 
         cache_path = tmp_path / "cache.duckdb"
-        adapter_registry = build_adapter_registry(local_project(tmp_path))
+        env = build_exec_env(local_project(tmp_path))
 
         # Request 1: fresh executor, empty caches — query executes, result cache warms.
         result_cache_1 = TrivialDuckDBCache(db_path=cache_path)
-        executor_1 = Executor(
+        executor_1 = Run(
             result.board,
-            adapter_registry=adapter_registry,
+            env=env,
             use_cache=True,
             result_cache=result_cache_1,
         )
-        html_1 = render(result.board, executor_1, format="html").output
+        html_1 = render(
+            result.board, executor_1.ctx, executor_1.ledger, format="html"
+        ).output
         assert isinstance(html_1, str)
         result_cache_1.close()
 
@@ -2162,13 +2184,15 @@ charts:
         # the DuckDB file cache → returns early without executing → that cache stays
         # empty. This is where the old code dropped the link.
         result_cache_2 = TrivialDuckDBCache(db_path=cache_path)
-        executor_2 = Executor(
+        executor_2 = Run(
             result.board,
-            adapter_registry=adapter_registry,
+            env=env,
             use_cache=True,
             result_cache=result_cache_2,
         )
-        html_2 = render(result.board, executor_2, format="html").output
+        html_2 = render(
+            result.board, executor_2.ctx, executor_2.ledger, format="html"
+        ).output
         assert isinstance(html_2, str)
         result_cache_2.close()
 
@@ -2321,9 +2345,10 @@ charts:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "users.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -2338,11 +2363,11 @@ charts:
         result = compile(self._board_yaml("dw"))
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="html")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="html")
         html = rendered.output
         assert isinstance(html, str)
 
@@ -2522,9 +2547,10 @@ class TestFkDrillExplicitLinkPrecedence:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "deals.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -2592,11 +2618,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="html")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="html")
         html = rendered.output
         assert isinstance(html, str)
 
@@ -2626,7 +2652,7 @@ class TestFkDrillPrecedence:
         /data/db/main/owner/detail/ not the deal detail page.
 
         Uses SQLite (registered at project level in dbt_charts.yml) so the
-        adapter_registry can resolve the source. The manifest.json is written
+        env can resolve the source. The manifest.json is written
         into target/ so _all_manifest_relationships() finds the FK edge.
         """
         import json
@@ -2635,10 +2661,11 @@ class TestFkDrillPrecedence:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.inspect.sources.dbt import extract_all_relationships
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         # Populate a SQLite file with the deal table (main. is the default schema)
         db_path = tmp_path / "deals.sqlite"
@@ -2650,7 +2677,7 @@ class TestFkDrillPrecedence:
         conn.commit()
         conn.close()
 
-        # Register the source at project level so build_adapter_registry picks it up
+        # Register the source at project level so build_exec_env picks it up
         sources_yaml = {"sources": {"db": {"type": "sqlite", "path": str(db_path)}}}
         (tmp_path / "dbt_charts.yml").write_text(yaml.dump(sources_yaml))
 
@@ -2713,11 +2740,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="html")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="html")
         html = rendered.output
         assert isinstance(html, str)
 
@@ -2932,9 +2959,10 @@ class TestChartAutoLinkRenderSingle:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "deals.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -3000,11 +3028,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="svg")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
         svg = rendered.output
         assert isinstance(svg, str)
 
@@ -3028,9 +3056,10 @@ charts:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "sales.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -3066,11 +3095,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="svg")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
         svg = rendered.output
         assert isinstance(svg, str)
 
@@ -3089,9 +3118,10 @@ charts:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "regions.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -3126,11 +3156,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="svg")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
         svg = rendered.output
         assert isinstance(svg, str)
 
@@ -3187,9 +3217,10 @@ class TestFkKeyedTableOwnDetail:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "profiles.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -3255,11 +3286,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="html")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="html")
         html = rendered.output
         assert isinstance(html, str)
 
@@ -3312,9 +3343,10 @@ class TestNonIdentityFkNotSuppressed:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "deals.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -3381,11 +3413,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="html")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="html")
         html = rendered.output
         assert isinstance(html, str)
 
@@ -3430,9 +3462,10 @@ class TestMeasureOnXNoLink:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "sales.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -3467,11 +3500,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="svg")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
         svg = rendered.output
         assert isinstance(svg, str)
 
@@ -3499,9 +3532,10 @@ charts:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "revenue.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -3538,11 +3572,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="svg")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
         svg = rendered.output
         assert isinstance(svg, str)
 
@@ -3588,9 +3622,10 @@ class TestChartFilterLinkUrlSafety:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "sales.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -3625,11 +3660,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="svg")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
         svg = rendered.output
         assert isinstance(svg, str)
 
@@ -3656,9 +3691,10 @@ charts:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "regions.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -3692,11 +3728,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="svg")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
         svg = rendered.output
         assert isinstance(svg, str)
 
@@ -3728,9 +3764,10 @@ charts:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         original = "100%+a&b#c?d/e=f"
         db_path = tmp_path / "labels.sqlite"
@@ -3765,11 +3802,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="svg")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
         svg = rendered.output
         assert isinstance(svg, str)
 
@@ -3808,9 +3845,10 @@ class TestChartFilterLinkAliasedColumnBail:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "sales.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -3844,11 +3882,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="svg")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
         svg = rendered.output
         assert isinstance(svg, str)
 
@@ -3862,7 +3900,7 @@ charts:
 
 
 class TestFkColumnLinksFromExecutorStaysPlainOnly:
-    """fk_column_links_from_executor deliberately stays fully out of this
+    """fk_column_links deliberately stays fully out of this
     task's CTE/JOIN row-grain work — it keys per-column FK links by the base
     table's column name and matches them against actual *output* column
     names with no alias tracing, so widening it to either CTE or JOIN queries
@@ -3879,9 +3917,9 @@ class TestFkColumnLinksFromExecutorStaysPlainOnly:
         import yaml
 
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render.chart.automatic_link import (
-            fk_column_links_from_executor,
+            fk_column_links,
         )
 
         db_path = tmp_path / "sales.sqlite"
@@ -3925,13 +3963,13 @@ class TestFkColumnLinksFromExecutorStaysPlainOnly:
         target_dir.mkdir()
         (target_dir / "manifest.json").write_text(json.dumps(manifest))
 
-        adapter_registry = build_adapter_registry(local_project(tmp_path))
+        env = build_exec_env(local_project(tmp_path))
 
         query = SqlQuery(
             sql="SELECT o.id, c.name FROM main.orders o JOIN main.customers c ON o.cust_id = c.id",
             source="dw",
         )
-        assert fk_column_links_from_executor(query, adapter_registry) == {}
+        assert fk_column_links(query, _probe(env)) == {}
 
     def test_cte_wrapped_query_bails(
         self, tmp_path, local_project: Callable[..., Project]
@@ -3945,9 +3983,9 @@ class TestFkColumnLinksFromExecutorStaysPlainOnly:
         import yaml
 
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render.chart.automatic_link import (
-            fk_column_links_from_executor,
+            fk_column_links,
         )
 
         db_path = tmp_path / "sales.sqlite"
@@ -3991,13 +4029,13 @@ class TestFkColumnLinksFromExecutorStaysPlainOnly:
         target_dir.mkdir()
         (target_dir / "manifest.json").write_text(json.dumps(manifest))
 
-        adapter_registry = build_adapter_registry(local_project(tmp_path))
+        env = build_exec_env(local_project(tmp_path))
 
         query = SqlQuery(
             sql="WITH w AS (SELECT * FROM main.orders) SELECT * FROM w",
             source="dw",
         )
-        assert fk_column_links_from_executor(query, adapter_registry) == {}
+        assert fk_column_links(query, _probe(env)) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -4023,9 +4061,10 @@ class TestIntegerDimChartFilterLink:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "sales.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -4060,11 +4099,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="svg")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
         svg = rendered.output
         assert isinstance(svg, str)
 
@@ -4082,9 +4121,10 @@ charts:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         db_path = tmp_path / "sales.sqlite"
         conn = sqlite3.connect(str(db_path))
@@ -4120,11 +4160,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="svg")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
         svg = rendered.output
         assert isinstance(svg, str)
 
@@ -4173,14 +4213,15 @@ class TestFkPivotTableColumnsAndLinks:
         import yaml
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ...._run import Run
 
         # Tidy data: one row per (region, quarter) combination.  No GROUP BY in
         # the query — the pivot transform happens in the render layer, not SQL.
         # source_schema_table resolves plain SELECT to (dw, main, sales), which
-        # allows fk_column_links_from_executor to fetch FK edges for `sales`.
+        # allows fk_column_links to fetch FK edges for `sales`.
         db_path = tmp_path / "sales.sqlite"
         conn = sqlite3.connect(str(db_path))
         conn.execute("CREATE TABLE sales (region TEXT, quarter TEXT, revenue REAL)")
@@ -4253,11 +4294,11 @@ charts:
         result = compile(board_yaml)
         assert result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        html = render(result.board, executor, format="html").output
+        html = render(result.board, executor.ctx, executor.ledger, format="html").output
         assert isinstance(html, str)
 
         # (a) Pivot renders with leaf column headers from data values (Q1, Q2),
@@ -4277,3 +4318,43 @@ charts:
             "cell hrefs pointing to /data/dw/main/regions/detail/. "
             f"HTML (first 3000 chars): {html[:3000]}"
         )
+
+
+def test_a_corrupt_manifest_fails_the_chart_not_the_render(
+    tmp_path, local_project: Callable[..., Project]
+) -> None:
+    """The FK edges come from ``target/manifest.json``; a lookup that raises is
+    that chart's error card, never a raise out of ``render()``."""
+    from dbt_charts.core.compile import compile
+    from dbt_charts.core.execute.env import build_exec_env
+    from dbt_charts.core.render import render
+
+    from ...._run import Run
+
+    _setup_sqlite_project(tmp_path)
+    (tmp_path / "target").mkdir()
+    (tmp_path / "target" / "manifest.json").write_text("{not json")
+    board_yaml = """\
+title: "Orders"
+links:
+  auto: true
+source: dw
+queries:
+  rows:
+    source: dw
+    sql: "SELECT id, status FROM main.orders"
+rows:
+  - orders
+charts:
+  orders:
+    title: "Orders"
+    type: table
+    query: rows
+"""
+    result = compile(board_yaml)
+    assert result.board is not None, result.errors
+    run = Run(result.board, env=build_exec_env(local_project(tmp_path)))
+    rendered = render(result.board, run.ctx, run.ledger, format="html")
+    assert rendered.board_error is None
+    assert rendered.output is not None
+    assert rendered.chart_errors

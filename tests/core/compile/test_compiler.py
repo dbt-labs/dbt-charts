@@ -301,7 +301,7 @@ def test_render_dashboard_in_memory_board_resolves_boards_relative_ref(
     `board.path.parent`, whatever that is.
     """
     from dbt_charts.core import board as dashboard_module
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
     from dbt_charts.core.project import InMemoryBoard
 
     db_path = tmp_path / "wh.duckdb"
@@ -332,7 +332,7 @@ def test_render_dashboard_in_memory_board_resolves_boards_relative_ref(
     )
 
     project = local_project(tmp_path)
-    adapter_registry = build_adapter_registry(
+    env = build_exec_env(
         project,
         read_only=False,
         allow_external_access_in_readonly=False,
@@ -344,7 +344,7 @@ def test_render_dashboard_in_memory_board_resolves_boards_relative_ref(
     result = dashboard_module.render_dashboard(
         board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
         project=project,
-        adapter_registry=adapter_registry,
+        env=env,
         format="json",
         result_cache=None,
     )

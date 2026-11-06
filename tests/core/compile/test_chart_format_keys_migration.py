@@ -20,10 +20,8 @@ from dbt_charts.core.compile.compiler import compile as compile_board
 from dbt_charts.core.compile.migrations import (
     MigrationConflictError,
     SchemaMigrationWarning,
-    migrate_mapping,
 )
 from dbt_charts.core.compile.migrations.migrations import (
-    _board_migration_context,
     prepare_board_mapping,
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
@@ -32,6 +30,8 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._engine_migrations import migrate_mapping
 
 _MEASURE_FAMILIES = ["bar", "line", "area", "histogram"]
 _TIME_FAMILIES = ["bar", "line", "area", "histogram", "scatter"]
@@ -58,10 +58,9 @@ def _board(chart_type: str, style: dict[str, Any]) -> dict[str, Any]:
 
 
 def _migrate(raw: dict[str, Any], catalog: YamlSchemaCatalog) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 @pytest.mark.parametrize("family", _MEASURE_FAMILIES)
@@ -104,13 +103,12 @@ def test_a_chart_local_axis_format_conflicts_with_number_format(
     competitor: str, catalog: YamlSchemaCatalog
 ) -> None:
     """Those layers beat the old key; moving it above them would override them."""
-    _, registry = _board_migration_context()
     raw = _board(
         "bar", {"number_format": "currency", competitor: {"labels": {"format": "%"}}}
     )
 
     with pytest.raises(MigrationConflictError) as raised:
-        migrate_mapping(raw, catalog=catalog, registry=registry)
+        migrate_mapping(raw)
 
     assert "number_format" in str(raised.value)
     assert competitor in str(raised.value)
@@ -152,11 +150,10 @@ def test_heatmap_format_key_is_deleted_with_a_warning(
     key: str, catalog: YamlSchemaCatalog
 ) -> None:
     """A heatmap's axes are both grid dimensions, so neither key ever applied."""
-    _, registry = _board_migration_context()
     raw = _board("heatmap", {key: "$,.0f"})
 
     with pytest.warns(SchemaMigrationWarning, match=key):
-        migrated = migrate_mapping(raw, catalog=catalog, registry=registry)
+        migrated = migrate_mapping(raw)
 
     assert not migrated["charts"]["c1"].get("style")
     AuthoredBoard.model_validate(migrated)
@@ -169,11 +166,10 @@ def test_heatmap_format_key_is_deleted_with_a_warning(
 def test_a_slot_that_already_has_a_format_conflicts(
     key: str, slot: str, catalog: YamlSchemaCatalog
 ) -> None:
-    _, registry = _board_migration_context()
     raw = _board("bar", {key: "%b", slot: {"labels": {"format": ",.0f"}}})
 
     with pytest.raises(MigrationConflictError) as raised:
-        migrate_mapping(raw, catalog=catalog, registry=registry)
+        migrate_mapping(raw)
 
     message = str(raised.value)
     assert key in message
@@ -188,7 +184,7 @@ def test_theme_family_key_is_deleted_with_a_warning(
     raw: dict[str, Any] = {"style": {"charts": {"bar": {key: "$,.0f"}}}}
 
     with pytest.warns(SchemaMigrationWarning, match=key):
-        prepared = prepare_board_mapping(raw, patch=True)
+        prepared = prepare_board_mapping(raw)
 
     BoardPatch.model_validate(prepared)
     assert "number_format" not in str(prepared)

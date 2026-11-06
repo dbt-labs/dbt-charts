@@ -1,5 +1,5 @@
 //! The ERR codes production raises while it builds a cartesian x axis, decided
-//! from the resolved x type (`x_type::resolve_cartesian_x_type`) and the
+//! from the resolved x type (`::bind::x_type::resolve_cartesian_x_type`) and the
 //! authored axis, in the order `build_cartesian_x_encoding` raises them.
 
 use std::borrow::Cow;
@@ -8,11 +8,15 @@ use column_types::ColumnTypes;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use super::temporal::{floor_to_bucket_start, infer_vega_type, is_time_format, normalize_labeled_temporal, TimeUnit, VegaType};
+use super::temporal::{is_time_format};
+use ::bind::temporal::{infer_vega_type, normalize_labeled_temporal, VegaType};
+
+use ::bind::temporal::{floor_to_bucket_start, TimeUnit};
 use d3rs::calendar::{civil_from_days, days_from_civil, days_in_month, is_leap_year};
-use super::x_type::{parse_date, py_cell_key, resolve_cartesian_x_type, resolve_filled_x, scaffold_rows, Grain, XAxis, XResolution};
+use ::bind::x_type::{parse_date, py_cell_key, resolve_cartesian_x_type, resolve_filled_x, scaffold_rows, Grain, XAxis, XResolution};
 use diagnostic::codes;
-use crate::common::{AxisStyle, PyKey};
+use crate::common::{AxisStyle};
+use ::bind::rows::{PyKey};
 use diagnostic::{py_repr, Diagnostic};
 
 type Row = Map<String, Value>;
@@ -42,7 +46,7 @@ struct Facts {
     #[serde(default)]
     wide_measures: Vec<String>,
     #[serde(default)]
-    panel_axes: Vec<super::multiples::PartitionAxis>,
+    panel_axes: Vec<::bind::multiples::PartitionAxis>,
 }
 
 /// `dash` is production's em dash, kept out of the source as an escape.
@@ -423,7 +427,7 @@ fn gap_fill_collision(facts: &Facts, field: &str, rows: &[Row], grain: Grain) ->
 }
 
 fn x_axis_of(facts: &Facts) -> XAxis<'_> {
-    XAxis::of(&facts.style.axis_x)
+    facts.style.axis_x.x_axis()
 }
 
 /// A line or area drawn as a band-aware step.
@@ -589,7 +593,7 @@ fn scatter_y(facts: &Facts, types: &ColumnTypes, rows: &[Row]) -> Result<(), Dia
     let (types, rows) = if facts.wide_measures.is_empty() {
         (types, rows)
     } else {
-        folded = crate::common::fold_wide(types, rows, &facts.wide_measures, facts.color.as_deref())?;
+        folded = ::bind::wide::fold_wide(types, rows, &facts.wide_measures, facts.color.as_deref())?;
         (&folded.0, folded.1.as_slice())
     };
     let y_type = infer_vega_type(types, rows, y)?;

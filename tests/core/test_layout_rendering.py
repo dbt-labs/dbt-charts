@@ -15,8 +15,7 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve.style.board import resolve_style
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.layouts import (
     render_cols_layout,
     render_grid_layout,
@@ -24,6 +23,7 @@ from dbt_charts.core.render.layouts import (
     render_tabs_layout,
 )
 
+from .._run import Run
 from ._board_utils import apply_static_layout
 
 # Import the layouts module using importlib to avoid name shadowing issues
@@ -86,9 +86,9 @@ rows:
         result = compile(yaml_content)
         assert result.success
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
@@ -175,9 +175,9 @@ cols:
         result = compile(yaml_content)
         assert result.success
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
@@ -238,9 +238,9 @@ grid:
         result = compile(yaml_content)
         assert result.success
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
@@ -306,9 +306,9 @@ tabs:
         result = compile(yaml_content)
         assert result.success
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
@@ -375,9 +375,9 @@ class TestNestedBoardContainerSizing:
 
         result = compile(yaml_content)
         assert result.success
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         board, _ = calculate_data_aware_layout(
@@ -542,9 +542,9 @@ rows:
         assert result.success
 
         board = apply_static_layout(result.board)
-        executor = Executor(
+        executor = Run(
             board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
@@ -608,9 +608,9 @@ rows:
         assert result.success
 
         board = apply_static_layout(result.board)
-        executor = Executor(
+        executor = Run(
             board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 

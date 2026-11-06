@@ -32,10 +32,11 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
 use diagnostic::codes;
-use crate::families::temporal::TimeUnit;
+use ::bind::temporal::TimeUnit;
 use diagnostic::Diagnostic;
-use crate::common::{row_str, slug_to_display, Divider, FormatSlot, GappedDivider, Font, SignPlacement};
-use crate::number_locale::active_number_locale;
+use crate::common::{slug_to_display, Divider, FormatSlot, GappedDivider, Font, SignPlacement};
+use ::bind::rows::{row_str};
+use ::bind::formats::locale::active_number_locale;
 use measure::FontBook;
 use scene::{Attrs, Node, Role};
 
@@ -659,14 +660,14 @@ impl StripNumerals {
             return text.map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec));
         }
         if self.prefix.is_empty() && self.suffix.is_empty() {
-            return crate::number_locale::d3_format(&self.digit_spec, v)
+            return ::bind::formats::locale::d3_format(&self.digit_spec, v)
                 .map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec));
         }
         if !self.suffix_is_magnitude && self.prefix.is_empty() {
             // Trimmed: format through the author's spec, then remove the
             // repeated suffix from the cell — rebuilding the spec is what would
             // silently drop a sign or zero pad.
-            let full = crate::number_locale::d3_format(&self.digit_spec, v)
+            let full = ::bind::formats::locale::d3_format(&self.digit_spec, v)
                 .map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec))?;
             if is_anchor {
                 return Ok(full);
@@ -675,7 +676,7 @@ impl StripNumerals {
         }
         // Composed: the sign leads the currency ("−$448"); a magnitude suffix
         // never shows on zero, a unit suffix does.
-        let digits = crate::number_locale::d3_format(&self.digit_spec, v.abs() / self.divisor)
+        let digits = ::bind::formats::locale::d3_format(&self.digit_spec, v.abs() / self.divisor)
             .map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec))?;
         let locale = active_number_locale();
         let sign = if v < 0.0 { locale.locale.minus.as_str() } else { self.plus.as_str() };
@@ -786,7 +787,7 @@ pub(crate) fn strip_numerals_for_values(values: &[f64], resolved: &str, vertical
     // Zero-print guard: a voter whose scaled form prints no non-zero digit
     // would be indistinguishable from a genuine zero row.
     for v in &voters {
-        let printed = crate::number_locale::d3_format(&digit_spec, v / magnitude)
+        let printed = ::bind::formats::locale::d3_format(&digit_spec, v / magnitude)
             .map_err(|e| format!("support_table: format {digit_spec:?}: {e}"))?;
         if !printed.chars().any(|c| c.is_ascii_digit() && c != '0') {
             return Ok(StripNumerals::plain(resolved));
@@ -834,7 +835,7 @@ pub(crate) fn format_cell(v: Option<&CellValue>, spec: Option<&str>) -> Result<S
         // y_field) — render the plain number, matching production.
         (Some(CellValue::Num(v)), None) => Ok(d3rs::js_math::js_number_string(*v)),
         (Some(CellValue::Num(v)), Some(spec)) => {
-            crate::number_locale::d3_format(spec, *v).map_err(|e| format!("support_table: format {spec:?}: {e}"))
+            ::bind::formats::locale::d3_format(spec, *v).map_err(|e| format!("support_table: format {spec:?}: {e}"))
         }
         // Bare source column holding a string: painted verbatim, matching
         // production's `_vl_format_calc` with `format_spec is None`.
@@ -2251,12 +2252,12 @@ mod numerals_tests {
     /// decimal separator is a comma.
     #[test]
     fn a_vertical_block_speaks_the_boards_words_and_decimal() {
-        let mut wire = crate::number_locale::en_us_wire();
+        let mut wire = ::bind::formats::locale::en_us_wire();
         wire["decimal"] = serde_json::json!(",");
         wire["thousands"] = serde_json::json!(".");
         wire["analytic"] = serde_json::json!(["\u{a0}k", "\u{a0}M", "\u{a0}Mrd", "\u{a0}Bio"]);
-        let de: crate::number_locale::NumberLocale = serde_json::from_value(wire).unwrap();
-        crate::number_locale::with_number_locale(&de, || {
+        let de: ::bind::formats::locale::NumberLocale = serde_json::from_value(wire).unwrap();
+        ::bind::formats::locale::with_number_locale(&de, || {
             let vals = [1_200_000.0, 3_400_000.0, 5_600_000.0];
             let n = strip_numerals_for_values(&vals, ".3~s", true, false).unwrap();
             assert_eq!(n.cell_text(1_200_000.0, true).unwrap(), "1,2\u{a0}M");
@@ -2270,7 +2271,7 @@ mod numerals_tests {
     #[test]
     fn an_anchored_dollar_strip_leads_the_board_currency_under_a_suffix_currency_locale() {
         let vals = [1_200_000.0, 3_400_000.0, 5_600_000.0];
-        crate::number_locale::with_number_locale(&crate::number_locale::de_de(), || {
+        ::bind::formats::locale::with_number_locale(&::bind::formats::locale::de_de(), || {
             let n = strip_numerals_for_values(&vals, "$.3~s", false, false).unwrap();
             assert!(n.cell_text(1_200_000.0, true).unwrap().starts_with('€'));
             assert!(!n.cell_text(3_400_000.0, false).unwrap().contains('€'));
@@ -2750,7 +2751,7 @@ mod tests {
         // `Value::Null` — not `"null"` — or the strip's domain lookup misses
         // it entirely.
         assert_eq!(value_to_key(&Value::Null), "");
-        assert_eq!(crate::common::row_str(&serde_json::json!({"x": null}).as_object().unwrap().clone(), "x"), "");
+        assert_eq!(::bind::rows::row_str(&serde_json::json!({"x": null}).as_object().unwrap().clone(), "x"), "");
     }
 
     #[test]

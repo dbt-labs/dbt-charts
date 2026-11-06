@@ -24,7 +24,6 @@ from dbt_charts.core.compile.migrations import (
     migrate_yaml_text,
     prepare_board_mapping,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.parse.parser import load_yaml_mapping
 from dbt_charts.core.compile.sizing import board_container_width
@@ -216,7 +215,6 @@ def test_a_root_and_a_nested_frame_width_each_take_their_own_path() -> None:
 
 
 def test_text_rewrite_moves_the_root_key_in_place() -> None:
-    catalog, registry = _board_migration_context()
     text = (
         "title: T\n"
         "style:\n"
@@ -226,9 +224,7 @@ def test_text_rewrite_moves_the_root_key_in_place() -> None:
         "    margin: 12\n"
         "text: hello\n"
     )
-    migrated = migrate_yaml_text(
-        text, catalog=catalog, registry=registry, stop_target=catalog.dev.version
-    )
+    migrated = migrate_yaml_text(text)
     doc = load_yaml_mapping(migrated)
     assert doc["width"] == 1440
     assert doc["style"] == {"frame": {"margin": 12}}
@@ -237,11 +233,8 @@ def test_text_rewrite_moves_the_root_key_in_place() -> None:
 
 
 def test_text_rewrite_leaves_no_empty_style_when_frame_held_only_width() -> None:
-    catalog, registry = _board_migration_context()
     text = "title: T\nstyle:\n  frame:\n    width: 1440\ntext: hello\n"
-    migrated = migrate_yaml_text(
-        text, catalog=catalog, registry=registry, stop_target=catalog.dev.version
-    )
+    migrated = migrate_yaml_text(text)
     doc = load_yaml_mapping(migrated)
     assert doc["width"] == 1440
     assert "style" not in doc
@@ -249,11 +242,8 @@ def test_text_rewrite_leaves_no_empty_style_when_frame_held_only_width() -> None
 
 
 def test_text_rewrite_strikes_a_nested_key() -> None:
-    catalog, registry = _board_migration_context()
     text = _NESTED % "style:\n      frame:\n        width: 400"
-    migrated = migrate_yaml_text(
-        text, catalog=catalog, registry=registry, stop_target=catalog.dev.version
-    )
+    migrated = migrate_yaml_text(text)
     doc = load_yaml_mapping(migrated)
     assert "style" not in doc["rows"][0]
     AuthoredBoard.model_validate(doc)

@@ -233,13 +233,13 @@ def test_preview_of_a_ref_opens_no_warehouse_connection(
     """Resolving a ref() reads the manifest; it must not reach for an adapter.
 
     Patching the constructor catches every build path, however
-    `build_adapter_registry` is imported at the call site.
+    `build_exec_env` is imported at the call site.
     """
     project = _ref_project(tmp_path, local_project, with_manifest=True)
     with patch(
-        "dbt_charts.core.execute.adapters.adapter_registry.AdapterRegistry.__init__",
+        "dbt_charts.core.execute.env.ExecEnv.__init__",
         side_effect=AssertionError(
-            "adapter_registry must not be built during lookup_board_query_sql"
+            "env must not be built during lookup_board_query_sql"
         ),
     ):
         result = lookup_board_query_sql("main", Path("charts/b.yml"), project=project)

@@ -7,42 +7,77 @@ Purpose: Take the ``Miss``es a lookup could not answer and return
     the worker pool, the ``{{ queries.X.cache }}`` dependency waves, and the
     failure boundary, so no error is raised past ``run``.
 
+    It also owns the observed call a miss makes: every route (a warehouse
+    backend, a file source, ``values``, ``schema``) runs through ``run_route``,
+    and ``run_query`` runs one ad-hoc query the same way.
+
 Entry Points:
     - run(misses, execute, settle, max_workers) -> dict[str, Outcome]
+    - run_route(env, route, query, ...) -> QueryResult
+    - run_query(env, query, ...) -> QueryResult
+    - execute_resolved(env, resolved, query, source_config) -> QueryResult
     - settle(ctx, ledger, miss, outcome) -> None
     - execute_miss(ctx, ledger, miss) -> Outcome
     - run_misses(ctx, ledger, found, max_workers) -> dict[str, Outcome]
-    - read_query(ctx, ledger, planned, force_refresh) -> ResultRows
 """
 
 import contextvars
 import logging
 import re
-from collections.abc import Callable, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from graphlib import TopologicalSorter
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from dbt_charts.core.column_types import ColumnType
+from dbt_charts.core.attribution import attribute
+from dbt_charts.core.column_types import ColumnType, declared_literal_cells
 from dbt_charts.core.compile.format import missing_format_columns
-from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
-from dbt_charts.core.compile.models.source import ResolvedSourceConfig
-from dbt_charts.core.compile.sql_guard import sqlglot_dialect
-from dbt_charts.core.compile.template.daterange import board_clock
-from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_FORMAT_COLUMN_MISSING
-from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
-from dbt_charts.core.execute.adapters.base import (
-    ResolvedRelation,
-    apply_row_limit_truncation,
-    resolve_effective_row_limit,
+from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
+from dbt_charts.core.compile.models.primitives import Regional
+from dbt_charts.core.compile.models.query.normalized import (
+    AnyQuery,
+    SchemaQuery,
+    SqlQuery,
+    ValuesQuery,
+    is_schema_query,
+    is_sql_query,
+    is_values_query,
 )
+from dbt_charts.core.compile.models.source import (
+    AttributedSourceConfig,
+    CsvSourceConfig,
+    JsonSourceConfig,
+    ParquetSourceConfig,
+    ResolvedSourceConfig,
+    is_file_source,
+)
+from dbt_charts.core.compile.sql_guard import sqlglot_dialect
+from dbt_charts.core.compile.template.daterange import (
+    BoardClock,
+    board_clock,
+    board_clock_in_scope,
+)
+from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_QUERY_DURATION_EXCEEDED,
+    ERR_QUERY_FORMAT_COLUMN_MISSING,
+)
+from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
+from dbt_charts.core.dialects import get_dialect
+from dbt_charts.core.execute.backends.dbt_adapter_factory import ConnectionSetupFailed
 from dbt_charts.core.execute.cache_backend import (
     CacheRows,
     ResultRows,
     TruncationInfo,
+)
+from dbt_charts.core.execute.compose import (
+    ResolvedQuery,
+    compose,
+    compose_sql,
+    file_source_dialect_refusal,
 )
 from dbt_charts.core.execute.incremental import (
     incremental_safety_reason,
@@ -55,20 +90,41 @@ from dbt_charts.core.execute.lookup import (
     cache_failure,
     cache_outcome,
     limit_rows,
-    lookup_and_record,
     memo_key,
 )
+from dbt_charts.core.execute.observability import WarehouseObserver, notify_observers
 from dbt_charts.core.execute.plan import (
     CACHE_REF_JINJA_RE,
-    CacheRefComposition,
     ExecContext,
     PlannedQuery,
-    cache_ref_upstream,
     get_query,
-    plan,
+    require_cache_refs,
     resolve_query_references,
 )
+from dbt_charts.core.execute.plan_sources import (
+    resolve_query_source,
+    source_not_named_error,
+)
+from dbt_charts.core.execute.query_result import (
+    QueryDurationExceeded,
+    QueryParams,
+    QueryResult,
+    ResolvedRelation,
+    adapter_unavailable,
+    apply_row_limit_truncation,
+    classify_warehouse_error,
+    connection_failure,
+    handle_adapter_error,
+    plain_error,
+    resolve_effective_row_limit,
+)
+from dbt_charts.core.execute.result import rows_to_query_result
+from dbt_charts.core.execute.schema_adapter import schema_rows
+from dbt_charts.core.execute.source_resolver import AD_HOC_QUERY_NAME, DbtContext
 from dbt_charts.core.execute.sql_translate import dialect_differs, dialect_unsupported
+
+if TYPE_CHECKING:
+    from dbt_charts.core.execute.env import ExecEnv
 
 _logger = logging.getLogger(__name__)
 
@@ -138,10 +194,15 @@ def settle(ctx: ExecContext, ledger: Ledger, miss: Miss, outcome: Outcome) -> No
             )
         if outcome.data_as_of is not None:
             ledger.ages.append((name, outcome.data_as_of, query.cache, False))
-    elif outcome.record is not None:
-        if use_store:
-            cache_failure(ctx, name, query, variables, miss.cache_key, outcome.record)
-        ledger.ages.append((name, ctx.clock(), query.cache, False))
+    else:
+        # A composing query in a later wave reads its upstream's failure here.
+        ledger.errors[name] = outcome.error
+        if outcome.record is not None:
+            if use_store:
+                cache_failure(
+                    ctx, name, query, variables, miss.cache_key, outcome.record
+                )
+            ledger.ages.append((name, ctx.clock(), query.cache, False))
 
 
 def _waves(misses: Sequence[Miss]) -> list[list[Miss]]:
@@ -181,7 +242,7 @@ def run(
 
     ``execute`` runs one miss; whatever it raises becomes an uncacheable
     ``Failed``. ``settle`` is called once per miss, on the thread that ran it,
-    as soon as its outcome is known, so a later wave (and the executor's memo)
+    as soon as its outcome is known, so a later wave (and the ledger's memo)
     sees an upstream's rows. With ``max_workers=None`` everything runs on the
     calling thread; otherwise each wave fans across a pool of that width.
     """
@@ -301,10 +362,15 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
     # connection. It is incompatible with an incremental tail: the whole
     # composing query reruns over the cached upstream rows, so no watermark
     # predicate can be appended.
-    if isinstance(planned.route, CacheRefComposition):
+    if planned.upstreams:
         assert is_sql_query(original_query)
         composed, cache_ref_reason = _execute_cache_ref_query(
-            ctx, ledger, original_query, variables, query_name
+            ctx,
+            ledger,
+            original_query,
+            planned.upstreams,
+            variables,
+            query_name,
         )
         limited, truncation = limit_rows(composed, query_name, cache_ref_reason)
         return Rows(limited, ctx.clock(), truncation=truncation)
@@ -318,6 +384,10 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
     except Exception as e:  # noqa: BLE001 — a resolver may raise anything (SSRF guard, DNS)
         return failed(e)
 
+    # The route follows the source the resolver chose, not the plan's reading
+    # of the declared sources: the two disagree when a board and the project
+    # declare one name as different kinds.
+    route = route_for(query, source_config)
     tail = miss.tail
     if tail is not None and tail.watermark is not None:
         # The lookup built a tail only for an SQL query;
@@ -331,7 +401,20 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
         reason = incremental_safety_reason(query.sql, dialect)
         if reason is None:
             limited, truncation = run_incremental_tail(
-                ctx, query_name, query, variables, tail, dialect, source_config
+                query_name,
+                query,
+                tail,
+                dialect,
+                lambda tail_query: run_route(
+                    ctx.env,
+                    route,
+                    tail_query,
+                    variables,
+                    None,
+                    ctx.board,
+                    query_name,
+                    source_config,
+                ),
             )
             return Rows(limited, None, truncation=truncation)
         _logger.debug(
@@ -341,12 +424,15 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
         )
 
     try:
-        result = ctx.adapter_registry.execute(
+        result = run_route(
+            ctx.env,
+            route,
             query,
             variables,
-            board=ctx.board,
-            query_name=query_name,
-            source_config=source_config,
+            None,
+            ctx.board,
+            query_name,
+            source_config,
         )
     except Exception as e:  # noqa: BLE001 — an adapter may raise anything
         return failed(e)
@@ -384,21 +470,24 @@ def run_and_settle(
 
 
 def run_misses(
-    ctx: ExecContext, ledger: Ledger, found: Lookup, max_workers: int
+    ctx: ExecContext, ledger: Ledger, found: Lookup, max_workers: int | None
 ) -> dict[str, Outcome]:
-    """Run what *found* could not answer, in a pool.
+    """Run what *found* could not answer, in a pool (on the calling thread when
+    *max_workers* is None).
 
     Every miss runs, and every failure is replayed: both land in the error
     memo, so a later read raises the stored error instead of re-executing. A
-    failure never blocks its siblings. This is the error memo's only writer.
+    failure never blocks its siblings.
 
     Returns:
         One outcome per missed or failed query: ``Rows``, or ``Failed`` for a
         replayed failure, a failed run or a ``formats:`` column the rows lack.
     """
-    results: dict[str, Outcome] = {
+    replayed = {
         name: Failed(failure.error, None) for name, failure in found.failures.items()
     }
+    ledger.errors.update({name: failed.error for name, failed in replayed.items()})
+    results: dict[str, Outcome] = {**replayed}
     for name, outcome in run_and_settle(ctx, ledger, found.misses, max_workers).items():
         results[name] = format_checked(ctx, name, outcome)
     for name, outcome in results.items():
@@ -410,38 +499,23 @@ def run_misses(
     return results
 
 
-def read_query(
-    ctx: ExecContext,
-    ledger: Ledger,
-    planned: PlannedQuery,
-    *,
-    force_refresh: bool = False,
-) -> ResultRows:
-    """Rows for one planned query: the memo or store if they hold it, else run it.
-
-    Raises the query's error when it failed, or a replayed failure holds it.
-    """
-    found = lookup_and_record(
-        ctx,
-        ledger,
-        [planned],
-        resume_incremental=True,
-        force_refresh=force_refresh,
-    )
-    if planned.name in found.hits:
-        return found.hits[planned.name].result
-    if planned.name in found.failures:
-        raise found.failures[planned.name].error
-    outcome = run_and_settle(ctx, ledger, found.misses, None)[planned.name]
-    if isinstance(outcome, Failed):
-        raise outcome.error
-    return outcome.result
+def _settled_rows(ledger: Ledger, upstream: PlannedQuery) -> ResultRows:
+    """The rows an upstream's wave left in the memo; raises its error instead."""
+    rows = ledger.memo.get(memo_key(upstream.query, upstream.cache_key))
+    if rows is not None:
+        return rows
+    if upstream.name not in ledger.errors:
+        raise ExecutionError(
+            f"Upstream query '{upstream.name}' was not run before its composing query"
+        )
+    raise ledger.errors[upstream.name]
 
 
 def _execute_cache_ref_query(
     ctx: ExecContext,
     ledger: Ledger,
     query: AnyQuery,
+    upstreams: Mapping[str, PlannedQuery],
     variables: dict[str, Any],  # type-state: explicit_any — variable values
     query_name: str,
 ) -> tuple[ResultRows, Literal["max_rows"] | None]:
@@ -449,8 +523,8 @@ def _execute_cache_ref_query(
 
     For each referenced upstream query NAME:
       1. Validate it exists and is cacheable.
-      2. Read its rows. A wave runs upstreams first, so they are already in the
-         ledger's memo; a one-shot read finds them in the store or runs them.
+      2. Read its rows. The plan carries every upstream and a wave runs them
+         first, so their rows (or their failure) are already in the ledger.
     Then render the composing SQL — inline ``{{ queries.X }}`` refs resolved,
     runtime variables **parameterized** (not string-interpolated) — and run
     it over the upstream rows in a fresh in-process DuckDB whose namespace
@@ -464,6 +538,7 @@ def _execute_cache_ref_query(
     Args:
         query: The composing SqlQuery, authored SQL (``{{ queries.X.cache }}``
             and ``{{ variable }}`` templates still present).
+        upstreams: The plan of each referenced X.
         variables: Merged variable values.
         query_name: Name of the composing query (for error messages).
 
@@ -473,22 +548,9 @@ def _execute_cache_ref_query(
         it) — mirroring how adapters signal via QueryResult.truncated_reason.
 
     Raises:
-        ExecutionError: If no cache backend, cache doesn't support refs,
-            an upstream query is missing, or an upstream has
-            cache: false.
+        ExecutionError: No result cache is attached, or it cannot serve refs.
     """
-    if not ctx.result_cache:
-        raise ExecutionError(
-            f"Query '{query_name}' uses {{{{ queries.X.cache }}}} composition but "
-            "no cache backend is configured. Attach a result cache (TrivialDuckDBCache "
-            "or PostgresResultCache) to enable cross-source cache-ref queries."
-        )
-    if not ctx.result_cache.supports_cache_refs():
-        raise ExecutionError(
-            f"Query '{query_name}' uses {{{{ queries.X.cache }}}} composition but "
-            "the attached cache backend does not support cache-ref execution."
-        )
-
+    require_cache_refs(ctx, query_name)
     assert is_sql_query(query)
     sql = query.sql
 
@@ -504,9 +566,7 @@ def _execute_cache_ref_query(
     schemas: dict[str, dict[str, ColumnType]] = {}
 
     for ref_name in ref_names:
-        cache_ref_upstream(query_name, ref_name, all_queries)
-        [upstream_plan] = plan(ctx, [ref_name], variables)
-        upstream = read_query(ctx, ledger, upstream_plan)
+        upstream = _settled_rows(ledger, upstreams[ref_name])
         check_formats(ctx, ref_name, upstream)
         named_rows[ref_name] = upstream.rows
         schemas[ref_name] = upstream.schema
@@ -539,3 +599,364 @@ def _execute_cache_ref_query(
     )
     rows, truncated_reason = apply_row_limit_truncation(rows, row_fetch_limit)
     return ResultRows(rows, schema), truncated_reason
+
+
+class Unresolved:
+    """Type of ``UNRESOLVED``: ``None`` is a valid resolved source, so it cannot
+    also mean "not resolved yet"."""
+
+
+UNRESOLVED = Unresolved()
+
+
+def ad_hoc_board_clock(instant: datetime) -> BoardClock:
+    """The clock of a query that belongs to no board: UTC, with the default
+    theme's fiscal year and the default locale's week."""
+    regional = Regional()
+    return BoardClock(
+        regional.today(instant),
+        regional.fiscal_year_start_month,
+        regional.week_start,
+        regional.time_zone,
+    )
+
+
+def run_query(
+    env: "ExecEnv",
+    query: AnyQuery,
+    variables: VariableValues | None = None,
+    params: QueryParams = None,
+    *,
+    board: Board | None = None,
+    dbt_context: DbtContext | None = None,
+    query_name: str = AD_HOC_QUERY_NAME,
+    source_config: ResolvedSourceConfig | None | Unresolved = UNRESOLVED,
+) -> QueryResult:
+    """Run one query that no render planned: resolve its source, pick its route
+    and run it, observed.
+
+    A render scopes the board clock a preset literal in the SQL dates on;
+    called outside one, this scopes the board's clock, or for an ad-hoc query
+    the UTC date with the default theme's fiscal year and week.
+
+    Args:
+        query: The query.
+        variables: Variable values for query resolution.
+        params: Pre-computed bindings, used as they are instead of rendering the
+            SQL's variables again.
+        board: Compiled board; supplies board-level sources and the
+            ``{{ queries.X }}`` registry.
+        dbt_context: Explicit dbt context override. None: the linked dbt project.
+        query_name: Author-facing name of the query, for the source resolver's
+            ERR-SOURCE-NOT-FOUND / ERR-SOURCE-INLINE-FORBIDDEN messages. A
+            synthetic query (bulk profiling, ad-hoc SQL) has none to give; the
+            default documents that explicitly.
+        source_config: The query's already-resolved source (None is a
+            legitimate resolution: a source-less non-SQL query). UNRESOLVED
+            resolves it here.
+    """
+    if isinstance(source_config, Unresolved):
+        try:
+            source_config = resolve_query_source(
+                query,
+                sources=env.sources,
+                resolver=env.resolver,
+                dbt_context=(
+                    dbt_context if dbt_context is not None else env.dbt_context
+                ),
+                board=board,
+                query_name=query_name,
+            )
+        except DbtChartsError as exc:
+            # handle_adapter_error keeps the resolver's typed identity, so
+            # ERR-SOURCE-NOT-FOUND et al. don't flatten to ERR-INTERNAL.
+            return handle_adapter_error("Source resolution", exc)
+    route = route_for(query, source_config)
+    if board_clock_in_scope():
+        return run_route(
+            env, route, query, variables, params, board, query_name, source_config
+        )
+    now = datetime.now(UTC)
+    with board_clock(board.clock(now) if board else ad_hoc_board_clock(now)):
+        return run_route(
+            env, route, query, variables, params, board, query_name, source_config
+        )
+
+
+@dataclass(frozen=True)
+class FileSource:
+    """A csv/json/parquet source, read through the file materializer."""
+
+
+@dataclass(frozen=True)
+class Values:
+    """A ``values`` query: its rows are in the query."""
+
+
+@dataclass(frozen=True)
+class Schema:
+    """A ``schema`` query: answered in process from the source's metadata."""
+
+
+@dataclass(frozen=True)
+class Warehouse:
+    """Everything else: the source's own backend runs the SQL."""
+
+
+Route = FileSource | Values | Schema | Warehouse
+
+
+def route_for(query: AnyQuery, source_config: ResolvedSourceConfig | None) -> Route:
+    """The route of a query that composes no cached upstream, by its resolved source."""
+    if is_values_query(query):
+        return Values()
+    if is_schema_query(query):
+        return Schema()
+    if source_config is not None and is_file_source(source_config):
+        return FileSource()
+    return Warehouse()
+
+
+def run_route(
+    env: "ExecEnv",
+    route: Route,
+    query: AnyQuery,
+    variables: VariableValues | None,
+    params: QueryParams,
+    board: Board | None,
+    query_name: str,
+    source_config: ResolvedSourceConfig | None,
+) -> QueryResult:
+    """Run a query down its route, in the attribution scope of its board, query
+    and source."""
+    # The board and query that caused this warehouse call. Established here
+    # rather than authored, so it cannot drift when a board or query is
+    # renamed. The surface is set further out, by whichever root opened the
+    # session.
+    scope = {"query": query_name}
+    if board is not None:
+        scope["board"] = board.id
+    # The source's own attribution rides this per-call scope, not the pooled
+    # adapter: pools are shared by connection identity, so two sources on one
+    # warehouse would otherwise both get whichever one built the pool.
+    authored = (
+        source_config.attribution
+        if isinstance(source_config, AttributedSourceConfig)
+        else {}
+    )
+    with attribute(scope, authored):
+        match route:
+            case Values():
+                assert isinstance(query, ValuesQuery)
+                return _observed(env.observers, None, lambda: run_values(query))
+            case Schema():
+                assert isinstance(query, SchemaQuery)
+                if source_config is not None and is_file_source(source_config):
+                    # Schema introspection of a file source (the /data explorer,
+                    # or an authored `type: schema` query) is not supported yet.
+                    return plain_error(
+                        f"Source {query.source!r} is a {source_config.type} file "
+                        "source. Schema introspection (the /data explorer, or "
+                        "an authored `type: schema` query) is not yet "
+                        "supported for file sources."
+                    )
+                return _observed(env.observers, None, lambda: schema_rows(env, query))
+            case FileSource() | Warehouse():
+                assert isinstance(query, SqlQuery)
+                if source_config is None:
+                    return handle_adapter_error(
+                        "Source resolution", source_not_named_error(env.sources)
+                    )
+                if isinstance(route, FileSource):
+                    return _run_file_source(
+                        env, query, variables, params, board, source_config
+                    )
+                return execute_on_backend(
+                    env, query, source_config, variables, params, board, None
+                )
+
+
+def _observed(
+    observers: list[WarehouseObserver],
+    warehouse_type: str | None,
+    call: Callable[[], QueryResult],
+) -> QueryResult:
+    """*call*, reported to the observers with its status and duration."""
+    status = "error"
+    start = time.perf_counter()
+    try:
+        result = call()
+        status = "success" if result.error is None else "error"
+        return result
+    finally:
+        notify_observers(observers, warehouse_type, status, time.perf_counter() - start)
+
+
+def run_values(query: ValuesQuery) -> QueryResult:
+    schema = query.declared_schema()
+    return QueryResult(
+        data=query.apply_limit(declared_literal_cells(query.rows, schema)),
+        columns=list(schema),
+        schema=schema,
+    )
+
+
+def execute_on_backend(
+    env: "ExecEnv",
+    query: SqlQuery,
+    source_config: ResolvedSourceConfig,
+    variables: VariableValues | None,
+    params: QueryParams,
+    board: Board | None,
+    resolved: ResolvedQuery | None,
+) -> QueryResult:
+    """Run a SQL query on its source's backend, observed from lookup to rows.
+
+    Composes the query unless the caller already did (*resolved*). Every
+    failure becomes the query's error result, a backend's classified by
+    :func:`classify_warehouse_error`.
+    """
+    dialect_name = source_config.type
+
+    def call() -> QueryResult:
+        nonlocal resolved
+        try:
+            backend = env.backends.for_source(source_config)
+        except DbtChartsError as exc:
+            return handle_adapter_error(f"{dialect_name} query setup", exc)
+        if resolved is None:
+            composed = compose_sql(
+                query,
+                variables,
+                params,
+                board,
+                source_config,
+                backend.param_style,
+                refs=env.dbt_refs,
+                project=env.project,
+            )
+            if isinstance(composed, QueryResult):
+                return composed
+            resolved = composed
+        try:
+            table = backend.execute(source_config, resolved)
+        except QueryDurationExceeded as exc:
+            return QueryResult(
+                data=[],
+                error=QueryError(
+                    ERR_QUERY_DURATION_EXCEEDED.message_template.format(
+                        seconds=exc.seconds, source=query.source or dialect_name
+                    ),
+                    code=ERR_QUERY_DURATION_EXCEEDED,
+                ),
+            )
+        except QueryError as exc:
+            return QueryResult(data=[], error=exc)
+        except DbtChartsError as exc:
+            return handle_adapter_error(f"{dialect_name} query setup", exc)
+        except ConnectionSetupFailed as exc:
+            return connection_failure(dialect_name, exc.cause)
+        except Exception as exc:  # noqa: BLE001 — the warehouse's verdict on the statement
+            return classify_warehouse_error(
+                f"{dialect_name} SQL execution", exc, dialect_name
+            )
+        return rows_to_query_result(
+            table, resolved.limit, list(resolved.resolved_relations) or None
+        )
+
+    return _observed(env.observers, dialect_name, call)
+
+
+def execute_resolved(
+    env: "ExecEnv",
+    resolved: ResolvedQuery,
+    query: AnyQuery,
+    *,
+    source_config: ResolvedSourceConfig,
+) -> QueryResult:
+    """Send a query from ``compose_query`` — possibly rewritten — to the warehouse.
+
+    ``query`` only labels a duration error. Nothing is rendered or guarded again, so the
+    caller owns what it substituted into ``resolved.sql``.
+    """
+    if not is_sql_query(query):
+        return plain_error(f"Expected SQL query, got {query.query_type}")
+    return execute_on_backend(env, query, source_config, None, None, None, resolved)
+
+
+def _run_file_source(
+    env: "ExecEnv",
+    query: SqlQuery,
+    variables: VariableValues | None,
+    params: QueryParams,
+    board: Board | None,
+    source_config: ResolvedSourceConfig,
+) -> QueryResult:
+    """Run a SQL query on a csv/json/parquet source through the materializer.
+
+    Applies the same ``query.limit`` / ``execution.max_rows`` contract
+    the backends honor, but not the same mechanism: they bound the driver cursor
+    itself, so an over-the-ceiling result is never fully fetched.
+    ``materialize_and_run`` has no cursor to bound — it returns every row the
+    materialized cache holds, and this slices to ``row_fetch_limit`` afterward.
+    ``truncated_reason`` is set only when the ceiling (not the author's own
+    limit) was the binding value.
+    """
+    assert isinstance(
+        source_config, CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig
+    )
+    source_name = query.source
+    assert source_name is not None  # a file source is reached through its name
+    if query.dialect is not None and dialect_differs(query.dialect, source_config):
+        return file_source_dialect_refusal(query.dialect)
+    materializer = env.materializer.get()
+    if materializer is None:
+        return adapter_unavailable(
+            f"Source {query.source!r} is a {source_config.type} "
+            "file source, and this session has no file-source "
+            "materializer."
+        )
+    # Same composition every backend gets: {{ queries.X }} refs expand and
+    # variables render before the materializer ever sees the SQL. "duckdb" is
+    # the placeholder style materialize_and_run's own render would have used.
+    try:
+        composed = compose(
+            query,
+            variables=variables,
+            params=params,
+            board=board,
+            source_config=source_config,
+            dialect_name="duckdb",
+            render_dialect=get_dialect("duckdb"),
+            refs=env.dbt_refs,
+            semantic=None,
+        )
+    except DbtChartsError as exc:
+        return handle_adapter_error("File-source execution", exc)
+    if isinstance(composed, QueryResult):
+        return composed
+    row_fetch_limit = resolve_effective_row_limit(query.limit)
+    # No bindings is a valid state, not a caller bug.
+    bound_variables = variables or {}  # type-state: silent_fallback — see above
+
+    def call() -> QueryResult:
+        try:
+            rows, schema = materializer.materialize_and_run(
+                source_config,
+                composed.sql,
+                bound_variables,
+                source_name,
+                params=list(composed.params),
+                strict=not query.lenient_variables,
+            )
+        except (DbtChartsError, RuntimeError, OSError, ValueError) as exc:
+            return handle_adapter_error("File-source execution", exc)
+        rows, truncated_reason = apply_row_limit_truncation(rows, row_fetch_limit)
+        return QueryResult(
+            data=rows,
+            columns=list(schema),
+            schema=schema,
+            truncated_reason=truncated_reason,
+        )
+
+    return _observed(env.observers, source_config.type, call)

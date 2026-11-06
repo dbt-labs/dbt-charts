@@ -21,7 +21,7 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import ProjectSourcesConfig, get_theme_style
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -487,8 +487,9 @@ charts:
 
         from dbt_charts.core.compile.compiler import compile
         from dbt_charts.core.compile.config import get_theme_style, reset_config
-        from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.render import render
+
+        from .._run import Run
 
         reset_config()
         yaml_content = """
@@ -520,15 +521,13 @@ charts:
             captured_bg.append(f.resolved_style.background)
             return original_calc(f, *args, **kwargs)
 
-        executor = Executor(
+        executor = Run(
             board,
-            adapter_registry=build_adapter_registry(
-                _project_with_duckdb_source(local_project)
-            ),
+            env=build_exec_env(_project_with_duckdb_source(local_project)),
             query_registry=result.query_registry,
         )
         with patch.object(layout_sizing_mod, "calculate_data_aware_layout", spy_calc):
-            render(board, executor, format="svg")
+            render(board, executor.ctx, executor.ledger, format="svg")
 
         dark_bg = get_theme_style("neon").background
         assert captured_bg, "calculate_data_aware_layout was not called"
@@ -543,8 +542,9 @@ charts:
         """render() output contains the new theme's background after board.theme mutation."""
         from dbt_charts.core.compile.compiler import compile
         from dbt_charts.core.compile.config import get_theme_style, reset_config
-        from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.render import render
+
+        from .._run import Run
 
         reset_config()
 
@@ -567,14 +567,12 @@ charts:
         board = result.board
         board.set_theme("neon")
 
-        executor = Executor(
+        executor = Run(
             board,
-            adapter_registry=build_adapter_registry(
-                _project_with_duckdb_source(local_project)
-            ),
+            env=build_exec_env(_project_with_duckdb_source(local_project)),
             query_registry=result.query_registry,
         )
-        svg = render(board, executor, format="svg").output
+        svg = render(board, executor.ctx, executor.ledger, format="svg").output
 
         dark_bg = get_theme_style("neon").background
         assert dark_bg.lower() in svg.lower(), (

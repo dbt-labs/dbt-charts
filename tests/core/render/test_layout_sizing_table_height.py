@@ -36,11 +36,12 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
 
 from ..._results import rows_result
+from ..._run import Run
 
 _BASE_QUERY = SqlQuery(sql="SELECT 1", source="test")
 _DEFAULT_RESOLVED = resolve_style(get_theme_style())
@@ -68,7 +69,7 @@ def _make_table_chart(
 
 def _make_executor(row_count: int) -> MagicMock:
     """Return a mock Executor that yields `row_count` rows for execute_query."""
-    mock = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    mock = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     mock.rendered_at = None
     rows = [{"col": i} for i in range(row_count)]
     mock.execute_query_result.return_value = rows_result(rows)
@@ -702,9 +703,9 @@ rows:
 """
         result = compile(yaml_content)
         assert result.success, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         board, _ = calculate_data_aware_layout(
@@ -773,9 +774,9 @@ rows:
 """
         result = compile(yaml_content)
         assert result.success, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         board, _ = calculate_data_aware_layout(
@@ -842,9 +843,9 @@ rows:
 """
         result = compile(yaml_content)
         assert result.success, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         board, _ = calculate_data_aware_layout(
@@ -996,7 +997,9 @@ class TestSizingProbeRecordsNoWarnings:
         rows = [
             {"col": f"a cell value far too long for forty pixels {i}"} for i in range(6)
         ]
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
         executor.rendered_at = None
         executor.execute_query_result.return_value = rows_result(rows)
         with collect_text_truncations() as recorded:

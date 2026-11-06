@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
-from dbt_charts.core.execute.adapters.base import QueryDurationExceeded
+from dbt_charts.core.execute.query_result import QueryDurationExceeded
 
 
 class TestBuildAdapter:
@@ -18,7 +18,7 @@ class TestBuildAdapter:
 
     def test_duckdb_memory_returns_adapter(self) -> None:
         """build_adapter with duckdb :memory: returns a live adapter."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter({"type": "duckdb", "path": ":memory:"})
         with adapter.connection_named("test"):
@@ -28,7 +28,7 @@ class TestBuildAdapter:
 
     def test_unknown_type_raises_value_error(self) -> None:
         """Unknown adapter type raises ValueError immediately."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         with pytest.raises(ValueError, match="Unsupported"):
             build_adapter({"type": "oracle"})
@@ -40,7 +40,7 @@ class TestBuildAdapter:
         import sys
 
         from dbt_charts.core.diagnostics import ERR_ADAPTER_NOT_INSTALLED
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import (
             AdapterNotInstalledError,
             build_adapter,
         )
@@ -85,7 +85,7 @@ class TestImportAdapterModule:
 
         from dbt_charts._install_hint import install_hint
         from dbt_charts.core.diagnostics import ERR_ADAPTER_NOT_INSTALLED
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import (
             AdapterNotInstalledError,
             import_adapter_module,
         )
@@ -105,7 +105,7 @@ class TestImportAdapterModule:
         import sys
 
         from dbt_charts._install_hint import install_hint
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import (
             AdapterNotInstalledError,
             import_adapter_module,
         )
@@ -117,7 +117,7 @@ class TestImportAdapterModule:
         assert "[" not in install_hint()
 
     def test_unsupported_type_raises_value_error(self) -> None:
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import (
             import_adapter_module,
         )
 
@@ -131,7 +131,7 @@ class TestImportAdapterModule:
         import sys
 
         from dbt_charts.core.diagnostics.base import DbtChartsError
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import (
             import_adapter_module,
         )
 
@@ -145,7 +145,7 @@ class TestImportAdapterModule:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Installing the extra can't fix a driver that fails inside it."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import (
             AdapterNotInstalledError,
             import_adapter_module,
         )
@@ -172,7 +172,7 @@ class TestImportAdapterModule:
     def test_only_the_adapter_or_its_parents_count_as_not_installed(
         self, monkeypatch: pytest.MonkeyPatch, missing: str, relabeled: bool
     ) -> None:
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import (
             AdapterNotInstalledError,
             import_adapter_module,
         )
@@ -189,7 +189,7 @@ class TestImportAdapterModule:
         """A typo'd extra would hand users an install command that installs nothing."""
         from importlib.metadata import metadata
 
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import (
             _ADAPTER_TYPE_MAP,
         )
 
@@ -207,7 +207,7 @@ class TestAthenaAdapter:
     """
 
     def test_map_entry_names_dbt_athena(self) -> None:
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import (
             _ADAPTER_TYPE_MAP,
         )
 
@@ -219,7 +219,7 @@ class TestAthenaAdapter:
         )
 
     def test_build_adapter_constructs_athena_credentials(self) -> None:
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter(
             {
@@ -239,7 +239,7 @@ class TestAthenaAdapter:
 
     def test_catalog_alias_addresses_the_athena_database(self) -> None:
         """`catalog` and `database` both name the Athena Glue catalog (dbt-athena alias)."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter(
             {
@@ -312,7 +312,7 @@ class TestBigQueryMethodInference:
     def _patch_bq(self, monkeypatch, mod):
         import sys
 
-        from dbt_charts.core.execute.adapters import dbt_adapter_factory
+        from dbt_charts.core.execute.backends import dbt_adapter_factory
 
         monkeypatch.setitem(sys.modules, "dbt.adapters.bigquery", mod)
         monkeypatch.setitem(
@@ -326,7 +326,7 @@ class TestBigQueryMethodInference:
 
     def test_no_keyfile_injects_oauth(self, monkeypatch) -> None:
         """build_adapter injects method='oauth' when no keyfile fields are present."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         received: dict = {}
         self._patch_bq(monkeypatch, self._make_fake_bq_module(received))
@@ -335,7 +335,7 @@ class TestBigQueryMethodInference:
 
     def test_keyfile_json_injects_service_account_json(self, monkeypatch) -> None:
         """build_adapter injects method='service-account-json' when keyfile_json set."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         received: dict = {}
         self._patch_bq(monkeypatch, self._make_fake_bq_module(received))
@@ -351,7 +351,7 @@ class TestBigQueryMethodInference:
 
     def test_keyfile_path_injects_service_account(self, monkeypatch) -> None:
         """build_adapter injects method='service-account' when keyfile path set."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         received: dict = {}
         self._patch_bq(monkeypatch, self._make_fake_bq_module(received))
@@ -367,7 +367,7 @@ class TestBigQueryMethodInference:
 
     def test_explicit_method_not_overridden(self, monkeypatch) -> None:
         """build_adapter preserves an explicit method already in source_config."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         received: dict = {}
         self._patch_bq(monkeypatch, self._make_fake_bq_module(received))
@@ -383,7 +383,7 @@ class TestBigQueryMethodInference:
         `dataset.table` resolved against the wrong project."""
         pytest.importorskip("dbt.adapters.bigquery")
         from dbt_charts.core.compile.models.source import BigQuerySourceConfig
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         source = BigQuerySourceConfig(
             type="bigquery", method="oauth", project="data-proj", dataset="ds"
@@ -404,8 +404,8 @@ class TestProfileAliases:
         import sys
         from types import SimpleNamespace
 
-        from dbt_charts.core.execute.adapters import dbt_adapter_factory
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends import dbt_adapter_factory
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         received: dict = {}
 
@@ -454,7 +454,7 @@ class TestProfileAliases:
         threads is not a credentials field; ExtensibleDbtClassMixin.from_dict
         drops it rather than crashing.
         """
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         # Must not raise TypeError for unexpected keyword argument 'threads'
         build_adapter({"type": "duckdb", "path": ":memory:", "threads": 4})
@@ -499,7 +499,7 @@ class TestSchemaDefault:
     def _patch_snowflake(self, monkeypatch, mod):
         import sys
 
-        from dbt_charts.core.execute.adapters import dbt_adapter_factory
+        from dbt_charts.core.execute.backends import dbt_adapter_factory
 
         monkeypatch.setitem(sys.modules, "dbt.adapters.snowflake", mod)
         monkeypatch.setitem(
@@ -524,7 +524,7 @@ class TestSchemaDefault:
         when the user's dbt_charts.yml omitted schema (reasonable — they are
         trying to discover what schemas exist).
         """
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         received: dict = {}
         self._patch_snowflake(monkeypatch, self._make_fake_snowflake_module(received))
@@ -542,7 +542,7 @@ class TestSchemaDefault:
 
     def test_snowflake_explicit_schema_not_overridden(self, monkeypatch) -> None:
         """build_adapter preserves an explicit schema in the Snowflake source config."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         received: dict = {}
         self._patch_snowflake(monkeypatch, self._make_fake_snowflake_module(received))
@@ -571,7 +571,7 @@ class TestTempDirCleanup:
         import gc
         from pathlib import Path
 
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         db_path = str(tmp_path / "cleanup_test.duckdb")
         adapter = build_adapter({"type": "duckdb", "path": db_path})
@@ -612,7 +612,7 @@ class TestFactorySlotIsolation:
         import duckdb
         from dbt.adapters.factory import FACTORY
 
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         path_a = tmp_path / "a.duckdb"
         path_b = tmp_path / "b.duckdb"
@@ -645,7 +645,7 @@ class TestReadOnlyDuckDB:
         """Regression: schema drill-down must not require exclusive lock (2026-05-06)."""
         import duckdb
 
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         db_path = tmp_path / "warehouse.duckdb"
         setup = duckdb.connect(str(db_path))
@@ -675,7 +675,7 @@ class TestReadOnlyDuckDB:
         """Regression: Snowflake's list_relations_without_caching macro calls
         adapter.config.flags.get(...). The cfg SimpleNamespace must expose
         a flags dict so the macro can read optional paging config."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter({"type": "duckdb", "path": ":memory:"})
         flags = adapter.config.flags
@@ -695,7 +695,7 @@ class TestReadOnlyDuckDB:
         """
         import duckdb
 
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         db_path = tmp_path / "warehouse.duckdb"
         setup = duckdb.connect(str(db_path))
@@ -736,19 +736,19 @@ class TestQueryHeaderWiring:
     """
 
     def test_job_label_is_enabled(self) -> None:
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter({"type": "duckdb", "path": ":memory:"})
         assert adapter.config.query_comment.job_label is True
 
     def test_query_header_is_attached(self) -> None:
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter({"type": "duckdb", "path": ":memory:"})
         assert adapter.connections.query_header is not None
 
     def test_non_bigquery_emits_the_comment(self) -> None:
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter({"type": "duckdb", "path": ":memory:"})
         assert adapter.connections.query_header.add("SELECT 1").startswith("/*")
@@ -756,7 +756,7 @@ class TestQueryHeaderWiring:
     def test_bigquery_leaves_the_sql_untouched(self, monkeypatch) -> None:
         """BigQuery takes labels only; a comment would change the query text its
         free result cache keys on."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         bq = TestBigQueryMethodInference()
         bq._patch_bq(monkeypatch, bq._make_fake_bq_module({}))
@@ -769,7 +769,7 @@ class TestQueryHeaderWiring:
         """build_adapter replaces the Databricks connection manager wholesale, and a
         fresh manager starts with query_header=None — so attaching before the swap
         silently drops attribution for every Databricks query."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter(
             {
@@ -813,7 +813,7 @@ class TestNativeAttributionCredential:
     def _patch(self, monkeypatch, mod):
         import sys
 
-        from dbt_charts.core.execute.adapters import dbt_adapter_factory
+        from dbt_charts.core.execute.backends import dbt_adapter_factory
 
         monkeypatch.setitem(sys.modules, "dbt.adapters.snowflake", mod)
         monkeypatch.setitem(
@@ -833,7 +833,7 @@ class TestNativeAttributionCredential:
     def test_fills_an_unset_query_tag(self, monkeypatch) -> None:
         import json
 
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         received: dict = {}
         self._patch(monkeypatch, self._fake_snowflake(received))
@@ -841,7 +841,7 @@ class TestNativeAttributionCredential:
         assert json.loads(received["query_tag"])["app"] == "dbt-charts"
 
     def test_leaves_an_authored_query_tag_alone(self, monkeypatch) -> None:
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         received: dict = {}
         self._patch(monkeypatch, self._fake_snowflake(received))
@@ -854,7 +854,7 @@ class TestNativeAttributionCredential:
         """model_dump emits unset optional fields as None, not as missing keys."""
         import json
 
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         received: dict = {}
         self._patch(monkeypatch, self._fake_snowflake(received))
@@ -869,8 +869,8 @@ class TestNativeAttributionCredential:
         from types import SimpleNamespace
 
         from dbt_charts.core.compile.models.source import PostgresSourceConfig
-        from dbt_charts.core.execute.adapters import dbt_adapter_factory
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends import dbt_adapter_factory
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         received: dict = {}
 
@@ -917,7 +917,7 @@ class TestNativeAttributionCredential:
         team on the credential would mislabel whichever source did not build it."""
         import json
 
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         received: dict = {}
         self._patch(monkeypatch, self._fake_snowflake(received))
@@ -945,8 +945,8 @@ class TestReadsOutsideATransaction:
         attribute surfaces here rather than at a customer's warehouse."""
         from dbt.adapters.postgres import PostgresAdapter
 
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
-        from dbt_charts.core.execute.adapters.postgres_connection_manager import (
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.postgres_connection_manager import (
             autocommit_connections,
         )
 
@@ -971,7 +971,7 @@ class TestReadsOutsideATransaction:
         has to hold at the driver handle rather than in the profile we hand dbt."""
         from types import SimpleNamespace
 
-        from dbt_charts.core.execute.adapters.postgres_connection_manager import (
+        from dbt_charts.core.execute.backends.postgres_connection_manager import (
             autocommit_connections,
         )
 
@@ -1002,7 +1002,7 @@ class TestReadsOutsideATransaction:
         autocommit `if credentials.autocommit`. An authored `false` would pin
         AccessShareLock exactly the way the Postgres bug did, and on a read-only
         connection that is all it can do."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter(
             {
@@ -1062,7 +1062,7 @@ class TestClickHouseAdapter:
     }
 
     def test_map_entry_names_dbt_clickhouse(self) -> None:
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import (
             _ADAPTER_TYPE_MAP,
         )
 
@@ -1074,7 +1074,7 @@ class TestClickHouseAdapter:
         )
 
     def test_build_adapter_selects_clickhouse_credentials(self) -> None:
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter(self._SOURCE, register_macros=False)
         creds = adapter.config.credentials
@@ -1088,13 +1088,13 @@ class TestClickHouseAdapter:
         """dbt-clickhouse's connect-time EXCHANGE TABLES probe creates and drops
         scratch tables — a write dbt charts never needs and a read-only grant
         refuses. Off unless the author asked for it."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter(self._SOURCE, register_macros=False)
         assert adapter.config.credentials.check_exchange is False
 
     def test_an_authored_exchange_probe_is_kept(self) -> None:
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter(
             {**self._SOURCE, "check_exchange": True}, register_macros=False
@@ -1103,7 +1103,7 @@ class TestClickHouseAdapter:
 
     def test_profile_extras_do_not_break_construction(self) -> None:
         """A dbt_profile target carries threads and the like; from_dict drops them."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter(
             {**self._SOURCE, "threads": 4, "driver": "http"}, register_macros=False
@@ -1189,7 +1189,7 @@ class TestSQLServerAdapter:
     }
 
     def test_map_entry_names_dbt_sqlserver(self) -> None:
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import (
             _ADAPTER_TYPE_MAP,
         )
 
@@ -1201,7 +1201,7 @@ class TestSQLServerAdapter:
         )
 
     def test_build_adapter_selects_sqlserver_credentials(self) -> None:
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter(self._SOURCE, register_macros=False)
         creds = adapter.config.credentials
@@ -1213,7 +1213,7 @@ class TestSQLServerAdapter:
 
     def test_profile_extras_do_not_break_construction(self) -> None:
         """A dbt_profile target carries threads and the like; from_dict drops them."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter({**self._SOURCE, "threads": 4}, register_macros=False)
         assert adapter.config.credentials.host == "sql.example.com"
@@ -1223,7 +1223,7 @@ class TestSQLServerAdapter:
     ) -> None:
         """dbt-sqlserver raises behavior-change warnings on every build, and
         dbt writes them to stdout, which breaks `dct query --json`."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         build_adapter(self._SOURCE, register_macros=False)
         captured = capfd.readouterr()
@@ -1235,7 +1235,7 @@ class TestSQLServerAdapter:
         import io
         import logging
 
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         class _ForeignHandler(logging.StreamHandler):
             pass
@@ -1335,7 +1335,7 @@ class TestDatabricksAdapter:
     def test_catalog_translates_to_the_database_field(self) -> None:
         """dbt-databricks' _ALIASES maps catalog -> database; DatabricksCredentials
         has no 'catalog' attribute of its own."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter(self._SOURCE, register_macros=False)
         creds = adapter.config.credentials
@@ -1353,7 +1353,7 @@ class TestDatabricksAdapter:
     }
 
     def test_m2m_set_maps_to_dbt_databricks_oauth(self) -> None:
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter(self._M2M_SOURCE, register_macros=False)
         creds = adapter.config.credentials
@@ -1367,7 +1367,7 @@ class TestDatabricksAdapter:
     ) -> None:
         """dbt-databricks tries legacy Azure auth first unless the secret starts with
         `dose`, the prefix Databricks puts on every OAuth secret it issues."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         config_cls = MagicMock()
         monkeypatch.setattr("dbt.adapters.databricks.credentials.Config", config_cls)
@@ -1386,7 +1386,7 @@ class TestDatabricksAdapter:
         """dbt charts' own socket_timeout field has no top-level dbt-databricks
         counterpart — it must land under connection_parameters._socket_timeout,
         the field dbt-databricks' driver actually reads."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter(
             {**self._SOURCE, "socket_timeout": 5}, register_macros=False
@@ -1399,7 +1399,7 @@ class TestDatabricksAdapter:
         """connect_timeout is the budget for a connection attempt that keeps
         retrying while the warehouse starts; it never reaches dbt-databricks,
         where the field means the sleep between retries."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter(
             {**self._SOURCE, "connect_timeout": 15, "socket_timeout": 7},
@@ -1413,7 +1413,7 @@ class TestDatabricksAdapter:
     def test_no_socket_timeout_leaves_driver_default(self) -> None:
         """With no socket_timeout supplied, dbt charts injects nothing; the
         600 seen here is dbt-databricks' own __post_init__ default."""
-        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+        from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 
         adapter = build_adapter(self._SOURCE, register_macros=False)
         assert (

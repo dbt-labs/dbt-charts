@@ -12,9 +12,9 @@ use column_types::ColumnTypes;
 
 use diagnostic::codes;
 use diagnostic::{py_repr, Diagnostic};
-use crate::families::multiples::{self, PartitionAxis};
+use ::bind::multiples::PartitionAxis;
 use crate::families::table::bind::coerce_numeric_cell;
-use crate::families::temporal::{infer_vega_type, VegaType};
+use ::bind::temporal::{infer_vega_type, VegaType};
 use crate::Payload;
 
 type Row = Map<String, Value>;
@@ -266,7 +266,7 @@ pub fn check(payload: &Payload, chart_type: &str) -> Result<(), Diagnostic> {
         // re-slices by each row's raw panel membership (`restripe`: the x can
         // itself be the multiples field), and a panel's rows carry no partition column.
         let checked = match (chart_type, facts.x.as_deref()) {
-            ("bar", Some(x)) => super::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, x)?,
+            ("bar", Some(x)) => ::bind::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, x)?,
             _ => Cow::Borrowed(payload.rows.as_slice()),
         };
         if facts.panel_axes.is_empty() {
@@ -282,7 +282,7 @@ pub fn check(payload: &Payload, chart_type: &str) -> Result<(), Diagnostic> {
                     row
                 })
                 .collect();
-            for panel in multiples::regroup(&facts.panel_axes, &indexed)? {
+            for panel in ::bind::multiples::regroup(&facts.panel_axes, &indexed)? {
                 let rows: Vec<Row> = panel
                     .rows
                     .iter()
@@ -357,11 +357,11 @@ fn duplicate_rows(facts: &Facts, types: &ColumnTypes, rows: &[Row]) -> Result<()
         return Ok(());
     }
     // Counter semantics: keys in first-seen order, each previewed by its first row.
-    let mut counts: HashMap<Vec<crate::common::PyKey>, usize> = HashMap::new();
-    let mut first_seen: Vec<(Vec<crate::common::PyKey>, Vec<&Value>)> = Vec::new();
+    let mut counts: HashMap<Vec<::bind::rows::PyKey>, usize> = HashMap::new();
+    let mut first_seen: Vec<(Vec<::bind::rows::PyKey>, Vec<&Value>)> = Vec::new();
     for row in rows {
         let key: Vec<&Value> = fields.iter().map(|f| row.get(f).unwrap_or(&Value::Null)).collect();
-        let identity: Vec<crate::common::PyKey> = key.iter().map(|v| crate::common::py_scalar_key(v)).collect();
+        let identity: Vec<::bind::rows::PyKey> = key.iter().map(|v| ::bind::rows::py_scalar_key(v)).collect();
         let count = counts.entry(identity.clone()).or_insert(0);
         *count += 1;
         if *count == 1 {
@@ -771,7 +771,7 @@ fn layers(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
 fn layer_x(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
     let Some(base_field) = facts.x.as_deref().filter(|_| facts.layers.iter().any(|l| l.x.is_some())) else { return Ok(()) };
     let Some(base_type) = super::cartesian_x_errors::base_x_type(&payload.resolved, &payload.schema.rows, &payload.rows)? else { return Ok(()) };
-    let base_rows = super::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, base_field)?;
+    let base_rows = ::bind::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, base_field)?;
     let mut base_values = base_rows.iter().filter_map(|row| row.get(base_field)).filter(|v| !v.is_null()).peekable();
     // Only a date-like base takes a temporal layer.
     let base_date_shaped =
@@ -784,7 +784,7 @@ fn layer_x(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
         } else {
             let dataset = super::layers::resolve_layer_rows(payload, layer.query_name.as_deref(), facts.query_name.as_deref(), &facts.chart_type)?;
             let dataset_types = super::layers::resolve_layer_types(payload, layer.query_name.as_deref(), facts.query_name.as_deref(), &facts.chart_type)?;
-            own_rows = super::temporal::normalize_labeled_temporal(dataset_types, dataset, x_field)?;
+            own_rows = ::bind::temporal::normalize_labeled_temporal(dataset_types, dataset, x_field)?;
             &own_rows
         };
         let types = super::layers::resolve_layer_types(payload, layer.query_name.as_deref(), facts.query_name.as_deref(), &facts.chart_type)?;

@@ -20,7 +20,7 @@ Dependencies:
     - abc (ABC, abstractmethod)
 
 See also:
-    - execute/adapters/base.py: Adapters consume these types
+    - execute/query_result.py: Adapters consume these types
 """
 
 import hashlib

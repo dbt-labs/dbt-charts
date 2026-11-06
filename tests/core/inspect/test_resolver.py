@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterator
 import pytest
 
 from dbt_charts.core.compile.config import ProjectSourcesConfig
-from dbt_charts.core.execute.adapters import AdapterRegistry
+from dbt_charts.core.execute.env import make_exec_env
 from dbt_charts.core.inspect.resolver import LayeredSchemaResolver
 from dbt_charts.core.project import Project, ProjectDirectory, ProjectPath
 
@@ -65,14 +65,14 @@ class TestDbtForSqliteWindowsAbsolutePath:
 
     @pytest.mark.windows
     def test_absolute_windows_path_skips_filesystem_project_branch(self) -> None:
-        registry = AdapterRegistry(
+        registry = make_exec_env(
             project=_NonFilesystemProject(),
             project_sources=ProjectSourcesConfig(
                 sources={"shop": {"type": "sqlite", "path": r"C:\Users\x\bird.sqlite"}}
             ),
         )
         resolver = LayeredSchemaResolver(
-            cache=None, adapter_registry=registry, project=registry.project
+            cache=None, env=registry, project=registry.project
         )
 
         # Must not raise — a non-FilesystemProject with an already-absolute

@@ -21,9 +21,10 @@ from dbt_charts.core.compile.models.source import (
     TrinoSourceConfig,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-from dbt_charts.core.execute.adapters.dbt_profile import resolve_target_type
+from dbt_charts.core.execute.backends.dbt_profile import resolve_target_type
 from dbt_charts.core.execute.drivers import is_driver_source
+from dbt_charts.core.execute.env import make_exec_env
+from dbt_charts.core.execute.plan_sources import resolve_query_source
 from dbt_charts.core.execute.source_resolver import DbtContext, DefaultSourceResolver
 
 _TARGET = {
@@ -132,10 +133,13 @@ def test_a_project_whose_own_target_is_trino_resolves_to_the_driver_source(
     (tmp_path / "dbt_project.yml").write_text("name: analytics\nprofile: analytics\n")
     context = DbtContext(dbt_project_path=tmp_path, target="dev")
     assert resolve_target_type(context) == "trino"
-    registry = AdapterRegistry(project=FilesystemProject(tmp_path), dbt_context=context)
+    registry = make_exec_env(project=FilesystemProject(tmp_path), dbt_context=context)
 
-    resolved = registry.resolve_query_source(
-        SqlQuery(sql="SELECT * FROM {{ ref('orders') }}", source="unknown")
+    resolved = resolve_query_source(
+        SqlQuery(sql="SELECT * FROM {{ ref('orders') }}", source="unknown"),
+        sources=registry.sources,
+        resolver=registry.resolver,
+        dbt_context=registry.dbt_context,
     )
 
     assert isinstance(resolved, TrinoSourceConfig)

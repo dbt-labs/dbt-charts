@@ -25,7 +25,7 @@ from dbt_common.exceptions.base import DbtRuntimeError
 
 from dbt_charts.core.dbt_manifest import load_manifest
 from dbt_charts.core.dialects import get_dialect
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import open_connection
+from dbt_charts.core.execute.backends.dbt_adapter_factory import open_connection
 from dbt_charts.core.execute.sql_literals import sql_string_literal
 from dbt_charts.core.inspect.partition_types import (
     PartitionEntry,

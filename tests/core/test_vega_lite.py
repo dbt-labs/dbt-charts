@@ -486,7 +486,7 @@ class TestRenderChart:
         )
         from dbt_charts.core.compile.resolve import resolve
         from dbt_charts.core.compile.template.jinja import resolve_jinja_template
-        from dbt_charts.core.execute.executor import Executor
+        from dbt_charts.core.execute.query_results import QueryResults
         from dbt_charts.core.render.chart.rendering import render_chart_item
 
         chart = make_chart(
@@ -496,7 +496,9 @@ class TestRenderChart:
             title="Revenue",
             subtitle="Region: {{ region }}",
         )
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
         executor.execute_query.return_value = [{"month": "Jan", "revenue": 100}]
         executor.execute_query_result.return_value = rows_result(
             executor.execute_query.return_value

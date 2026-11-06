@@ -211,11 +211,11 @@ async def run_server(project: "Project", cache: "QueryResultCache | None") -> No
         ) from e
 
     from dbt_charts.agent_api import ProjectSession
-    from dbt_charts.core.execute.adapters import LOCAL_AUTHORING_REGISTRY_KWARGS
+    from dbt_charts.core.execute.env import LOCAL_AUTHORING_ENV_KWARGS
     from dbt_charts.core.serve import embedded
 
     with ProjectSession.from_project(
-        project, cache=cache, **LOCAL_AUTHORING_REGISTRY_KWARGS
+        project, cache=cache, **LOCAL_AUTHORING_ENV_KWARGS
     ) as project_session:
         http_server, listener = embedded.build_embedded_server(
             cast("FilesystemProject", project_session.project)

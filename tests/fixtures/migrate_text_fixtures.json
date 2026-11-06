@@ -1,0 +1,347 @@
+[
+ {
+  "text": "title: t\nqueries:\n  a: SELECT 1 AS n\ncharts:\n  revenue:\n    type: bar\n    query: q\n    x: month\n    y: amount\n    style:\n      axis_y:\n        format: currency_whole\nrows:\n  - revenue\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: t\nqueries:\n  a: SELECT 1 AS n\ncharts:\n  revenue:\n    type: bar\n    query: q\n    x: month\n    y: amount\n    style:\n      axis_y:\n        labels:\n          format: \"currency_whole\"\nrows:\n  - revenue\n"
+ },
+ {
+  "text": "title: t\nqueries:\n  a: other.yaml.queries.a\ncharts:\n  revenue:\n    type: bar\n    query: q\n    x: month\n    y: amount\n    style:\n      axis_y:\n        format: currency_whole\nrows:\n  - revenue\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: t\nqueries:\n  a: other.yaml.queries.a\ncharts:\n  revenue:\n    type: bar\n    query: q\n    x: month\n    y: amount\n    style:\n      axis_y:\n        labels:\n          format: \"currency_whole\"\nrows:\n  - revenue\n"
+ },
+ {
+  "text": "title: t\nqueries:\n  a: {ref: other.yaml.queries.a}\ncharts:\n  revenue:\n    type: bar\n    query: q\n    x: month\n    y: amount\n    style:\n      axis_y:\n        format: currency_whole\nrows:\n  - revenue\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: t\nqueries:\n  a: {ref: other.yaml.queries.a}\ncharts:\n  revenue:\n    type: bar\n    query: q\n    x: month\n    y: amount\n    style:\n      axis_y:\n        labels:\n          format: \"currency_whole\"\nrows:\n  - revenue\n"
+ },
+ {
+  "text": "title: t\nqueries:\n  q: SELECT 1 AS n\ncharts:\n  a: other.yaml.charts.a\n  revenue:\n    type: bar\n    query: q\n    x: month\n    y: amount\n    style:\n      axis_y:\n        format: currency_whole\nrows:\n  - revenue\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: t\nqueries:\n  q: SELECT 1 AS n\ncharts:\n  a: other.yaml.charts.a\n  revenue:\n    type: bar\n    query: q\n    x: month\n    y: amount\n    style:\n      axis_y:\n        labels:\n          format: \"currency_whole\"\nrows:\n  - revenue\n"
+ },
+ {
+  "text": "title: t\nqueries:\n  q: SELECT 1 AS n\ncharts:\n  a: {ref: other.yaml.charts.a}\n  revenue:\n    type: bar\n    query: q\n    x: month\n    y: amount\n    style:\n      axis_y:\n        format: currency_whole\nrows:\n  - revenue\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: t\nqueries:\n  q: SELECT 1 AS n\ncharts:\n  a: {ref: other.yaml.charts.a}\n  revenue:\n    type: bar\n    query: q\n    x: month\n    y: amount\n    style:\n      axis_y:\n        labels:\n          format: \"currency_whole\"\nrows:\n  - revenue\n"
+ },
+ {
+  "text": "title: t\nqueries:\n  q: SELECT 1 AS n\nvariables:\n  a: other.yaml.variables.a\ncharts:\n  revenue:\n    type: bar\n    query: q\n    x: month\n    y: amount\n    style:\n      axis_y:\n        format: currency_whole\nrows:\n  - revenue\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: t\nqueries:\n  q: SELECT 1 AS n\nvariables:\n  a: other.yaml.variables.a\ncharts:\n  revenue:\n    type: bar\n    query: q\n    x: month\n    y: amount\n    style:\n      axis_y:\n        labels:\n          format: \"currency_whole\"\nrows:\n  - revenue\n"
+ },
+ {
+  "text": "title: t\nqueries:\n  q: SELECT 1 AS n\nvariables:\n  a: {ref: other.yaml.variables.a}\ncharts:\n  revenue:\n    type: bar\n    query: q\n    x: month\n    y: amount\n    style:\n      axis_y:\n        format: currency_whole\nrows:\n  - revenue\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: t\nqueries:\n  q: SELECT 1 AS n\nvariables:\n  a: {ref: other.yaml.variables.a}\ncharts:\n  revenue:\n    type: bar\n    query: q\n    x: month\n    y: amount\n    style:\n      axis_y:\n        labels:\n          format: \"currency_whole\"\nrows:\n  - revenue\n"
+ },
+ {
+  "text": "title: t\nqueries:\n  a: SELECT 1 AS n\ncharts:\n  revenue:\n    type: bar\n    query: a\n    x: month\n    y: amount\n    style:\n      axis_y:\n        categorical_orient: left\nrows:\n  - revenue\n",
+  "stop": "0.11.0",
+  "err": "UnsupportedSchemaError"
+ },
+ {
+  "text": "charts:\n  revenue:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n    style:\n      # keep this comment\n      axis_y:\n        format: currency_whole\n        scale:\n          band_padding_inner: 0.2\n          type: log\n      axis_x:\n        ticks:\n          size: 8\nrows: [revenue]\n",
+  "stop": null,
+  "ok": "charts:\n  revenue:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n    style:\n      # keep this comment\n      axis_y:\n        scale:\n          padding: 0.2\n          continuous:\n            type: \"log\"\n        labels:\n          format: \"currency_whole\"\n      axis_x:\n        ticks:\n          length: 8\nrows: [revenue]\n"
+ },
+ {
+  "text": "charts:\n  revenue:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n    style:\n      axis_x:\n        label:\n          angle: -35\nrows: [revenue]\n",
+  "stop": null,
+  "ok": "charts:\n  revenue:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n    style:\n      axis_x:\n        labels:\n          angle: -35\nrows: [revenue]\n"
+ },
+ {
+  "text": "charts:\n  revenue:\n    type: line\n    query: revenue\n    x: month\n    y: amount\n    style:\n      axis_y:\n        scale:\n          domain: [0, 100]\nrows: [revenue]\n",
+  "stop": null,
+  "err": "MigrationError"
+ },
+ {
+  "text": "charts:\n  revenue:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n    style:\n      axis_x:\n        label:\n          angle: -35\n  churn:\n    type: bar\n    query: churn\n    x: month\n    y: rate\n    style:\n      axis_x:\n        label:\n          angle: 0\nrows: [revenue, churn]\n",
+  "stop": null,
+  "ok": "charts:\n  revenue:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n    style:\n      axis_x:\n        labels:\n          angle: -35\n  churn:\n    type: bar\n    query: churn\n    x: month\n    y: rate\n    style:\n      axis_x:\n        labels:\n          angle: 0\nrows: [revenue, churn]\n"
+ },
+ {
+  "text": "title: Bookings\nextends: clarity\nqueries:\n  revenue:\n    sql: SELECT month, cumulative_won FROM x\ncharts:\n  arr_line:\n    type: line\n    query: revenue\n    x: month\n    y: cumulative_won\n    style:\n      axis_y:\n        format: currency_whole\nrows: [arr_line]\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: Bookings\nextends: clarity\nqueries:\n  revenue:\n    sql: SELECT month, cumulative_won FROM x\ncharts:\n  arr_line:\n    type: line\n    query: revenue\n    x: month\n    y: cumulative_won\n    style:\n      axis_y:\n        labels:\n          format: \"currency_whole\"\nrows: [arr_line]\n"
+ },
+ {
+  "text": "title: t\nauto_link: true\nrows:\n  - c\n",
+  "stop": null,
+  "ok": "links:\n  auto: true\ntitle: t\nrows:\n  - c\n"
+ },
+ {
+  "text": "charts:\n  revenue_bar:\n    type: bar\n    query: q1\n    x: month\n    y: revenue\n    style:\n      scale:\n        continuous:\n          zero: false\nrows: [revenue_bar]\n",
+  "stop": null,
+  "err": "IncompleteMigrationError"
+ },
+ {
+  "text": "title: T\nqueries:\n  q1:\n    sql: \"select 1 as a, 2 as b\"\n    source: test\nrows:\n  - type: bar\n    query: q1\n    x: a\n    y: b\n    conditional_formatting:\n      b:\n        when:\n          - gt: 1\n            background: \"#ff0000\"\n  - type: table\n    query: q1\n    conditional_formatting:\n      b:\n        when:\n          - gt: 1\n            background: \"#ff0000\"\n",
+  "stop": null,
+  "ok": "title: T\nqueries:\n  q1:\n    sql: \"select 1 as a, 2 as b\"\n    source: test\nrows:\n  - type: bar\n    query: q1\n    x: a\n    y: b\n  - type: table\n    query: q1\n    conditional_formatting:\n      b:\n        when:\n          - gt: 1\n            background: \"#ff0000\"\n"
+ },
+ {
+  "text": "title: T\nqueries:\n  q1:\n    sql: \"select 1 as a, 2 as b\"\n    source: test\ncharts:\n  b:\n    type: bar\n    query: q1\n    x: a\n    y: b\n    conditional_formatting:\n      b:\n        when:\n          - gt: 1\n            background: \"#ff0000\"\n  t:\n    type: table\n    query: q1\n    conditional_formatting:\n      b:\n        when:\n          - gt: 1\n            background: \"#ff0000\"\nrows: [b, t]\n",
+  "stop": null,
+  "ok": "title: T\nqueries:\n  q1:\n    sql: \"select 1 as a, 2 as b\"\n    source: test\ncharts:\n  b:\n    type: bar\n    query: q1\n    x: a\n    y: b\n  t:\n    type: table\n    query: q1\n    conditional_formatting:\n      b:\n        when:\n          - gt: 1\n            background: \"#ff0000\"\nrows: [b, t]\n"
+ },
+ {
+  "text": "title: Accounts\ndescription: Won revenue by account.\n\n# Industry cells filter the list.\nqueries:\n  description:\n    sql: SELECT 1 AS month, 2 AS revenue\n    description: prose on the query named 'description'\ncharts:\n  directory:\n    type: bar\n    query: description\n    x: month\n    y: revenue\nrows: [directory]\n",
+  "stop": null,
+  "ok": "title: Accounts\nnotes: Won revenue by account.\n\n# Industry cells filter the list.\nqueries:\n  description:\n    sql: SELECT 1 AS month, 2 AS revenue\n    notes: prose on the query named 'description'\ncharts:\n  directory:\n    type: bar\n    query: description\n    x: month\n    y: revenue\nrows: [directory]\n"
+ },
+ {
+  "text": "title: T\ndescription: board prose\nrows:\n  - queries:\n      description:\n        sql: SELECT 1 AS a, 2 AS b\n    charts:\n      c1: {type: bar, query: description, x: a, y: b}\n    rows: [c1]\n",
+  "stop": null,
+  "ok": "title: T\nnotes: board prose\nrows:\n  - queries:\n      description:\n        sql: SELECT 1 AS a, 2 AS b\n    charts:\n      c1: {type: bar, query: description, x: a, y: b}\n    rows: [c1]\n"
+ },
+ {
+  "text": "title: T\ndescription: real board prose\nqueries:\n  q:\n    sql: SELECT 1 AS a, 2 AS b\ncols:\n  - description:\n      type: bar\n      query: q\n      x: a\n      y: b\n",
+  "stop": null,
+  "ok": "title: T\nnotes: real board prose\nqueries:\n  q:\n    sql: SELECT 1 AS a, 2 AS b\ncols:\n  - description:\n      type: bar\n      query: q\n      x: a\n      y: b\n"
+ },
+ {
+  "text": "title: T\ndescription: top board prose\nqueries:\n  q:\n    sql: SELECT 1 AS a, 2 AS b\n    source: duckdb\nrows:\n  - description: sub board prose\n    queries:\n      q1:\n        sql: SELECT 1 AS a, 2 AS b\n        source: duckdb\n        description: sub query prose\n    variables:\n      v1:\n        input: text\n        description: sub variable prose\n    charts:\n      c1:\n        type: bar\n        query: q1\n        x: a\n        y: b\n        description: sub chart prose\n      c2:\n        type: bar\n        query:\n          sql: SELECT 1 AS a, 2 AS b\n          source: duckdb\n          description: inline query prose\n        x: a\n        y: b\n    rows: [c1, c2]\n",
+  "stop": null,
+  "ok": "title: T\nnotes: top board prose\nqueries:\n  q:\n    sql: SELECT 1 AS a, 2 AS b\n    source: duckdb\nrows:\n  - notes: sub board prose\n    queries:\n      q1:\n        sql: SELECT 1 AS a, 2 AS b\n        source: duckdb\n        notes: sub query prose\n    variables:\n      v1:\n        input: text\n        notes: sub variable prose\n    charts:\n      c1:\n        type: bar\n        query: q1\n        x: a\n        y: b\n        notes: sub chart prose\n      c2:\n        type: bar\n        query:\n          sql: SELECT 1 AS a, 2 AS b\n          source: duckdb\n          notes: inline query prose\n        x: a\n        y: b\n    rows: [c1, c2]\n"
+ },
+ {
+  "text": "title: t\nstyle:\n  footer:\n    rule:\n      color: '#f00'\n      stroke_width: 2\n  charts:\n    table:\n      row:\n        roles:\n          summary:\n            rule_width: 2\n",
+  "stop": null,
+  "ok": "title: t\nstyle:\n  footer:\n    divider:\n      color: '#f00'\n      visible: true\n      width: 2\n  charts:\n    table:\n      row:\n        roles:\n          summary:\n            divider:\n              visible: true\n              width: 2\n          total:\n            divider:\n              visible: true\n              width: 2\n"
+ },
+ {
+  "text": "title: Revenue\nstyle:\n  # keep this comment\n  board:\n    width: 960\n    min_height: 400\nrows: [revenue]\ncharts:\n  revenue:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n",
+  "stop": null,
+  "ok": "width: 960\ntitle: Revenue\nstyle:\n  # keep this comment\n  frame:\n    min_height: 400\nrows: [revenue]\ncharts:\n  revenue:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n"
+ },
+ {
+  "text": "title: Revenue\nstyle:\n  title:\n    sizes: [30, 22, 16, 14, 12, 11]\nrows: [revenue]\n",
+  "stop": null,
+  "err": "MigrationError"
+ },
+ {
+  "text": "title: Revenue\n# this comment must survive\nallow_html: true\nrows: [revenue]\ncharts:\n  revenue:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n",
+  "stop": null,
+  "ok": "html_policy: \"trusted-raw\"\ntitle: Revenue\n# this comment must survive\nrows: [revenue]\ncharts:\n  revenue:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n"
+ },
+ {
+  "text": "title: Revenue\n# this comment must survive\nallow_html: false\nrows: [revenue]\ncharts:\n  revenue:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n",
+  "stop": null,
+  "ok": "html_policy: \"none\"\ntitle: Revenue\n# this comment must survive\nrows: [revenue]\ncharts:\n  revenue:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n"
+ },
+ {
+  "text": "charts:\n  sales:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n    style:\n      legend:\n        # keep this comment\n        interactive_legend: true\n        visible: true\nrows: [sales]\n",
+  "stop": null,
+  "ok": "charts:\n  sales:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n    style:\n      legend:\n        # keep this comment\n        visible: true\nrows: [sales]\n"
+ },
+ {
+  "text": "title: t\nrows:\n  - cols:\n      - charts:\n          s:\n            type: bar\n            query: q\n            x: a\n            y: b\n            style:\n              legend:\n                interactive_legend: true\n                visible: true\n",
+  "stop": null,
+  "ok": "title: t\nrows:\n  - cols:\n      - charts:\n          s:\n            type: bar\n            query: q\n            x: a\n            y: b\n            style:\n              legend:\n                visible: true\n"
+ },
+ {
+  "text": "title: T\nqueries:\n  q1: {sql: \"select 1 as v, 0.1 as d\", source: test}\ncharts:\n  c1:\n    type: kpi\n    query: q1\n    value: v\n    variant: compact\n    support:\n      value: d\n      label: vs prior\n      format: percent_delta\n      tone: positive\n      glyph: \"▲\"\n    style:\n      glyph:\n        character: \"●\"\n        font:\n          size: 14\n      affix:\n        font:\n          size: 12\n      title:\n        overflow: wrap\nrows: [c1]\n",
+  "stop": null,
+  "ok": "title: T\nqueries:\n  q1: {sql: \"select 1 as v, 0.1 as d\", source: test}\ncharts:\n  c1:\n    type: kpi\n    query: q1\n    value: v\n    support:\n      value: d\n      label: vs prior\n      glyph: \"▲\"\n    style:\n      value:\n        glyph:\n          font:\n            size: 14\n        affix:\n          font:\n            size: 12\n      variant: \"compact\"\n      support:\n        format: \"percent_delta\"\n        tone: \"positive\"\n      label:\n        overflow: \"wrap\"\n    glyph: \"\\u25CF\"\nrows: [c1]\n"
+ },
+ {
+  "text": "title: T\nqueries:\n  q1: {sql: \"select 1 as v\", source: test}\ncharts:\n  c1: {type: kpi, query: q1, value: v}\nstyle:\n  charts:\n    kpi:\n      affix:\n        font: label\n      glyph:\n        font:\n          size: 9\n          line_height: 1.2\nrows: [c1]\n",
+  "stop": null,
+  "ok": "title: T\nqueries:\n  q1: {sql: \"select 1 as v\", source: test}\ncharts:\n  c1: {type: kpi, query: q1, value: v}\nstyle:\n  charts:\n    kpi:\n      value:\n        glyph:\n          font:\n            size: 9\n        affix:\n          font: \"label\"\nrows: [c1]\n"
+ },
+ {
+  "text": "charts:\n  a:\n    type: kpi\n    query: q\n    value: n\n    style:\n      color: '#bf8700'\n      align: center\n  a.style.color:\n    type: table\n    query: q\nrows:\n- a\n- a.style.color\nqueries:\n  q: {type: values, rows: [{n: 1}]}\n",
+  "stop": null,
+  "ok": "charts:\n  a:\n    type: kpi\n    query: q\n    value: n\n    style:\n      align: center\n  a.style.color:\n    type: table\n    query: q\nrows:\n- a\n- a.style.color\nqueries:\n  q: {type: values, rows: [{n: 1}]}\n"
+ },
+ {
+  "text": "charts:\n  k1:\n    type: kpi\n    query: q1\n    value: revenue\n    style:\n      tone: positive\nrows: [k1]\n",
+  "stop": null,
+  "err": "IncompleteMigrationError"
+ },
+ {
+  "text": "charts:\n  k1:\n    type: kpi\n    query: q1\n    value: revenue\n    style:\n      tone: positive\nrows: [k1]\n",
+  "stop": "0.11.0",
+  "err": "IncompleteMigrationError"
+ },
+ {
+  "text": "charts:\n  revenue_kpi:\n    type: kpi\n    query: q1\n    value: revenue\nstyle:\n  charts:\n    kpi:\n      tones:\n        positive: '#00ff00'\nrows: [revenue_kpi]\n",
+  "stop": null,
+  "err": "MigrationError"
+ },
+ {
+  "text": "title: t\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n    style:\n      legend:\n        position: bottom-right\n        direction: horizontal\nrows:\n  - c\n",
+  "stop": null,
+  "ok": "title: t\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n    style:\n      legend:\n        direction: horizontal\n        position:\n          edge: \"bottom\"\n          align: \"end\"\n          overlay: true\nrows:\n  - c\n"
+ },
+ {
+  "text": "title: t\ncharts:\n  p:\n    type: pie\n    query: q\n    theta: b\n    style:\n      legend:\n        position: top-left\nrows:\n  - p\n",
+  "stop": null,
+  "ok": "title: t\ncharts:\n  p:\n    type: pie\n    query: q\n    theta: b\n    style:\n      legend:\n        position:\n          edge: \"top\"\n          align: \"start\"\nrows:\n  - p\n"
+ },
+ {
+  "text": "title: t\nrows:\n  - title: sub\n    rows:\n      - type: bar\n        query: q\n        x: a\n        y: b\n        style:\n          legend:\n            position: top-left\n",
+  "stop": null,
+  "ok": "title: t\nrows:\n  - title: sub\n    rows:\n      - type: bar\n        query: q\n        x: a\n        y: b\n        style:\n          legend:\n            position:\n              edge: \"top\"\n              align: \"start\"\n              overlay: true\n"
+ },
+ {
+  "text": "charts:\n  k:\n    type: kpi\n    query: q\n    value: revenue\nstyle:\n  charts:\n    kpi:\n      legend:\n        position: bottom\n      preferred_width: 300\nrows: [k]\n",
+  "stop": null,
+  "ok": "charts:\n  k:\n    type: kpi\n    query: q\n    value: revenue\nstyle:\n  charts:\n    kpi:\n      preferred_width: 300\nrows: [k]\n"
+ },
+ {
+  "text": "charts:\n  b:\n    type: bar\n    query: q\n    x: month\n    y: revenue\nstyle:\n  charts:\n    bar:\n      preferred_width: 200\n      tooltip:\n        gap: 4\nrows: [b]\n",
+  "stop": null,
+  "ok": "charts:\n  b:\n    type: bar\n    query: q\n    x: month\n    y: revenue\nstyle:\n  charts:\n    bar:\n      preferred_width: 200\nrows: [b]\n"
+ },
+ {
+  "text": "charts:\n  b:\n    type: bar\n    query: q\n    x: month\n    y: revenue\n    style:\n      preferred_width: 400\n      tooltip:\n        gap: 8\nrows: [b]\n",
+  "stop": null,
+  "ok": "charts:\n  b:\n    type: bar\n    query: q\n    x: month\n    y: revenue\n    style:\n      preferred_width: 400\nrows: [b]\n"
+ },
+ {
+  "text": "title: T\nqueries:\n  q1:\n    sql: \"select 1 as a, 2 as b\"\n    source: test\ncharts:\n  bar:\n    type: bar\n    query: q1\n    x: a\n    y: b\n    tooltip: {enabled: true}\n  other:\n    type: line\n    query: q1\n    x: a\n    y: b\n    style:\n      tooltip: {format: \".2f\"}\nrows: [bar, other]\n",
+  "stop": "0.11.0",
+  "err": "IncompleteMigrationError"
+ },
+ {
+  "text": "title: T\nqueries:\n  q1:\n    sql: \"select 1 as a, 2 as b\"\n    source: test\ncharts:\n  c:\n    type: bar\n    query: q1\n    x: a\n    y: b\nrows:\n- c\nstyle:\n  color: true\n",
+  "stop": "0.11.0",
+  "err": "UnsupportedSchemaError"
+ },
+ {
+  "text": "title: T\nqueries:\n  q1:\n    sql: \"select 1 as a, 2 as b\"\n    source: test\ncharts:\n  c:\n    type: bar\n    query: q1\n    x: a\n    y: b\n    conditional_formatting:\n    - when: x\nrows:\n- c\n",
+  "stop": "0.11.0",
+  "err": "UnsupportedSchemaError"
+ },
+ {
+  "text": "title: T\nstyle:\n  # keep\n  frame:\n    width: 1440\n    margin: 12\ntext: hello\n",
+  "stop": "0.12.0",
+  "ok": "_schema_version: \"0.12.0\"  # written automatically by dct migrate\nwidth: 1440\ntitle: T\nstyle:\n  # keep\n  frame:\n    margin: 12\ntext: hello\n"
+ },
+ {
+  "text": "title: T\nstyle:\n  frame:\n    width: 1440\ntext: hello\n",
+  "stop": "0.12.0",
+  "ok": "_schema_version: \"0.12.0\"  # written automatically by dct migrate\nwidth: 1440\ntitle: T\ntext: hello\n"
+ },
+ {
+  "text": "\ntitle: T\nqueries:\n  q:\n    type: values\n    rows:\n      - {k: a, v: 1}\ncharts:\n  c1: {query: q, type: bar, x: k, y: v}\nrows:\n  - title: Inner\n    style:\n      frame:\n        width: 400\n    rows:\n      - c1\n",
+  "stop": "0.12.0",
+  "ok": "_schema_version: \"0.12.0\"  # written automatically by dct migrate\n\ntitle: T\nqueries:\n  q:\n    type: values\n    rows:\n      - {k: a, v: 1}\ncharts:\n  c1: {query: q, type: bar, x: k, y: v}\nrows:\n  - title: Inner\n    rows:\n      - c1\n"
+ },
+ {
+  "text": "\nqueries:\n  q:\n    type: values\n    rows:\n      - {k: a, v: 1, kind: value}\n      - {k: Total, v: 1, kind: total}\ncharts:\n  t:\n    type: table\n    query: q\n    style:\n      row:\n        role: kind\n        height: 20\nrows:\n  - t\n",
+  "stop": "0.12.0",
+  "ok": "_schema_version: \"0.12.0\"  # written automatically by dct migrate\n\nqueries:\n  q:\n    type: values\n    rows:\n      - {k: a, v: 1, kind: value}\n      - {k: Total, v: 1, kind: total}\ncharts:\n  t:\n    type: table\n    query: q\n    style:\n      row:\n        height: 20\n    row_role: \"kind\"\nrows:\n  - t\n"
+ },
+ {
+  "text": "title: t\nstyle:\n  charts:\n    category_colors:\n      region:\n        values:\n          A: dbt-grays.separator\nrows:\n  - text: hello\n",
+  "stop": "0.12.0",
+  "ok": "_schema_version: \"0.12.0\"  # written automatically by dct migrate\ntitle: t\nstyle:\n  charts:\n    category_colors:\n      region:\n        values:\n          A: \"dbt-grays.4\"\nrows:\n  - text: hello\n"
+ },
+ {
+  "text": "title: t\nstyle:\n  background: dbt-grays.muted\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\nrows:\n  - text: hello\n",
+  "stop": "0.12.0",
+  "ok": "_schema_version: \"0.12.0\"  # written automatically by dct migrate\ntitle: t\nstyle:\n  background: \"dbt-grays.8\"\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\nrows:\n  - text: hello\n"
+ },
+ {
+  "text": "title: T\nstyle:\n  muted: '#777777'\nrows: []\n",
+  "stop": null,
+  "ok": "title: T\nstyle:\n  fonts:\n    secondary:\n      color: \"#777777\"\nrows: []\n"
+ },
+ {
+  "text": "title: Test\nqueries:\n  q: {type: values, rows: [{n: 1}]}\nstyle:\n  color: '#bf8700'\n  background: '#ffffff'\ncharts:\n  k:\n    query: q\n    type: line\n    x: n\n    y: n\n    style:\n      color:\n        static: '#123456'\nrows:\n- style:\n    color: '#abcdef'\n  rows:\n  - k\n",
+  "stop": null,
+  "ok": "title: Test\nqueries:\n  q: {type: values, rows: [{n: 1}]}\nstyle:\n  background: '#ffffff'\ncharts:\n  k:\n    query: q\n    type: line\n    x: n\n    y: n\n    style:\n      color:\n        static: '#123456'\nrows:\n- rows:\n  - k\n"
+ },
+ {
+  "text": "title: T\ntext: Some prose.\nstyle:\n  text:\n    column:\n      max_number: 2\n      gap: 24\n      divider:\n        visible: true\n        width: 1\n        color: \"#ccc\"\nrows:\n  - text: A nested block.\n    style:\n      text:\n        column:\n          gap: 40\n",
+  "stop": null,
+  "ok": "title: T\ntext: Some prose.\nstyle:\n  text:\n    column:\n      max_number: 2\n      divider:\n        visible: true\n        width: 1\n        color: \"#ccc\"\nrows:\n  - text: A nested block.\n"
+ },
+ {
+  "text": "title: t\ntheme: solid\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\nrows:\n  - c\n",
+  "stop": null,
+  "ok": "title: t\ntheme: \"clarity\"\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\nrows:\n  - c\n"
+ },
+ {
+  "text": "title: t\ntheme: plain\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\nrows:\n  - c\n",
+  "stop": null,
+  "ok": "title: t\ntheme: \"clarity\"\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\nrows:\n  - c\n"
+ },
+ {
+  "text": "title: t\ntheme: editorial\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\nrows:\n  - c\n",
+  "stop": null,
+  "ok": "title: t\ntheme: \"clarity\"\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\nrows:\n  - c\n"
+ },
+ {
+  "text": "title: t\ntheme: cream\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\nrows:\n  - c\n",
+  "stop": null,
+  "ok": "title: t\ntheme: \"paper\"\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\nrows:\n  - c\n"
+ },
+ {
+  "text": "title: t\ntheme: vivid\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\nrows:\n  - c\n",
+  "stop": null,
+  "ok": "title: t\ntheme: vivid\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\nrows:\n  - c\n"
+ },
+ {
+  "text": "title: t\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n    style:\n      color:\n        static: category_dark[2]\n\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: t\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n    style:\n      color:\n        static: \"category[2].dark\"\n\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n"
+ },
+ {
+  "text": "title: t\nstyle:\n  charts:\n    color:\n      categorical:\n        single_series_palette: category_dark.blue\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n    style:\n      color:\n        static: category_dark[2]\n\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: t\nstyle:\n  charts:\n    color:\n      categorical:\n        single_series_palette: \"category.blue.dark\"\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n    style:\n      color:\n        static: \"category[2].dark\"\n\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n"
+ },
+ {
+  "text": "title: t\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n    style:\n      color:\n        categorical:\n          palette: vivid-10-dark:4\n\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: t\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n    style:\n      color:\n        categorical:\n          palette: \"vivid-10:4.dark\"\n\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n"
+ },
+ {
+  "text": "title: t\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n    style:\n      color:\n        categorical:\n          palette: vivid-10-dark_r\n\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: t\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n    style:\n      color:\n        categorical:\n          palette: \"vivid-10_r.dark\"\n\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n"
+ },
+ {
+  "text": "title: t\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n    style:\n      color:\n        categorical:\n          palette: vivid-10-dark:4_r\n\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: t\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n    style:\n      color:\n        categorical:\n          palette: \"vivid-10:4_r.dark\"\n\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n"
+ },
+ {
+  "text": "title: t\nstyle:\n  palettes:\n    category: vivid-10\n    category_dark: vivid-10-dark\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: t\nstyle:\n  palettes:\n    category: vivid-10\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n"
+ },
+ {
+  "text": "title: t\r\ncharts:\r\n  c:\r\n    type: bar\r\n    query: q\r\n    x: a\r\n    y: b\r\n    style:\r\n      color:\r\n        static: category_dark[2]\r\n\r\nqueries:\r\n  q:\r\n    columns: [a, b]\r\n    values: [[1, 2]]\r\n",
+  "stop": "0.11.0",
+  "err": "ValueError"
+ },
+ {
+  "text": "title: t\nstyle:\n  charts:\n    color:\n      categorical:\n        single_series_palette:\n          - category_dark.blue  # brand ink\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: t\nstyle:\n  charts:\n    color:\n      categorical:\n        single_series_palette:\n          - category.blue.dark  # brand ink\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n"
+ },
+ {
+  "text": "title: t\nstyle:\n  charts:\n    color:\n      categorical:\n        single_series_palette: [category_dark.blue]\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n",
+  "stop": "0.11.0",
+  "err": "ValueError"
+ },
+ {
+  "text": "title: t\nstyle:\n  charts:\n    category_colors:\n      region:\n        values:\n          Coal: category_ink.charcoal\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\ntitle: t\nstyle:\n  charts:\n    category_colors:\n      region:\n        values:\n          Coal: \"category.charcoal.deep\"\nqueries:\n  q:\n    columns: [a, b]\n    values: [[1, 2]]\n"
+ },
+ {
+  "text": "title: T\ndescription: p\nstyle:\n  board:\n    width: 800\ncharts:\n  c:\n    query: q\n    type: line\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\nwidth: 800\ntitle: T\nnotes: p\ncharts:\n  c:\n    query: q\n    type: line\n"
+ },
+ {
+  "text": "title: T\ndescription: p\nstyle:\n  board:\n    width: 800\ncharts:\n  c:\n    query: q\n    type: line\n",
+  "stop": "0.11.0",
+  "ok": "_schema_version: \"0.11.0\"  # written automatically by dct migrate\nwidth: 800\ntitle: T\nnotes: p\ncharts:\n  c:\n    query: q\n    type: line\n"
+ }
+]

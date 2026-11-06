@@ -15,7 +15,8 @@ import duckdb
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute import run as run_stage
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.inspect.bulk_schema import bulk_schema, format_bulk_schema
 
 
@@ -37,14 +38,14 @@ def _duckdb_registry(tmp_path: Path, local_project: Callable[..., FilesystemProj
         encoding="utf-8",
     )
     project = local_project(tmp_path)
-    return build_adapter_registry(project, read_only=True)
+    return build_exec_env(project, read_only=True)
 
 
 def test_bulk_schema_returns_all_schemas_tables_columns(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
     registry = _duckdb_registry(tmp_path, local_project)
-    schema = bulk_schema(source="wh", adapter_registry=registry)
+    schema = bulk_schema(source="wh", env=registry)
 
     assert set(schema) >= {"sales", "marketing"}
     assert set(schema["sales"]) == {"orders", "customers"}
@@ -55,20 +56,22 @@ def test_bulk_schema_returns_all_schemas_tables_columns(
 
 
 def test_bulk_schema_issues_exactly_one_query(
-    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The whole point: one query for the entire source, not one per schema."""
     registry = _duckdb_registry(tmp_path, local_project)
     calls = 0
-    real_execute = registry.execute
+    real_route = run_stage.run_route
 
-    def counting_execute(*args, **kwargs):
+    def counting_route(*args, **kwargs):
         nonlocal calls
         calls += 1
-        return real_execute(*args, **kwargs)
+        return real_route(*args, **kwargs)
 
-    registry.execute = counting_execute  # type: ignore[method-assign]
-    bulk_schema(source="wh", adapter_registry=registry)
+    monkeypatch.setattr(run_stage, "run_route", counting_route)
+    bulk_schema(source="wh", env=registry)
     assert calls == 1
 
 
@@ -84,7 +87,7 @@ def test_bulk_schema_raises_when_execution_max_rows_truncates_it(
     registry = _duckdb_registry(tmp_path, local_project)
 
     with pytest.raises(RuntimeError, match="truncated"):
-        bulk_schema(source="wh", adapter_registry=registry)
+        bulk_schema(source="wh", env=registry)
 
 
 def test_bulk_schema_over_sqlite_source(
@@ -103,9 +106,9 @@ def test_bulk_schema_over_sqlite_source(
     (tmp_path / "dbt_charts.yml").write_text(
         f"sources:\n  shop:\n    type: sqlite\n    path: {db_path}\n", encoding="utf-8"
     )
-    registry = build_adapter_registry(local_project(tmp_path), profile_type="sqlite")
+    registry = build_exec_env(local_project(tmp_path), profile_type="sqlite")
 
-    schema = bulk_schema(source="shop", adapter_registry=registry)
+    schema = bulk_schema(source="shop", env=registry)
     assert "customer" in schema["main"]
     assert list(schema["main"]["customer"]) == ["id", "plan"]
 
@@ -114,7 +117,7 @@ def test_format_bulk_schema_renders_tables_and_columns(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
     registry = _duckdb_registry(tmp_path, local_project)
-    schema = bulk_schema(source="wh", adapter_registry=registry)
+    schema = bulk_schema(source="wh", env=registry)
     text = format_bulk_schema(schema, source="wh", dialect="duckdb")
 
     assert "wh" in text

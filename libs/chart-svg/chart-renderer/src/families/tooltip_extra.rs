@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn a_date_prints_through_the_resolved_time_format() {
-        let _scope = crate::time_locale::en_us_scope();
+        let _scope = ::bind::time_locale::en_us_scope();
         let out = rows(
             json!([{"column": "closed_on", "label": "Closed", "format": "%-d %b %Y"}]),
             json!({"closed_on": "2024-01-31"}),

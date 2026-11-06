@@ -25,7 +25,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style_and_context,
 )
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 
 from .conftest import (
     compile_with_board_sources as compile_board,
@@ -248,18 +248,17 @@ rows:
 """
 
     def test_kpi_label_jinja_resolves_at_render_time(self):
-        from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.render.board_resolve import build_resolved_board
         from dbt_charts.core.render.chart.rendering import render_chart_item
+
+        from ..._run import Run
 
         board = _compile_one(self._BOARD_YAML)
         # Sanity: the authored label survives compile with the jinja braces
         # intact — resolution happens at render time, not compile time.
         assert "{{ region }}" in board.charts["rev"].label
 
-        executor = Executor(
-            board, adapter_registry=build_adapter_registry(project_with_db_source())
-        )
+        executor = Run(board, env=build_exec_env(project_with_db_source()))
         variables = {"region": "EMEA"}
         resolved_board, render_cache = build_resolved_board(board, executor, variables)
         kpi = resolved_board.charts["rev"]
@@ -278,14 +277,13 @@ rows:
         assert "{{ region }}" not in svg
 
     def test_kpi_label_jinja_resolves_in_terminal_path(self):
-        from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.render.terminal import render_chart_item_terminal
+
+        from ..._run import Run
 
         board = _compile_one(self._BOARD_YAML)
         chart = board.charts["rev"]
-        executor = Executor(
-            board, adapter_registry=build_adapter_registry(project_with_db_source())
-        )
+        executor = Run(board, env=build_exec_env(project_with_db_source()))
         # Terminal renderer must mirror the SVG path: chart.label is jinja-
         # resolved before being passed to render_kpi_terminal. Without this,
         # the literal ``{{ region }}`` would print to the terminal.
@@ -309,13 +307,12 @@ class TestDataChartTitleAttributeContract:
 
     def _render_chart(self, board_yaml: str, chart_id: str) -> str:
         from dbt_charts.core.compile.resolve import resolve
-        from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.render.chart.rendering import render_chart_item
 
+        from ..._run import Run
+
         board = _compile_one(board_yaml)
-        executor = Executor(
-            board, adapter_registry=build_adapter_registry(project_with_db_source())
-        )
+        executor = Run(board, env=build_exec_env(project_with_db_source()))
         rs, ctx = resolve_style_and_context(get_theme_style())
         chart = board.charts[chart_id]
         data = executor.execute_chart(chart, {})

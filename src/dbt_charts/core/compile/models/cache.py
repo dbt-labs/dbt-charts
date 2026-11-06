@@ -372,8 +372,8 @@ class CachePolicy(BaseModel):
 
 # The fail-safe default for `Query.cache` (compile/models/query/normalized.py)
 # and the explicit choice for call sites that structurally never reach the
-# result cache (ad-hoc CLI/agent-API probes, internal executor plumbing that
-# calls AdapterRegistry.execute directly, bypassing Executor's cache-aware
+# result cache (ad-hoc CLI/agent-API probes, internal plumbing that
+# calls run_query directly, bypassing the lookup stage's cache-aware
 # path). A single frozen instance, shared everywhere it's read.
 NEVER_CACHED = CachePolicy(enabled=False, ttl=None)
 

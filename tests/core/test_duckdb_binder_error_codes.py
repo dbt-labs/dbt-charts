@@ -12,9 +12,10 @@ import pytest
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.diagnostics.execution import QueryError
-from dbt_charts.core.execute.executor import Executor
 
 from .._backend_runner import DuckDBRunner
+from .._run import Run
+from .._scripted_env import ScriptedBackend, scripted_env
 
 
 def _make_query(sql: str) -> SqlQuery:
@@ -207,13 +208,12 @@ class TestExecutorSurfacesBinderCode:
 
     def test_executor_raises_query_error_with_binder_code(self) -> None:
         """Executor raises QueryResult.error as-is, code intact (not ERR-UNKNOWN-INTERNAL)."""
-        from unittest.mock import Mock
 
         from dbt_charts.core.compile import compile
         from dbt_charts.core.diagnostics.codes_execute import (
             ERR_BINDER_UNKNOWN_COLUMN,
         )
-        from dbt_charts.core.execute.adapters.base import QueryResult
+        from dbt_charts.core.execute.query_result import QueryResult
 
         yaml_content = """
 title: Binder test
@@ -235,17 +235,18 @@ rows:
         assert board is not None
 
         # Mock the registry to return a pre-classified QueryResult.
-        mock_registry = Mock()
-        mock_registry.project_file_sources.return_value = {}
-        mock_registry.execute.return_value = QueryResult(
-            data=[],
-            error=QueryError(
-                'Binder Error: Referenced column "nonexistent_col" not found',
-                code=ERR_BINDER_UNKNOWN_COLUMN,
-            ),
+        mock_registry_backend = ScriptedBackend(
+            QueryResult(
+                data=[],
+                error=QueryError(
+                    'Binder Error: Referenced column "nonexistent_col" not found',
+                    code=ERR_BINDER_UNKNOWN_COLUMN,
+                ),
+            )
         )
+        mock_registry = scripted_env(mock_registry_backend)
 
-        executor = Executor(board, adapter_registry=mock_registry)
+        executor = Run(board, env=mock_registry)
 
         with pytest.raises(QueryError) as exc_info:
             executor.execute_query("bad_query")

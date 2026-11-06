@@ -30,11 +30,13 @@ from dbt_charts.core.compile.config import (
     ProjectSourcesConfig,
     get_export_config,
 )
-from dbt_charts.core.execute.adapters.adapter_registry import (
-    AdapterRegistry,
-    build_adapter_registry,
-)
 from dbt_charts.core.execute.cache_backend import QueryResultCache
+from dbt_charts.core.execute.env import (
+    ExecEnv,
+    build_exec_env,
+    close_env,
+)
+from dbt_charts.core.execute.plan_sources import list_sql_sources
 from dbt_charts.core.inspect.query_validator import (
     QueryDiagnostic,
     validate_query as _core_validate_query,
@@ -68,7 +70,7 @@ class ProjectSession:
 
     project: Project
     cache: QueryResultCache | None
-    _owns_registry: bool
+    _owns_env: bool
     _lazy_built: bool
     _read_only: bool
     _dialect: str
@@ -82,19 +84,19 @@ class ProjectSession:
         self,
         project: Project,
         cache: QueryResultCache | None = None,
-        adapter_registry: AdapterRegistry | None = None,
-        owns_registry: bool = False,
+        env: ExecEnv | None = None,
+        owns_env: bool = False,
         read_only: bool = True,
         file_materializer: FileSourceMaterializer | None = None,
     ) -> None:
         self.project = project
         self.cache = cache
-        self._owns_registry = adapter_registry is None or owns_registry
-        self._lazy_built = adapter_registry is None
-        if adapter_registry is not None:
+        self._owns_env = env is None or owns_env
+        self._lazy_built = env is None
+        if env is not None:
             # cached_property stores in __dict__; pre-populating makes the descriptor
             # short-circuit the build on first access.
-            self.__dict__["adapter_registry"] = adapter_registry
+            self.__dict__["env"] = env
         self._read_only = read_only
         self._dialect = "duckdb"
         self._duckdb_config = None
@@ -124,8 +126,8 @@ class ProjectSession:
         ``project_cache_ctx(project)`` already holds a project — use
         ``from_project`` instead, or this builds a second one.
 
-        The adapter registry is built lazily on first access to ``adapter_registry``.
-        Call ``refresh()`` to close the current registry and force a rebuild on the
+        The exec env is built lazily on first access to ``env``.
+        Call ``refresh()`` to close the current env and force a rebuild on the
         next access.
         """
         from dbt_charts.cli.filesystem_project import FilesystemProject  # noqa: PLC0415
@@ -147,8 +149,8 @@ class ProjectSession:
         project: Project,
         *,
         cache: QueryResultCache | None = None,
-        adapter_registry: AdapterRegistry | None = None,
-        owns_registry: bool = False,
+        env: ExecEnv | None = None,
+        owns_env: bool = False,
         read_only: bool = True,
         duckdb_config: dict[str, Any] | None = None,
         allow_external_access_in_readonly: bool = False,
@@ -161,32 +163,32 @@ class ProjectSession:
         not want to re-resolve the path.  The caller owns the Project lifecycle;
         this method stores it directly without re-wrapping.
 
-        Pass ``adapter_registry`` to inject a pre-built registry (e.g. from a
-        host-specific factory like ``build_cloud_adapter_registry``). When
+        Pass ``env`` to inject a pre-built env (e.g. from a
+        host-specific factory like ``build_cloud_exec_env``). When
         provided, the session uses it directly and does not call
-        ``build_adapter_registry`` on first access. By default the caller
+        ``build_exec_env`` on first access. By default the caller
         retains ownership (``close()``/``__exit__`` leave it open) — pass
-        ``owns_registry=True`` when handing off a throwaway registry built just
+        ``owns_env=True`` when handing off a throwaway env built just
         for this session, so ``close()`` releases its connections. Never set
-        this for a registry the caller (or another session) reuses afterward —
-        e.g. a warm registry shared across requests must stay caller-owned.
+        this for a env the caller (or another session) reuses afterward —
+        e.g. a warm env shared across requests must stay caller-owned.
 
         ``extra_routes_factory`` builds the backends routed in place of the
-        standard ones (see ``build_adapter_registry``). It is a factory because
-        the registry closes its backends and ``refresh()`` builds a new registry:
+        standard ones (see ``build_exec_env``). It is a factory because
+        the env closes its backends and ``refresh()`` builds a new env:
         each build gets backends of its own. Passing it alongside an injected
-        ``adapter_registry`` raises: that registry is already composed.
+        ``env`` raises: that env is already composed.
         """
-        if adapter_registry is not None and extra_routes_factory is not None:
+        if env is not None and extra_routes_factory is not None:
             raise ValueError(
                 "extra_routes_factory cannot be combined with an injected "
-                "adapter_registry; route the backends on that registry instead."
+                "env; route the backends on that env instead."
             )
         session = cls(
             project=project,
             cache=cache,
-            adapter_registry=adapter_registry,
-            owns_registry=owns_registry,
+            env=env,
+            owns_env=owns_env,
             read_only=read_only,
             file_materializer=file_materializer,
         )
@@ -214,22 +216,22 @@ class ProjectSession:
         self.close()
 
     @cached_property
-    def adapter_registry(self) -> AdapterRegistry:
-        """Lazily build the registry on first access; cached thereafter.
+    def env(self) -> ExecEnv:
+        """Lazily build the env on first access; cached thereafter.
 
-        Cleared and rebuilt by refresh() only when lazily built (no registry
+        Cleared and rebuilt by refresh() only when lazily built (no env
         was injected at construction). Closed by close() iff we own it
-        (owns_registry — see from_project()). When constructed with an
-        injected registry, returns it directly.
+        (owns_env — see from_project()). When constructed with an
+        injected env, returns it directly.
         """
-        # This lazy-build path only runs when no adapter_registry was injected
+        # This lazy-build path only runs when no env was injected
         # at construction: ProjectSession.open() (always a FilesystemProject)
-        # and hosts that always inject their own registry (Cloud, via
-        # from_project(adapter_registry=...)) never reach here. But
-        # from_project() can also be called WITHOUT an injected registry
+        # and hosts that always inject their own env (Cloud, via
+        # from_project(env=...)) never reach here. But
+        # from_project() can also be called WITHOUT an injected env
         # against a non-filesystem Project (e.g. rendering a query-less board
         # through an in-memory Project in tests) — that's a supported path:
-        # build_adapter_registry takes a base Project and only special-cases
+        # build_exec_env takes a base Project and only special-cases
         # FilesystemProject internally (data_dir / dbt-sibling detection fall
         # back to None for any other host), so no data file is ever
         # materialized via a non-filesystem Project's disk.
@@ -237,7 +239,7 @@ class ProjectSession:
         # Threading file_materializer through here is what makes dct query /
         # MCP execute_sql work against a file source the same
         # way a local render already does.
-        return build_adapter_registry(
+        return build_exec_env(
             self.project,
             read_only=self._read_only,
             profile_type=self._dialect,
@@ -255,21 +257,21 @@ class ProjectSession:
     def refresh(self) -> None:
         """Policy-free rebuild primitive.
 
-        For projects opened via ``open()`` (no injected registry): closes the
-        current registry (if built) and clears it so the next access rebuilds
+        For projects opened via ``open()`` (no injected env): closes the
+        current env (if built) and clears it so the next access rebuilds
         from disk. Also invalidates the sources and warnings_ignore caches so
         the next access re-reads disk.
 
-        For projects constructed with an injected ``adapter_registry`` — whether
-        or not the session owns it via ``owns_registry`` — skips the registry
+        For projects constructed with an injected ``env`` — whether
+        or not the session owns it via ``owns_env`` — skips the env
         rebuild (build arguments are not available and a caller-injected
-        registry may carry policy, like Cloud's SSRF-guarded resolver, that a
+        env may carry policy, like Cloud's SSRF-guarded resolver, that a
         generic rebuild cannot reconstruct); still invalidates the config
         caches.
         """
-        if self._lazy_built and "adapter_registry" in self.__dict__:
-            self.adapter_registry.close()
-            del self.__dict__["adapter_registry"]
+        if self._lazy_built and "env" in self.__dict__:
+            close_env(self.env)
+            del self.__dict__["env"]
         # Invalidate Project's cached_property caches in place. Reconstructing
         # via `self.project = Project(self.project.root)` would type-erase any
         # subclass — notably CloudManagedProject, whose `sources` overrides
@@ -290,9 +292,9 @@ class ProjectSession:
         materializer = self._file_materializer
         self._file_materializer = None
         try:
-            if self._owns_registry and "adapter_registry" in self.__dict__:
-                self.adapter_registry.close()
-                del self.__dict__["adapter_registry"]
+            if self._owns_env and "env" in self.__dict__:
+                close_env(self.env)
+                del self.__dict__["env"]
         finally:
             if materializer is not None:
                 materializer.close()
@@ -311,7 +313,7 @@ class ProjectSession:
         # ProjectSession is FS-only-meaningful here: `.open()` always builds a
         # FilesystemProject, and this property's only caller
         # (ai/context.py's resolve_dashboard_path) is a CLI/MCP-only path.
-        # Same reasoning as the adapter_registry cast above.
+        # Same reasoning as the env cast above.
         return cast("FilesystemProject", self.project).charts_dir
 
     # ── Verb forwarders ──────────────────────────────────────────────────────
@@ -328,7 +330,7 @@ class ProjectSession:
         results = _validate.validate_paths(
             paths,
             project=self.project,
-            adapter_registry=self.adapter_registry if warehouse else None,
+            env=self.env if warehouse else None,
         )
         return _validate.annotate_with_data_lint(results, project=self.project)
 
@@ -433,7 +435,7 @@ class ProjectSession:
             project=self.project,
             vars=vars,
             limit=limit,
-            adapter_registry=self.adapter_registry,
+            env=self.env,
         )
 
     def execute_query(
@@ -449,7 +451,7 @@ class ProjectSession:
             variables=variables,
             source=source,
             limit=limit,
-            adapter_registry=self.adapter_registry,
+            env=self.env,
             lenient_variables=lenient_variables,
         )
 
@@ -464,7 +466,7 @@ class ProjectSession:
             sql,
             path,
             self.project,
-            self.adapter_registry,
+            self.env,
             self.cache,
             variables=variables,
             limit=limit,
@@ -473,13 +475,11 @@ class ProjectSession:
     def list_sources(self) -> str:
         return sources_listing(
             self.project,
-            [item["name"] for item in self.adapter_registry.list_sql_sources()],
+            [item["name"] for item in list_sql_sources(self.env.sources)],
         )
 
     def profile_source(self, source: str, tables: Sequence[str] = ()) -> str:
-        return _profile.profile_source(
-            source, adapter_registry=self.adapter_registry, wanted=tables
-        )
+        return _profile.profile_source(source, env=self.env, wanted=tables)
 
     def emit_board(
         self,
@@ -496,7 +496,7 @@ class ProjectSession:
             artifact_path,
             recording_path,
             project=self.project,
-            adapter_registry=self.adapter_registry,
+            env=self.env,
             variables=variables,
             use_cache=use_cache,
             result_cache=self.cache,
@@ -517,7 +517,7 @@ class ProjectSession:
             board,
             variables,
             project=self.project,
-            adapter_registry=self.adapter_registry,
+            env=self.env,
             result_cache=self.cache,
             builtin_variables=builtin_variables,
         )
@@ -564,7 +564,7 @@ class ProjectSession:
             board=board,
             chart=chart,
             variables=variables,
-            adapter_registry=self.adapter_registry,
+            env=self.env,
             project=self.project,
             result_cache=self.cache,
             format=format,

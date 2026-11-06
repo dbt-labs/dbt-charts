@@ -113,7 +113,7 @@ def compute_cache_key(
 ) -> tuple[str, str, str]:
     """The content-addressed cache key ``(source_hash, query_hash, variables_hash)``.
 
-    Single source of truth for query cache identity — every Executor cache read and
+    Single source of truth for query cache identity — every cache read and
     write derives its key here. Keyed by content, never by name:
 
     - SQL queries hash ``sql`` (plus ``setup_sql``) and the source's identity;

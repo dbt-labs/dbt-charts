@@ -306,7 +306,7 @@ def render_template(
             double-quoting. Called at most once, lazily, the first time the
             template invokes ``sql_identifier()`` — a template that never
             calls it never triggers source resolution (``render_pipeline.py``
-            builds a resolver that only touches the adapter registry on
+            builds a resolver that only touches the exec env on
             first call, so index-level routes with no identifier quoting to
             do stay free). Defaults to a resolver that always returns
             ``None``, for templates and callers that don't quote identifiers.

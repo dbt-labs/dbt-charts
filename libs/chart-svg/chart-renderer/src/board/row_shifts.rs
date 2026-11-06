@@ -355,7 +355,7 @@ pub fn derive_title_shifts(
 ) -> Result<Vec<RowShift>, String> {
     let board: BoardDoc = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("board payload deserialize: {e}"))?;
-    payload.board_style.scoped(|| derive(&board, payload, fonts, items))
+    payload.scoped(|| derive(&board, payload, fonts, items))
 }
 
 fn derive(

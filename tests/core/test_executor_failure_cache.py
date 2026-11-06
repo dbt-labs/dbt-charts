@@ -18,13 +18,16 @@ from dbt_charts.core.diagnostics import (
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import ERR_DBT_REF_UNKNOWN_NODE
-from dbt_charts.core.execute import Executor, QueryError
+from dbt_charts.core.execute import QueryError
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure
 from dbt_charts.core.execute.duckdb_cache import compute_cache_key
-from dbt_charts.core.execute.lookup import memo_key
+from dbt_charts.core.execute.lookup import Ledger, memo_key
+from dbt_charts.core.execute.query_result import QueryResult
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 from .._results import rows_result, rows_schema
+from .._run import Run
+from .._scripted_env import ScriptedBackend, scripted_env
 
 BOARD_YAML = """
 title: Test
@@ -45,27 +48,22 @@ rows:
 """
 
 
-def _make_executor(result_cache=None, adapter_result=None, adapter_side_effect=None):
-    """Build an Executor with a mock adapter registry."""
+def _make_executor(
+    routes: Mock, result_cache=None, adapter_result=None, adapter_side_effect=None
+):
+    """Build a run whose routes answer from *adapter_result* or *adapter_side_effect*."""
     result = compile(BOARD_YAML)
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
     if adapter_side_effect:
-        mock_registry.execute.side_effect = adapter_side_effect
+        routes.side_effect = adapter_side_effect
     elif adapter_result is not None:
-        mock_registry.execute.return_value = adapter_result
+        routes.return_value = adapter_result
     else:
-        ok = Mock()
-        ok.is_success = True
-        ok.data = [{"value": 1}]
-        ok.schema = rows_schema(ok.data)
-        ok.resolved_relations = None
-        ok.truncated_reason = None
-        mock_registry.execute.return_value = ok
+        data = [{"value": 1}]
+        routes.return_value = QueryResult(data=data, schema=rows_schema(data))
 
-    return Executor(
+    return Run(
         result.board,
-        adapter_registry=mock_registry,
+        env=scripted_env(ScriptedBackend()),
         query_registry=result.query_registry,
         result_cache=result_cache,
     )
@@ -79,21 +77,20 @@ class TestQueryErrorCachedViaIsSuccessFalsePath:
     and never cached, making the failure cache a no-op for the playground's only adapter.
     """
 
-    def test_query_error_from_failed_adapter_result_is_cached(self):
-        failed_result = Mock()
-        failed_result.is_success = False
-        failed_result.error = QueryError("column 'x' not found")
-        failed_result.resolved_relations = None
-        failed_result.truncated_reason = None
+    def test_query_error_from_failed_adapter_result_is_cached(self, routes: Mock):
+        failed_result = _failed_result(QueryError("column 'x' not found"))
 
         cache = TrivialDuckDBCache(failure_ttl_seconds=900)
         try:
-            executor = _make_executor(result_cache=cache, adapter_result=failed_result)
+            executor = _make_executor(
+                routes, result_cache=cache, adapter_result=failed_result
+            )
 
             with pytest.raises(QueryError):
                 executor.execute_query("good_query")
 
-            # Second call must replay from cache, not hit the adapter again
+            # The next render must replay from cache, not hit the adapter again
+            executor.ledger = Ledger()
             with pytest.raises(QueryError) as exc_info:
                 executor.execute_query("good_query")
             assert isinstance(exc_info.value.__cause__, CachedQueryFailure)
@@ -101,13 +98,8 @@ class TestQueryErrorCachedViaIsSuccessFalsePath:
             cache.close()
 
 
-def _failed_result(error: QueryError) -> Mock:
-    failed = Mock()
-    failed.is_success = False
-    failed.error = error
-    failed.resolved_relations = None
-    failed.truncated_reason = None
-    return failed
+def _failed_result(error: QueryError) -> QueryResult:
+    return QueryResult(data=[], error=error)
 
 
 class TestCachedFailureKeepsItsCode:
@@ -118,28 +110,28 @@ class TestCachedFailureKeepsItsCode:
     ERR-BINDER-UNKNOWN-COLUMN.
     """
 
-    def test_replayed_failure_has_the_original_code(self):
+    def test_replayed_failure_has_the_original_code(self, routes: Mock):
         cache = TrivialDuckDBCache(failure_ttl_seconds=900)
         try:
             error = QueryError.from_code(ERR_BINDER_UNKNOWN_COLUMN, detail="no col")
             fresh = _make_executor(
-                result_cache=cache, adapter_result=_failed_result(error)
+                routes, result_cache=cache, adapter_result=_failed_result(error)
             )
             with pytest.raises(QueryError) as first:
                 fresh.execute_query("good_query")
 
-            replay = _make_executor(result_cache=cache)
+            replay = _make_executor(routes, result_cache=cache)
             with pytest.raises(QueryError) as second:
                 replay.execute_query("good_query")
 
-            replay.adapter_registry.execute.assert_not_called()
+            routes.assert_called_once()  # the fresh run's call; the replay made none
             assert second.value.code is ERR_BINDER_UNKNOWN_COLUMN
             assert str(second.value) == str(first.value)
             assert second.value.fields["query_name"] == "good_query"
         finally:
             cache.close()
 
-    def test_replayed_failure_keeps_the_fields_its_hint_needs(self):
+    def test_replayed_failure_keeps_the_fields_its_hint_needs(self, routes: Mock):
         cache = TrivialDuckDBCache(failure_ttl_seconds=900)
         try:
             error = QueryError.from_code(
@@ -148,12 +140,12 @@ class TestCachedFailureKeepsItsCode:
                 available=["orders", "customers"],
             )
             fresh = _make_executor(
-                result_cache=cache, adapter_result=_failed_result(error)
+                routes, result_cache=cache, adapter_result=_failed_result(error)
             )
             with pytest.raises(QueryError) as first:
                 fresh.execute_query("good_query")
 
-            replay = _make_executor(result_cache=cache)
+            replay = _make_executor(routes, result_cache=cache)
             with pytest.raises(QueryError) as second:
                 replay.execute_query("good_query")
 
@@ -164,41 +156,42 @@ class TestCachedFailureKeepsItsCode:
         finally:
             cache.close()
 
-    def test_untyped_failure_replays_as_internal_like_a_fresh_one(self):
+    def test_untyped_failure_replays_as_internal_like_a_fresh_one(self, routes: Mock):
         cache = TrivialDuckDBCache(failure_ttl_seconds=900)
         try:
             fresh = _make_executor(
-                result_cache=cache, adapter_side_effect=RuntimeError("boom")
+                routes, result_cache=cache, adapter_side_effect=RuntimeError("boom")
             )
             with pytest.raises(QueryError) as first:
                 fresh.execute_query("good_query")
 
-            replay = _make_executor(result_cache=cache)
+            replay = _make_executor(routes, result_cache=cache)
             with pytest.raises(QueryError) as second:
                 replay.execute_query("good_query")
 
+            assert routes.call_count == 1  # the replay came from the cache
             assert first.value.code is ERR_INTERNAL
             assert second.value.code is ERR_INTERNAL
         finally:
             cache.close()
 
-    def test_unregistered_code_is_a_miss_and_reruns(self):
+    def test_unregistered_code_is_a_miss_and_reruns(self, routes: Mock):
         """A code this version does not know (renamed or retired since the
         write) cannot be replayed faithfully, so the query runs again."""
         cache = TrivialDuckDBCache(failure_ttl_seconds=900)
         try:
             error = QueryError.from_code(ERR_BINDER_UNKNOWN_COLUMN, detail="x")
             fresh = _make_executor(
-                result_cache=cache, adapter_result=_failed_result(error)
+                routes, result_cache=cache, adapter_result=_failed_result(error)
             )
             with pytest.raises(QueryError):
                 fresh.execute_query("good_query")
             with cache._connection() as conn:
                 conn.execute("UPDATE _query_outcomes SET error_code = 'ERR-GONE'")
 
-            replay = _make_executor(result_cache=cache)
+            replay = _make_executor(routes, result_cache=cache)
             assert replay.execute_query("good_query") == [{"value": 1}]
-            replay.adapter_registry.execute.assert_called_once()
+            assert routes.call_count == 2  # the fresh run's call, then the rerun
         finally:
             cache.close()
 
@@ -211,7 +204,7 @@ class TestDbtChartsErrorNotCached:
     str(cached_failure) == '' and the human-readable text is silently discarded on replay.
     """
 
-    def test_dbt_charts_error_not_written_to_failure_cache(self):
+    def test_dbt_charts_error_not_written_to_failure_cache(self, routes: Mock):
         cache = TrivialDuckDBCache(failure_ttl_seconds=900)
         try:
             result = compile(BOARD_YAML)
@@ -224,12 +217,10 @@ class TestDbtChartsErrorNotCached:
                 call_count += 1
                 raise policy_error
 
-            executor = Executor(
+            routes.side_effect = raise_policy
+            executor = Run(
                 result.board,
-                adapter_registry=Mock(
-                    execute=Mock(side_effect=raise_policy),
-                    project_file_sources=Mock(return_value={}),
-                ),
+                env=scripted_env(ScriptedBackend()),
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
@@ -246,7 +237,8 @@ class TestDbtChartsErrorNotCached:
             )
             assert cache.get(source_hash, query_hash, variables_hash) is None
 
-            # Second call must also hit the adapter (not replay a cached failure)
+            # The next render must also hit the adapter (not replay a cached failure)
+            executor.ledger = Ledger()
             with pytest.raises(QueryError):
                 executor.execute_query("good_query")
             assert call_count == 2
@@ -275,7 +267,7 @@ class TestCachedQueryFailureMessage:
 class TestExecutorCachesFailureToDuckDB:
     """When result_cache is set and a query fails, the failure is cached."""
 
-    def test_failure_cached_and_returned_on_second_call(self):
+    def test_failure_cached_and_returned_on_second_call(self, routes: Mock):
         cache = TrivialDuckDBCache(failure_ttl_seconds=900)
         try:
             call_count = 0
@@ -286,6 +278,7 @@ class TestExecutorCachesFailureToDuckDB:
                 raise RuntimeError("table not found")
 
             executor = _make_executor(
+                routes,
                 result_cache=cache,
                 adapter_side_effect=fail_once,
             )
@@ -296,7 +289,8 @@ class TestExecutorCachesFailureToDuckDB:
 
             assert call_count == 1
 
-            # Second call: replays the cached failure without hitting adapter
+            # The next render replays the cached failure without hitting adapter
+            executor.ledger = Ledger()
             with pytest.raises(QueryError) as exc_info:
                 executor.execute_query("good_query")
 
@@ -322,10 +316,12 @@ class TestInMemoryErrorShortCircuitsResultCache:
     ``result_cache`` read.
     """
 
-    def test_stored_error_raises_without_touching_result_cache(self) -> None:
+    def test_stored_error_raises_without_touching_result_cache(
+        self, routes: Mock
+    ) -> None:
         result_cache = Mock()
         result_cache.get.return_value = None
-        executor = _make_executor(result_cache=result_cache)
+        executor = _make_executor(routes, result_cache=result_cache)
 
         stored = QueryError("Source 'analytics_bq' not found", "good_query")
         executor.ledger.errors["good_query"] = stored
@@ -336,7 +332,7 @@ class TestInMemoryErrorShortCircuitsResultCache:
         # Known-failed in memory: the persistent outcome probe is skipped.
         result_cache.get.assert_not_called()
 
-    def test_in_memory_cache_wins_over_query_errors(self) -> None:
+    def test_in_memory_cache_wins_over_query_errors(self, routes: Mock) -> None:
         """The ledger memo's rows win even when ``ledger.errors`` has an entry.
 
         Regression for: parallel pre-execution writes the memo before
@@ -348,7 +344,7 @@ class TestInMemoryErrorShortCircuitsResultCache:
         """
         result_cache = Mock()
         result_cache.get.return_value = None
-        executor = _make_executor(result_cache=result_cache)
+        executor = _make_executor(routes, result_cache=result_cache)
 
         # Simulate: query succeeded, result is in _cache…
         query = executor.board.queries["good_query"]
@@ -370,7 +366,7 @@ class TestInMemoryErrorShortCircuitsResultCache:
 class TestExecutorForceRefresh:
     """force_refresh=True clears cache and re-runs the query."""
 
-    def test_force_refresh_reruns_after_failure(self):
+    def test_force_refresh_reruns_after_failure(self, routes: Mock):
         cache = TrivialDuckDBCache(failure_ttl_seconds=900)
         try:
             calls = []
@@ -388,6 +384,7 @@ class TestExecutorForceRefresh:
                 return ok
 
             executor = _make_executor(
+                routes,
                 result_cache=cache,
                 adapter_side_effect=adapter_fn,
             )
@@ -403,7 +400,7 @@ class TestExecutorForceRefresh:
         finally:
             cache.close()
 
-    def test_force_refresh_reruns_after_success(self):
+    def test_force_refresh_reruns_after_success(self, routes: Mock):
         cache = TrivialDuckDBCache(failure_ttl_seconds=900)
         try:
             calls = []
@@ -419,6 +416,7 @@ class TestExecutorForceRefresh:
                 return ok
 
             executor = _make_executor(
+                routes,
                 result_cache=cache,
                 adapter_side_effect=adapter_fn,
             )
@@ -448,7 +446,7 @@ class TestQueryErrorCodePreservation:
     ERR-INTERNAL after wrapping.
     """
 
-    def test_adapter_execution_error_code_preserved_in_query_error(self):
+    def test_adapter_execution_error_code_preserved_in_query_error(self, routes: Mock):
         from dbt_charts.core.diagnostics.codes_execute import (
             ERR_DBT_MANIFEST_UNREADABLE,
         )
@@ -459,7 +457,7 @@ class TestQueryErrorCodePreservation:
             relpath="target/manifest.json",
             detail="Expecting value: line 1 column 1 (char 0)",
         )
-        executor = _make_executor(adapter_side_effect=err)
+        executor = _make_executor(routes, adapter_side_effect=err)
 
         with pytest.raises(QueryError) as exc_info:
             executor.execute_query("good_query", use_cache=False)

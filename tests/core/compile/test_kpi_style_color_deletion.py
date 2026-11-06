@@ -20,16 +20,16 @@ from pydantic import ValidationError
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
     migrate_yaml_text,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._engine_migrations import migrate_mapping
 
 
 @pytest.fixture
@@ -38,25 +38,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: dict[str, Any], catalog: YamlSchemaCatalog) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
-
-
-def test_registry_scopes_the_deletion_to_kpi() -> None:
-    """Declared with `chart_type`, not bare: the tail is live on eight other
-    families, and the scope is what proves the declaration legal at
-    registry-construction time."""
-    _, registry = _board_migration_context()
-
-    scoped = [
-        d
-        for d in registry.deletions_from("0.5.0")
-        if d.path == ("style", "color") and d.chart_type == "kpi"
-    ]
-
-    assert len(scoped) == 1
+        return migrate_mapping(raw)
 
 
 def test_kpi_chart_style_patch_still_rejects_color() -> None:
@@ -101,7 +85,6 @@ def test_theme_level_kpi_color_migrates_and_says_so(
 ) -> None:
     """Not an inert key: it painted the value text, so the strip changes how
     the board looks and the author has to hear about it."""
-    _, registry = _board_migration_context()
     raw = {
         "title": "Test",
         "queries": {"q": {"type": "values", "rows": [{"n": 1}]}},
@@ -113,7 +96,7 @@ def test_theme_level_kpi_color_migrates_and_says_so(
     with pytest.warns(
         SchemaMigrationWarning, match="style.charts.kpi.value.font.color"
     ):
-        migrated = migrate_mapping(raw, catalog=catalog, registry=registry)
+        migrated = migrate_mapping(raw)
 
     assert "style" not in migrated
     AuthoredBoard.model_validate(migrated)
@@ -128,7 +111,6 @@ def test_a_chart_id_containing_a_dot_does_not_capture_a_sibling(
     `charts.a.style.color` would also name the chart called `a.style.color`,
     and the rewriter resolved it to that sibling's key line instead.
     """
-    _, registry = _board_migration_context()
 
     migrated = migrate_yaml_text(
         """charts:
@@ -148,8 +130,6 @@ rows:
 queries:
   q: {type: values, rows: [{n: 1}]}
 """,
-        catalog=catalog,
-        registry=registry,
     )
 
     assert "'#bf8700'" not in migrated

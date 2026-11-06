@@ -1,8 +1,8 @@
 """Tests for cross-request adapter-registry persistence in dct serve.
 
 The per-source connection pool (``DbtBackend._source_pools``) lives on a
-``DbtBackend`` inside an ``AdapterRegistry``. ``dct serve`` builds one registry at
-startup and keeps it warm on ``app.state.adapter_registry`` across requests — it is
+``DbtBackend`` inside an ``ExecEnv``. ``dct serve`` builds one registry at
+startup and keeps it warm on ``app.state.env`` across requests — it is
 rebuilt only when ``dbt_charts.yml`` changes (source config edits) and closed on
 shutdown. So a repeat view reuses the already-open warehouse connections.
 """
@@ -46,21 +46,21 @@ class TestRegistryPersistence:
         """The registry is built once at startup and the same instance serves
         every request (warm pool persists)."""
         project = _make_project(tmp_path)
-        spy = MagicMock(wraps=server_mod.build_adapter_registry)
-        monkeypatch.setattr(server_mod, "build_adapter_registry", spy)
+        spy = MagicMock(wraps=server_mod.build_exec_env)
+        monkeypatch.setattr(server_mod, "build_exec_env", spy)
 
         app = server_mod.create_server(FilesystemProject(project), no_cache=True)
         with TestClient(app, raise_server_exceptions=False) as client:
             r1 = client.get("/x")
             r2 = client.get("/x")
-            live_registry = app.state.adapter_registry
+            live_registry = app.state.env
 
         assert r1.status_code == 200
         assert r2.status_code == 200
         # Built exactly once (at startup); no per-request rebuild.
         assert spy.call_count == 1
         # The same warm registry object served both requests.
-        assert live_registry is app.state.adapter_registry
+        assert live_registry is app.state.env
 
     def test_config_change_rebuilds_and_closes_old_registry(
         self, tmp_path: Path, monkeypatch
@@ -69,22 +69,22 @@ class TestRegistryPersistence:
         project = _make_project(tmp_path)
         config = project / "dbt_charts.yml"
         config.write_text("name: t\n")
-        spy = MagicMock(wraps=server_mod.build_adapter_registry)
-        monkeypatch.setattr(server_mod, "build_adapter_registry", spy)
+        spy = MagicMock(wraps=server_mod.build_exec_env)
+        monkeypatch.setattr(server_mod, "build_exec_env", spy)
 
         app = server_mod.create_server(FilesystemProject(project), no_cache=True)
         with TestClient(app, raise_server_exceptions=False) as client:
             client.get("/x")
-            old = app.state.adapter_registry
-            old.close = MagicMock(wraps=old.close)  # type: ignore[method-assign]
+            old = app.state.env
+            old.backends.close = MagicMock(wraps=old.backends.close)  # type: ignore[method-assign]
             # Advance the config mtime by 1s to guarantee a detectable change.
             st = config.stat()
             os.utime(config, (st.st_atime, st.st_mtime + 1))
             client.get("/x")
-            new = app.state.adapter_registry
+            new = app.state.env
 
         assert new is not old  # rebuilt from the edited config
-        old.close.assert_called_once()  # old pool released on swap
+        old.backends.close.assert_called_once()  # old pool released on swap
         assert spy.call_count == 2  # startup build + rebuild
 
     def test_board_edit_does_not_rebuild_registry(
@@ -92,17 +92,17 @@ class TestRegistryPersistence:
     ) -> None:
         """A board edit rides on fresh reads — it must not churn the warm registry."""
         project = _make_project(tmp_path)
-        spy = MagicMock(wraps=server_mod.build_adapter_registry)
-        monkeypatch.setattr(server_mod, "build_adapter_registry", spy)
+        spy = MagicMock(wraps=server_mod.build_exec_env)
+        monkeypatch.setattr(server_mod, "build_exec_env", spy)
 
         app = server_mod.create_server(FilesystemProject(project), no_cache=True)
         with TestClient(app, raise_server_exceptions=False) as client:
             client.get("/x")
-            registry = app.state.adapter_registry
+            registry = app.state.env
             board = project / "charts" / "x.yml"
             st = board.stat()
             os.utime(board, (st.st_atime, st.st_mtime + 1))
             client.get("/x")
 
-        assert app.state.adapter_registry is registry  # unchanged
+        assert app.state.env is registry  # unchanged
         assert spy.call_count == 1  # no rebuild

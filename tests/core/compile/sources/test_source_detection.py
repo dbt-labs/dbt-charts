@@ -96,7 +96,7 @@ class TestDetectDatabaseTypeFromRegistry:
         from dbt_charts.core.compile.sources.detection import (
             detect_database_type_from_registry,
         )
-        from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+        from dbt_charts.core.execute.env import make_exec_env
         from dbt_charts.core.execute.source_resolver import DbtContext
 
         # Create profiles.yml
@@ -105,7 +105,7 @@ class TestDetectDatabaseTypeFromRegistry:
             "my_project:\n  target: dev\n  outputs:\n    dev:\n      type: postgresql\n"
         )
 
-        registry = AdapterRegistry(
+        registry = make_exec_env(
             project=local_project(tmp_path),
             dbt_context=DbtContext(dbt_project_path=tmp_path, target="dev"),
         )
@@ -122,9 +122,9 @@ class TestDetectDatabaseTypeFromRegistry:
         from dbt_charts.core.compile.sources.detection import (
             detect_database_type_from_registry,
         )
-        from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+        from dbt_charts.core.execute.env import make_exec_env
 
-        registry = AdapterRegistry(project=local_project(Path()))
+        registry = make_exec_env(project=local_project(Path()))
         result = detect_database_type_from_registry(registry)
         assert result["type"] == "none"
 
@@ -135,9 +135,9 @@ class TestDetectDatabaseTypeFromRegistry:
         from dbt_charts.core.compile.sources.detection import (
             detect_database_type_from_registry,
         )
-        from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+        from dbt_charts.core.execute.env import make_exec_env
 
-        registry = AdapterRegistry(
+        registry = make_exec_env(
             project=local_project(Path()), profile_type="not_a_real_engine"
         )
 
@@ -151,9 +151,9 @@ class TestDetectDatabaseTypeFromRegistry:
         from dbt_charts.core.compile.sources.detection import (
             detect_database_type_from_registry,
         )
-        from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+        from dbt_charts.core.execute.env import make_exec_env
 
-        registry = AdapterRegistry(project=local_project(Path()), profile_type="duckdb")
+        registry = make_exec_env(project=local_project(Path()), profile_type="duckdb")
 
         result = detect_database_type_from_registry(registry)
         assert result["type"] == "duckdb"
@@ -165,11 +165,9 @@ class TestDetectDatabaseTypeFromRegistry:
         from dbt_charts.core.compile.sources.detection import (
             detect_database_type_from_registry,
         )
-        from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+        from dbt_charts.core.execute.env import make_exec_env
 
-        registry = AdapterRegistry(
-            project=local_project(Path()), profile_type="postgres"
-        )
+        registry = make_exec_env(project=local_project(Path()), profile_type="postgres")
 
         result = detect_database_type_from_registry(registry)
         assert result["type"] == "postgresql"

@@ -11,7 +11,7 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import BoardRenderResult, render_dashboard
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import InMemoryBoard
 
 _NAMES = ["duration", "bytes"]
@@ -22,7 +22,7 @@ def _render(yaml_content: str, tmp_path: Path) -> BoardRenderResult:
     return render_dashboard(
         board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
         project=project,
-        adapter_registry=build_adapter_registry(project, read_only=False),
+        env=build_exec_env(project, read_only=False),
         result_cache=None,
         format="svg",
     )

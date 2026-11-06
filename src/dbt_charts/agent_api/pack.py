@@ -1,7 +1,7 @@
 """Dashboard pack proposal and scaffold-apply API.
 
 Thin agent-API wrapper:
-- ``propose_pack``: reads schema via the registry + resolver, calls the pure
+- ``propose_pack``: reads schema via the env + resolver, calls the pure
   planner, and writes the resulting artifact to
   ``target/dbt-charts/proposals/<slug>/proposal.yml``.
 - ``apply_proposal``: takes an approved ``PackProposal`` and writes a sparse,
@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from pydantic import BaseModel, ConfigDict
 
-from dbt_charts.core.execute.adapters import AdapterRegistry, build_adapter_registry
+from dbt_charts.core.execute.env import ExecEnv, build_exec_env
+from dbt_charts.core.execute.plan_sources import list_sql_sources
 from dbt_charts.core.inspect.resolver import LayeredSchemaResolver
 from dbt_charts.core.pack.models import PackProposal, ProposedDashboard
 from dbt_charts.core.pack.planner import SourceEntry, plan_pack
@@ -89,7 +90,7 @@ def _is_connector_schema(schema_name: str) -> bool:
 
 
 def _collect_source_entries(
-    registry: AdapterRegistry,
+    env: ExecEnv,
     source_name: str,
 ) -> dict[str, SourceEntry]:
     """Return one SourceEntry per connector-like schema for a source.
@@ -107,8 +108,8 @@ def _collect_source_entries(
     this as an uncertainty note when the whole source returns nothing.
     """
     resolver = LayeredSchemaResolver(
-        adapter_registry=registry,
-        project=registry.project,
+        env=env,
+        project=env.project,
     )
     try:
         schema_resp = resolver.list_schemas(source_name)
@@ -173,8 +174,8 @@ def propose_pack(
     if not project_dir.exists():
         raise FileNotFoundError(f"Project directory not found: {project_dir}")
 
-    registry = build_adapter_registry(project)
-    sql_sources = registry.list_sql_sources()
+    env = build_exec_env(project)
+    sql_sources = list_sql_sources(env.sources)
 
     if not sql_sources:
         raise ValueError(
@@ -193,7 +194,7 @@ def propose_pack(
     for src in sql_sources:
         source_name = src["name"]
         original_source_names.append(source_name)
-        schema_entries = _collect_source_entries(registry, source_name)
+        schema_entries = _collect_source_entries(env, source_name)
         if not schema_entries:
             # Unreachable source — keep as None so plan_pack emits the note.
             sources[source_name] = None

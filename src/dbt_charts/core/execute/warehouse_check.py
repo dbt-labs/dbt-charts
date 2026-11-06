@@ -1,6 +1,7 @@
 """Per-adapter warehouse check — validity and column schema without full execution.
 
-Every mechanism runs the query through ``AdapterRegistry.execute`` so it sees
+Every mechanism runs the query through ``run.run_query`` or
+``run.execute_resolved`` so it sees
 exactly what execution would: dbt refs resolved, ``setup_sql`` on the same
 connection, board variables merged and coerced. Checking a hand-rebuilt copy of
 the SQL instead would report failures the real render never produces.
@@ -40,7 +41,7 @@ result schema — so those rows are ``columns_checked=False`` and the caller
 reports the chart-column check as unavailable rather than pretending it ran.
 
 A query authored with a ``dialect:`` other than its source's is translated first,
-through the path execution uses (``AdapterRegistry.translate_query``), and the
+through the path execution uses (``compose.translate_query``), and the
 mechanism then checks the translated text. A translation failure is ``invalid``:
 execution would fail the same way.
 
@@ -92,13 +93,16 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_WAREHOUSE_RUNTIME,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError, UnparseableSqlError
+from dbt_charts.core.execute.compose import compose_query, translate_query
+from dbt_charts.core.execute.plan_sources import resolve_query_source
+from dbt_charts.core.execute.run import execute_resolved, run_query
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
     from dbt_charts.core.compile.models.query.normalized import AnyQuery
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
     from dbt_charts.core.diagnostics.registry import ErrorCode
-    from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
 
 CheckStatus = Literal["valid", "invalid", "unchecked"]
 
@@ -169,7 +173,7 @@ def warehouse_check(
     query: SqlQuery,
     *,
     board: Board,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     query_name: str,
     query_registry: dict[str, AnyQuery],
 ) -> WarehouseCheck:
@@ -182,16 +186,16 @@ def warehouse_check(
     Raises:
         DbtChartsError: the query's source cannot be resolved.
     """
-    from dbt_charts.core.execute.adapters.base import QueryResult
-    from dbt_charts.core.execute.executor import utc_now
     from dbt_charts.core.execute.plan import (
         CACHE_REF_JINJA_RE,
         merge_board_variables,
         resolve_query_references,
+        utc_now,
     )
+    from dbt_charts.core.execute.query_result import QueryResult
 
     # {{ queries.X.cache }} composes another query's *cached result*, which the
-    # Executor materializes at render time and no warehouse has ever heard of.
+    # run stage materializes at render time and no warehouse has ever heard of.
     # Sending this SQL anywhere would report a failure about a table the author
     # never wrote.
     if CACHE_REF_JINJA_RE.search(query.sql):
@@ -208,8 +212,8 @@ def warehouse_check(
 
     # Multi-hop {{ queries.X }} composition and the setup_sql of everything in
     # the chain, resolved exactly as the executor resolves it, and before the
-    # source is: the source is chosen on the SQL that executes. AdapterRegistry's
-    # own composition is a single non-recursive pass, so a two-hop chain would
+    # source is: the source is chosen on the SQL that executes. ``compose`` is a
+    # single non-recursive pass, so a two-hop chain would
     # otherwise reach the warehouse with `{{ queries.X }}` still in the SQL.
     resolved = resolve_query_references(
         query,
@@ -221,8 +225,13 @@ def warehouse_check(
     query = resolved
 
     try:
-        source_config = adapter_registry.resolve_query_source(
-            query, board=board, query_name=query_name
+        source_config = resolve_query_source(
+            query,
+            sources=env.sources,
+            resolver=env.resolver,
+            dbt_context=env.dbt_context,
+            board=board,
+            query_name=query_name,
         )
     except ExecutionError as exc:
         # A dbt target that cannot be read is this query's problem, not the
@@ -242,8 +251,13 @@ def warehouse_check(
         # A `dialect:` query is translated when it runs. The mechanisms below wrap
         # or dry-run the SQL as given, so they must be handed the translated text.
         if query.dialect is not None:
-            translated = adapter_registry.translate_query(
-                query, board=board, variables=variables, source_config=source_config
+            translated = translate_query(
+                query,
+                board=board,
+                variables=variables,
+                source_config=source_config,
+                refs=env.dbt_refs,
+                project=env.project,
             )
             if isinstance(translated, QueryResult):
                 assert translated.error is not None
@@ -271,7 +285,7 @@ def warehouse_check(
                 return _check_bigquery(
                     query,
                     board=board,
-                    adapter_registry=adapter_registry,
+                    env=env,
                     variables=variables,
                     source_config=source_config,
                 )
@@ -279,7 +293,7 @@ def warehouse_check(
             return _check_sqlserver(
                 query,
                 board=board,
-                adapter_registry=adapter_registry,
+                env=env,
                 variables=variables,
                 source_config=source_config,
             )
@@ -322,7 +336,7 @@ def warehouse_check(
                 adapter_type=adapter_type,
                 check=prefix_check,
                 board=board,
-                adapter_registry=adapter_registry,
+                env=env,
                 variables=variables,
                 source_config=source_config,
             )
@@ -436,7 +450,7 @@ def _check_via_wrap(
     adapter_type: str,
     check: _PrefixCheck,
     board: Board,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     variables: VariableValues,
     source_config: ResolvedSourceConfig | None,
 ) -> WarehouseCheck:
@@ -458,7 +472,8 @@ def _check_via_wrap(
     entitles this to read a failure of the wrapped statement as a verdict on
     the authored one.
     """
-    result = adapter_registry.execute(
+    result = run_query(
+        env,
         query.model_copy(update={"sql": wrapped_sql, "limit": None}),
         variables=variables,
         board=board,
@@ -595,7 +610,7 @@ def _check_sqlserver(
     query: SqlQuery,
     *,
     board: Board,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     variables: VariableValues,
     source_config: ResolvedSourceConfig,
 ) -> WarehouseCheck:
@@ -606,12 +621,12 @@ def _check_sqlserver(
 
     The query goes in as a string literal, so it is wrapped *after* rendering
     (a rendered value's quotes would otherwise close the literal): the wire SQL
-    from :meth:`~AdapterRegistry.compose_query`, whose select-only guard has
+    from :func:`~dbt_charts.core.execute.compose.compose_query`, whose select-only guard has
     already run, is wrapped and sent through
-    :meth:`~AdapterRegistry.execute_resolved`.
+    :func:`~dbt_charts.core.execute.run.execute_resolved`.
     """
     from dbt_charts.core.dialects import get_dialect
-    from dbt_charts.core.execute.adapters.base import QueryResult
+    from dbt_charts.core.execute.query_result import QueryResult
     from dbt_charts.core.execute.sql_literals import sql_string_literal
 
     unwrappable = _unwrappable_reason(
@@ -627,11 +642,13 @@ def _check_sqlserver(
         )
     # The authored limit bounds the rows of the query; the describe's rows are
     # its columns, so a limit here would truncate the schema.
-    composed = adapter_registry.compose_query(
+    composed = compose_query(
         query.model_copy(update={"limit": None}),
         board=board,
         variables=variables,
         source_config=source_config,
+        refs=env.dbt_refs,
+        project=env.project,
     )
     if isinstance(composed, QueryResult):
         if composed.error:
@@ -673,9 +690,7 @@ def _check_sqlserver(
         ),
         params=(),
     )
-    result = adapter_registry.execute_resolved(
-        wrapped, query, source_config=source_config
-    )
+    result = execute_resolved(env, wrapped, query, source_config=source_config)
     if result.error:
         return _failure(
             str(result.error),
@@ -719,7 +734,7 @@ def _check_bigquery(
     query: SqlQuery,
     *,
     board: Board,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     variables: VariableValues,
     source_config: ResolvedSourceConfig,
 ) -> WarehouseCheck:
@@ -739,19 +754,24 @@ def _check_bigquery(
     ``bigquery_default_dataset``'s own dict-based read.
     """
     from dbt_charts.core.connections import build_bigquery_client, import_bigquery
-    from dbt_charts.core.execute.adapters.base import (
+    from dbt_charts.core.execute.backends.dbt_core import bigquery_default_dataset
+    from dbt_charts.core.execute.query_result import (
         BIGQUERY_UNKNOWN_REF_SUBSTRINGS,
         QueryResult,
     )
-    from dbt_charts.core.execute.backends.dbt_core import bigquery_default_dataset
 
     # Through the same helper the rest of the BigQuery surface uses, so a
     # missing extra names itself instead of surfacing a bare ModuleNotFoundError.
     QueryJobConfig = import_bigquery("google.cloud.bigquery").QueryJobConfig
     BadRequest = import_bigquery("google.api_core.exceptions").BadRequest
 
-    composed = adapter_registry.compose_query(
-        query, board=board, variables=variables, source_config=source_config
+    composed = compose_query(
+        query,
+        board=board,
+        variables=variables,
+        source_config=source_config,
+        refs=env.dbt_refs,
+        project=env.project,
     )
     if isinstance(composed, QueryResult):
         if composed.error:

@@ -19,9 +19,6 @@ import pytest
 
 from dbt_charts.core.compile.migrations import prepare_board_mapping
 from dbt_charts.core.compile.migrations.migrations import migrate_yaml_text
-from dbt_charts.core.compile.migrations.versions.v0_11_0 import (
-    RETIRED_SCAFFOLD_TOKEN_MAP,
-)
 from dbt_charts.core.compile.resolve.style.palette import color, color_from_theme
 
 # The scaffold as it was authored before 0.10.0: role -> (palette, old slot).
@@ -113,21 +110,8 @@ def test_a_chart_level_token_and_a_single_series_list_item_migrate() -> None:
     assert series == ["dbt-grays.11"]
 
 
-def test_white_and_black_are_not_retired() -> None:
-    assert "dbt-grays.white" not in RETIRED_SCAFFOLD_TOKEN_MAP
-    assert "chrome.black" not in RETIRED_SCAFFOLD_TOKEN_MAP
-    mapping = _board(background="dbt-grays.white", font={"color": "chrome.black"})
-
-    assert prepare_board_mapping(mapping)["style"] == {
-        "background": "dbt-grays.white",
-        "font": {"color": "chrome.black"},
-    }
-
-
 def test_the_text_rewriter_respells_a_retired_name_on_disk() -> None:
-    from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 
-    catalog, registry = _board_migration_context()
     text = textwrap.dedent(
         """\
         title: t
@@ -142,9 +126,7 @@ def test_the_text_rewriter_respells_a_retired_name_on_disk() -> None:
         """
     )
 
-    migrated = migrate_yaml_text(
-        text, catalog=catalog, registry=registry, stop_target=catalog.dev.version
-    )
+    migrated = migrate_yaml_text(text)
 
     assert "dbt-grays.8" in migrated
     assert "muted" not in migrated

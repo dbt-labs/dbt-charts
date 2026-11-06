@@ -17,9 +17,10 @@ from pathlib import Path
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.compiler import compile_file
 from dbt_charts.core.compile.sizing import board_container_width
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.board_resolve import build_resolved_board
+
+from ..._run import Run
 
 _QUERY = """
 queries:
@@ -152,9 +153,9 @@ def test_negative_width_is_rejected() -> None:
 
 
 def _chart_slot(board, chart_id: str, local_project: Callable) -> float:
-    executor = Executor(
+    executor = Run(
         board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=None,
     )
     resolved, _cache = build_resolved_board(board, executor, {}, render_first=False)

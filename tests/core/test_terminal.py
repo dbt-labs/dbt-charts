@@ -348,11 +348,11 @@ def test_render_chart_item_terminal_isolates_a_bare_dbt_charts_error(make_chart)
 
     from dbt_charts.core.diagnostics import ERR_INTERNAL
     from dbt_charts.core.diagnostics.base import DbtChartsError
-    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.execute.query_results import QueryResults
     from dbt_charts.core.render.terminal import render_chart_item_terminal
 
     chart = make_chart("bar", x="month", y="revenue")
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query_result.side_effect = DbtChartsError.from_code(
         ERR_INTERNAL, message="terminal pipeline blew up"
     )
@@ -369,11 +369,11 @@ def test_render_chart_item_terminal_still_isolates_bug_class_errors(make_chart):
     """The four bug-class types stay caught — this widened, it did not replace."""
     from unittest.mock import MagicMock
 
-    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.execute.query_results import QueryResults
     from dbt_charts.core.render.terminal import render_chart_item_terminal
 
     chart = make_chart("bar", x="month", y="revenue")
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query_result.side_effect = ValueError("bad value")
 
     output = render_chart_item_terminal(

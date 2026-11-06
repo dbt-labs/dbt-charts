@@ -1,7 +1,7 @@
 """Run queries on a single DuckDB or SQLite backend through the real registry.
 
 A test wants one backend with its own constructor arguments, not the full
-``build_adapter_registry`` wiring; this routes it exactly as the registry does
+``build_exec_env`` wiring; this routes it exactly as the registry does
 (compose, then ``Backend.execute``, then Arrow to rows).
 """
 
@@ -17,14 +17,15 @@ from dbt_charts.core.compile.models.source import (
     DuckDBSourceConfig,
     ResolvedSourceConfig,
 )
-from dbt_charts.core.execute.adapters import AdapterRegistry, QueryResult
-from dbt_charts.core.execute.adapters.base import QueryParams
 from dbt_charts.core.execute.backends.base import BackendRegistry
 from dbt_charts.core.execute.backends.duckdb_local import (
     DuckDBBackend,
     default_duckdb_source,
 )
 from dbt_charts.core.execute.backends.sqlite import SqliteBackend
+from dbt_charts.core.execute.env import close_env, make_exec_env
+from dbt_charts.core.execute.query_result import QueryParams, QueryResult
+from dbt_charts.core.execute.run import run_query
 from dbt_charts.core.project import Project
 
 if TYPE_CHECKING:
@@ -54,7 +55,7 @@ class DuckDBRunner:
         )
         self._configured_source = source_config
         self._dbt_project_path = Path(dbt_project_path) if dbt_project_path else None
-        self.registry = AdapterRegistry(
+        self.registry = make_exec_env(
             project=project
             if project is not None
             else FilesystemProject(data_dir or Path.cwd()),
@@ -76,12 +77,12 @@ class DuckDBRunner:
     ) -> QueryResult:
         if source_config is None and is_sql_query(query):
             source_config = self._default_source()
-        return self.registry.execute(
-            query, variables, params, source_config=source_config
+        return run_query(
+            self.registry, query, variables, params, source_config=source_config
         )
 
     def interrupt(self) -> None:
-        self.registry.interrupt()
+        self.registry.backends.interrupt()
 
     def pooled_connection(
         self, source: DuckDBSourceConfig | dict[str, object] | None = None
@@ -99,14 +100,14 @@ class DuckDBRunner:
         )
 
     def close(self) -> None:
-        self.registry.close()
+        close_env(self.registry)
 
 
 class SqliteRunner:
     """One ``SqliteBackend`` behind a registry."""
 
     def __init__(self, *, data_dir: Path | None = None) -> None:
-        self.registry = AdapterRegistry(
+        self.registry = make_exec_env(
             project=FilesystemProject(data_dir or Path.cwd()),
             backends=BackendRegistry({"sqlite": SqliteBackend(data_dir=data_dir)}),
         )
@@ -118,9 +119,9 @@ class SqliteRunner:
         params: QueryParams = None,
         source_config: ResolvedSourceConfig | None = None,
     ) -> QueryResult:
-        return self.registry.execute(
-            query, variables, params, source_config=source_config
+        return run_query(
+            self.registry, query, variables, params, source_config=source_config
         )
 
     def close(self) -> None:
-        self.registry.close()
+        close_env(self.registry)

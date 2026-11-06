@@ -52,9 +52,9 @@ def test_importing_cli_main_does_not_load_dbt_common_or_core_compile() -> None:
     assert not heavy, f"import dbt_charts.cli.main eagerly loaded: {sorted(heavy)}"
 
 
-def test_importing_the_executor_does_not_load_dbt_core() -> None:
-    """A board of inline `values` renders through the executor without dbt-core."""
-    modules = _sys_modules_after("import dbt_charts.core.execute.executor")
+def test_importing_the_execute_stages_does_not_load_dbt_core() -> None:
+    """A board of inline `values` renders through the execute stages without dbt-core."""
+    modules = _sys_modules_after("import dbt_charts.core.execute.query_results")
     heavy = {
         m
         for m in modules

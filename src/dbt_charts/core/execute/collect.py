@@ -64,7 +64,7 @@ def collect_all_query_names(board: Board) -> set[str]:
 
     Names are not all keys in ``board.queries``: a nested board's own
     ``queries:`` resolve through the plan stage's ``get_query``. Callers pass the result
-    to ``Executor.lookup``.
+    to ``lookup_names``.
     """
     names: set[str] = set(text_query_references([board.title, board.text]))
 

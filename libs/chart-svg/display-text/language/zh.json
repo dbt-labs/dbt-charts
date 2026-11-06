@@ -54,6 +54,7 @@
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{year}年{month}{start_day}–{end_day}日",
   "controls.reset": "重置",
+  "controls.remove_value": "移除 {value}",
   "controls.search": "搜索",
   "controls.search_values": "搜索值",
   "controls.select_all": "全选",

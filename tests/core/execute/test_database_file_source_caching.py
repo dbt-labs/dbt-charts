@@ -12,13 +12,16 @@ import yaml
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
-from dbt_charts.core.execute.adapters.adapter_registry import (
-    LOCAL_AUTHORING_REGISTRY_KWARGS,
-    build_adapter_registry,
+from dbt_charts.core.execute.env import (
+    LOCAL_AUTHORING_ENV_KWARGS,
+    build_exec_env,
+    make_exec_env,
 )
-from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.lookup import warehouse_cache_hit_ats
+from dbt_charts.core.execute.plan import database_file_stat_version
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+from ..._run import Run
 
 
 def _write_rows(source_type: str, db_path: Path, amounts: list[int]) -> None:
@@ -40,7 +43,7 @@ def _executor(
     project: FilesystemProject,
     cache: TrivialDuckDBCache,
     registry_kwargs: dict[str, Any] | None = None,
-) -> Executor:
+) -> Run:
     board = compile_board(
         yaml.dump(
             {
@@ -52,9 +55,9 @@ def _executor(
         )
     ).board
     assert board is not None
-    return Executor(
+    return Run(
         board,
-        adapter_registry=build_adapter_registry(project, **(registry_kwargs or {})),
+        env=build_exec_env(project, **(registry_kwargs or {})),
         query_registry={"q": board.queries["q"]},
         result_cache=cache,
     )
@@ -119,9 +122,9 @@ def test_duckdb_with_external_access_stays_a_warehouse_hit(tmp_path: Path) -> No
     _write_rows("duckdb", tmp_path / "data" / "shop.duckdb", [100])
     project = _declare(tmp_path, "duckdb", "shop.duckdb")
     cache = TrivialDuckDBCache()
-    _executor(project, cache, LOCAL_AUTHORING_REGISTRY_KWARGS).execute_query("q")
+    _executor(project, cache, LOCAL_AUTHORING_ENV_KWARGS).execute_query("q")
 
-    executor = _executor(project, cache, LOCAL_AUTHORING_REGISTRY_KWARGS)
+    executor = _executor(project, cache, LOCAL_AUTHORING_ENV_KWARGS)
     executor.execute_query("q")
     assert warehouse_cache_hit_ats(executor.ledger) == executor.cache_hit_ats != []
 
@@ -130,7 +133,7 @@ def test_duckdb_source_with_attach_stays_unversioned(tmp_path: Path) -> None:
     from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 
     (tmp_path / "shop.duckdb").touch()
-    registry = build_adapter_registry(FilesystemProject(tmp_path))
+    registry = build_exec_env(FilesystemProject(tmp_path))
     plain = DuckDBSourceConfig(type="duckdb", path="shop.duckdb")
     attached = DuckDBSourceConfig.model_validate(
         {
@@ -140,8 +143,10 @@ def test_duckdb_source_with_attach_stays_unversioned(tmp_path: Path) -> None:
         }
     )
 
-    assert registry.database_file_version(plain) != ""
-    assert registry.database_file_version(attached) == ""
+    assert database_file_stat_version(registry.backends, registry.project, plain) != ""
+    assert (
+        database_file_stat_version(registry.backends, registry.project, attached) == ""
+    )
 
 
 def test_cache_key_never_resolves_a_warehouse_source() -> None:
@@ -159,26 +164,26 @@ def test_cache_key_never_resolves_a_warehouse_source() -> None:
     ).board
     assert board is not None
     registry = Mock()
-    registry.project_sources.sources = {"wh": {"type": "postgres", "host": "h"}}
-    registry.project_file_sources.return_value = {}
-    registry.resolve_query_source.side_effect = RuntimeError("blocked host")
-    executor = Executor(
+    declared = {"type": "postgres", "host": "h"}
+    registry.sources.get.return_value = declared
+    registry.sources.runtime_config().sources = {"wh": declared}
+    registry.resolver.resolve.side_effect = RuntimeError("blocked host")
+    executor = Run(
         board,
-        adapter_registry=registry,
+        env=registry,
         query_registry={"q": board.queries["q"]},
         result_cache=TrivialDuckDBCache(),
     )
 
     assert "q" not in executor.lookup(["q"]).hits
-    registry.resolve_query_source.assert_not_called()
+    registry.resolver.resolve.assert_not_called()
 
 
 def test_host_without_a_sqlite_adapter_never_stats_the_path(tmp_path: Path) -> None:
     # A host that cannot open the file must not probe the disk for it.
     from dbt_charts.core.compile.models.source import SQLiteSourceConfig
-    from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 
-    registry = AdapterRegistry(FilesystemProject(tmp_path))
+    registry = make_exec_env(FilesystemProject(tmp_path))
     source = SQLiteSourceConfig(type="sqlite", path=str(tmp_path / "missing.db"))
 
-    assert registry.database_file_version(source) == ""
+    assert database_file_stat_version(registry.backends, registry.project, source) == ""

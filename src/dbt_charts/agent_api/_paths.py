@@ -493,9 +493,9 @@ def resolve_board_or_error(path: Path, project: Project) -> BoardFile | Diagnost
 class BoardRenderContext:
     """Path resolution result from a board path + project root.
 
-    Adapter registry is built by `ProjectSession.open`, not by the context — call sites
+    Exec env is built by `ProjectSession.open`, not by the context — call sites
     open a `ProjectSession` with `project_root` and read the registry off
-    `project.adapter_registry`.
+    `project.env`.
     """
 
     board_file: Path
@@ -550,7 +550,7 @@ def build_board_render_context(
 class YamlRenderContext:
     """Path resolution result for rendering inline YAML against a project root.
 
-    Adapter registry is built by `ProjectSession.open`, not by the context.
+    Exec env is built by `ProjectSession.open`, not by the context.
     """
 
     project_root: Path

@@ -34,19 +34,22 @@ _SERIF_FONT_FACE_RULE = re.compile(r"@font-face \{[^}]*font-family: 'Source Seri
 
 def _export(tmp_path: Path, local_project, *, footer: bool, timestamp: bool) -> str:
     from dbt_charts.core.compile import compile
-    from dbt_charts.core.execute import Executor
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
     from dbt_charts.core.render import render
+
+    from ..._run import Run
 
     result = compile(
         _YAML.format(footer=str(footer).lower(), timestamp=str(timestamp).lower())
     )
     assert result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(tmp_path)),
+        env=build_exec_env(local_project(tmp_path)),
     )
-    output = render(result.board, executor, format="svg", standalone=True).output
+    output = render(
+        result.board, executor.ctx, executor.ledger, format="svg", standalone=True
+    ).output
     assert isinstance(output, str)
     return output
 

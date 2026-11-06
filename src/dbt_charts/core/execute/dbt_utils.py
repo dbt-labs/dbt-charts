@@ -1,0 +1,204 @@
+"""Shared dbt utilities for SQL adapters."""
+
+import re
+import threading
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+from dbt_charts.core.compile.models.source import (
+    DbtProfileSourceConfig,
+    DbtTargetSourceConfig,
+)
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_DBT_CALL_UNSUPPORTED,
+    ERR_DBT_MANIFEST_MISSING,
+    ERR_DBT_REF_UNKNOWN_NODE,
+    ERR_DBT_SOURCE_UNKNOWN_TABLE,
+)
+from dbt_charts.core.diagnostics.execution import ExecutionError
+from dbt_charts.core.execute.dbt_jinja import (
+    REF_CALL_RE,
+    SOURCE_CALL_RE,
+    dbt_macro_kind,
+    first_dbt_call,
+    has_dbt_jinja,
+)
+from dbt_charts.core.execute.query_result import ResolvedRelation
+
+if TYPE_CHECKING:
+    from dbt_charts.core.compile.models.source import ResolvedSourceConfig
+    from dbt_charts.core.dbt_manifest import RawTableFormats, RefIndex
+    from dbt_charts.core.project import Project
+
+DBT_PROJECT_DB_NAMES = ["sample.duckdb", "dbt_charts_examples.duckdb", "dev.duckdb"]
+
+
+def source_target_path(source_config: "ResolvedSourceConfig | None") -> str | None:
+    """The manifest directory a dbt_profile source authored, before or after expansion."""
+    if isinstance(source_config, DbtProfileSourceConfig | DbtTargetSourceConfig):
+        return source_config.target_path
+    return None
+
+
+def resolve_dbt_refs_with_provenance(
+    sql: str,
+    index: "RefIndex",
+    encode_relation: Callable[[str], str] | None = None,
+) -> tuple[str, list[ResolvedRelation]]:
+    """Resolve ref/source in SQL and record the resolved relation per call.
+
+    `encode_relation` receives each resolved relation's text and returns what
+    to splice in its place; None splices the relation text itself.
+    """
+    relations: list[ResolvedRelation] = []
+
+    def resolve_ref(match: re.Match[str]) -> str:
+        ref_name = match.group(1)
+        entry = index.refs.get(ref_name)
+        if entry is None:
+            raise ExecutionError.from_code(
+                ERR_DBT_REF_UNKNOWN_NODE,
+                ref_name=ref_name,
+                available=index.available_refs,
+            )
+        fragment, schema = entry
+        relations.append(ResolvedRelation(ref_name=ref_name, schema=schema))
+        return fragment if encode_relation is None else encode_relation(fragment)
+
+    sql = REF_CALL_RE.sub(resolve_ref, sql)
+
+    def resolve_source(match: re.Match[str]) -> str:
+        source_name = match.group(1)
+        table_name = match.group(2)
+        entry = index.sources.get((source_name, table_name))
+        if entry is None:
+            raise ExecutionError.from_code(
+                ERR_DBT_SOURCE_UNKNOWN_TABLE,
+                source_name=source_name,
+                table_name=table_name,
+                available=index.available_sources,
+            )
+        fragment, schema = entry
+        ref_name = f"{source_name}.{table_name}"
+        relations.append(ResolvedRelation(ref_name=ref_name, schema=schema))
+        return fragment if encode_relation is None else encode_relation(fragment)
+
+    sql = SOURCE_CALL_RE.sub(resolve_source, sql)
+
+    # Detection routes on the `{{ ref(` prefix; substitution has to parse a whole
+    # call. A prefix matcher always accepts more than a parser, so check the
+    # output rather than trust the patterns to have covered every spelling: a
+    # call still standing here is one this engine cannot resolve.
+    if has_dbt_jinja(sql):
+        raise ExecutionError.from_code(
+            ERR_DBT_CALL_UNSUPPORTED, call=first_dbt_call(sql)
+        )
+
+    return sql, relations
+
+
+class DbtRefResolver:
+    """Resolves `{{ ref() }}` / `{{ source() }}` against a project's dbt manifest.
+
+    Call `resolve()` before rendering variable Jinja over raw SQL: the variable
+    renderer runs under StrictUndefined, so a `ref()` that survives to it dies
+    as an undefined Jinja global — an error that names neither dbt nor the
+    manifest. The registry and `DbtBackend` each own one;
+    `ExecEnv` owns one too, which it hands to `compose`.
+
+    ``resolve(sql, target_path)`` selects the manifest: a source's authored
+    ``target_path`` picks the manifest its target built, none picks dbt's
+    default location. The manifest's ``file_version`` is read on every call and
+    the index rebuilt when it changed, so a rewritten manifest is picked up by a
+    long-lived resolver.
+
+    The manifest is the gate. SQL without dbt Jinja is returned untouched and
+    reads no files; SQL with it and no manifest to resolve against raises
+    ERR-DBT-MANIFEST-MISSING rather than passing the call downstream.
+    """
+
+    def __init__(self, project: "Project | None") -> None:
+        """Initialize the resolver.
+
+        Args:
+            project: Seam the manifests are read through. None for an adapter
+                built without a project (Cloud's dev-only DuckDB registration,
+                a bare adapter in a test) — ref()/source() then raises, since
+                there is nothing to resolve it against.
+        """
+        self._project = project
+        # Keyed by the authored target_path (None = dbt's default location):
+        # the manifest version the index was built from, and the index.
+        self._indexes: dict[str | None, tuple[str, RefIndex]] = {}
+        # One resolver is shared across the executor's worker threads; the
+        # lock makes each first load atomic so a concurrent resolve() never
+        # sees a path marked loaded with its index still unbuilt.
+        self._load_lock = threading.Lock()
+
+    def resolve(
+        self,
+        sql: str,
+        target_path: str | None = None,
+        encode_relation: Callable[[str], str] | None = None,
+    ) -> tuple[str, list[ResolvedRelation]]:
+        """Return `sql` with refs replaced by relations, plus their lineage.
+
+        Raises:
+            ExecutionError: ERR-DBT-MANIFEST-MISSING when the SQL calls ref() or
+                source() and no manifest is available;
+                ERR-DBT-REF-UNKNOWN-NODE / ERR-DBT-SOURCE-UNKNOWN-TABLE when a
+                manifest is available but does not contain the node named;
+                ERR-DBT-CALL-UNSUPPORTED when the call is in a form this engine
+                cannot resolve to a single relation. No ref() or source() ever
+                leaves this method unresolved.
+        """
+        if not has_dbt_jinja(sql):
+            return sql, []
+
+        relpath, _version, index = self._snapshot(target_path)
+        if index is None:
+            raise ExecutionError.from_code(
+                ERR_DBT_MANIFEST_MISSING,
+                kind=dbt_macro_kind(sql),
+                paths=[relpath],
+            )
+        return resolve_dbt_refs_with_provenance(sql, index, encode_relation)
+
+    def column_formats(self, target_path: str | None) -> "RawTableFormats":
+        """``meta.format`` of the dbt columns that carry one, by ref/source name.
+
+        Read from the manifest ``target_path`` names (dbt's default location
+        when None); empty when there is no manifest.
+        """
+        index = self._snapshot(target_path)[2]
+        return index.formats if index is not None else {}
+
+    def manifest_version(self, target_path: str | None) -> str:
+        """The ``file_version`` of the manifest ``resolve`` would use now, ``""``
+        when there is none. Same load as ``resolve``, so a cache key built from it
+        names the manifest the resolution will read."""
+        return self._snapshot(target_path)[1]
+
+    def _snapshot(self, target_path: str | None) -> tuple[str, str, "RefIndex | None"]:
+        """The manifest path, its version and its ref/source index (``""`` and
+        None when the manifest does not exist)."""
+        from dbt_charts.core.dbt_manifest import (  # noqa: PLC0415
+            load_manifest,
+            manifest_relpath,
+            ref_index,
+        )
+
+        with self._load_lock:
+            project = self._project
+            relpath = manifest_relpath(project, target_path)
+            loaded = (
+                load_manifest(project, target_path) if project is not None else None
+            )
+            if loaded is None:
+                self._indexes.pop(target_path, None)
+                return relpath, "", None
+            cached = self._indexes.get(target_path)
+            if cached is None or cached[0] != loaded.version:
+                cached = (loaded.version, ref_index(loaded))
+                self._indexes[target_path] = cached
+            return relpath, loaded.version, cached[1]

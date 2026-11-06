@@ -14,14 +14,15 @@ import pytest
 
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.primitives import FormatConfig, FormatTable
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import Project
 from dbt_charts.core.render import render
 from dbt_charts.core.render.board_variables import board_data_provider
 from dbt_charts.core.render.boards import resolve_display_text_from_provider
 from dbt_charts.core.render.render_result import RenderResult
 from dbt_charts.core.render.sizing import get_markdown_text_height
+
+from ..._run import Run
 
 _QUERIES = """
 queries:
@@ -65,21 +66,21 @@ _SOURCES_DIR = Path(tempfile.mkdtemp(prefix="dct-text-query-refs-"))
 )
 
 
-def _executor(yaml: str, local_project: Callable[..., Project]) -> Executor:
+def _executor(yaml: str, local_project: Callable[..., Project]) -> Run:
     project = local_project(_SOURCES_DIR)
     result = compile(yaml, project_sources=project.sources)
     assert result.success, result.errors
     assert result.board is not None
-    return Executor(
+    return Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
 
 
 def _render(yaml: str, local_project: Callable[..., Project]) -> RenderResult:
     executor = _executor(yaml, local_project)
-    return render(executor.board, executor, format="svg")
+    return render(executor.board, executor.ctx, executor.ledger, format="svg")
 
 
 def _text(yaml: str, local_project: Callable[..., Project]) -> str:

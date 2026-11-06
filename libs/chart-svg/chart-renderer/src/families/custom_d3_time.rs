@@ -25,7 +25,7 @@ pub(super) fn register(m: &mut std::collections::BTreeMap<&'static str, Value>) 
 /// truncates toward zero; one past what a `Date` holds (8.64e15 ms either side of the epoch) is an error.
 fn instant(site: &str, name: &str, value: &Value) -> Result<f64, Error> {
     if let Some(iso) = value.as_str() {
-        return crate::time_axis::date_text_day(iso)
+        return ::bind::time_axis::date_text_day(iso)
             .map(|day| (day * MS_PER_DAY).round())
             .ok_or_else(|| invalid(format!("{site}: {name} is not an ISO-8601 date or timestamp, got {iso:?}")));
     }
@@ -39,7 +39,7 @@ fn instant(site: &str, name: &str, value: &Value) -> Result<f64, Error> {
 }
 
 fn locale(site: &str) -> Result<Arc<d3rs::time_format::Locale>, Error> {
-    crate::time_locale::active_time_locale().map(|l| Arc::new((*l).clone())).map_err(|e| invalid(format!("{site}: {e}")))
+    ::bind::time_locale::active_time_locale().map(|l| Arc::new((*l).clone())).map_err(|e| invalid(format!("{site}: {e}")))
 }
 
 // ── scale_utc ───────────────────────────────────────────────────────────────

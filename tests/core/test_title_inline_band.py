@@ -14,8 +14,7 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.variable.authored import Variable
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.board_resolve import (
     build_resolved_board_static as resolve_board,
 )
@@ -30,6 +29,7 @@ from dbt_charts.core.render.sizing import (
     title_baseline_offset,
 )
 
+from .._run import Run
 from ._board_utils import apply_static_layout
 from ._control_utils import render_strip_for
 from ._svg_render import authored_boxes, variables_box_x
@@ -66,9 +66,9 @@ def _board_svg(yaml_content: str, project: FilesystemProject) -> str:
     result = compile(yaml_content)
     assert result.success, result.errors
     apply_static_layout(result.board)
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
     return render_board_svg(
@@ -280,9 +280,9 @@ rows:
         assert result.success, result.errors
         apply_static_layout(result.board)
         resolved = resolve_board(result.board)
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         svg = render_board_svg(
@@ -437,9 +437,9 @@ rows:
         assert result.success, result.errors
         apply_static_layout(result.board)
         resolved = resolve_board(result.board)
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         svg = render_board_svg(
@@ -502,9 +502,9 @@ rows:
         assert result.success, result.errors
         apply_static_layout(result.board)
         resolved = resolve_board(result.board)
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         svg = render_board_svg(
@@ -660,9 +660,9 @@ rows:
         assert result.success, result.errors
         apply_static_layout(result.board)
         resolved = resolve_board(result.board)
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         return render_board_svg(
@@ -732,9 +732,9 @@ rows:
         assert result.success, result.errors
         apply_static_layout(result.board)
         resolved = resolve_board(result.board)
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         svg = render_board_svg(
@@ -801,9 +801,9 @@ rows:
         assert result.success, result.errors
         apply_static_layout(result.board)
         resolved = resolve_board(result.board)
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         svg = render_board_svg(
@@ -1031,9 +1031,9 @@ rows:
 
         result = compile(yaml_content)
         assert result.success, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         board, cache = calculate_data_aware_layout(

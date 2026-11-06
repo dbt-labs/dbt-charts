@@ -4,18 +4,15 @@
 //! (AXIS_FREE_EDGE_PAD, VALUE_AXIS_BREATHING_ROOM), and the tabular-numeric
 //! machinery (TAB_FONT/TAB_STYLE/SUFFIX_GAP).
 
-use std::borrow::Cow;
-
-use column_types::{ColumnType, ColumnTypes};
 use diagnostic::codes;
-use d3rs::stack::{stack, Offset, Order};
 use diagnostic::Diagnostic;
-use crate::number_locale::active_number_locale;
+use ::bind::formats::locale::active_number_locale;
 use print::xml_escape_attr;
 use measure::FontBook;
 use scene::{Attrs, Chars, Escape, Node, Role, Run, Shape, Transform};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use ::bind::rows::js_to_number;
 
 // Axis-free-edge fixed inset — the small, fixed padding Vega-Lite's own
 // `autosize: fit` reserves on the edge with no label gutter to size (no
@@ -201,91 +198,6 @@ const TEXT_FORMATS: [&str; 2] = ["email", "url"];
 
 pub(crate) fn is_text_format(spec: &str) -> bool {
     TEXT_FORMATS.contains(&spec)
-}
-
-/// What the wire tagged on one cell: the Python `str()` of the value, and the
-/// non-finite float a `null` stands for (`None` for a Decimal).
-#[derive(Clone, Debug, PartialEq)]
-pub struct CellTag {
-    pub text: String,
-    pub non_finite: Option<f64>,
-}
-
-/// The tags of one row's tagged cells, keyed by column.
-pub type CellRow = std::collections::BTreeMap<String, CellTag>;
-
-/// Per-row tags of the cells the wire tagged (`{"decimal": text}`,
-/// `{"non_finite": kind, "text": text}`). A pivot labels its dimension columns
-/// with the text, and KPI and spark_bar print a non-finite cell's text;
-/// everything else reads the decoded number.
-pub type CellText = Vec<CellRow>;
-
-/// The tag of the cell at `row`, `column`, if the wire tagged it.
-pub fn tag_at<'a>(tags: &'a [CellRow], row: usize, column: &str) -> Option<&'a CellTag> {
-    tags.get(row)?.get(column)
-}
-
-/// The one place the wire's cell markers are read, so every family sees plain
-/// numbers. JSON has no `NaN`/`Infinity`/exact Decimal, so the Python seam tags
-/// a finite Decimal as `{"decimal": str(value)}` and a non-finite float or
-/// Decimal as `{"non_finite": "nan" | "inf" | "-inf", "text": str(value)}`. A
-/// Decimal becomes the float it converts to; a non-finite value becomes `null`,
-/// the missing value every family already handles. Returns the tag of each
-/// tagged top-level cell; a malformed marker is an error.
-pub fn decode_cells(rows: &mut [serde_json::Map<String, Value>]) -> Result<CellText, String> {
-    rows.iter_mut()
-        .map(|row| {
-            let mut tags = CellRow::new();
-            for (column, cell) in row.iter_mut() {
-                if let Some(tag) = decode_value(cell)? {
-                    tags.insert(column.clone(), tag);
-                }
-            }
-            Ok(tags)
-        })
-        .collect()
-}
-
-fn decode_value(v: &mut Value) -> Result<Option<CellTag>, String> {
-    match v {
-        Value::Object(o) => {
-            let tag = match (o.get("decimal"), o.get("non_finite")) {
-                (Some(Value::String(text)), None) if o.len() == 1 => {
-                    let number = text
-                        .parse::<f64>()
-                        .ok()
-                        .and_then(serde_json::Number::from_f64)
-                        .ok_or_else(|| format!("cell tagged decimal is not a finite number: {text:?}"))?;
-                    Some((CellTag { text: text.clone(), non_finite: None }, Value::Number(number)))
-                }
-                (None, Some(Value::String(kind))) if o.len() <= 2 => {
-                    let non_finite = match kind.as_str() {
-                        "nan" => f64::NAN,
-                        "inf" => f64::INFINITY,
-                        "-inf" => f64::NEG_INFINITY,
-                        other => return Err(format!("cell tagged non_finite has unknown kind {other:?}")),
-                    };
-                    let text = o.get("text").and_then(Value::as_str).unwrap_or(kind);
-                    Some((CellTag { text: text.to_string(), non_finite: Some(non_finite) }, Value::Null))
-                }
-                _ => None,
-            };
-            if let Some((tag, decoded)) = tag {
-                *v = decoded;
-                return Ok(Some(tag));
-            }
-            for child in o.values_mut() {
-                decode_value(child)?;
-            }
-        }
-        Value::Array(items) => {
-            for child in items {
-                decode_value(child)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(None)
 }
 
 #[derive(Deserialize, Clone, Default)]
@@ -829,14 +741,14 @@ impl FormatSlot {
         // `bytes` takes the board's locale there (Vega's `format` reads
         // `config.locale.number`); the Python slots print en-US.
         if spec == "bytes" {
-            let (number, unit) = d3rs::native::bytes(value, crate::number_locale::d3_format)?;
+            let (number, unit) = d3rs::native::bytes(value, ::bind::formats::locale::d3_format)?;
             return Ok(format!("{number}{unit}"));
         }
         if spec == "duration" {
             let (number, unit) = d3rs::native::predefined_native(spec, value)?.expect("duration is a native");
             return Ok(format!("{number}{unit}"));
         }
-        let digits = crate::number_locale::d3_format(spec, value).map_err(|e| format!("format {spec:?} on {value}: {e}"))?;
+        let digits = ::bind::formats::locale::d3_format(spec, value).map_err(|e| format!("format {spec:?} on {value}: {e}"))?;
         match notation {
             Some(notation) if d3rs::format::parse_parts(spec)?.type_ == 's' => respell_si(&digits, spec, notation),
             // d3's raw "G" reads as gigabytes; spell billions as the locale's analytic word, like the ruler.
@@ -1077,7 +989,7 @@ impl AxisStyle {
 fn decimal_pad_table(digit_spec: &str, precision: usize, values: &[f64], family: &str, fonts: &FontBook) -> Result<Vec<String>, String> {
     let mut depths = std::collections::HashSet::new();
     for &value in values {
-        let text = crate::number_locale::d3_format(digit_spec, value)?;
+        let text = ::bind::formats::locale::d3_format(digit_spec, value)?;
         depths.insert(text.split_once('.').map_or(0, |(_, fraction)| fraction.len()));
     }
     if depths.len() < 2 {
@@ -1384,7 +1296,7 @@ pub fn suffix_at_register(exponent: i32, analytic: bool) -> Result<String, Strin
 
 /// The active locale's magnitude word for d3's SI letter at `notation`, as
 /// `format_value` prints it, behind the gap it carries (a no-break space or
-/// none; `text/magnitude_words.py`). Any other letter is returned as is.
+/// none; `display-text/locale/magnitude_words.json`). Any other letter is returned as is.
 fn printed_magnitude_word(d3_suffix: &str, notation: &str) -> Result<String, String> {
     Ok(active_number_locale().magnitude_word(d3_suffix, notation)?.unwrap_or_else(|| d3_suffix.to_string()))
 }
@@ -1460,11 +1372,11 @@ pub fn sub_unit_guarded_format(
         // tick_label.si_format, fmt.notation)`).
         return match labels_format {
             Some(slot) => slot.bare_digits(si_format, value),
-            None => crate::number_locale::d3_format(si_format, value),
+            None => ::bind::formats::locale::d3_format(si_format, value),
         }
         .map_err(|e| format!("tick_label si_format {si_format:?}: {e}"));
     }
-    crate::number_locale::d3_format(band_spec, value).map_err(|e| format!("tick_label format {band_spec:?}: {e}"))
+    ::bind::formats::locale::d3_format(band_spec, value).map_err(|e| format!("tick_label format {band_spec:?}: {e}"))
 }
 
 /// Production's `_ESTIMATE_TARGET_COUNTS`.
@@ -1560,7 +1472,7 @@ pub fn estimated_tick_label_gutter(
                 sub_unit_guarded_format(v, &tl.format, si, tl.scientific_format.as_deref(), labels_format, Some(tl.anchor_at_start.is_some()))?
             }
             (None, Some(slot)) => slot.paint_tick(v).map_err(|e| format!("estimated tick label: {e}"))?,
-            (None, None) => crate::number_locale::d3_format(",.0~f", v)
+            (None, None) => ::bind::formats::locale::d3_format(",.0~f", v)
                 .map_err(|e| format!("estimated tick label \",.0~f\": {e}"))?,
         };
         max_w = max_w.max(fonts.measure(&lbl, measure_family, font_size)?);
@@ -1577,7 +1489,7 @@ pub fn estimated_tick_label_gutter(
 /// must never run for it. Shared by `bar.rs` and `line.rs` so the law
 /// lives in one place, not two independent readings of it.
 pub fn normalize_percent_label(value: f64) -> Result<String, String> {
-    crate::number_locale::d3_format(".0%", value).map_err(|e| format!("normalize tick label: {e}"))
+    ::bind::formats::locale::d3_format(".0%", value).map_err(|e| format!("normalize tick label: {e}"))
 }
 
 pub fn format_y_label(
@@ -1652,9 +1564,9 @@ pub fn format_y_label(
                 Some(slot) => slot
                     .bare_digits(&tl.format, value)
                     .map_err(|e| format!("tick_label format {:?}: {e}", tl.format))?,
-                None if on_anchor && !tl.prefix.is_empty() => crate::number_locale::d3_format(&anchor_spec, value)
+                None if on_anchor && !tl.prefix.is_empty() => ::bind::formats::locale::d3_format(&anchor_spec, value)
                     .map_err(|e| format!("tick_label anchor spec {anchor_spec:?}: {e}"))?,
-                None => crate::number_locale::d3_format(&tl.format, value)
+                None => ::bind::formats::locale::d3_format(&tl.format, value)
                     .map_err(|e| format!("tick_label format {:?}: {e}", tl.format))?,
             };
             if tl.decimal_pad_table.is_empty() {
@@ -1682,7 +1594,7 @@ pub fn format_y_label(
         // Production's default (no ruler, no explicit format) axis emits
         // labelExpr `format(datum.value, ",.0~f")` — render exactly that
         // spec (U+2212 minus and all), not a hand-rolled approximation.
-        return crate::number_locale::d3_format(",.0~f", value)
+        return ::bind::formats::locale::d3_format(",.0~f", value)
             .map_err(|e| format!("default axis format ,.0~f: {e}"));
     };
     let divisor = 10f64.powi(ruler.exponent);
@@ -1733,10 +1645,10 @@ pub fn format_y_label(
         slot.paint(scaled).map_err(|e| format!("ruler anchor spec {:?}: {e}", slot.spec))?
     } else if carries_prefix && !ruler.prefix.is_empty() && !composed {
         let spec = spec_with_symbol(&ruler.digit_spec, &ruler.prefix);
-        crate::number_locale::d3_format(&spec, scaled)
+        ::bind::formats::locale::d3_format(&spec, scaled)
             .map_err(|e| format!("ruler anchor spec {spec:?}: {e}"))?
     } else {
-        crate::number_locale::d3_format(&ruler.digit_spec, scaled)
+        ::bind::formats::locale::d3_format(&ruler.digit_spec, scaled)
             .map_err(|e| format!("ruler digit_spec {:?}: {e}", ruler.digit_spec))?
     };
     let trail = if carries_prefix { trail } else { String::new() };
@@ -1764,124 +1676,6 @@ pub fn format_y_label(
 }
 
 // ── Axis style (the slice of ResolvedAxisStyle the scaffold reads) ────────
-
-/// The authored chart-level sort (`ChartSort` in
-/// `compile/models/chart/authored/_annotations.py`) — orders a categorical
-/// channel's domain. Shared by bar.rs and scatter.rs, which apply it with
-/// their own family's aggregate.
-#[derive(Deserialize)]
-pub struct ChartSort {
-    pub by: String,
-    pub order: SortDir,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum SortDir {
-    Asc,
-    Desc,
-}
-
-/// The per-category aggregate an authored `sort` ranks by — production's
-/// `EncodingSortField.op` (`utils.py::x_domain_order(..., op=)`): `Sum` for
-/// a stacked bar sorted by its own measure (`bar_sort_op`), `Min` for every
-/// other bar sort and every other dimension axis
-/// (`emitters/_cartesian.py::dimension_sort_to_vl` pins `op: "min"`).
-#[derive(Clone, Copy, PartialEq)]
-pub enum SortAggregate {
-    Sum,
-    Min,
-}
-
-/// Reorder `base_order` (a categorical domain in first-occurrence row
-/// order) by an authored `sort`'s per-category aggregate — the one ranking
-/// law bar, line/area, and heatmap all share, parameterized on `agg`
-/// (`x_domain_order`'s own `op=` in production; bar calls this with
-/// `bar_sort_op`'s verdict, line/area/heatmap with `Min`).
-///
-/// `pin_sorted_domain` bakes the resulting order as an explicit VL
-/// `scale.domain` — so an unranked category (no value for the sort field on
-/// any row) always TRAILS, on both directions, matching `x_domain_order`'s
-/// own `ranked + unranked` return: pinning an explicit domain means Vega
-/// just draws the array as given, never consulting its own native
-/// sort-comparator placement for what's absent. Ties are stable
-/// (`sort_by`), so ties keep first-occurrence order.
-///
-/// Under `Sum`, a numeric string parses (`row_num` tolerates it, matching
-/// production's own `coerce_numeric_cell` under `op == "sum"`); any other
-/// non-numeric value refuses by name here — a deliberate divergence, since
-/// `coerce_numeric_cell` instead reads it as no value (drops that row, the
-/// same as an absent one) — the same refusal bar.rs's own `CatOrder::Field`
-/// doc comment documents. Under `Min` the sort value is compared as itself
-/// (`utils.py::_js_min`): numbers numerically, strings by code point, a value
-/// of the other kind passed over; keys of both kinds make Python's sort raise,
-/// which `x_domain_order` answers with row order.
-pub fn dimension_sort_domain(
-    rows: &[serde_json::Map<String, Value>],
-    field: &str,
-    base_order: Vec<String>,
-    sort: Option<&ChartSort>,
-    agg: SortAggregate,
-    family: &str,
-) -> Result<Vec<String>, String> {
-    let Some(sort) = sort else {
-        return Ok(base_order);
-    };
-    let mut mins: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
-    let mut sums: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
-    for row in rows {
-        let Some(raw) = row.get(&sort.by).filter(|v| !v.is_null()) else { continue };
-        let cat = row_str(row, field);
-        match agg {
-            SortAggregate::Min => match mins.get_mut(&cat) {
-                // `_js_min`: a value Python cannot compare against the min is passed over.
-                Some(min) => {
-                    if raw_x_order(raw, min).is_ok_and(std::cmp::Ordering::is_lt) {
-                        *min = raw.clone();
-                    }
-                }
-                None => {
-                    mins.insert(cat, raw.clone());
-                }
-            },
-            SortAggregate::Sum => {
-                let val = row_num(row, &sort.by).filter(|v| v.is_finite()).ok_or_else(|| {
-                    format!(
-                        "{family}: sort by {:?} is not supported — Vega's `sum` over \
-                         non-numeric values is not ported",
-                        sort.by
-                    )
-                })?;
-                *sums.entry(cat).or_insert(0.0) += val;
-            }
-        }
-    }
-    let keys: std::collections::HashMap<String, Value> = match agg {
-        SortAggregate::Min => mins,
-        SortAggregate::Sum => sums
-            .into_iter()
-            .map(|(cat, total)| {
-                let total = serde_json::Number::from_f64(total)
-                    .ok_or_else(|| format!("{family}: the sum of {:?} over {cat:?} is not finite", sort.by))?;
-                Ok((cat, Value::Number(total)))
-            })
-            .collect::<Result<_, String>>()?,
-    };
-    let (mut ranked, unranked): (Vec<String>, Vec<String>) =
-        base_order.iter().cloned().partition(|c| keys.contains_key(c));
-    // A column of both kinds makes Python's sort raise: `x_domain_order` keeps row order.
-    let numeric = ranked.iter().all(|c| matches!(keys[c], Value::Number(_) | Value::Bool(_)));
-    let textual = ranked.iter().all(|c| keys[c].is_string());
-    if !numeric && !textual {
-        return Ok(base_order);
-    }
-    ranked.sort_by(|a, b| {
-        let ord = raw_x_order(&keys[a], &keys[b]).expect("one kind of key is ordered");
-        if sort.order == SortDir::Desc { ord.reverse() } else { ord }
-    });
-    ranked.extend(unranked);
-    Ok(ranked)
-}
 
 #[derive(Deserialize, Clone)]
 pub struct AxisStyle {
@@ -2195,7 +1989,7 @@ impl AxisStyle {
     /// (`compose_axis_format`).
     pub fn format_only_label(&self, slot: &FormatSlot, value: f64) -> Result<String, String> {
         if self.ruler.is_some() || self.tick_label.is_some() {
-            crate::number_locale::d3_format(&slot.spec, value)
+            ::bind::formats::locale::d3_format(&slot.spec, value)
         } else {
             slot.paint_tick(value)
         }
@@ -2328,6 +2122,18 @@ impl AxisStyle {
             .and_then(|c| c.get("type"))
             .and_then(Value::as_str)
             == Some("log")
+    }
+
+    /// What the x-type law reads off this axis.
+    pub fn x_axis(&self) -> ::bind::x_type::XAxis<'_> {
+        ::bind::x_type::XAxis {
+            time_unit: self.time_unit.as_ref().and_then(Value::as_str),
+            authored_type: self.resolved_authored_type(),
+            raw_type: self.r#type.as_deref(),
+            fill: self.fill.as_deref(),
+            fiscal_year_start_month: self.fiscal_year_start_month,
+            max_ordinal_buckets: crate::constants::axis::MAX_ORDINAL_BUCKETS,
+        }
     }
 
     /// Production's `resolve_authored_x_type` (`type_inference.py:127-142`):
@@ -2767,7 +2573,7 @@ impl AxisLabels {
     pub fn apply_expr_uncased(&self, scale: &'static str, value: f64, label: String, index: usize, count: usize) -> Result<String, String> {
         let Some(src) = self.expr.as_deref() else { return Ok(label) };
         let label = match self.spec() {
-            Some(spec) => crate::number_locale::d3_format(spec, value).map_err(|e| format!("labels.format {spec:?}: {e}"))?,
+            Some(spec) => ::bind::formats::locale::d3_format(spec, value).map_err(|e| format!("labels.format {spec:?}: {e}"))?,
             None => label,
         };
         crate::labels_expr::speak_value(scale, src, value, &label, index, count)
@@ -3450,26 +3256,6 @@ pub fn title_truncations(
     found
 }
 
-/// How many distinct `field` values `rows` carry under Python's equality, as
-/// `len({row[field] ...})` counts the bands of the raw query result.
-pub fn distinct_values(rows: &[serde_json::Map<String, Value>], field: &str) -> usize {
-    rows.iter()
-        .filter(|row| row.contains_key(field))
-        .map(|row| py_scalar_key(&row[field]))
-        .collect::<std::collections::HashSet<_>>()
-        .len()
-}
-
-/// `count_horizontal_bar_categories` (`_cartesian.py`): the distinct `str()` of
-/// the category field over the rows that carry it non-null.
-pub fn count_horizontal_bar_categories(rows: &[serde_json::Map<String, Value>], field: &str) -> usize {
-    rows.iter()
-        .filter(|row| row.get(field).is_some_and(|v| !v.is_null()))
-        .map(|row| row_str(row, field))
-        .collect::<std::collections::HashSet<_>>()
-        .len()
-}
-
 /// A value label's `font.color` that stands for its mark's series color.
 pub const SERIES_INK: &str = "series";
 
@@ -3839,232 +3625,6 @@ pub fn title_node(text: &str, style: Option<&TitleStyle>, x: f64, y: f64, stamp_
     Node::text(Role::Title, (x, baseline), Attrs::new().vega("font-family", family).num("font-size", size).quick_some("font-style", f.and_then(|f| f.style.as_deref())).set("font-weight", weight).set("fill", color).set_if(stamp_kind, "data-authored-kind", "title"), text)
 }
 
-/// Numeric value from a row column; text reads as none, however it looks.
-pub fn row_num(row: &serde_json::Map<String, Value>, field: &str) -> Option<f64> {
-    match row.get(field)? {
-        Value::Number(n) => n.as_f64(),
-        _ => None,
-    }
-}
-
-/// The rows whose `field` holds a number, each with that number. A null or non-numeric measure
-/// draws no mark and no label (Vega skips the datum), so every pass over a measure reads rows here.
-pub fn valued_rows<'a>(
-    rows: impl IntoIterator<Item = &'a serde_json::Map<String, Value>>,
-    field: &str,
-) -> Vec<(&'a serde_json::Map<String, Value>, f64)> {
-    rows.into_iter().filter_map(|row| row_num(row, field).map(|val| (row, val))).collect()
-}
-
-/// Python's comparison of two raw values: numbers (bools included) with numbers,
-/// strings with strings, any other pair has no order (`TypeError`).
-pub fn raw_x_order(a: &Value, b: &Value) -> Result<std::cmp::Ordering, String> {
-    // A bool is an int to Python.
-    let number = |v: &Value| match v {
-        Value::Number(n) => n.as_f64(),
-        Value::Bool(b) => Some(f64::from(u8::from(*b))),
-        _ => None,
-    };
-    let order = match (a, b) {
-        (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
-        _ => number(a).zip(number(b)).and_then(|(a, b)| a.partial_cmp(&b)),
-    };
-    order.ok_or_else(|| format!("x values {a} and {b} have no order"))
-}
-
-/// `rows` with each non-null `x_field` replaced by its position on the drawn x axis, so a
-/// "last x" read follows the axis (the latest instant on a time axis, the last category on a
-/// band one) instead of comparing text ("Before" outranks "After"). A null or absent x stays
-/// as it is (the walk-backs skip it); an x the axis does not draw is an error, never a
-/// dropped row.
-pub fn x_ranked_rows(
-    rows: &[serde_json::Map<String, Value>],
-    x_field: &str,
-    domain: &[String],
-) -> Result<Vec<serde_json::Map<String, Value>>, String> {
-    let rank: std::collections::HashMap<&str, usize> = domain.iter().enumerate().map(|(at, x)| (x.as_str(), at)).collect();
-    rows.iter()
-        .map(|row| {
-            let mut ranked = row.clone();
-            if row.get(x_field).is_some_and(|x| !x.is_null()) {
-                let x = row_str(row, x_field);
-                let at = rank.get(x.as_str()).ok_or_else(|| format!("x value {x:?} is not on the drawn x axis"))?;
-                ranked.insert(x_field.to_string(), Value::from(*at));
-            }
-            Ok(ranked)
-        })
-        .collect()
-}
-
-/// Production's `last_nonnull_value_per_series` (`_cartesian.py`): each
-/// series' value at its own greatest x, found by walking the rows in order and
-/// replacing the held pair whenever a row's raw x is `>=` the held one (Python's
-/// comparison of the raw values, so the later of two equal xs wins and an
-/// unsorted string x compares lexicographically; a time axis hands in its
-/// instants, not its text). A row with a null series, x or
-/// y is skipped; an x pair of different types has no order and is refused.
-pub fn last_nonnull_value_per_series(
-    rows: &[serde_json::Map<String, Value>],
-    x_field: &str,
-    y_field: &str,
-    series_field: &str,
-) -> Result<std::collections::HashMap<String, f64>, String> {
-    let mut latest: std::collections::HashMap<String, (&Value, f64)> = std::collections::HashMap::new();
-    for row in rows {
-        let (Some(x), Some(y)) = (row.get(x_field).filter(|v| !v.is_null()), row_num(row, y_field)) else {
-            continue;
-        };
-        if row.get(series_field).is_none_or(Value::is_null) {
-            continue;
-        }
-        let series = row_str(row, series_field);
-        let replaces = match latest.get(&series) {
-            None => true,
-            Some((held, _)) => raw_x_order(x, held).map_err(|e| format!("{e} (series {series:?})"))?.is_ge(),
-        };
-        if replaces {
-            latest.insert(series, (x, y));
-        }
-    }
-    Ok(latest.into_iter().map(|(series, (_, y))| (series, y)).collect())
-}
-
-/// Production's `_wide_endpoint_positions`: a column's value at its greatest
-/// raw x, the first of equal xs winning. A row with a null x or y is skipped.
-pub fn last_nonnull_value(
-    rows: &[serde_json::Map<String, Value>],
-    x_field: &str,
-    y_field: &str,
-) -> Result<Option<f64>, String> {
-    let mut latest: Option<(&Value, f64)> = None;
-    for row in rows {
-        let (Some(x), Some(y)) = (row.get(x_field).filter(|v| !v.is_null()), row_num(row, y_field)) else {
-            continue;
-        };
-        let replaces = match latest {
-            None => true,
-            Some((held, _)) => raw_x_order(x, held)?.is_gt(),
-        };
-        if replaces {
-            latest = Some((x, y));
-        }
-    }
-    Ok(latest.map(|(_, y)| y))
-}
-
-/// Port of production's `utils.py::is_year_shaped` — value-only, no
-/// column-name signal: every non-null `field` value is an int (a JSON
-/// `Value::Number` with no fractional part), a 4-digit string matching
-/// `^\d{4}$`, or an integral float (a warehouse NUMERIC/Decimal year comes
-/// back as a JSON number that may still carry a `.0`) — each in
-/// `[1700, 2100]`. A JSON `Value::Bool` never matches (`Value::Number`
-/// can't confuse a bool with a number the way Python's `isinstance(v,
-/// int)` can, so there is no separate bool exclusion to port). Empty input
-/// (every row's `field` null or absent) is not year-shaped.
-///
-/// `time_unit_detect.normalize_labeled_temporal` rewrites a year-shaped x
-/// to ISO dates BEFORE `resolve_cartesian_x_type` ever classifies it, so a
-/// bare year resolves `temporal` in production even though it has no
-/// date-like STRUCTURAL shape at all — `x_values_are_temporal_candidates`
-/// alone does not catch it. This predicate is the missing precondition a
-/// categorical-x gate (line/area's authored-sort gate) needs alongside it.
-pub fn is_year_shaped(types: &ColumnTypes, rows: &[serde_json::Map<String, Value>], field: &str) -> Result<bool, String> {
-    // A declared float is a measure, never a year.
-    if *types.get(field)? == ColumnType::Float {
-        return Ok(false);
-    }
-    const YEAR_MIN: f64 = 1700.0;
-    const YEAR_MAX: f64 = 2100.0;
-    let mut any = false;
-    for row in rows {
-        let v = match row.get(field) {
-            Some(v) if !v.is_null() => v,
-            _ => continue,
-        };
-        any = true;
-        let ok = match v {
-            Value::Number(n) => n
-                .as_f64()
-                .is_some_and(|f| f.fract() == 0.0 && (YEAR_MIN..=YEAR_MAX).contains(&f)),
-            Value::String(s) => {
-                s.len() == 4
-                    && s.bytes().all(|b| b.is_ascii_digit())
-                    && s.parse::<i32>().is_ok_and(|y| (1700..=2100).contains(&y))
-            }
-            _ => false,
-        };
-        if !ok {
-            return Ok(false);
-        }
-    }
-    Ok(any)
-}
-
-#[cfg(test)]
-mod is_year_shaped_tests {
-    use super::*;
-
-    fn declared(kind: ColumnType) -> ColumnTypes {
-        ColumnTypes::default().with("year", kind.clone()).with("code", kind)
-    }
-
-    fn year_shaped(kind: ColumnType, rows: &[serde_json::Map<String, Value>], field: &str) -> bool {
-        is_year_shaped(&declared(kind), rows, field).expect("declared")
-    }
-
-    fn rows(field: &str, values: &[Value]) -> Vec<serde_json::Map<String, Value>> {
-        values
-            .iter()
-            .map(|v| {
-                let mut m = serde_json::Map::new();
-                m.insert(field.to_string(), v.clone());
-                m
-            })
-            .collect()
-    }
-
-    /// `[1700, 2100]` is inclusive at both ends (`utils.py::is_year_shaped`'s
-    /// own `YEAR_MIN <= y <= YEAR_MAX`), string or number alike.
-    #[test]
-    fn the_1700_2100_range_is_inclusive_at_both_ends() {
-        let r = rows("year", &[Value::String("1700".into()), Value::String("2100".into())]);
-        assert!(year_shaped(ColumnType::String, &r, "year"));
-        let r = rows("year", &[serde_json::json!(1700), serde_json::json!(2100)]);
-        assert!(year_shaped(ColumnType::Integer, &r, "year"));
-    }
-
-    /// One value just outside either bound fails the WHOLE domain, string or
-    /// number alike — the gate is a per-value AND, not a range over the
-    /// domain's extremes.
-    #[test]
-    fn a_value_one_outside_either_bound_fails_the_whole_domain() {
-        let r = rows("year", &[Value::String("1699".into()), Value::String("2000".into())]);
-        assert!(!year_shaped(ColumnType::String, &r, "year"));
-        let r = rows("year", &[Value::String("2000".into()), Value::String("2101".into())]);
-        assert!(!year_shaped(ColumnType::String, &r, "year"));
-        let r = rows("year", &[serde_json::json!(1699), serde_json::json!(2000)]);
-        assert!(!year_shaped(ColumnType::Integer, &r, "year"));
-    }
-
-    /// A non-year 4-digit number outside `[1700, 2100]` — e.g. a product
-    /// code or a quantity — never counts as year-shaped, string or number.
-    #[test]
-    fn a_non_year_4_digit_number_is_not_year_shaped() {
-        let r = rows("code", &[Value::String("1234".into()), Value::String("5678".into())]);
-        assert!(!year_shaped(ColumnType::String, &r, "code"));
-        let r = rows("code", &[serde_json::json!(1234), serde_json::json!(5678)]);
-        assert!(!year_shaped(ColumnType::Integer, &r, "code"));
-    }
-
-    /// A declared float is a measure, not a year; a declared decimal is one.
-    #[test]
-    fn a_declared_float_is_never_year_shaped() {
-        let r = rows("year", &[serde_json::json!(2020.0), serde_json::json!(2021.0)]);
-        assert!(!year_shaped(ColumnType::Float, &r, "year"));
-        assert!(year_shaped(ColumnType::Decimal, &r, "year"));
-    }
-}
-
 /// A field name as display text: `display_text::slug_to_text`, then
 /// `apply_case` per the resolved `font.case` (`title` keeps minor words
 /// lowercase: "Avg Days to Complete").
@@ -4413,169 +3973,6 @@ pub fn axis_title_rotated(
     Some(axis_title_group(text, style, (title_x, y), Some(angle), title_x, key))
 }
 
-/// Display string from a row column. This is production's Vega-drawn
-/// convention (axis tick labels, strip cell text — anywhere the raw datum
-/// reaches Vega, which stringifies with JS `toString`), not Python's
-/// `str()`: a bool renders JSON-native `"true"`/`"false"`. The one place
-/// production instead builds a label host-side with Python `str()` — wide
-/// series naming — uses `wide_dimension_str` below, not this function; do
-/// not special-case `Value::Bool` here, or every one of `row_str`'s other
-/// ~29 call sites across bar/heatmap/line/pie/scatter/support_table_strip
-/// would silently disagree with what Vega actually draws.
-pub fn row_str(row: &serde_json::Map<String, Value>, field: &str) -> String {
-    cell_str(row.get(field))
-}
-
-/// `row_str` of one cell.
-pub fn cell_str(cell: Option<&Value>) -> String {
-    row_cell_str(cell).into_owned()
-}
-
-/// `row_str` without copying a string cell.
-pub fn row_str_ref<'a>(row: &'a serde_json::Map<String, Value>, field: &str) -> Cow<'a, str> {
-    row_cell_str(row.get(field))
-}
-
-fn row_cell_str(cell: Option<&Value>) -> Cow<'_, str> {
-    match cell {
-        Some(Value::String(s)) => Cow::Borrowed(s),
-        Some(Value::Null) | None => Cow::Borrowed(""),
-        Some(other) => Cow::Owned(other.to_string()),
-    }
-}
-
-/// JS `Number(string)` (ECMA-262 StringToNumber): `None` where it is `NaN`.
-/// Blank is 0; `0x`/`0o`/`0b` prefixes read an unsigned integer; `Infinity`
-/// is the only named value; decimals take no digit separators and no
-/// trailing garbage.
-pub fn js_string_to_number(s: &str) -> Option<f64> {
-    let t = s.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
-    if t.is_empty() {
-        return Some(0.0);
-    }
-    let radix = match t.get(..2) {
-        Some("0x" | "0X") => Some(16),
-        Some("0o" | "0O") => Some(8),
-        Some("0b" | "0B") => Some(2),
-        _ => None,
-    };
-    if let Some(radix) = radix {
-        let digits = &t[2..];
-        if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
-            return None;
-        }
-        return Some(digits.chars().fold(0.0, |acc, c| acc * f64::from(radix) + f64::from(c.to_digit(radix).unwrap_or(0))));
-    }
-    let (sign, body) = match t.as_bytes()[0] {
-        b'-' => (-1.0, &t[1..]),
-        b'+' => (1.0, &t[1..]),
-        _ => (1.0, t),
-    };
-    if body == "Infinity" {
-        return Some(sign * f64::INFINITY);
-    }
-    let (mantissa, exponent) = body.split_once(['e', 'E']).map_or((body, None), |(m, e)| (m, Some(e)));
-    let (int, frac) = mantissa.split_once('.').map_or((mantissa, None), |(i, f)| (i, Some(f)));
-    let all_digits = |part: &str| part.bytes().all(|b| b.is_ascii_digit());
-    let mantissa_ok = all_digits(int) && frac.is_none_or(all_digits) && !(int.is_empty() && frac.is_none_or(str::is_empty));
-    let exponent_ok = exponent.is_none_or(|e| {
-        let digits = e.strip_prefix(['+', '-']).unwrap_or(e);
-        !digits.is_empty() && all_digits(digits)
-    });
-    if !mantissa_ok || !exponent_ok {
-        return None;
-    }
-    body.parse::<f64>().ok().map(|v| sign * v)
-}
-
-/// JS `Number(v)` of a JSON scalar; `None` where it is `NaN`.
-pub fn js_to_number(v: &Value) -> Option<f64> {
-    match v {
-        Value::Number(n) => n.as_f64(),
-        Value::Bool(b) => Some(f64::from(u8::from(*b))),
-        Value::String(s) => js_string_to_number(s),
-        _ => None,
-    }
-}
-
-/// JS `a < b` on two non-null JSON scalars: two strings compare by UTF-16
-/// code unit, anything else as numbers (a numeric string coerces, a
-/// non-numeric one is `NaN` and compares false both ways).
-pub fn js_less(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        (Value::String(x), Value::String(y)) => x.encode_utf16().lt(y.encode_utf16()),
-        _ => matches!((js_to_number(a), js_to_number(b)), (Some(x), Some(y)) if x < y),
-    }
-}
-
-/// Vega's `ascending` comparator on two JSON scalars with JS `<`/`>`
-/// coercion: numbers compare numerically (a numeric string coerces), strings
-/// lexicographically, and a number against a non-numeric string is "equal".
-fn js_ascending(a: &Value, b: &Value) -> i32 {
-    match (a, b) {
-        // `ascending` ranks a null before any other value.
-        (Value::Null, Value::Null) => 0,
-        (Value::Null, _) => -1,
-        (_, Value::Null) => 1,
-        _ if js_less(a, b) => -1,
-        _ if js_less(b, a) => 1,
-        _ => 0,
-    }
-}
-
-/// An ordinal scale's `domain` (first-appearance order) sorted the way Vega
-/// compiles `sort: {op: "min", field: sort.by, order}`: each category's key is
-/// the JS `min` of the sort field over the `rows` it names (nulls skipped, the
-/// first value kept unless a later one is less), and a category with no value
-/// ranks below every other, first ascending and last descending.
-pub fn min_ranked_domain(
-    domain: Vec<String>,
-    rows: &[&serde_json::Map<String, Value>],
-    category_of: impl Fn(&serde_json::Map<String, Value>) -> String,
-    sort: &ChartSort,
-) -> Result<Vec<String>, String> {
-    let keyed: Vec<(String, Value)> = domain
-        .into_iter()
-        .map(|category| {
-            let key = rows
-                .iter()
-                .filter(|row| category_of(row) == category)
-                .filter_map(|row| row.get(&sort.by).filter(|v| !v.is_null()))
-                .fold(None::<&Value>, |min, v| min.filter(|m| !js_less(v, m)).or(Some(v)));
-            (category, key.cloned().unwrap_or(Value::Null))
-        })
-        .collect();
-    js_rank(&keyed, sort.order)
-}
-
-/// `items` ordered by their `key` the way Vega sorts a domain by an
-/// aggregate: `Array.prototype.sort` with `ascending` (a null key first) or
-/// its reverse. A key column of one type is a total order, so any stable
-/// sort agrees; a mix of numbers and strings makes the comparator
-/// non-transitive and the order is whatever V8's insertion sort produces.
-pub fn js_rank<T: Clone>(items: &[(T, Value)], order: SortDir) -> Result<Vec<T>, String> {
-    let sign = if order == SortDir::Desc { -1 } else { 1 };
-    let cmp = |a: &(T, Value), b: &(T, Value)| sign * js_ascending(&a.1, &b.1);
-    let numeric = items.iter().all(|(_, k)| matches!(k, Value::Null | Value::Number(_) | Value::Bool(_)));
-    let textual = items.iter().all(|(_, k)| k.is_null() || k.is_string());
-    let mut ranked: Vec<usize> = (0..items.len()).collect();
-    if numeric || textual {
-        ranked.sort_by(|&a, &b| cmp(&items[a], &items[b]).cmp(&0));
-    } else {
-        d3rs::js_sort::js_sort(&mut ranked, |a, b| f64::from(cmp(&items[a], &items[b])))?;
-    }
-    Ok(ranked.into_iter().map(|i| items[i].0.clone()).collect())
-}
-
-/// The order Vega's ordinal-scale `sort: true` produces for a domain of JSON
-/// scalars: JavaScript `Array.prototype.sort` with `ascending`. A column that
-/// mixes numbers and strings makes the comparator non-transitive, so the result
-/// is whatever V8's insertion sort gives ([`js_rank`]).
-pub fn vega_ascending_sort(values: Vec<Value>) -> Result<Vec<Value>, String> {
-    let items: Vec<(Value, Value)> = values.into_iter().map(|v| (v.clone(), v)).collect();
-    js_rank(&items, SortDir::Asc)
-}
-
 /// `_LINE_POS_MAP` and `_POINT_POS_MAP` (`features/value_labels.py`, identical but
 /// for `middle`'s align): the (align, baseline, dx, dy) of a point value label at an authored `position`; `None` for an unknown one.
 pub fn value_label_anchor(position: &str) -> Option<(&'static str, &'static str, f64, f64)> {
@@ -4668,79 +4065,6 @@ pub fn value_label(
 }
 
 #[cfg(test)]
-mod vega_ascending_tests {
-    use super::*;
-    use serde_json::json;
-
-    fn sorted(v: Value) -> Vec<String> {
-        let values = v.as_array().unwrap().clone();
-        vega_ascending_sort(values).unwrap().iter().map(|x| x.to_string().trim_matches('"').to_string()).collect()
-    }
-
-    #[test]
-    fn a_mixed_domain_sorts_as_v8_runs_it() {
-        assert_eq!(sorted(json!([3, "b", 1, "a"])), ["3", "b", "1", "a"]);
-        assert_eq!(sorted(json!([10, 2, "a", "B"])), ["2", "10", "B", "a"]);
-        assert_eq!(sorted(json!(["d", "c", 2, 1, "a"])), ["c", "d", "1", "2", "a"]);
-    }
-
-    #[test]
-    fn a_pure_domain_sorts_ascending() {
-        assert_eq!(sorted(json!(["b", "a", "C"])), ["C", "a", "b"]);
-    }
-}
-
-#[cfg(test)]
-mod min_ranked_domain_tests {
-    use super::*;
-    use serde_json::json;
-
-    fn rows(cells: &[(&str, Value)]) -> Vec<serde_json::Map<String, Value>> {
-        cells
-            .iter()
-            .map(|(cat, by)| json!({"cat": cat, "by": by}).as_object().unwrap().clone())
-            .collect()
-    }
-
-    fn ranked(cells: &[(&str, Value)], order: SortDir) -> Vec<String> {
-        let rows = rows(cells);
-        let refs: Vec<_> = rows.iter().collect();
-        let domain = ["a", "b", "c", "d"].map(String::from).to_vec();
-        let sort = ChartSort { by: "by".into(), order };
-        min_ranked_domain(domain, &refs, |row| row_str(row, "cat"), &sort).unwrap()
-    }
-
-    /// JS `<` compares two strings by code unit, so a text sort key ranks
-    /// lexicographically and its `min` is the first in that order.
-    #[test]
-    fn a_text_sort_key_ranks_by_its_lexicographic_min() {
-        let cells = [("a", json!("z")), ("a", json!("m")), ("b", json!("b")), ("c", json!("a")), ("d", json!("B"))];
-        assert_eq!(ranked(&cells, SortDir::Asc), ["d", "c", "b", "a"]);
-        assert_eq!(ranked(&cells, SortDir::Desc), ["a", "b", "c", "d"]);
-    }
-
-    /// A category with no sort value ranks below every other: first ascending,
-    /// last descending, ties keeping first-appearance order.
-    #[test]
-    fn a_category_with_no_value_leads_ascending_and_trails_descending() {
-        let cells = [("a", json!(2)), ("b", Value::Null), ("c", json!(1)), ("c", json!(1)), ("d", json!(2))];
-        assert_eq!(ranked(&cells, SortDir::Asc), ["b", "c", "a", "d"]);
-        assert_eq!(ranked(&cells, SortDir::Desc), ["a", "d", "c", "b"]);
-    }
-
-    /// Numbers and bools coerce to numbers, a number against a non-numeric
-    /// string compares false both ways, so the first value stays the `min`.
-    #[test]
-    fn a_value_js_cannot_order_against_the_min_leaves_it_in_place() {
-        assert!(js_less(&json!(1), &json!("10")));
-        assert!(js_less(&json!(false), &json!(true)));
-        assert!(!js_less(&json!(1), &json!("x")) && !js_less(&json!("x"), &json!(1)));
-        let cells = [("a", json!(5)), ("a", json!("x")), ("b", json!(7))];
-        assert_eq!(ranked(&cells, SortDir::Asc), ["c", "d", "a", "b"]);
-    }
-}
-
-#[cfg(test)]
 mod axis_title_text_tests {
     use super::*;
 
@@ -4764,34 +4088,6 @@ mod axis_title_text_tests {
     }
 }
 
-#[cfg(test)]
-mod row_str_tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn rows_rank_by_their_position_on_the_drawn_axis_and_an_off_axis_x_raises() {
-        let rows = |xs: &[Value]| -> Vec<serde_json::Map<String, Value>> {
-            xs.iter().enumerate().map(|(i, x)| json!({"x": x, "s": "a", "y": 10 * (i + 1)}).as_object().unwrap().clone()).collect()
-        };
-        let domain = ["Before".to_string(), "After".to_string()];
-        let ranked = x_ranked_rows(&rows(&[json!("After"), json!("Before"), Value::Null]), "x", &domain).unwrap();
-        assert_eq!(ranked.iter().map(|r| r["x"].clone()).collect::<Vec<_>>(), vec![json!(1), json!(0), Value::Null]);
-        // "Before" > "After" as strings, but "After" is last on the axis.
-        let last = last_nonnull_value_per_series(&ranked, "x", "y", "s").unwrap();
-        assert_eq!(last["a"], 10.0, "the row on \"After\"");
-        let err = x_ranked_rows(&rows(&[json!("During")]), "x", &domain).unwrap_err();
-        assert!(err.contains("\"During\"") && err.contains("not on the drawn x axis"), "{err}");
-    }
-
-    #[test]
-    fn row_str_renders_a_bool_json_native_not_pythons_str() {
-        let row = json!({"active": true, "inactive": false}).as_object().unwrap().clone();
-        assert_eq!(row_str(&row, "active"), "true");
-        assert_eq!(row_str(&row, "inactive"), "false");
-    }
-}
-
 // ── Wide-measures fold ───────────────────────────────────────────────────────
 //
 // A wide (`y: [a, b]`) cartesian chart unfolds into one row per (source row,
@@ -4804,473 +4100,19 @@ mod row_str_tests {
 // other law runs — `y` is already `WIDE_VALUE_FIELD` by construction, since
 // the resolver bakes it onto the payload's own `y` (`bake_wide_measures_kwargs`).
 
-/// Field the VL fold transform emits for the folded numeric value — mirrors
-/// `WIDE_VALUE_FIELD`. A wide payload's own `y` is already this constant
-/// (baked by the resolver), so no family needs to set it itself.
-pub const WIDE_VALUE_FIELD: &str = "__dbt_charts_wide_value__";
-/// The key under which a row whose date x was floored to its time bucket keeps
-/// the date it carried, which production's tooltip and link read.
-pub const RAW_X: &str = "\u{1d}raw_x";
-
-/// The raw measure name the fold keys each row by — mirrors `WIDE_KEY_FIELD`,
-/// which a link's `{{ color }}` reads.
-pub const WIDE_KEY_FIELD: &str = "__dbt_charts_wide_key__";
-/// Human-readable series label the fold's color field carries — mirrors
-/// `WIDE_LABEL_FIELD`. Substituted for the chart's own `color` field once,
-/// at the top of each wide-capable family's render entry point.
-pub const WIDE_LABEL_FIELD: &str = "__dbt_charts_wide_label__";
-/// Separator between a `color:` dimension's value and the measure name in a
-/// composite series label; mirrors `WIDE_SERIES_SEPARATOR`.
-pub const WIDE_SERIES_SEPARATOR: &str = " - ";
-
-/// Display string for a wide chart's `color:` dimension value — the ONE
-/// place production builds a series label host-side with Python `str()`
-/// (`unfold_wide_rows`, `_wide.py::_label_expression`'s
-/// `json.dumps(str(value))`), rather than letting Vega draw the raw datum:
-/// a bool renders `"True"`/`"False"`, disagreeing with `row_str`'s
-/// JSON-native `"true"`/`"false"` deliberately — everywhere else in this
-/// crate a bool cell reaches Vega's own `toString`, never Python's.
-fn wide_dimension_str(row: &serde_json::Map<String, Value>, field: &str) -> String {
-    match row.get(field) {
-        Some(Value::Bool(b)) => if *b { "True" } else { "False" }.to_string(),
-        _ => row_str(row, field),
-    }
-}
-
-/// Pre-fold wide rows into long form — the Rust mirror of `unfold_wide_rows`.
-/// A row whose `dimension` cell is null names no series (the whole row is
-/// dropped); a row whose MEASURE cell is null contributes no row for that
-/// measure alone. Every other original column rides along unchanged on each
-/// emitted row (`row.clone()` first, fold fields added after), so a
-/// per-row lookup against a folded row still sees the same source values.
-pub fn unfold_wide_rows(
-    rows: &[serde_json::Map<String, Value>],
-    measures: &[String],
-    dimension: Option<&str>,
-) -> Vec<serde_json::Map<String, Value>> {
-    let mut out = Vec::new();
-    for row in rows {
-        if let Some(dim) = dimension {
-            if row.get(dim).map(Value::is_null).unwrap_or(true) {
-                continue;
-            }
-        }
-        for measure in measures {
-            let Some(value) = row.get(measure) else { continue };
-            if value.is_null() {
-                continue;
-            }
-            let mut folded = row.clone();
-            let label = match dimension {
-                None => measure.clone(),
-                Some(dim) => format!("{}{WIDE_SERIES_SEPARATOR}{measure}", wide_dimension_str(row, dim)),
-            };
-            folded.insert(WIDE_LABEL_FIELD.to_string(), Value::String(label));
-            folded.insert(WIDE_KEY_FIELD.to_string(), Value::String(measure.clone()));
-            folded.insert(WIDE_VALUE_FIELD.to_string(), value.clone());
-            out.push(folded);
-        }
-    }
-    out
-}
-
-/// The declared types of `unfold_wide_rows`' output: every source column rides
-/// along, the label and key fields are text, and the value field takes the
-/// measures' own type (numbers of differing kinds fold to `float`).
-pub fn unfold_wide_types(types: &ColumnTypes, measures: &[String]) -> Result<ColumnTypes, String> {
-    let mut declared = measures.iter().map(|m| types.get(m)).collect::<Result<Vec<_>, _>>()?;
-    declared.dedup();
-    let value = match declared.as_slice() {
-        [only] => (*only).clone(),
-        many if many.iter().all(|t| t.is_number()) => ColumnType::Float,
-        many => return Err(format!("wide measures {measures:?} mix the types {many:?}")),
-    };
-    Ok(types
-        .clone()
-        .with(WIDE_LABEL_FIELD, ColumnType::String)
-        .with(WIDE_KEY_FIELD, ColumnType::String)
-        .with(WIDE_VALUE_FIELD, value))
-}
-
-/// A scatter's wide fold as the validators and `bind` see it: rows folded in sorted measure order,
-/// with the types that declare the fold's synthesized fields.
-pub fn fold_wide(
-    types: &ColumnTypes,
-    rows: &[serde_json::Map<String, Value>],
-    measures: &[String],
-    dimension: Option<&str>,
-) -> Result<(ColumnTypes, Vec<serde_json::Map<String, Value>>), String> {
-    let mut order = measures.to_vec();
-    order.sort();
-    Ok((unfold_wide_types(types, measures)?, unfold_wide_rows(rows, &order, dimension)))
-}
-
-/// Distinct non-null values of `dimension`, in first-seen order, deduped by
-/// their `wide_dimension_str` display form — mirrors `wide_dimension_values`.
-/// Every composite label (`unfold_wide_rows` above) already keys on
-/// `wide_dimension_str`, so dedup can't desync from the string the label
-/// itself carries.
-pub fn wide_dimension_values(
-    rows: &[serde_json::Map<String, Value>],
-    dimension: &str,
-) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    for row in rows {
-        if row.get(dimension).map(Value::is_null).unwrap_or(true) {
-            continue;
-        }
-        let s = wide_dimension_str(row, dimension);
-        if seen.insert(s.clone()) {
-            out.push(s);
-        }
-    }
-    out
-}
-
-/// Sorted color-scale domain of a wide chart, RAW identity (production's
-/// `raw_wide_series_names`): the authored measures (from the resolved chart,
-/// not the rows — a measure null on every row still owns a domain/palette
-/// slot), crossed with every observed `dimension` value when one is authored.
-pub fn wide_series_names(
-    measures: &[String],
-    dimension: Option<&str>,
-    rows: &[serde_json::Map<String, Value>],
-) -> Vec<String> {
-    let mut names: Vec<String> = match dimension {
-        None => measures.to_vec(),
-        Some(dim) => wide_dimension_values(rows, dim)
-            .iter()
-            .flat_map(|v| measures.iter().map(move |m| format!("{v}{WIDE_SERIES_SEPARATOR}{m}")))
-            .collect(),
-    };
-    names.sort();
-    names
-}
-
-/// A board's `stack` mode on d3-shape's stack, `values[series][column]` with NaN
-/// for no datum, baseline series first, and each datum's `[start, end]` back.
-///
-/// `zero` is the diverging offset: positives pile up from 0, negatives down from
-/// it, a zero riding the positive pile. `normalize` expands each sign's series over that sign's own sum, so a
-/// mixed-sign column is two `[0, 1]` piles and a negative segment is drawn as its
-/// magnitude; a sign's pile that sums to 0 (a column of zeros, or a zero beside a
-/// negative) has no share and its spans are NaN (Vega's 0/0), where d3 would leave
-/// the zeros unscaled. `center` is the
-/// silhouette of the magnitudes floated up by half the tallest column, so the
-/// tallest fills `[0, max]` and every column centers on `max / 2`. An unknown
-/// mode refuses by name.
-pub fn grammar_stack(mode: &str, values: &[Vec<f64>]) -> Result<Vec<Vec<[f64; 2]>>, String> {
-    match mode {
-        "zero" => Ok(zero_stack(values)),
-        "normalize" => Ok(normalized(values)),
-        "center" => {
-            let columns = values.first().map_or(0, Vec::len);
-            Ok(centered(values, tallest_pile((0..columns).map(|j| values.iter().map(move |series| series[j])))))
-        }
-        other => Err(format!("stack: unknown mode {other:?}")),
-    }
-}
-
-/// The largest column sum of magnitudes, an absent (NaN) datum adding nothing: the
-/// height of the tallest `center` pile.
-pub fn tallest_pile<C: IntoIterator<Item = f64>>(columns: impl IntoIterator<Item = C>) -> f64 {
-    columns
-        .into_iter()
-        .map(|column| column.into_iter().filter(|v| !v.is_nan()).map(f64::abs).sum::<f64>())
-        .fold(0.0, f64::max)
-}
-
-/// `grammar_stack("center", values)` with the tallest pile given: a facet centers
-/// every panel on the tallest column of all of them.
-pub fn centered(values: &[Vec<f64>], tallest: f64) -> Vec<Vec<[f64; 2]>> {
-    let magnitudes: Vec<Vec<f64>> = values.iter().map(|series| series.iter().map(|v| v.abs()).collect()).collect();
-    let mut spans = stack(&magnitudes, Order::None, Offset::Silhouette).series;
-    for span in spans.iter_mut().flatten() {
-        span[0] += tallest / 2.0;
-        span[1] += tallest / 2.0;
-    }
-    spans
-}
-
-fn normalized(values: &[Vec<f64>]) -> Vec<Vec<[f64; 2]>> {
-    // A sign's pile that sums to 0 has no share to divide by (Vega's 0/0): d3's expand
-    // leaves its zeros at [0, 0], here they have no span.
-    let sign = |keep: fn(f64) -> bool| -> Vec<Vec<[f64; 2]>> {
-        let kept: Vec<Vec<f64>> = values
-            .iter()
-            .map(|series| series.iter().map(|&v| if keep(v) { v } else { f64::NAN }).collect())
-            .collect();
-        let mut spans = stack(&kept, Order::None, Offset::Expand).series;
-        for j in 0..kept.first().map_or(0, Vec::len) {
-            if kept.iter().map(|series| series[j]).filter(|v| !v.is_nan()).sum::<f64>() == 0.0 {
-                for span in spans.iter_mut() {
-                    span[j] = [f64::NAN; 2];
-                }
-            }
-        }
-        spans
-    };
-    let (positive, negative) = (sign(|v| v >= 0.0), sign(|v| v < 0.0));
-    values
-        .iter()
-        .enumerate()
-        .map(|(i, series)| {
-            series
-                .iter()
-                .enumerate()
-                .map(|(j, &v)| if v < 0.0 { negative[i][j] } else { positive[i][j] })
-                .collect()
-        })
-        .collect()
-}
-
-/// Where a rail label anchors on a stacked segment: its midpoint, or the raw zero
-/// stack's midpoint, 0, for a normalized segment with no share (`_stacked_midpoints`:
-/// `mid / col_total if col_total else mid`).
-pub fn rail_anchor(span: [f64; 2]) -> f64 {
-    if span[0].is_nan() {
-        0.0
-    } else {
-        (span[0] + span[1]) / 2.0
-    }
-}
-
-/// The `[start, end]` of every item on its key's `zero` pile, in input order:
-/// items sharing a key stack in the order they come, one series each.
-pub fn zero_piles<K: Eq + std::hash::Hash>(items: impl IntoIterator<Item = (K, f64)>) -> Vec<(f64, f64)> {
-    let mut piles: Vec<Vec<f64>> = Vec::new();
-    let mut pile_of: std::collections::HashMap<K, usize> = std::collections::HashMap::new();
-    let mut place: Vec<(usize, usize)> = Vec::new();
-    for (key, value) in items {
-        let pile = *pile_of.entry(key).or_insert_with(|| {
-            piles.push(Vec::new());
-            piles.len() - 1
-        });
-        place.push((pile, piles[pile].len()));
-        piles[pile].push(value);
-    }
-    let spans: Vec<Vec<[f64; 2]>> = piles
-        .iter()
-        .map(|pile| {
-            let one_point_each: Vec<Vec<f64>> = pile.iter().map(|&v| vec![v]).collect();
-            zero_stack(&one_point_each).into_iter().map(|series| series[0]).collect()
-        })
-        .collect();
-    place.into_iter().map(|(pile, i)| (spans[pile][i][0], spans[pile][i][1])).collect()
-}
-
-/// d3's diverging offset, except that a zero datum rides the top of the positive pile
-/// below it (Vega's `stackZero`, and d3's own `none` offset) instead of sitting at the
-/// baseline: a zero-height segment keeps the seam between its neighbors, so a series that
-/// is null or absent at one x pinches to a wedge there rather than dipping to 0.
-fn zero_stack(values: &[Vec<f64>]) -> Vec<Vec<[f64; 2]>> {
-    let mut spans = stack(values, Order::None, Offset::Diverging).series;
-    for j in 0..values.first().map_or(0, Vec::len) {
-        let mut top = 0.0;
-        for (series, span) in values.iter().zip(spans.iter_mut()) {
-            if series[j] == 0.0 {
-                span[j] = [top, top];
-            } else if series[j] > 0.0 {
-                top = span[j][1];
-            }
-        }
-    }
-    spans
-}
-
-/// Baseline-first series order of a stacked chart — port of
-/// `core/utils.py::sorted_series_by_stack_order`. `value` (the default when
-/// `stack_order` is unauthored): descending global sum of `y_field`, ties by
-/// name; `alphabetical`: by name; `data`: first encounter of the series cell
-/// in `rows`, a series never encountered ranking last. Any other string
-/// refuses by name rather than ranking by a guessed rule.
-pub fn sorted_series_by_stack_order(
-    series: &[String],
-    rows: &[serde_json::Map<String, Value>],
-    series_field: &str,
-    y_field: &str,
-    stack_order: Option<&str>,
-) -> Result<Vec<String>, String> {
-    let mut ordered = series.to_vec();
-    match stack_order {
-        Some("alphabetical") => ordered.sort(),
-        Some("data") => {
-            let mut encounter: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-            for row in rows {
-                if row.get(series_field).is_some_and(|v| !v.is_null()) {
-                    let next = encounter.len();
-                    encounter.entry(row_str(row, series_field)).or_insert(next);
-                }
-            }
-            let unseen = encounter.len();
-            ordered.sort_by(|a, b| {
-                let rank = |s: &String| encounter.get(s).copied().unwrap_or(unseen);
-                rank(a).cmp(&rank(b)).then_with(|| a.cmp(b))
-            });
-        }
-        None | Some("value") => {
-            let mut sums: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
-            for row in rows {
-                if row.get(series_field).is_some_and(|v| !v.is_null()) {
-                    if let Some(y) = row_num(row, y_field) {
-                        *sums.entry(row_str(row, series_field)).or_insert(0.0) += y;
-                    }
-                }
-            }
-            let total = |s: &String| sums.get(s).copied().unwrap_or(0.0);
-            ordered.sort_by(|a, b| total(b).total_cmp(&total(a)).then_with(|| a.cmp(b)));
-        }
-        Some(other) => {
-            return Err(format!(
-                "stack: style.stack_order={other:?} not supported — only \"value\", \"data\", or \"alphabetical\""
-            ));
-        }
-    }
-    Ok(ordered)
-}
-
 /// Y-axis title fallback for a folded multi-measure chart — mirrors
-/// `wide_measures_title`: each measure's label (`wide_measure_labels_for`),
+/// `wide_measures_title`: each measure's label (`wide_measure_labels`),
 /// joined with ", ". An authored `y_label` always overrides this.
 pub fn wide_measures_title(
     measures: &[String],
     field_labels: &FieldLabels,
 ) -> Result<String, String> {
-    let labels = display_text::wide_measure_labels_for(measures, field_labels)?;
+    let labels = display_text::wide_measure_labels(measures, field_labels)?.labels;
     Ok(measures
         .iter()
         .map(|m| labels[m].as_str())
         .collect::<Vec<_>>()
         .join(&display_text::language::tr("controls.list_join", None, &[])?))
-}
-
-/// `_wide_fields.py::humanize_wide_series_name`: a wide series' painted
-/// label. A bare measure name maps to its label; a `<value><sep><measure>`
-/// composite keeps the dimension value verbatim and labels the measure half;
-/// anything else (not a wide series) is its own display text.
-pub fn wide_series_display(name: &str, wide_labels: &std::collections::HashMap<String, String>) -> String {
-    if let Some(label) = wide_labels.get(name) {
-        return label.clone();
-    }
-    match name.rsplit_once(WIDE_SERIES_SEPARATOR) {
-        Some((value, measure)) => match wide_labels.get(measure) {
-            Some(label) => format!("{value}{WIDE_SERIES_SEPARATOR}{label}"),
-            None => name.to_string(),
-        },
-        None => name.to_string(),
-    }
-}
-
-/// The value a wide series' marks link by: the dimension value of a `<value><sep><measure>`
-/// composite, else the series name itself (a fold with no dimension is keyed by its measure).
-pub fn wide_link_key(series: &str, wide: bool, from_measures: bool) -> &str {
-    match series.rsplit_once(WIDE_SERIES_SEPARATOR) {
-        Some((value, _)) if wide && !from_measures => value,
-        _ => series,
-    }
-}
-
-#[cfg(test)]
-mod wide_fields_tests {
-    use super::*;
-    use serde_json::json;
-
-    fn row(v: serde_json::Value) -> serde_json::Map<String, Value> {
-        v.as_object().unwrap().clone()
-    }
-
-    #[test]
-    fn unfold_drops_a_null_measure_cell() {
-        let rows = vec![row(json!({"month": "Jan", "a": 1.0, "b": Value::Null}))];
-        let measures = vec!["a".to_string(), "b".to_string()];
-        let out = unfold_wide_rows(&rows, &measures, None);
-        assert_eq!(out.len(), 1, "only measure a's row survives: {out:?}");
-        assert_eq!(out[0][WIDE_LABEL_FIELD], json!("a"));
-        assert_eq!(out[0][WIDE_VALUE_FIELD], json!(1.0));
-    }
-
-    #[test]
-    fn unfold_drops_a_null_dimension_row_entirely() {
-        let rows = vec![
-            row(json!({"month": "Jan", "cat": Value::Null, "a": 1.0})),
-            row(json!({"month": "Feb", "cat": "Tools", "a": 2.0})),
-        ];
-        let measures = vec!["a".to_string()];
-        let out = unfold_wide_rows(&rows, &measures, Some("cat"));
-        assert_eq!(out.len(), 1, "the null-dimension row names no series: {out:?}");
-        assert_eq!(out[0]["month"], json!("Feb"));
-    }
-
-    #[test]
-    fn unfold_composes_the_dimension_value_and_measure_into_the_label() {
-        let rows = vec![row(json!({"month": "Jan", "cat": "Tools", "a": 1.0}))];
-        let measures = vec!["a".to_string()];
-        let out = unfold_wide_rows(&rows, &measures, Some("cat"));
-        assert_eq!(out[0][WIDE_LABEL_FIELD], json!("Tools - a"));
-    }
-
-    /// A bool `color:` dimension composes Python's `str()` (`"True"`), not
-    /// JSON `toString` (`"true"`) — production builds this label host-side,
-    /// unlike every other bool cell in this crate, which Vega draws raw.
-    #[test]
-    fn unfold_composes_a_bool_dimension_value_as_pythons_str() {
-        let rows = vec![row(json!({"month": "Jan", "active": true, "a": 1.0}))];
-        let measures = vec!["a".to_string()];
-        let out = unfold_wide_rows(&rows, &measures, Some("active"));
-        assert_eq!(out[0][WIDE_LABEL_FIELD], json!("True - a"));
-    }
-
-    #[test]
-    fn unfold_keeps_the_original_columns_on_every_folded_row() {
-        let rows = vec![row(json!({"month": "Jan", "a": 1.0, "b": 2.0}))];
-        let measures = vec!["a".to_string(), "b".to_string()];
-        let out = unfold_wide_rows(&rows, &measures, None);
-        assert_eq!(out.len(), 2);
-        assert!(out.iter().all(|r| r["month"] == json!("Jan")));
-    }
-
-    #[test]
-    fn wide_series_names_sorts_the_plain_measure_list() {
-        let measures = vec!["revenue".to_string(), "profit".to_string()];
-        assert_eq!(wide_series_names(&measures, None, &[]), vec!["profit", "revenue"]);
-    }
-
-    #[test]
-    fn wide_series_names_sorts_the_dimension_x_measure_cross() {
-        let rows = vec![
-            row(json!({"cat": "Tools", "a": 1.0})),
-            row(json!({"cat": "Electronics", "a": 2.0})),
-        ];
-        let measures = vec!["largest_order".to_string(), "avg_order_value".to_string()];
-        assert_eq!(
-            wide_series_names(&measures, Some("cat"), &rows),
-            vec![
-                "Electronics - avg_order_value",
-                "Electronics - largest_order",
-                "Tools - avg_order_value",
-                "Tools - largest_order",
-            ]
-        );
-    }
-
-    #[test]
-    fn wide_measures_title_joins_measure_labels() {
-        let measures = vec!["revenue".to_string(), "fix-linked".to_string()];
-        assert_eq!(wide_measures_title(&measures, &FieldLabels::new()).unwrap(), "Revenue, Fix linked");
-        let labels = FieldLabels::from([("fix-linked".to_string(), "fix-linked".to_string())]);
-        assert_eq!(wide_measures_title(&measures, &labels).unwrap(), "Revenue, fix-linked");
-    }
-
-    #[test]
-    fn wide_series_display_labels_the_measure_half_only() {
-        let labels = std::collections::HashMap::from([
-            ("units_sold".to_string(), "units sold".to_string()),
-        ]);
-        assert_eq!(wide_series_display("units_sold", &labels), "units sold");
-        assert_eq!(wide_series_display("EU - units_sold", &labels), "EU - units sold");
-        assert_eq!(wide_series_display("EU", &labels), "EU");
-    }
 }
 
 // Named engine format → d3 spec (`PREDEFINED_SPECS`). Shared by kpi.rs and
@@ -5471,9 +4313,9 @@ pub(crate) fn format_kpi_parts(value: f64, f: &FormatParts, o: &PartsOptions) ->
         // other float through `,.2f`, under the board's locale; d3 supplies
         // the house minus.
         number_str = if value == value.trunc() && value.abs() < 1e15 {
-            crate::number_locale::d3_format(",d", if value == 0.0 { 0.0 } else { value })?
+            ::bind::formats::locale::d3_format(",d", if value == 0.0 { 0.0 } else { value })?
         } else {
-            crate::number_locale::d3_format(d3rs::format::SUB_UNIT_NUMBER_SPEC, value)?
+            ::bind::formats::locale::d3_format(d3rs::format::SUB_UNIT_NUMBER_SPEC, value)?
         };
     } else {
         if format_spec.contains('$') {
@@ -5491,7 +4333,7 @@ pub(crate) fn format_kpi_parts(value: f64, f: &FormatParts, o: &PartsOptions) ->
         if let Some(scale) = &o.shared_scale {
             // The column's one baked magnitude, never the value's own SI
             // letter (format_value.py:300-331).
-            number_str = crate::number_locale::d3_format(scale.digit_spec, value / 10_f64.powi(scale.exponent))?;
+            number_str = ::bind::formats::locale::d3_format(scale.digit_spec, value / 10_f64.powi(scale.exponent))?;
             if value != 0.0 && (scale.repeat || scale.is_anchor) {
                 let analytic = match f.notation {
                     None => !scale.repeat,
@@ -5506,7 +4348,7 @@ pub(crate) fn format_kpi_parts(value: f64, f: &FormatParts, o: &PartsOptions) ->
                 magnitude_word = suffix_at_register(scale.exponent, analytic)?;
             }
         } else if format_spec_clean.ends_with('s') {
-            let raw_formatted = crate::number_locale::d3_format(&format_spec_clean, value)?;
+            let raw_formatted = ::bind::formats::locale::d3_format(&format_spec_clean, value)?;
             let (num_part, si_char) = split_si_suffix(&raw_formatted);
             number_str = num_part.to_string();
             if !MAGNITUDE_CHARS.contains(&si_char) {
@@ -5523,7 +4365,7 @@ pub(crate) fn format_kpi_parts(value: f64, f: &FormatParts, o: &PartsOptions) ->
                 magnitude_word = printed_magnitude_word(si_char, effective_notation.as_deref().unwrap_or(""))?;
             }
         } else {
-            number_str = crate::number_locale::d3_format(&format_spec_clean, value)?;
+            number_str = ::bind::formats::locale::d3_format(&format_spec_clean, value)?;
         }
         if format_spec.contains('%') {
             if let Some(stripped) = number_str.strip_suffix(locale.locale.percent.as_str()) {
@@ -5628,32 +4470,6 @@ mod axis_title_tests {
         let labels = FieldLabels::from([("seg".to_string(), "customer SEG".to_string())]);
         assert_eq!(field_display_text("seg", &labels, "title").unwrap(), "customer SEG");
         assert_eq!(field_display_text("revenue_usd", &labels, "title").unwrap(), "Revenue ($)");
-    }
-
-    #[test]
-    fn the_seam_decodes_decimal_and_non_finite_cells_and_keeps_their_text() {
-        let mut rows = vec![serde_json::json!({
-            "d": {"decimal": "2.50"},
-            "n": {"non_finite": "nan", "text": "NaN"},
-            "f": 1.5,
-            "spark": [1, {"non_finite": "inf", "text": "inf"}, {"decimal": "3"}],
-        })
-        .as_object()
-        .unwrap()
-        .clone()];
-        let text = decode_cells(&mut rows).unwrap();
-        assert_eq!(
-            Value::Object(rows[0].clone()),
-            serde_json::json!({"d": 2.5, "n": null, "f": 1.5, "spark": [1, null, 3.0]})
-        );
-        assert_eq!(text[0]["d"], CellTag { text: "2.50".into(), non_finite: None });
-        assert_eq!(text[0].len(), 2);
-        assert!(text[0]["n"].non_finite.unwrap().is_nan() && text[0]["n"].text == "NaN");
-        assert_eq!(rows[0]["d"], serde_json::json!(2.5));
-        let mut bad = vec![serde_json::json!({"d": {"decimal": "not a number"}}).as_object().unwrap().clone()];
-        assert!(decode_cells(&mut bad).is_err());
-        let mut unknown = vec![serde_json::json!({"n": {"non_finite": "huge"}}).as_object().unwrap().clone()];
-        assert!(decode_cells(&mut unknown).is_err());
     }
 
     #[test]
@@ -6202,7 +5018,7 @@ mod format_y_label_tests {
     /// An authored `notation: analytic` on a REPEAT ladder (`scale.py:149-151`
     /// bakes `register` from the notation first) spells the word on every
     /// non-zero tick in the analytic register, glued to the digits for en-US
-    /// (`magnitude_words.py:40`).
+    /// (`display-text/locale/magnitude_words.json`).
     #[test]
     fn repeat_mode_speaks_the_baked_register() {
         let mut r = repeat_currency_ruler();
@@ -6236,22 +5052,6 @@ mod format_y_label_tests {
         assert_eq!(format_y_label(150000.0, Some(&r), None, None, 3, 5).unwrap(), "150k");
         assert_eq!(format_y_label(200000.0, Some(&r), None, None, 4, 5).unwrap(), "$200k");
     }
-}
-
-/// A color channel's legend/palette domain: the distinct values, sorted the
-/// way Vega-Lite's nominal scale sorts an unpinned domain.
-pub fn color_domain_of<'a>(
-    rows: impl IntoIterator<Item = &'a serde_json::Map<String, Value>>,
-    color_field: &str,
-) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    let mut domain: Vec<String> = rows
-        .into_iter()
-        .map(|row| row_str(row, color_field))
-        .filter(|v| seen.insert(v.clone()))
-        .collect();
-    domain.sort();
-    domain
 }
 
 impl StyleChannel {
@@ -6801,8 +5601,8 @@ mod format_slot_tests {
 
     #[test]
     fn a_plain_axis_si_tick_speaks_the_active_locales_billion_word() {
-        let es = crate::number_locale::en_us_with_words(["K", "M", "\u{a0}mil M", "\u{a0}B"], ["k", "m", "bn", "trn"]);
-        let ticks = crate::number_locale::with_number_locale(&es, || {
+        let es = ::bind::formats::locale::en_us_with_words(["K", "M", "\u{a0}mil M", "\u{a0}B"], ["k", "m", "bn", "trn"]);
+        let ticks = ::bind::formats::locale::with_number_locale(&es, || {
             let slot = slot(json!({"spec": ".3~s"}));
             [1.0e3, 1.0e9, 1.0e12].map(|v| slot.paint_tick(v).unwrap())
         });
@@ -7126,54 +5926,6 @@ mod css_color_tests {
     }
 }
 
-/// A cell's Python equality class: `1`, `1.0` and `True` are one key, an
-/// integral double equals the int it names, and `None` is its own key. A list
-/// or object cell (unhashable in Python) keys by its JSON text.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub enum PyKey {
-    None,
-    Int(i128),
-    Float(u64),
-    Str(String),
-}
-
-pub fn py_scalar_key(cell: &Value) -> PyKey {
-    match cell {
-        Value::Null => PyKey::None,
-        Value::Bool(b) => PyKey::Int(i128::from(*b)),
-        Value::String(s) => PyKey::Str(s.clone()),
-        Value::Number(n) if n.is_f64() => {
-            let x = n.as_f64().expect("an f64 number");
-            // Every JSON int fits in i128, so an integral double past it
-            // equals no int.
-            if x.fract() == 0.0 && x.abs() < 2f64.powi(127) {
-                PyKey::Int(x as i128)
-            } else {
-                PyKey::Float(x.to_bits())
-            }
-        }
-        Value::Number(n) => PyKey::Int(n.as_i64().map_or_else(|| i128::from(n.as_u64().expect("a u64")), i128::from)),
-        Value::Array(_) | Value::Object(_) => PyKey::Str(cell.to_string()),
-    }
-}
-
-#[cfg(test)]
-mod distinct_values_tests {
-    use super::*;
-    use serde_json::json;
-
-    fn rows(values: Vec<Value>) -> Vec<serde_json::Map<String, Value>> {
-        values.into_iter().map(|v| json!({"x": v}).as_object().unwrap().clone()).collect()
-    }
-
-    /// `1`, `1.0` and `True` are one Python key; `"1"`, `None` and `""` are three more.
-    #[test]
-    fn distinct_values_follow_pythons_equality() {
-        let cells = rows(vec![json!(1), json!(1.0), json!(true), json!("1"), json!(null), json!("")]);
-        assert_eq!(distinct_values(&cells, "x"), 4);
-    }
-}
-
 #[cfg(test)]
 mod axis_labels_expr_tests {
     use super::*;
@@ -7210,108 +5962,6 @@ mod axis_labels_expr_tests {
 }
 
 #[cfg(test)]
-mod grammar_stack_tests {
-    use super::*;
-
-    const NAN: f64 = f64::NAN;
-
-    /// One column per entry of `columns`, one series per row: `values[series][column]`.
-    fn series_major(columns: &[&[f64]]) -> Vec<Vec<f64>> {
-        (0..columns[0].len()).map(|i| columns.iter().map(|column| column[i]).collect()).collect()
-    }
-
-    fn spans(mode: &str, columns: &[&[f64]]) -> Vec<Vec<[f64; 2]>> {
-        grammar_stack(mode, &series_major(columns)).expect("a known mode")
-    }
-
-    fn assert_spans(got: &[Vec<[f64; 2]>], series: usize, column: usize, want: [f64; 2]) {
-        assert_eq!(got[series][column], want, "series {series}, column {column}: {got:?}");
-    }
-
-    #[test]
-    fn zero_piles_positives_up_and_negatives_down_from_the_baseline() {
-        let got = spans("zero", &[&[3.0, -2.0, 4.0, 0.0]]);
-        assert_spans(&got, 0, 0, [0.0, 3.0]);
-        assert_spans(&got, 1, 0, [-2.0, 0.0]);
-        assert_spans(&got, 2, 0, [3.0, 7.0]);
-        assert_spans(&got, 3, 0, [7.0, 7.0]);
-    }
-
-    #[test]
-    fn zero_lets_a_zero_datum_ride_the_positive_pile_below_it() {
-        let got = spans("zero", &[&[0.0, 2.0, 0.0, -1.0, 0.0]]);
-        assert_spans(&got, 0, 0, [0.0, 0.0]);
-        assert_spans(&got, 1, 0, [0.0, 2.0]);
-        assert_spans(&got, 2, 0, [2.0, 2.0]);
-        assert_spans(&got, 3, 0, [-1.0, 0.0]);
-        assert_spans(&got, 4, 0, [2.0, 2.0]);
-    }
-
-    #[test]
-    fn zero_skips_an_absent_datum() {
-        let got = spans("zero", &[&[3.0, NAN, 4.0]]);
-        assert!(got[1][0][1].is_nan(), "{got:?}");
-        assert_spans(&got, 2, 0, [3.0, 7.0]);
-    }
-
-    #[test]
-    fn normalize_gives_each_sign_its_own_unit_pile() {
-        let got = spans("normalize", &[&[1.0, 3.0, -2.0, -6.0]]);
-        assert_spans(&got, 0, 0, [0.0, 0.25]);
-        assert_spans(&got, 1, 0, [0.25, 1.0]);
-        assert_spans(&got, 2, 0, [0.0, 0.25]);
-        assert_spans(&got, 3, 0, [0.25, 1.0]);
-    }
-
-    #[test]
-    fn normalize_skips_an_absent_datum_and_leaves_an_all_zero_column_without_a_share() {
-        let got = spans("normalize", &[&[1.0, NAN, 3.0], &[0.0, 0.0, NAN]]);
-        assert_spans(&got, 0, 0, [0.0, 0.25]);
-        assert!(got[1][0][1].is_nan(), "{got:?}");
-        assert_spans(&got, 2, 0, [0.25, 1.0]);
-        assert!(got[0][1].iter().all(|v| v.is_nan()) && got[1][1].iter().all(|v| v.is_nan()), "{got:?}");
-    }
-
-    #[test]
-    fn normalize_gives_a_zero_beside_a_negative_no_share() {
-        let got = spans("normalize", &[&[0.0, -5.0], &[0.0, 2.0]]);
-        assert!(got[0][0].iter().all(|v| v.is_nan()), "{got:?}");
-        assert_spans(&got, 1, 0, [0.0, 1.0]);
-        assert_spans(&got, 0, 1, [0.0, 0.0]);
-        assert_spans(&got, 1, 1, [0.0, 1.0]);
-    }
-
-    #[test]
-    fn center_floats_each_column_to_the_middle_of_the_tallest() {
-        let got = spans("center", &[&[4.0, 6.0], &[1.0, 3.0]]);
-        assert_spans(&got, 0, 0, [0.0, 4.0]);
-        assert_spans(&got, 1, 0, [4.0, 10.0]);
-        assert_spans(&got, 0, 1, [3.0, 4.0]);
-        assert_spans(&got, 1, 1, [4.0, 7.0]);
-    }
-
-    #[test]
-    fn center_piles_a_negative_as_its_magnitude_and_skips_an_absent_datum() {
-        let got = spans("center", &[&[4.0, 6.0, 0.0], &[-2.0, NAN, 2.0]]);
-        assert_spans(&got, 0, 1, [3.0, 5.0]);
-        assert!(got[1][1][1].is_nan(), "{got:?}");
-        assert_spans(&got, 2, 1, [5.0, 7.0]);
-    }
-
-    #[test]
-    fn an_unknown_mode_refuses_by_name() {
-        let err = grammar_stack("silhouette", &[vec![1.0]]).unwrap_err();
-        assert!(err.contains("\"silhouette\""), "{err}");
-    }
-
-    #[test]
-    fn zero_piles_stack_each_key_in_item_order() {
-        let got = zero_piles([("a", 2.0), ("b", 5.0), ("a", 3.0), ("a", -1.0)]);
-        assert_eq!(got, vec![(0.0, 2.0), (0.0, 5.0), (2.0, 5.0), (-1.0, 0.0)]);
-    }
-}
-
-#[cfg(test)]
 mod tick_round_tests {
     use super::tick_round;
 
@@ -7321,5 +5971,18 @@ mod tick_round_tests {
         assert_eq!(tick_round(2.4), 2.5);
         assert_eq!(tick_round(2.5), 3.5);
         assert_eq!(tick_round(-2.5), -1.5);
+    }
+}
+
+#[cfg(test)]
+mod wide_title_tests {
+    use super::*;
+
+    #[test]
+    fn wide_measures_title_joins_measure_labels() {
+        let measures = vec!["revenue".to_string(), "fix-linked".to_string()];
+        assert_eq!(wide_measures_title(&measures, &FieldLabels::new()).unwrap(), "Revenue, Fix linked");
+        let labels = FieldLabels::from([("fix-linked".to_string(), "fix-linked".to_string())]);
+        assert_eq!(wide_measures_title(&measures, &labels).unwrap(), "Revenue, fix-linked");
     }
 }

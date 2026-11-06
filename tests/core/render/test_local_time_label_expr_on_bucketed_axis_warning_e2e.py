@@ -22,13 +22,11 @@ proved against raw, unpinned vl-convert instead.
 
 from __future__ import annotations
 
-from unittest.mock import Mock
-
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
-from ..._results import rows_schema
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 _CODE = "WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS"
 
@@ -58,19 +56,9 @@ _COLOR_ROWS = [
 
 def _make_executor(
     board: object, query_registry: object, rows: list[dict[str, object]] | None = None
-) -> Executor:
-    ok = Mock()
-    ok.is_success = True
-    ok.data = rows if rows is not None else _ROWS
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.return_value = ok
-    return Executor(
-        board, adapter_registry=mock_registry, query_registry=query_registry
-    )
+) -> Run:
+    mock_registry = scripted_env(ScriptedBackend(rows if rows is not None else _ROWS))
+    return Run(board, env=mock_registry, query_registry=query_registry)
 
 
 def _board_yaml(*, time_unit: str | None, expr: str) -> str:
@@ -102,7 +90,7 @@ def _render(
     result = compile(yaml_source)
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, rows)
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
     return list(render_result.warnings)
 
 

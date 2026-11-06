@@ -228,7 +228,7 @@ def test_query_board_rejects_the_same_overrides(
             Path("charts/b.yml"),
             project,
             vars=variables,
-            adapter_registry=session.adapter_registry,
+            env=session.env,
         )
     assert result.success is False
     assert result.error_code == code

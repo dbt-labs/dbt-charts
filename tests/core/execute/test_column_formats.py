@@ -14,14 +14,15 @@ from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.board.normalized import Board, LayoutItem
 from dbt_charts.core.compile.models.chart.normalized.table import TableChart
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.column_formats import (
     known_format_names,
     with_dbt_column_formats,
 )
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
 from dbt_charts.core.render.render_result import RenderResult
+
+from ..._run import Run
 
 _BOARD = """
 title: T
@@ -101,12 +102,12 @@ def _render(
         project_sources=sources,
     )
     assert result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(tmp_path)),
+        env=build_exec_env(FilesystemProject(tmp_path)),
         query_registry=result.query_registry,
     )
-    return render(result.board, executor, format=output_format)
+    return render(result.board, executor.ctx, executor.ledger, format=output_format)
 
 
 def _svg(tmp_path: Path, chart: str, **kwargs: Any) -> str:
@@ -208,10 +209,7 @@ def test_a_derived_column_takes_the_casing_the_result_returns(
     assert result.board is not None, result.errors
     executor = MagicMock()
     executor.board = result.board
-    executor.adapter_registry.project.sources.sources = {}
-    executor.adapter_registry.dbt_refs.column_formats.return_value = {
-        "orders": {"amount": "currency"}
-    }
+    executor.base_column_formats.return_value = {"orders": {"amount": "currency"}}
     executor.execute_query.return_value = [{"month": "2026-01-01", "revenue": 1}]
 
     widened = with_dbt_column_formats(result.board, executor, {})
@@ -227,7 +225,7 @@ _BASE_STYLE = "style:\n  formats:\n    currency: '$,.0f'\n    integer: ',.0f'\n"
 
 def _two_boards(
     tmp_path: Path, meta: dict[str, object], nested_style: str
-) -> tuple[Board, Executor]:
+) -> tuple[Board, Run]:
     sources = _prepare(tmp_path, meta)
     nested = compile_board(
         _BOARD.replace(_BASE_STYLE, nested_style) % {"chart": _TABLE, "formats": ""},
@@ -251,9 +249,9 @@ def _two_boards(
             )
         }
     )
-    executor = Executor(
+    executor = Run(
         tree,
-        adapter_registry=build_adapter_registry(FilesystemProject(tmp_path)),
+        env=build_exec_env(FilesystemProject(tmp_path)),
         query_registry=root.query_registry,
     )
     return tree, executor
@@ -264,7 +262,7 @@ def test_a_name_only_a_nested_board_defines_fails_the_chart_in_every_placement(
 ) -> None:
     tree, executor = _two_boards(tmp_path, {"format": "arr_money"}, _ALIAS_STYLE)
 
-    result = render(tree, executor, format="svg")
+    result = render(tree, executor.ctx, executor.ledger, format="svg")
 
     assert result.chart_errors
     assert {e.code for e in result.chart_errors} == {"ERR-DBT-COLUMN-FORMAT-UNKNOWN"}

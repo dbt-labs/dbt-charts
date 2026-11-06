@@ -112,6 +112,11 @@ pub struct BoardPayload {
     /// request set, as opposed to defaults merged into `variable_values`.
     #[serde(default)]
     pub overridden_variables: Vec<String>,
+    /// `board_variables.py::current_context_variables` — host-injected render
+    /// context among `variable_values` (a directory listing), which text may
+    /// read but a toggle link back to this board must not carry.
+    #[serde(default)]
+    pub context_variables: Vec<String>,
     /// `board_sweep.py::_variable_datasets` — every visible variable's own
     /// query-backed option rows, by variable name, flat across the WHOLE
     /// board tree (variables are board-global: one namespace document-wide,
@@ -1438,6 +1443,30 @@ fn wrap_chart_svg(
     ))
 }
 
+/// Every variable's declared `input` across the board tree, which decides how a list prints in text.
+fn declared_inputs(board: &Value, out: &mut std::collections::HashMap<String, String>) {
+    if let Some(variables) = board.get("variables").and_then(Value::as_object) {
+        for (name, variable) in variables {
+            if let Some(input) = variable.get("input").and_then(Value::as_str) {
+                out.entry(name.clone()).or_insert_with(|| input.to_string());
+            }
+        }
+    }
+    let items = board.get("layout").and_then(|l| l.get("items")).and_then(Value::as_array);
+    for nested in items.into_iter().flatten().filter_map(|item| item.get("board")) {
+        declared_inputs(nested, out);
+    }
+}
+
+impl BoardPayload {
+    /// Run `render` in the board's locales and with its variables' declared inputs in scope.
+    fn scoped<T>(&self, render: impl FnOnce() -> T) -> T {
+        let mut kinds = std::collections::HashMap::new();
+        declared_inputs(&self.resolved, &mut kinds);
+        self.board_style.scoped(|| title::with_input_kinds(kinds, render))
+    }
+}
+
 /// `boards.py::_measured_variable_values`, ported: `{**board.variable_
 /// defaults, **variables}` — `variables` is the SAME raw request-level
 /// overrides dict at every nesting level in production (`render_nested_
@@ -2012,7 +2041,7 @@ fn render_details_summary(
     }
     .unwrap_or("");
     let new_value = if expanded { "false" } else { "true" };
-    let href = build_toggle_url(&payload.variable_values, details_variable, new_value);
+    let href = build_toggle_url(&payload.variable_values, &payload.context_variables, details_variable, new_value);
     let fill = if expanded { &details.expanded_fill } else { &details.collapsed_fill };
     let fill_attr = fill.as_deref().unwrap_or("none");
     let summary_rect = format!(
@@ -2040,7 +2069,8 @@ fn render_details_summary(
 }
 
 /// `layouts.py::_build_toggle_url`: change one URL param while preserving
-/// every other current variable value — non-`null` values only, matching
+/// every other current variable value — non-`null` board variables only
+/// (never `context_variables`), matching
 /// `{k: str(v) for k, v in variables.items() if v is not None}`, then
 /// `params[param_name] = new_value`. Python dict order is INSERTION order:
 /// an existing key is updated in place (position unchanged), a new one is
@@ -2052,12 +2082,13 @@ fn render_details_summary(
 /// board's toggle-link query string relative to production's.
 fn build_toggle_url(
     variables: &serde_json::Map<String, Value>,
+    context_variables: &[String],
     param_name: &str,
     new_value: &str,
 ) -> String {
     let mut params: Vec<(String, String)> = variables
         .iter()
-        .filter(|(_, v)| !v.is_null())
+        .filter(|(k, v)| !v.is_null() && !context_variables.contains(k))
         .map(|(k, v)| (k.clone(), jinja_query_value_str(v)))
         .collect();
     if let Some(entry) = params.iter_mut().find(|(k, _)| k == param_name) {
@@ -3119,7 +3150,7 @@ fn render_tabs_layout(
         }
         match layout.tab_variable.as_deref() {
             Some(tab_variable) if !is_active => {
-                let href = build_toggle_url(&payload.variable_values, tab_variable, slug);
+                let href = build_toggle_url(&payload.variable_values, &payload.context_variables, tab_variable, slug);
                 tab_bar_parts.push(format!(r#"<a href="{}" {attrs}>{tab_svg}</a>"#, xml_escape_attr(&href)));
             }
             _ => tab_bar_parts.push(format!("<g {attrs}>{tab_svg}</g>")),
@@ -3911,7 +3942,7 @@ fn item_takes_spare_height(
 pub type SizedBoard = (Vec<ItemBox>, ContainerBox, HashSet<String>);
 
 pub fn size_board(payload: &BoardPayload, fonts: &FontBook) -> Result<SizedBoard, String> {
-    payload.board_style.scoped(|| size_board_in_scope(payload, fonts))
+    payload.scoped(|| size_board_in_scope(payload, fonts))
 }
 
 fn size_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<SizedBoard, String> {
@@ -4038,9 +4069,7 @@ pub fn size_board_items_json(
     fonts: &FontBook,
     boxes: &[ItemBox],
 ) -> Result<Vec<Value>, String> {
-    payload
-        .board_style
-        .scoped(|| size_board_items_json_in_scope(payload, fonts, boxes))
+    payload.scoped(|| size_board_items_json_in_scope(payload, fonts, boxes))
 }
 
 fn size_board_items_json_in_scope(
@@ -4698,7 +4727,7 @@ fn render_nested_board(
 /// doc, below, for what it is and is not).
 pub fn render_board(payload: &BoardPayload, fonts: &FontBook) -> Result<(String, String), String> {
     payload.placements.borrow_mut().clear();
-    payload.board_style.scoped(|| render_board_in_scope(payload, fonts))
+    payload.scoped(|| render_board_in_scope(payload, fonts))
 }
 
 /// Which placement of its chart the next paint of `chart_id` is: 0 the first time, then 1, 2, ...
@@ -5906,7 +5935,7 @@ mod nested_box_sidecar_tests {
             "resolved": resolved, "chart_datasets": {}, "background": null, "fonts_dir": null,
             "render_timestamp_text": "", "render_time_iso": "2026-01-01T00:00:00Z",
             "defs_styles_block": "", "hover_attributes": "",
-            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"secondary_color": null, "tones": null, "title_case": null, "continuous_height": null, "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()},
+            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"secondary_color": null, "tones": null, "title_case": null, "continuous_height": null, "format_locale": ::bind::formats::locale::en_us_wire(), "time_locale": ::bind::time_locale::en_us_wire()},
             "chart_defaults": {
                 "default_chart_height": 300.0, "default_table_height": 250.0,
                 "min_height": 200.0, "max_height": 600.0,
@@ -6347,5 +6376,19 @@ mod nested_box_sidecar_tests {
             "slope paints at the row height its sibling sets: \
              slope={slope_h} sibling={sibling_h}: {svg}"
         );
+    }
+}
+
+#[cfg(test)]
+mod toggle_url_tests {
+    use super::*;
+
+    #[test]
+    fn toggle_url_omits_host_context_variables() {
+        let variables = serde_json::json!({"siblings": ["a.yml"], "vendor": "Acme"});
+        let variables = variables.as_object().unwrap();
+        let context = vec!["siblings".to_string()];
+        assert_eq!(build_toggle_url(variables, &context, "_tab_t", "two"), "?vendor=Acme&_tab_t=two");
+        assert!(build_toggle_url(variables, &[], "_tab_t", "two").contains("siblings"));
     }
 }

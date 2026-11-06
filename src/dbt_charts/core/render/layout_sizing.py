@@ -285,7 +285,7 @@ def _resolve_with_runtime_inputs(
     if should_synthesize_automatic_link(chart, data, links.auto):
         synthesized = synthesize_automatic_link(
             chart,
-            results,
+            results.link_schema,
             exclude_x=automatic_link_excludes_x(chart, data),
         )
         if synthesized:
@@ -297,20 +297,15 @@ def _resolve_with_runtime_inputs(
         assert isinstance(chart, TableChart)
         from dbt_charts.core.render.chart.automatic_link import (  # noqa: PLC0415
             fetch_column_rows_for_link,
-            fk_column_links_from_executor,
+            fk_column_links,
         )
 
         chart_query = chart.query
         assert chart_query is not None
-        table_column_links = fk_column_links_from_executor(
-            chart_query,
-            results.adapter_registry,
-        )
+        table_column_links = fk_column_links(chart_query, results.link_schema)
         if table_column_links:
             table_column_rows = fetch_column_rows_for_link(
-                results.adapter_registry,
-                chart_query,
-                board=results.board,
+                results.link_schema, chart_query
             )
 
     return resolve_chart_with_runtime_inputs(

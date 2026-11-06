@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'Horizontal bars center category labels, print dates by grain, and refuse axis_x.position and axis_x.ticks.visible: true.'
+time: 2026-11-04T23:43:34.274616-08:00

@@ -243,7 +243,7 @@ class TestDefaultSourceResolver:
         self, monkeypatch, authored, board_sources, project_sources_fn, dbt_context
     ):
         """FR-007: resolver never calls build_adapter for any input shape."""
-        import dbt_charts.core.execute.adapters.dbt_adapter_factory as factory
+        import dbt_charts.core.execute.backends.dbt_adapter_factory as factory
         from dbt_charts.core.execute.source_resolver import DefaultSourceResolver
 
         called = []

@@ -73,7 +73,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_MARKDOWN_NOT_BOARD,
     ERR_UNRESOLVED_REFERENCE,
 )
-from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env, close_env
 from dbt_charts.core.project import (
     CHARTS_SUBDIR,
     InMemoryBoard,
@@ -192,7 +192,7 @@ def _file_render_contexts(board_dir: ProjectDirectory) -> list[tuple[Path, Path]
     """Return candidate ``(project_root, base_dir)`` contexts for file-backed YAML.
 
     Materializes filesystem paths here: each candidate builds its own
-    ``FilesystemProject`` and adapter registry (the project root and the shared
+    ``FilesystemProject`` and exec env (the project root and the shared
     ``examples/`` fallback are different projects), so the fallback loop is
     filesystem currency, not domain.
     """
@@ -255,7 +255,7 @@ def _render_with_fallback(
     last_exc: Exception | None = None
     for candidate_project_dir, candidate_base_dir in contexts:
         project = FilesystemProject(candidate_project_dir.resolve())
-        registry = build_adapter_registry(project, read_only=True)
+        env = build_exec_env(project, read_only=True)
         result: BoardRenderResult | None = None
         try:
             # Fence-rendered YAML has no on-disk leaf — a pathless in-memory
@@ -267,7 +267,7 @@ def _render_with_fallback(
                 result = render_dashboard(
                     board=board,
                     project=project,
-                    adapter_registry=registry,
+                    env=env,
                     result_cache=cache,
                     builtin_variables=lazy_dir_context(
                         project.directory_for_fspath(candidate_base_dir)
@@ -285,7 +285,7 @@ def _render_with_fallback(
             if not _should_retry_with_examples(exc, result, candidate_project_dir):
                 raise
         finally:
-            registry.close()
+            close_env(env)
     assert last_exc is not None
     raise last_exc
 
@@ -563,10 +563,17 @@ class _ChartFencePreprocessor(Preprocessor):
     ``charts`` fence can name what another fence declares.
     """
 
-    def __init__(self, md: Markdown, project_dir: str, embed_fonts: bool) -> None:
+    def __init__(
+        self,
+        md: Markdown,
+        project_dir: str,
+        embed_fonts: bool,
+        variables: dict[str, str],
+    ) -> None:
         super().__init__(md)
         self.project_dir = project_dir
         self.embed_fonts = embed_fonts
+        self.variables = variables
 
     def run(self, lines: list[str]) -> list[str]:
         text = "\n".join(lines)
@@ -585,6 +592,7 @@ class _ChartFencePreprocessor(Preprocessor):
                     session,
                     InMemoryBoard(text, path=project.path(_PAGE_RELPATH)),
                     self.embed_fonts,
+                    variables=self.variables,
                 )
             if page.errors:
                 raise ChartFenceError(_describe(page.errors))
@@ -598,6 +606,13 @@ class _ChartFencePreprocessor(Preprocessor):
                 )
                 for f in page.fences
             ]
+            if lines[0].strip() == "---":
+                # Frontmatter is the page's metadata, never its prose; the
+                # compile above read it and checked its closing delimiter.
+                closing = next(
+                    i for i, line in enumerate(lines[1:], 1) if line.strip() == "---"
+                )
+                spans.append((0, closing, ""))
         for first, last, body, options in examples:
             try:
                 spans.append(
@@ -620,7 +635,11 @@ class _ChartFencePreprocessor(Preprocessor):
         if css:
             fragments[0] = f"<style>\n{css}</style>\n{fragments[0]}"
         stashed = [
-            (first, last, f"\n{self.md.htmlStash.store(fragment)}\n")
+            (
+                first,
+                last,
+                f"\n{self.md.htmlStash.store(fragment)}\n" if fragment else "",
+            )
             for (first, last, _), fragment in zip(spans, fragments, strict=True)
         ]
         return splice_lines(text, stashed).split("\n")
@@ -641,6 +660,7 @@ class DbtChartsExtension(Extension):
                 "Carry the fonts in the page. Off only for a site that serves "
                 "them at /static/fonts/",
             ],
+            "variables": [{}, "Values for the page's variables, by name"],
         }
         super().__init__(**kwargs)
 
@@ -649,7 +669,10 @@ class DbtChartsExtension(Extension):
         # preprocessors (25) claim the fences.
         md.preprocessors.register(
             _ChartFencePreprocessor(
-                md, self.getConfig("project_dir"), self.getConfig("embed_fonts")
+                md,
+                self.getConfig("project_dir"),
+                self.getConfig("embed_fonts"),
+                self.getConfig("variables"),
             ),
             "dbt_charts",
             26,

@@ -25,7 +25,6 @@ from dbt_charts.core.constants.find_queries import (
     MAX_CACHED_VARIANTS,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.execute.cache_backend import (
     BrowsableResultCache,
     CacheEntry,
@@ -33,8 +32,13 @@ from dbt_charts.core.execute.cache_backend import (
     QueryResultCache,
 )
 from dbt_charts.core.execute.duckdb_cache import compute_relevant_variables
-from dbt_charts.core.execute.executor import Executor, utc_now
-from dbt_charts.core.execute.plan import merge_board_variables, plan
+from dbt_charts.core.execute.env import ExecEnv
+from dbt_charts.core.execute.plan import (
+    make_context,
+    merge_board_variables,
+    plan,
+    utc_now,
+)
 from dbt_charts.core.project import Project, board_identity
 from dbt_charts.core.validate import normalize_data_for_json
 
@@ -249,7 +253,7 @@ def _read_call(
 def _board_answer(
     hit: BoardMatch | BoardListing,
     project: Project,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     cache: BrowsableResultCache | None,
     entries: list[CacheEntry],
     budget: _InlineBudget,
@@ -274,15 +278,11 @@ def _board_answer(
     # With no cache there are no entries, so no key to match them against.
     current: dict[str, tuple[str, str]] = {}
     if cache is not None:
-        executor = Executor(
-            board,
-            adapter_registry=adapter_registry,
-            query_registry=loaded.query_registry,
-        )
+        ctx = make_context(board, env, query_registry=loaded.query_registry)
         try:
             current = {
                 planned.name: cache.listed_key(planned.cache_key)[:2]
-                for planned in plan(executor.ctx, [name for name, _ in named])
+                for planned in plan(ctx, [name for name, _ in named])
             }
         except ExecutionError as exc:
             return BoardAnswer(**shown, variables=[], queries=[], errors=[str(exc)])
@@ -310,7 +310,7 @@ def _board_answer(
 def find_queries(
     project: Project,
     cache: QueryResultCache | None,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     text: str,
     limit: int | None,
 ) -> FindQueriesResult:
@@ -334,7 +334,6 @@ def find_queries(
             else "not_browsable"
         ),
         boards=[
-            _board_answer(hit, project, adapter_registry, browsable, entries, budget)
-            for hit in hits
+            _board_answer(hit, project, env, browsable, entries, budget) for hit in hits
         ],
     )

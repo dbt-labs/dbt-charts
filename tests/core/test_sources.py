@@ -33,7 +33,8 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_CREDENTIAL_LITERAL
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
+from dbt_charts.core.execute.run import run_query
 from dbt_charts.core.project import PROJECT_CONFIG_NAME
 
 
@@ -915,7 +916,7 @@ class TestNamedSourceExecution:
         self, local_project: Callable[..., FilesystemProject]
     ):
         """Test that executor resolves string source to config."""
-        from dbt_charts.core.execute import Executor
+        from .._run import Run
 
         yaml_content = """
 title: Test Dashboard
@@ -940,9 +941,9 @@ rows:
         result = compile(yaml_content, project_sources=project_sources)
         assert result.success
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         data = executor.execute_query("get_answer")
@@ -954,7 +955,7 @@ rows:
         self, local_project: Callable[..., FilesystemProject]
     ):
         """Test that CTE-based queries work as replacement for init_sql views."""
-        from dbt_charts.core.execute import Executor
+        from .._run import Run
 
         yaml_content = """
 title: Profile Dashboard
@@ -986,9 +987,9 @@ rows:
         result = compile(yaml_content, project_sources=project_sources)
         assert result.success
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         data = executor.execute_query("column_stats")
@@ -1003,7 +1004,7 @@ rows:
         self, local_project: Callable[..., FilesystemProject]
     ):
         """Test multiple queries using the same DuckDB source."""
-        from dbt_charts.core.execute import Executor
+        from .._run import Run
 
         yaml_content = """
 title: Multi-Query Dashboard
@@ -1034,9 +1035,9 @@ rows:
         result = compile(yaml_content, project_sources=project_sources)
         assert result.success
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
@@ -1084,7 +1085,7 @@ rows:
         """Source reference should use compiled board sources when available."""
         import duckdb
 
-        from dbt_charts.core.execute import Executor
+        from .._run import Run
 
         db_path = tmp_path / "warehouse.duckdb"
         conn = duckdb.connect(str(db_path))
@@ -1114,9 +1115,9 @@ rows:
         result = compile(yaml_content, project_sources=project_sources)
         assert result.success
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         assert executor.execute_query("metric") == [{"value": 7}]
@@ -1375,7 +1376,8 @@ rows:
         import duckdb
 
         from dbt_charts.core.compile import compile_file
-        from dbt_charts.core.execute import Executor
+
+        from .._run import Run
 
         project_dir = tmp_path / "project"
         boards_dir = project_dir / "charts"
@@ -1412,9 +1414,9 @@ rows:
         assert result.success
         assert "analytics" in result.board.sources
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         data = executor.execute_query("get_answer")
@@ -2092,7 +2094,7 @@ class TestRegistryTypedAtLoad:
 
 
 class TestExecuteTimeSourceCodePropagation:
-    """The resolver's diagnostic code must survive the adapter registry's
+    """The resolver's diagnostic code must survive the exec env's
     QueryResult flattening — a zero-source deployment's per-chart failure is
     ERR-SOURCE-NOT-FOUND-EMPTY, not the ERR-INTERNAL fallback (which downstream
     surfaces, e.g. Cloud's Data Sources mapping, can do nothing with).
@@ -2102,7 +2104,8 @@ class TestExecuteTimeSourceCodePropagation:
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
         from dbt_charts.core.diagnostics.execution import QueryError
-        from dbt_charts.core.execute import Executor
+
+        from .._run import Run
 
         yaml_content = """
 title: Test
@@ -2125,9 +2128,9 @@ rows:
         # happens at execute time via the resolver.
         result = compile(yaml_content, project_sources=ProjectSourcesConfig(sources={}))
         assert result.success
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
@@ -2150,15 +2153,16 @@ rows:
         missing ones are not — failing the whole board render.
         """
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.execute.source_resolver import (
             AllowlistedSourceResolver,
         )
 
-        registry = build_adapter_registry(
+        registry = build_exec_env(
             local_project(Path.cwd()), resolver=AllowlistedSourceResolver()
         )
-        result = registry.execute(
+        result = run_query(
+            registry,
             SqlQuery(sql="SELECT 1", source="warehouse_prod", limit=None),
             query_name="q",
         )

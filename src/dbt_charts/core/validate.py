@@ -4,7 +4,7 @@ This module provides core validation functions that can be used by any
 dbt charts client (CLI, playground, API, etc.) to validate board YAML
 before execution.
 
-All validation logic is in core - clients just provide their adapter registry.
+All validation logic is in core - clients just provide their exec env.
 """
 
 from __future__ import annotations

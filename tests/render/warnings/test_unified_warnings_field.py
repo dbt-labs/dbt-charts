@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from types import ModuleType
-from unittest.mock import Mock
 
 import pytest
 
@@ -23,7 +22,7 @@ from dbt_charts.core.diagnostics import (
 from dbt_charts.core.project import Project
 from dbt_charts.core.render.warnings.base import WarningContext
 
-from ..._results import rows_schema
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 _ORPHAN_YAML = """
 source: examples_db
@@ -61,21 +60,13 @@ class TestBoardRenderResultUnifiedWarnings:
         from dbt_charts.core.board import render_dashboard
         from dbt_charts.core.project import InMemoryBoard
 
-        # Set up a project-less adapter registry mock.
-        ok = Mock()
-        ok.is_success = True
-        ok.data = [{"x": 1, "y": 2}]
-        ok.schema = rows_schema(ok.data)
-        ok.resolved_relations = None
-        ok.truncated_reason = None
-        registry = Mock()
-        registry.execute.return_value = ok
-        registry.project_file_sources.return_value = {}
+        # Set up a project-less exec env mock.
+        registry = scripted_env(ScriptedBackend([{"x": 1, "y": 2}]))
 
         project = local_project(tmp_path)
         result = render_dashboard(
             board=InMemoryBoard(_ORPHAN_YAML, path=project.path("charts/_t.yml")),
-            adapter_registry=registry,
+            env=registry,
             format="json",
             project=project,
             result_cache=None,
@@ -114,15 +105,7 @@ class TestBoardRenderResultUnifiedWarnings:
 
         monkeypatch.setattr(renderer_mod, "run_all", _run_all)
 
-        ok = Mock()
-        ok.is_success = True
-        ok.data = [{"x": 1, "y": 2}]
-        ok.schema = rows_schema(ok.data)
-        ok.resolved_relations = None
-        ok.truncated_reason = None
-        registry = Mock()
-        registry.execute.return_value = ok
-        registry.project_file_sources.return_value = {}
+        registry = scripted_env(ScriptedBackend([{"x": 1, "y": 2}]))
 
         yaml_content = """
 source: examples_db
@@ -142,7 +125,7 @@ rows:
         project = local_project(tmp_path)
         result = render_dashboard(
             board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
-            adapter_registry=registry,
+            env=registry,
             format="json",
             project=project,
             result_cache=None,

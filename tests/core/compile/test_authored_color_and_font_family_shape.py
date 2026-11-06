@@ -16,12 +16,12 @@ from dbt_charts.core.compile.models.style.authored.table import (
     TableColumnConfig,
     TableColumnDefaultsConfig,
 )
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.fonts import check_authored_font_stack
 from dbt_charts.core.project import Project
-from dbt_charts.core.render import render
 from dbt_charts.core.render.render_result import RenderResult
+
+from ..._run import Run, render_run
 
 _BODY = """
 queries:
@@ -155,11 +155,11 @@ rows: [k]
 def _render(yaml: str, local_project: Callable[..., Project]) -> RenderResult:
     result = compile(yaml)
     assert result.board is not None
-    return render(
+    return render_run(
         result.board,
-        Executor(
+        Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
         ),
         format="svg",
     )

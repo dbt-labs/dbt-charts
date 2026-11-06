@@ -7,7 +7,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from dbt_charts.core.board import render_dashboard
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 
 from ...conftest import InMemoryProject
 
@@ -25,7 +25,7 @@ def _text(markdown: str) -> str:
         board=project.path("charts/note.md").read_board(),
         variables=None,
         project=project,
-        adapter_registry=build_adapter_registry(project, read_only=False),
+        env=build_exec_env(project, read_only=False),
         result_cache=None,
         format="svg",
     )

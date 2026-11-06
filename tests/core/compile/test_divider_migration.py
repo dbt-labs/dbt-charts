@@ -12,18 +12,13 @@ import pytest
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
     migrate_yaml_text,
     prepare_board_mapping,
 )
-from dbt_charts.core.compile.migrations.migrations import (
-    _board_migration_context,
-)
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.parse.parser import load_yaml_mapping
-from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
-    load_yaml_schema_catalog,
-)
+
+from ._engine_migrations import migrate_mapping
 
 pytestmark = pytest.mark.filterwarnings(
     "ignore::dbt_charts.core.compile.migrations.SchemaMigrationWarning"
@@ -31,12 +26,9 @@ pytestmark = pytest.mark.filterwarnings(
 
 
 def _migrate(raw: dict[str, Any]) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(
-            raw, catalog=load_yaml_schema_catalog(), registry=registry
-        )
+        return migrate_mapping(raw)
 
 
 def _board(style: dict[str, Any]) -> dict[str, Any]:
@@ -361,7 +353,6 @@ def test_a_support_divider_without_continuous_cannot_be_migrated() -> None:
 
 
 def test_text_rewrite_renames_and_adds_visible_in_place() -> None:
-    _, registry = _board_migration_context()
     text = (
         "title: t\n"
         "style:\n"
@@ -376,9 +367,7 @@ def test_text_rewrite_renames_and_adds_visible_in_place() -> None:
         "          summary:\n"
         "            rule_width: 2\n"
     )
-    rewritten = migrate_yaml_text(
-        text, catalog=load_yaml_schema_catalog(), registry=registry
-    )
+    rewritten = migrate_yaml_text(text)
     style: Any = load_yaml_mapping(rewritten)["style"]
     assert style["footer"] == {
         "divider": {"visible": True, "color": "#f00", "width": 2}

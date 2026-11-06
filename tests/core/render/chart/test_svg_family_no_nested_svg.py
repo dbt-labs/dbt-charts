@@ -33,10 +33,11 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.render.chart.rendering import render_chart_item
 
 from ...._results import rows_result
+from ...._run import Run
 
 _DUMMY_QUERY = SqlQuery(sql="SELECT 1", source="test")
 _RESOLVED_STYLE = resolve_style(get_theme_style())
@@ -45,11 +46,11 @@ _SVG_OPEN_TAG = re.compile(r"<svg\b")
 _DBT_CHART_CLASS = re.compile(r'class="[^"]*\bdbt-chart\b[^"]*"')
 
 
-def _executor(data: list[dict[str, Any]]) -> Executor:
-    ex = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    ex.execute_chart.return_value = data
+def _executor(data: list[dict[str, Any]]) -> Run:
+    ex = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     ex.execute_query.return_value = data
-    ex.execute_chart_result.return_value = rows_result(data)
+    ex.execute_query.return_value = data
+    ex.execute_query_result.return_value = rows_result(data)
     ex.execute_query_result.return_value = rows_result(data)
     return ex
 
@@ -135,7 +136,7 @@ def test_vega_chart_data_error_fallback_has_no_nested_svg() -> None:
     from dbt_charts.core.diagnostics.chart_data import ChartDataError
 
     chart = _chart("line", x="x", y="y", title="Line chart that errors")
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.side_effect = ChartDataError("no data", chart_id="test_line")
     executor.execute_query_result.side_effect = executor.execute_query.side_effect
     svg, _ = render_chart_item(

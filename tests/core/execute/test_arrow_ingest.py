@@ -211,7 +211,7 @@ def test_runtime_paths_do_not_import_pyarrow(tmp_path: Path) -> None:
         )
         from dbt_charts.core.column_types import ColumnType
         import nanoarrow as na
-        from dbt_charts.core.execute.adapters.base import RowFetchLimit
+        from dbt_charts.core.execute.query_result import RowFetchLimit
         from dbt_charts.core.execute.arrow_ingest import encode, infer_type, table
         from dbt_charts.core.execute.cache_backend import ResultRows
         from dbt_charts.core.execute.cache_composition import compose_over_named_rows

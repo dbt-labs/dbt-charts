@@ -248,11 +248,13 @@ class TestSizerAgreesWithRenderer:
         """End-to-end: the slot the sizer asks for fits what the renderer draws."""
         from unittest.mock import MagicMock
 
-        from dbt_charts.core.execute.executor import Executor
+        from dbt_charts.core.execute.query_results import QueryResults
         from dbt_charts.core.render.layout_sizing import _get_table_height_from_data
 
         chart = _chart(make_chart)
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
         executor.execute_query_result.return_value = rows_result([_NARROW_ROW])
 
         resolved = resolve(chart, [_NARROW_ROW], chart_style_context=_BOARD_CTX)

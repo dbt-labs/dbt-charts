@@ -552,7 +552,7 @@ class TestOneProfileNameLadder:
     def test_env_var_wins_in_every_reader(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from dbt_charts.core.execute.adapters.dbt_profile import resolve_target_type
+        from dbt_charts.core.execute.backends.dbt_profile import resolve_target_type
         from dbt_charts.core.execute.source_resolver import DbtContext
         from dbt_charts.core.project_roots import infer_dialect_from_dbt
 
@@ -584,7 +584,7 @@ class TestOneProfileNameLadder:
     def test_adapter_without_any_name_names_all_three_places(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from dbt_charts.core.execute.adapters.dbt_profile import resolve_target_type
+        from dbt_charts.core.execute.backends.dbt_profile import resolve_target_type
         from dbt_charts.core.execute.source_resolver import DbtContext
 
         monkeypatch.delenv("DBT_PROFILE", raising=False)

@@ -4,7 +4,7 @@ Stage: RENDER
 Purpose: Render compiled boards to various output formats.
 
 Entry Points:
-    - render(board, executor, format, variables, **options) -> str | bytes
+    - render(board, ctx, ledger, format, variables, **options) -> str | bytes
     - render_chart(chart, data, **options) -> str
 
 This is the main rendering orchestration module. It:
@@ -15,7 +15,7 @@ This is the main rendering orchestration module. It:
 
 Dependencies:
     - dbt_charts.compile (for Board, Chart)
-    - dbt_charts.execute (for Executor)
+    - dbt_charts.execute (for ExecContext, Ledger)
     - .boards (for SVG rendering)
     - .charts (for chart rendering)
     - .converters (for format conversion)
@@ -24,6 +24,7 @@ Dependencies:
 import contextlib
 import logging
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -67,13 +68,14 @@ from dbt_charts.core.execute.collect import (
     collect_all_query_names,
     collect_layout_chart_query_names,
 )
-from dbt_charts.core.execute.executor import Executor
-from dbt_charts.core.execute.plan import get_query
-from dbt_charts.core.execute.query_results import QueryResults
-from dbt_charts.core.execute.run import Failed
+from dbt_charts.core.execute.lookup import Ledger, lookup_names
+from dbt_charts.core.execute.plan import ExecContext, get_query
+from dbt_charts.core.execute.query_results import QueryResults, collect
+from dbt_charts.core.execute.run import Failed, run_misses
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
 from dbt_charts.core.render.board_variables import (
     board_variables,
+    context_variables,
     daterange_presets,
     overridden_variables,
     variable_options,
@@ -83,6 +85,7 @@ from dbt_charts.core.render.chart.annotation_nothing_drawn import (
     NothingDrawn,
     collect_annotation_nothing_drawn,
 )
+from dbt_charts.core.render.chart.automatic_link import with_link_schema
 from dbt_charts.core.render.chart.axis_label_collision import (
     AxisLabelCollision,
     collect_axis_label_collisions,
@@ -566,26 +569,25 @@ def _render_variables(
 
 
 def _prefetch_query_names(
-    board: Board, executor: Executor, variables: VariableValues
+    board: Board, ctx: ExecContext, variables: VariableValues
 ) -> frozenset[str]:
     """Queries of the hidden tabs whose cache policy asks to be prefetched.
 
     ``prefetch`` is resolved per query at compile time, so a query is warmed
     only when its own policy has caching on and ``prefetch`` set. Names resolve
-    through the executor: a nested board's own ``queries:`` are not keys of
+    through the context: a nested board's own ``queries:`` are not keys of
     ``board.queries``.
     """
     hidden = collect_all_query_names(board) - collect_all_query_names(
         scope_tabs(board, variables)
     )
-    return frozenset(
-        name for name in hidden if get_query(executor.ctx, name).cache.prefetch
-    )
+    return frozenset(name for name in hidden if get_query(ctx, name).cache.prefetch)
 
 
 def prefetch_tab_queries(
     board: Board,
-    executor: Executor,
+    ctx: ExecContext,
+    ledger: Ledger,
     variables: VariableValues,
     max_workers: int | None = None,
     builtin_variables: VariableValues | None = None,
@@ -597,18 +599,24 @@ def prefetch_tab_queries(
     finds its rows in the result cache. Pass the variables and builtins the render
     got — the queries must render to the same SQL to land on the same cache
     keys. Cached queries are skipped, misses run in parallel through
-    ``Executor.run_misses`` with the executor's own per-query guards, and
-    a failure is returned in the per-query outcome rather than raised: the
-    click re-runs that query and reports it.
+    ``run_misses`` with its per-query guards, and a failure is returned in the
+    per-query outcome rather than raised: the click re-runs that query and
+    reports it.
     """
     merged = _render_variables(
         board,
         parse_variable_json_strings(variables),
         builtin_variables,
-        board.clock(executor.rendered_at),
+        board.clock(ctx.rendered_at),
     )
-    found = executor.lookup(_prefetch_query_names(board, executor, merged), merged)
-    outcomes = executor.run_misses(found, resolve_max_workers(max_workers))
+    found = lookup_names(
+        ctx,
+        ledger,
+        _prefetch_query_names(board, ctx, merged),
+        merged,
+        resume_incremental=False,
+    )
+    outcomes = run_misses(ctx, ledger, found, resolve_max_workers(max_workers))
     errors: dict[str, Exception | None] = {
         name: outcome.error if isinstance(outcome, Failed) else None
         for name, outcome in outcomes.items()
@@ -620,32 +628,31 @@ def prefetch_tab_queries(
 
 
 def _collect_extra(
-    executor: Executor,
+    ctx: ExecContext,
+    ledger: Ledger,
     results: QueryResults,
     extra: ExtraQueries,
     max_workers: int,
 ) -> QueryResults:
     """*results* plus the restated checks' late queries, collected per variables.
 
-    The probe definitions are in the executor's registry only while they run.
+    The probe definitions live in an overlay registry on a derived context, so
+    the render's own context never sees them.
     """
-    registry = executor.query_registry
-    executor.query_registry = {**registry, **extra.definitions}
-    try:
-        for names, values in extra.calls:
-            found = executor.lookup(names, values)
-            outcomes = executor.run_misses(found, max_workers)
-            results = results.with_collection(
-                executor.collect_results(found, outcomes, values)
-            )
-    finally:
-        executor.query_registry = registry
+    late = replace(ctx, query_registry={**ctx.query_registry, **extra.definitions})
+    for names, values in extra.calls:
+        found = lookup_names(late, ledger, names, values, resume_incremental=False)
+        outcomes = run_misses(late, ledger, found, max_workers)
+        results = results.with_collection(
+            collect(late, ledger, found, outcomes, values)
+        )
     return results
 
 
 def render(
     board: Board,
-    executor: Executor,
+    ctx: ExecContext,
+    ledger: Ledger,
     format: str = "svg",
     variables: VariableValues | None = None,
     ignore_codes: set[str] | None = None,
@@ -659,6 +666,9 @@ def render(
 ) -> RenderResult:
     overrides = variables or {}  # type-state: silent_fallback — None: no overrides
     registry = board.variable_registry or {}  # type-state: silent_fallback — none
+    injected_context = (
+        frozenset() if builtin_variables is None else frozenset(builtin_variables)
+    )
     committed = {**board.variable_defaults, **overrides}
     presets = daterange_preset_ids(committed, registry)
     with (
@@ -671,11 +681,13 @@ def render(
         ),
         daterange_presets(presets),
         overridden_variables(frozenset(overrides)),
-        board_clock(board.clock(executor.rendered_at)),
+        context_variables(injected_context - registry.keys()),
+        board_clock(board.clock(ctx.rendered_at)),
     ):
         return _render(
             board,
-            executor,
+            ctx,
+            ledger,
             format,
             variables,
             ignore_codes,
@@ -691,7 +703,8 @@ def render(
 
 def _render(
     board: Board,
-    executor: Executor,
+    ctx: ExecContext,
+    ledger: Ledger,
     format: str,
     variables: VariableValues | None,
     ignore_codes: set[str] | None,
@@ -713,7 +726,8 @@ def _render(
 
     Args:
         board: Compiled board to render
-        executor: Executor for query execution
+        ctx: The render's context: its board, registry, result cache and clock
+        ledger: What the render's queries accumulate (memo, errors, data ages)
         format: Output format (svg, html, png, pdf, thumbnail, terminal, json, text, text-data, yaml, data)
         variables: Variable values for queries
         ignore_codes: Caller-supplied set of warning codes to suppress (CLI seam).
@@ -806,9 +820,7 @@ def _render(
     whole_board = board
     if format not in _EVERY_TAB_FORMATS:
         try:
-            prefetch_query_names = _prefetch_query_names(
-                board, executor, merged_variables
-            )
+            prefetch_query_names = _prefetch_query_names(board, ctx, merged_variables)
             board = scope_tabs(board, merged_variables)
         except DbtChartsError as e:
             return RenderResult(
@@ -831,15 +843,22 @@ def _render(
     query_started = time.perf_counter()
 
     # Partition: hits are served from the memo or store, only misses go to the
-    # pool, and a cached failure is replayed per chart. collect_results then folds
+    # pool, and a cached failure is replayed per chart. collect then folds
     # all three into the QueryResults render reads.
-    found = executor.lookup(query_names, merged_variables)
-    outcomes = executor.run_misses(found, resolved_max_workers)
-    results = executor.collect_results(found, outcomes, merged_variables)
+    found = lookup_names(
+        ctx, ledger, query_names, merged_variables, resume_incremental=False
+    )
+    outcomes = run_misses(ctx, ledger, found, resolved_max_workers)
+    results = collect(ctx, ledger, found, outcomes, merged_variables)
     if restated_check:
         results = _collect_extra(
-            executor, results, plan_extra(board, merged_variables), resolved_max_workers
+            ctx,
+            ledger,
+            results,
+            plan_extra(board, merged_variables),
+            resolved_max_workers,
         )
+    results = with_link_schema(results, ctx, board, merged_variables)
     query_ms = (time.perf_counter() - query_started) * 1000
     # Option queries have run for the board's own controls, so their rows cost
     # nothing more to check a query-backed select against. A tab
@@ -1413,7 +1432,7 @@ def _to_terminal(
 
     Args:
         board: Board to render
-        results: Executor for query execution
+        results: The collected query results
         variables: Variable values for queries
         resolved_style: Board-scoped resolved style (from resolved_board.style).
         **options: Terminal-specific options

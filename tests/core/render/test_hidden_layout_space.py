@@ -10,12 +10,13 @@ import pytest
 
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.sizing import prose_slot_widths
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import Project
 from dbt_charts.core.render import render
 from dbt_charts.core.render.board_resolve import build_resolved_board
 from dbt_charts.core.render.conditions import item_is_drawn
+
+from ..._run import Run
 
 _LONG = "tall " * 400
 _CHART = """queries:
@@ -42,12 +43,12 @@ def _geometry(
     result = compile(yaml)
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
     )
-    out = render(result.board, executor, format="svg")
+    out = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert out.board_error is None, out.board_error
     assert isinstance(out.output, str)
     box = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', out.output)

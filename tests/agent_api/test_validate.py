@@ -209,7 +209,7 @@ class TestValidateReturnsErrorsForYamlParseError:
 
 
 class TestValidateDoesNotOpenWarehouse:
-    """validate() never calls build_adapter_registry (no DB contract)."""
+    """validate() never calls build_exec_env (no DB contract)."""
 
     def test_validate_does_not_open_warehouse(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -217,12 +217,10 @@ class TestValidateDoesNotOpenWarehouse:
         from dbt_charts.agent_api.validate import validate
 
         board = _write_board(tmp_path, _VALID_BOARD)
-        with patch(
-            "dbt_charts.core.execute.adapters.build_adapter_registry"
-        ) as mock_registry:
+        with patch("dbt_charts.core.execute.env.ExecEnv.__init__") as env_init:
             validate(board, project=local_project(tmp_path))
 
-        mock_registry.assert_not_called()
+        env_init.assert_not_called()
 
 
 class TestValidatePathResolutionRejectsEscape:

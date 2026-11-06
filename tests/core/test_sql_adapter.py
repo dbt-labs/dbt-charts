@@ -17,10 +17,11 @@ from dbt_charts.core.compile.models.source import (
     ResolvedSourceConfig,
 )
 from dbt_charts.core.diagnostics.codes_execute import ERR_UNPARSEABLE_SQL
-from dbt_charts.core.execute.adapters.base import QueryResult
-from dbt_charts.core.execute.adapters.typed_fetch import TypedRows
 from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
+from dbt_charts.core.execute.backends.typed_fetch import TypedRows
 from dbt_charts.core.execute.compose import ResolvedQuery, compose
+from dbt_charts.core.execute.query_result import QueryResult
+from dbt_charts.core.execute.run import execute_resolved
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
 from .._backend_runner import DuckDBRunner
@@ -428,7 +429,7 @@ class TestLimitFetchDialects:
         q.limit = limit
 
         with patch(
-            "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+            "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
             return_value=mock_adapter,
         ):
             resolved = _compose(sql_adapter, q, params=[])
@@ -817,7 +818,7 @@ class TestRuntimeMutatingSqlGuard:
             )
             mock_dbt_adapter = MagicMock()
             with patch(
-                "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+                "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
                 return_value=mock_dbt_adapter,
             ):
                 result = adapter.execute(query, source_config=source_config)
@@ -1022,7 +1023,7 @@ class TestPlaceholderShapedLiterals:
         query = _make_query(sql, source=dialect)
         try:
             with patch(
-                "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+                "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
                 return_value=mock_adapter,
             ):
                 result = adapter.execute(
@@ -1205,7 +1206,7 @@ class TestDbtAdapterColumnNameNormalization:
         adapter = _sql(local_project, profile_type=dialect)
 
         with patch(
-            "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+            "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
             return_value=mock_adapter,
         ):
             resolved = _compose(adapter, q, params=[])
@@ -1318,8 +1319,8 @@ class TestExecuteResolved:
         # A placeholder-shaped literal that a second render would corrupt.
         wrapped = dataclasses.replace(resolved, sql="SELECT '{{ x }}' AS wrapped")
         with patch.object(adapter.backend, "_get_source_pool", return_value=pool):
-            result = adapter.registry.execute_resolved(
-                wrapped, query, source_config=source
+            result = execute_resolved(
+                adapter.registry, wrapped, query, source_config=source
             )
 
         assert pool.execute.call_args.args[0] == "SELECT '{{ x }}' AS wrapped"

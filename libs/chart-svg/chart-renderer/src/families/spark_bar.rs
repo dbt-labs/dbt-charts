@@ -14,7 +14,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use diagnostic::codes;
-use crate::common::{tag_at, CellRow, CellTag, Font};
+use crate::common::{Font};
+use ::bind::rows::{tag_at, CellRow, CellTag};
 use diagnostic::{py_repr, warn, Diagnostic};
 use crate::layout::{IntrinsicWidth, Layout, Rect};
 use measure::{FontBook, Measure};
@@ -220,7 +221,7 @@ fn validate_value_field(
 fn format_count(v: &Value, tag: Option<&CellTag>) -> Result<String, String> {
     let float = match v {
         Value::Number(n) if n.is_i64() || n.is_u64() => {
-            return crate::number_locale::d3_format(",d", n.as_f64().unwrap_or(0.0));
+            return ::bind::formats::locale::d3_format(",d", n.as_f64().unwrap_or(0.0));
         }
         Value::Number(n) => n.as_f64().unwrap_or(0.0),
         // A missing/NULL magnitude renders as production's `count_value = 0`
@@ -234,7 +235,7 @@ fn format_count(v: &Value, tag: Option<&CellTag>) -> Result<String, String> {
     if float.is_finite() && float.fract() == 0.0 {
         Ok(format!("{}", float as i64))
     } else {
-        crate::number_locale::d3_format(",.1f", float)
+        ::bind::formats::locale::d3_format(",.1f", float)
     }
 }
 
@@ -881,8 +882,8 @@ mod tests {
             "padding": null,
             "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},
                 "secondary_color": "#626366", "tones": null, "title_case": "title",
-                "format_locale": crate::number_locale::en_us_wire(),
-                "time_locale": crate::time_locale::en_us_wire(),
+                "format_locale": ::bind::formats::locale::en_us_wire(),
+                "time_locale": ::bind::time_locale::en_us_wire(),
                 "spark_bar_title": {"height": 24.0, "baseline_y": 16.0},
                 "placeholder": {
                     "opacity": 0.4,

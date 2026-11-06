@@ -24,12 +24,12 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_DURATION_EXCEEDED
-from dbt_charts.core.execute.adapters.base import resolve_effective_row_limit
 from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.query_result import resolve_effective_row_limit
 
 from .conftest import DbtHarness
 
-_BUILD_ADAPTER = "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter"
+_BUILD_ADAPTER = "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter"
 
 
 def _prepared(sql: str) -> ResolvedQuery:

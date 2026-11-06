@@ -1,6 +1,7 @@
 //! Value labels: where they sit, the ink they take and whether they fit.
 
-use crate::common::{AxisStyle, LabelAnchor, MarkLabels, VALUE_AXIS_BREATHING_ROOM, format_mark_label, row_num, row_str};
+use crate::common::{AxisStyle, LabelAnchor, MarkLabels, VALUE_AXIS_BREATHING_ROOM, format_mark_label};
+use ::bind::rows::{row_num, row_str};
 use crate::constants::bar::LABEL_FIT_LINE_HEIGHT_MULTIPLIER;
 use crate::families::cartesian::{BandScale};
 use d3rs::scale::Continuous;
@@ -241,7 +242,7 @@ pub(super) fn label_sites<'a>(
     mut place: impl FnMut(&serde_json::Map<String, Value>, &str, f64) -> Result<Option<LabelSite>, String>,
 ) -> Result<Vec<LabelSite>, String> {
     let mut sites = Vec::new();
-    for (row, val) in crate::common::valued_rows(rows, y_field) {
+    for (row, val) in ::bind::rows::valued_rows(rows, y_field) {
         if let Some(mut site) = place(row, &row_str(row, cat_field), val)? {
             site.href = link.map(|link| link.href(row)).transpose()?;
             sites.push(site);
@@ -431,15 +432,15 @@ pub(super) struct LabelBuild<'a> {
 fn chronological_axis(b: &LabelBuild) -> Result<Option<Vec<String>>, String> {
     let dates: Vec<&str> = b.cat_domain.iter().map(String::as_str).collect();
     let mut chronological = b.cat_domain.to_vec();
-    if crate::families::temporal::x_is_standard_date(&b.r.column_types, b.cat_field, &dates)? {
-        let mut axis = crate::time_axis::TimeAxis::new(Default::default(), HashMap::new());
+    if ::bind::temporal::x_is_standard_date(&b.r.column_types, b.cat_field, &dates)? {
+        let mut axis = ::bind::time_axis::TimeAxis::new(Default::default(), HashMap::new());
         for date in &dates {
             axis.add(date).map_err(|e| e.diagnostic(&b.r.id, b.cat_field, "bar").to_string())?;
         }
         axis.sort_by_instant(&mut chronological);
         return Ok(Some(chronological));
     }
-    if crate::common::is_year_shaped(&b.r.column_types, b.rows, b.cat_field)? {
+    if ::bind::rows::is_year_shaped(&b.r.column_types, b.rows, b.cat_field)? {
         // A year-shaped integer axis is a time axis: its years order numerically.
         let mut years = chronological
             .iter()

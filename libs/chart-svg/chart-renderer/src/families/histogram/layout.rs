@@ -410,7 +410,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         let stack_h = plot_h - y_pos(bin.count as f64);
         let corner = crate::common::bar_corner_radius(corner_r, right - left, stack_h);
         let stack_top = y_pos(bin.count as f64);
-        let piled = crate::common::zero_piles(bin.segments.iter().map(|segment| ((), segment.n as f64)));
+        let piled = ::bind::stack::zero_piles(bin.segments.iter().map(|segment| ((), segment.n as f64)));
         for (segment, (below, end)) in bin.segments.iter().zip(piled) {
             let bottom = y_pos(below);
             let top = y_pos(end);
@@ -452,7 +452,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     let (lx, ly) = legend_xy.get();
     if let Some(lg) = &symbol_legend {
         let (dx, dy) = legend::legend_slide(&r.id, &r.legend.position, lg, (plot_w, plot_h))?;
-        plot.extend(legend::drawn_symbol_legend(&symbol_entries, lg, &r.legend, swatch, lx + dx, ly + dy, false));
+        plot.extend(legend::drawn_symbol_legend(&symbol_entries, lg, &r.legend, swatch, lx + dx, ly + dy, false, r.canvas.as_str()));
     } else if let Some(color) = gradient_color {
         let at = GradientAt::new(&r.legend, r.color_format.as_ref(), color, (plot_w, plot_h))?;
         let legend = at.legend(&r.legend, color, gradient_id, &bound.legend_title, fonts)?;

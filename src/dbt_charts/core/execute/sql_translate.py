@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import sqlglot
 import sqlglot.expressions as exp
+from sqlglot.tokens import TokenType
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
@@ -32,10 +33,13 @@ from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
 if TYPE_CHECKING:
     # The adapters package imports this module; a runtime import is a cycle.
-    from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
+    from dbt_charts.core.execute.dbt_utils import DbtRefResolver
     from dbt_charts.core.execute.metricflow import SemanticLayer
 
 _SENTINEL_RE = re.compile(r"\x00dct_(?:param|rel)_\d+\x00")
+# Sentinels cross sqlglot in this plain form: sqlglot's BigQuery generator
+# escapes the NULs in an identifier.
+_PLAIN_SENTINEL_RE = re.compile(r"__dct_(?:param|rel)_\d+__")
 _PARAM_RE = re.compile(r"\x00dct_param_(\d+)\x00")
 
 BoundParams = list[Any]  # type-state: explicit_any — runtime-typed values
@@ -113,7 +117,7 @@ def _keep_monday_weeks(
     elif write == "snowflake":
         for node in nodes:
             operand = node.this
-            duplicated.update(_SENTINEL_RE.findall(operand.sql()))
+            duplicated.update(_PLAIN_SENTINEL_RE.findall(operand.sql()))
             node.replace(
                 exp.DateAdd(
                     this=exp.TimestampTrunc(this=operand.copy(), unit=exp.var("DAY")),
@@ -142,12 +146,20 @@ def translate_sql(sql: str, read: str, write: str) -> str:
     Raises:
         ExecutionError: ERR-SQL-DIALECT-UNSUPPORTED when the SQL does not parse,
             holds several statements, calls a function sqlglot does not know,
-            uses a construct the target cannot express, or loses or duplicates
-            a placeholder.
+            uses a construct the target cannot express, loses or duplicates
+            a placeholder, or already uses a sentinel's plain name.
     """
     read_name, write_name = sqlglot_dialect(read), sqlglot_dialect(write)
     if read_name == write_name:
         return sql
+    if _PLAIN_SENTINEL_RE.search(sql):
+        raise dialect_unsupported(
+            read,
+            write,
+            "the SQL uses a `__dct_rel_<n>__` or `__dct_param_<n>__` "
+            "name, which dbt Charts reserves",
+        )
+    sql = _SENTINEL_RE.sub(lambda m: f"__{m.group(0)[1:-1]}__", sql)
     # sqlglot raises ValueError for a dialect name it does not know.
     try:
         trees = sqlglot.parse(sql, read=read_name)
@@ -172,22 +184,33 @@ def translate_sql(sql: str, read: str, write: str) -> str:
     try:
         out = _emit(tree, write_name)
         emitted = sqlglot.parse_one(out, read=write_name)
+        tokens = sqlglot.tokenize(out, read=write_name)
     except Exception as exc:  # noqa: BLE001 — sqlglot raises arbitrary internal errors on constructs it cannot model
         raise dialect_unsupported(read, write, str(exc)) from exc
-    # Every sentinel must come out as a bare identifier: sqlglot can move one
-    # into a string literal (`INTERVAL {{ n }} DAY` becomes `INTERVAL '<n> DAY'`),
+    # Every sentinel must come out as a bare identifier and a bare name token:
+    # sqlglot can move one into a string literal (`INTERVAL {{ n }} DAY` becomes
+    # `INTERVAL '<n> DAY'`, a DuckDB struct field name becomes a string key),
     # where the value inlined later would no longer be data.
-    in_text = Counter(_SENTINEL_RE.findall(sql)) + duplicated
+    in_text = Counter(_PLAIN_SENTINEL_RE.findall(sql)) + duplicated
     as_identifiers = Counter(
         node.name
         for node in emitted.find_all(exp.Identifier)
-        if not node.quoted and _SENTINEL_RE.fullmatch(node.name)
+        if not node.quoted and _PLAIN_SENTINEL_RE.fullmatch(node.name)
     )
-    if in_text != Counter(_SENTINEL_RE.findall(out)) or in_text != as_identifiers:
+    as_names = Counter(
+        token.text
+        for token in tokens
+        if token.token_type is TokenType.VAR
+        and _PLAIN_SENTINEL_RE.fullmatch(token.text)
+    )
+    if (
+        in_text != Counter(_PLAIN_SENTINEL_RE.findall(out))
+        or not in_text == as_identifiers == as_names
+    ):
         raise dialect_unsupported(
             read, write, "a variable or ref() would end up inside a string or comment"
         )
-    return out
+    return _PLAIN_SENTINEL_RE.sub(lambda m: f"\x00{m.group(0)[2:-2]}\x00", out)
 
 
 _DIALECT_ALIASES = {"postgresql": "postgres", "mssql": "sqlserver", "mariadb": "mysql"}

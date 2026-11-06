@@ -10,7 +10,7 @@ import pytest
 from dbt_charts.agent_api.query import execute_query
 from dbt_charts.core.compile.template.daterange import current_board_clock
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import Project
 
 _SQL = (
@@ -25,9 +25,9 @@ def test_an_ad_hoc_query_resolves_a_preset_literal(
     (tmp_path / "dbt_charts.yml").write_text(
         'sources:\n  db:\n    type: duckdb\n    path: ":memory:"\n'
     )
-    registry = build_adapter_registry(local_project(tmp_path))
+    registry = build_exec_env(local_project(tmp_path))
 
-    result = execute_query(_SQL, source="db", adapter_registry=registry)
+    result = execute_query(_SQL, source="db", env=registry)
 
     assert result.success, result.errors
     assert result.data == [{"w": "hit"}]

@@ -11,7 +11,7 @@ import pytest
 
 from dbt_charts.core.compile import compile as df_compile
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.execute import Executor, cache_keys
+from dbt_charts.core.execute import cache_keys
 from dbt_charts.core.execute.cache_keys import stored_query_hash
 from dbt_charts.core.execute.duckdb_cache import (
     compute_cache_key,
@@ -21,6 +21,8 @@ from dbt_charts.core.execute.duckdb_cache import (
 )
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
+from ..._run import Run
+from ..._scripted_env import backend_of
 from .test_cache_policy_enforcement import _board_yaml, _ok_adapter
 
 
@@ -53,20 +55,20 @@ def test_a_local_cache_entry_written_under_one_version_misses_under_the_next(
         adapter = _ok_adapter()
 
         def run() -> None:
-            Executor(
+            Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             ).execute_query("q")
 
         run()
         run()
-        assert adapter.execute.call_count == 1  # second run is a hit
+        assert backend_of(adapter).execute.call_count == 1  # second run is a hit
         monkeypatch.setattr(
             cache_keys, "RESULT_FORMAT_VERSION", cache_keys.RESULT_FORMAT_VERSION + 1
         )
         run()
-        assert adapter.execute.call_count == 2
+        assert backend_of(adapter).execute.call_count == 2
     finally:
         cache.close()

@@ -65,11 +65,11 @@ from dbt_charts.core.diagnostics.codes_execute import (
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.diagnostics.registry import ErrorCode
 from dbt_charts.core.dialects import SQLDialect, get_dialect
-from dbt_charts.core.execute.adapters.base import GROUP_BY_MESSAGE
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import ConnectionSetupFailed
+from dbt_charts.core.execute.backends.dbt_adapter_factory import ConnectionSetupFailed
 from dbt_charts.core.execute.column_advice import duckdb_unknown_column_advice
 from dbt_charts.core.execute.duckdb_config import normalize_duckdb_config
 from dbt_charts.core.execute.duckdb_types import duckdb_schema, typed_rows
+from dbt_charts.core.execute.query_result import GROUP_BY_MESSAGE
 
 # Relative read_csv()/read_parquet() paths resolve against data_dir via a
 # per-connection `SET file_search_path` applied at connection creation. This lock
@@ -560,7 +560,7 @@ def default_duckdb_source(dbt_project_path: Path | None) -> DuckDBSourceConfig:
     """
     if dbt_project_path is None:
         return DuckDBSourceConfig(type="duckdb", path=":memory:")
-    from dbt_charts.core.execute.adapters.dbt_utils import DBT_PROJECT_DB_NAMES
+    from dbt_charts.core.execute.dbt_utils import DBT_PROJECT_DB_NAMES
 
     for db_name in DBT_PROJECT_DB_NAMES:
         candidate = dbt_project_path / "data" / db_name
@@ -893,7 +893,7 @@ class DuckDBBackend:
         locked down by ``_connect`` after setup):
         - Same read_only=True driver flag for file-based paths.
         - enable_external_access is NOT forced to False; caller's duckdb_config
-          passes through. Approved callsites: LOCAL_AUTHORING_REGISTRY_KWARGS.
+          passes through. Approved callsites: LOCAL_AUTHORING_ENV_KWARGS.
 
         When read_only=False:
         - No read_only driver flag.

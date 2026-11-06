@@ -1,19 +1,24 @@
 //! The vertical bar panel on a band or temporal x: columns over a category axis.
 
-use crate::common::{VALUE_AXIS_BREATHING_ROOM, axis_title_band, axis_title_text, color_domain_of, row_num, row_str};
+use ::bind::rows::color_domain_of;
+use crate::common::{VALUE_AXIS_BREATHING_ROOM, axis_title_band, axis_title_text};
+use ::bind::rows::{row_num, row_str};
 use diagnostic::Diagnostic;
 use crate::families::axis_caption::{AxisCaption, category_axis_caption, date_value_caption, value_axis_caption};
 use crate::families::cartesian::{BandScale, vl_default_tick_count};
 use d3rs::scale::{Band, Continuous};
-use crate::families::layers::{AreaFrame, DomainCut, DualAxisTitles, LayerAxis, LayerAxisFrame, LayerAxisInk, LayerClaim, LayerScale, LayerSide, LayerStack, LayerType, MOVED_BASE_LABEL_PAD, OverlayAxisY, OverlayBarLayer, OverlayLayer, OverlayLineLayer, OverlayScatterLayer, PointColor, YSides, claim_layers, layer_color_groups, layer_color_of, layer_color_promoted, layer_color_text, layer_color_values, layer_series_swatches, layer_series_text, layer_stack_order, merged_legend_title, resolve_layer_rows, row_order_stack, scope_group_top, union_x_domain};
-use crate::families::legend::{LegendEntry, LegendSymbol, VegaLegend, drawn_symbol_legend, legend_fit_bounds, legend_origin, legend_room, legend_slide, legend_title_text, limited_labels, title_only_legend, vega_legend, with_drawn_labels};
+use crate::families::layers::{AreaFrame, DomainCut, DualAxisTitles, LayerAxis, LayerAxisFrame, LayerAxisInk, LayerClaim, LayerScale, LayerSide, LayerStack, LayerType, MOVED_BASE_LABEL_PAD, OverlayAxisY, OverlayBarLayer, OverlayLayer, OverlayLineLayer, OverlayScatterLayer, PointColor, YSides, claim_layers, layer_series_swatches, layer_series_text, merged_legend_title, resolve_layer_rows, row_order_stack, scope_group_top, union_x_domain};
+use ::bind::layers::{layer_color_groups, layer_color_of, layer_color_promoted, layer_color_text, layer_color_values, layer_stack_order};
+use crate::families::legend::{VEGA_LEGEND_OFFSET, LegendEntry, LegendSymbol, VegaLegend, drawn_symbol_legend, fold_to_height, folded_entries, legend_fit_bounds, legend_origin, legend_room, legend_slide, legend_title_text, limited_labels, title_only_legend, vega_legend, with_drawn_labels};
 use crate::families::scatter_axis::TemporalXAxis;
 use crate::families::span::RangedBars;
-use crate::families::temporal::{AuthoredTimeFormat, LabelUnit, TemporalLabel, TimeUnit, axis_time_format, complete_buckets, grain_format, parse_authored_time_unit, resolve_vega_label_layout};
+use crate::families::temporal::{AuthoredTimeFormat, LabelUnit, TemporalLabel, axis_time_format, grain_format, resolve_vega_label_layout};
+use ::bind::temporal::{complete_buckets, parse_authored_time_unit};
+use ::bind::temporal::{TimeUnit};
 use crate::families::{facet_compose, multiples, span, support_table_strip};
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::layout::Rect;
-use crate::time_axis::{Grain as AxisGrain, TimeAxis};
+use ::bind::time_axis::{Grain as AxisGrain, TimeAxis};
 use crate::vega_fit::category_label_layout;
 use crate::{Padding, Payload, vega_fit};
 use diagnostic::codes;
@@ -31,7 +36,7 @@ use super::domain::{CenterStack, RawX, SegmentSpan, SegmentSpans, bar_value_exte
 use super::facet::color_1to1_with_cat;
 use super::labels::{FitHide, LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, category_clearance, label_fit_span, label_hang, mark_labels, plain_sites, step_band_of, value_label_layers};
 use super::layout::{Drawn, XScale, clipped_if, warn_vertical_density};
-use super::legend::{LayeredBarLegend, bar_link_keys, grouped_legend_domain, numeric_legends_of, stacked_legend_entries};
+use super::legend::{LayeredBarLegend, authored_legend_order, bar_link_keys, grouped_legend_domain, numeric_legends_of, stacked_legend_entries};
 use super::marks::{BandColumns, ColumnSplit, Columns, RangedLayerAria, Rounded, bar_passes, base_mark, baseline_rule_layers, datum_by_key, layer_mark, baseline_rules, collapsed_bars, direction_layers, grouped_overlap_fraction, hover_band_for, labels_on_zero_stack, layer_block_rows, layer_day_numbers, link_hrefs, painted_series_bars, ranged_extent, strip_cell_aria, strip_columns, unity_rule};
 use super::time_x::TimeX;
 use super::tooltip::{NativeTitles, bar_datum_aria, imputed_datum_aria, stack_group_total, tooltip_order_domain};
@@ -230,7 +235,7 @@ pub(super) fn annotations_unsupported(r: &BarResolved, chart_type: &str) -> Diag
 /// The calendar dates category labels lead with (`YYYY-MM-DD`, then nothing or a `T` or space and anything): the shape
 /// that routes a band axis to the temporal label tilt. A label heuristic, not an x value.
 pub(super) fn leading_dates(domain: &[String]) -> Vec<(i32, u8, u8)> {
-    domain.iter().filter_map(|label| crate::time_axis::parse_iso_date(label)).collect()
+    domain.iter().filter_map(|label| ::bind::time_axis::parse_iso_date(label)).collect()
 }
 
 /// A numeric x lands on a category axis as strings, which a number anchor cannot name.
@@ -400,7 +405,7 @@ pub(crate) struct BarFacetPanelOpts<'a> {
     pub(crate) series: &'a Cell<usize>,
     /// This panel's canonical key, the `panel` an annotation names.
     pub(crate) panel_key: &'a str,
-    /// This panel's place in `multiples::regroup` order; keeps clip ids unique.
+    /// This panel's place in `::bind::multiples::regroup` order; keeps clip ids unique.
     pub(crate) panel_ordinal: usize,
 }
 
@@ -447,11 +452,11 @@ pub(crate) fn render_vertical_panel(
     // Production's emitter rewrites a labeled or year-shaped x to ISO dates
     // before anything reads it; a layer reading its own query is rewritten
     // the same way below.
-    let rows_normalized = crate::families::temporal::normalize_labeled_temporal(&r.column_types, rows, &r.x)?;
+    let rows_normalized = ::bind::temporal::normalize_labeled_temporal(&r.column_types, rows, &r.x)?;
     let rows = &*rows_normalized;
     let whole_rows = facet.map_or(r.whole_rows.as_deref(), |f| Some(f.chart_rows));
     let chart_rows_normalized =
-        whole_rows.map(|whole| crate::families::temporal::normalize_labeled_temporal(&r.column_types, whole, &r.x)).transpose()?;
+        whole_rows.map(|whole| ::bind::temporal::normalize_labeled_temporal(&r.column_types, whole, &r.x)).transpose()?;
     let value_domain_rows = facet.map_or_else(|| Some(crate::legend_view::axis_rows(r.whole_rows.as_deref(), rows)), |f| f.value_domain_rows);
     let value_axis_right_overhang = facet.map_or(0.0, |f| f.value_axis_right_overhang);
     // `independent_scale` gates two effects, each at its own read site:
@@ -504,22 +509,22 @@ pub(crate) fn render_vertical_panel(
         }
         let own_rows = resolve_layer_rows(payload, query_name, r.query_name.as_deref(), "bar")?;
         let own_types = crate::families::layers::resolve_layer_types(payload, query_name, r.query_name.as_deref(), "bar")?;
-        crate::families::temporal::normalize_labeled_temporal(own_types, own_rows, x.unwrap_or(cat_field))
+        ::bind::temporal::normalize_labeled_temporal(own_types, own_rows, x.unwrap_or(cat_field))
     };
     let filled_x = x_resolution(r, chart_rows)?;
     let law = filled_x.resolution;
     let detected_data_tu: Option<TimeUnit> = match law.grain {
-        crate::families::x_type::Grain::Calendar(tu) => Some(tu),
+        ::bind::x_type::Grain::Calendar(tu) => Some(tu),
         _ => None,
     };
     // A time axis keys every datum by its bucket's start, or its UTC instant, a layer's too.
-    let time_axis = law.vl_type == crate::families::temporal::VegaType::Temporal;
+    let time_axis = law.vl_type == ::bind::temporal::VegaType::Temporal;
     // Every x date of the chart is read once, here, by the one date reader; what follows reads the axis.
     let mut x_axis = TimeAxis::new(
         AxisGrain {
             unit: detected_data_tu,
             part: match law.grain {
-                crate::families::x_type::Grain::Part(part) => Some(part),
+                ::bind::x_type::Grain::Part(part) => Some(part),
                 _ => None,
             },
             band: false,
@@ -533,7 +538,7 @@ pub(crate) fn render_vertical_panel(
     let layer_rows_store = layers
         .iter()
         .map(|l| {
-            use crate::families::layers::{layer_rows_scope, LayerRows};
+            use ::bind::layers::{layer_rows_scope, LayerRows};
             let l_rows = match layer_rows_scope(facet.is_some(), band_x && l.is_step_curve(), l.query_name(), r.query_name.as_deref()) {
                 LayerRows::Chart => Cow::Borrowed(chart_rows),
                 LayerRows::Panel | LayerRows::Dataset => own_layer_rows(l.query_name(), l.x())?,
@@ -602,7 +607,7 @@ pub(crate) fn render_vertical_panel(
     let layout_domain: Vec<String> = crate::legend_view::shown_among(r.legend_view.as_ref(), &color_domain);
     let stack_order: Vec<String> = if is_stacked {
         let cf = color_field.expect("is_stacked implies color");
-        crate::common::sorted_series_by_stack_order(
+        ::bind::stack::sorted_series_by_stack_order(
             &color_domain,
             chart_rows,
             cf,
@@ -639,10 +644,10 @@ pub(crate) fn render_vertical_panel(
     // horizontal arm.
     let tooltip_labels = !r.style.tooltip_format.spec.is_empty();
     // A wide fold names its series by the measure's display label.
-    let wide_labels = display_text::wide_measure_labels_for(&r.wide_measures, &r.field_labels)?;
+    let wide_labels = display_text::wide_measure_labels(&r.wide_measures, &r.field_labels)?.labels;
     let numeric_names = r.numeric_series_names(&color_domain)?;
     let series_text = |s: &str| {
-        numeric_names.get(s).cloned().unwrap_or_else(|| crate::common::wide_series_display(s, &wide_labels))
+        numeric_names.get(s).cloned().unwrap_or_else(|| ::bind::wide::wide_series_display(s, &wide_labels))
     };
     let order_domain =
         tooltip_order_domain(is_stacked, is_grouped, true, &stack_order, &color_domain, &r.legend, category_scale);
@@ -753,7 +758,7 @@ pub(crate) fn render_vertical_panel(
         0.0
     } else if val_on_right != baked_on_right { MOVED_BASE_LABEL_PAD } else { ax_y.labels.padding.unwrap_or(6.0) };
 
-    let time: Option<TimeX> = if law.vl_type == crate::families::temporal::VegaType::Temporal {
+    let time: Option<TimeX> = if law.vl_type == ::bind::temporal::VegaType::Temporal {
         if super::time_x::has_year_below_100(&mut x_axis, rows, &r.x) {
             return Err(payload.painted_no_marks());
         }
@@ -794,12 +799,12 @@ pub(crate) fn render_vertical_panel(
     let authored_x: Vec<String> =
         facet.map_or(payload.rows.as_slice(), |f| f.chart_rows).iter().map(|row| row_str(row, cat_field)).collect();
     let authored_x: Vec<&str> = authored_x.iter().map(String::as_str).collect();
-    let x_standard_dates = crate::families::temporal::x_is_standard_date(&r.column_types, cat_field, &authored_x)?;
+    let x_standard_dates = ::bind::temporal::x_is_standard_date(&r.column_types, cat_field, &authored_x)?;
     // Front-end contract only, same law as line/area's own `x_is_standard_date`
     // (`infer_vega_type_from_data`'s STRICT `all_temporal` gate): a daily-date x
     // that `detect_time_unit` doesn't bucket still headers through the
     // continuous-date fallback, never the raw ISO string.
-    let x_is_standard_date = crate::families::temporal::x_is_standard_date(&r.column_types, cat_field, &domain_strs)?;
+    let x_is_standard_date = ::bind::temporal::x_is_standard_date(&r.column_types, cat_field, &domain_strs)?;
     // What the labels paint is keyed by the grain they resolve to
     // (`resolve_label_time_unit`), not the data's own.
     let label_unit = detected_data_tu
@@ -839,7 +844,7 @@ pub(crate) fn render_vertical_panel(
         for value in cat_domain.drain(..) {
             match x_axis.add(&value) {
                 Ok(()) => dates.push(value),
-                Err(crate::time_axis::Unreadable::NotADate(_)) => categories.push(value),
+                Err(::bind::time_axis::Unreadable::NotADate(_)) => categories.push(value),
                 Err(outside) => return Err(outside.diagnostic(&r.id, cat_field, "bar")),
             }
         }
@@ -853,7 +858,7 @@ pub(crate) fn render_vertical_panel(
         // (yearly April starts read as quarters).
         if let Some(fill_tu) = filled_x.filled {
             let mut widened = x_axis.dates(&cat_domain);
-            widened.extend(crate::annotation::x_dates_outside(&cat_domain.iter().filter_map(|date| x_axis.get(date).map(|instant| instant.at)).collect::<Vec<_>>(), &r.annotations));
+            widened.extend(crate::annotation::x_dates_outside(&cat_domain.iter().filter_map(|date| x_axis.get(date).map(|instant| instant.at)).collect::<Vec<_>>(), &r.annotations, true));
             cat_domain = complete_buckets(&widened, fill_tu, ax_x.fiscal_year_start_month).text;
             // The axis answers the date texts of every band; one it cannot place keeps the date its text names.
             for bucket in &cat_domain {
@@ -862,7 +867,7 @@ pub(crate) fn render_vertical_panel(
         }
         // A row the rekey moved onto its band's start heads its tooltip with the date it carried; a facet's
         // step layer draws every panel's rows.
-        for raw in chart_rows.iter().filter_map(|row| row.get(crate::common::RAW_X).and_then(Value::as_str)) {
+        for raw in chart_rows.iter().filter_map(|row| row.get(::bind::wide::RAW_X).and_then(Value::as_str)) {
             x_axis.add(raw).ok();
         }
     } else {
@@ -1048,7 +1053,7 @@ pub(crate) fn render_vertical_panel(
     let legend_entries: Vec<(String, String)> = if legend_shown && !color_domain.is_empty() && r.numeric_color.is_none() {
         if is_stacked {
             // A linked legend lists its variable's options in their order, not the stack's.
-            let reversed: Vec<String> = linked_options.map_or_else(|| stack_order.iter().rev().cloned().collect(), <[String]>::to_vec);
+            let reversed: Vec<String> = linked_options.map_or_else(|| authored_legend_order(stack_order.iter().rev().cloned().collect(), &r.legend, &wide_labels), <[String]>::to_vec);
             stacked_legend_entries(&reversed, palette_domain, &r.series_palette, category_scale, &wide_labels, &r.patterns)?
         } else {
             stacked_legend_entries(
@@ -1138,9 +1143,6 @@ pub(crate) fn render_vertical_panel(
         &layers.iter().collect::<Vec<_>>(),
     )?;
     let legend_entries_typed: Vec<LegendEntry> = layered_legend.entries(r, &layer_scale);
-    let legend_labels = limited_labels(&legend_entries_typed, numeric_legends.unlisted_line, &legend_title, &r.legend, fonts, legend_room(&r.legend, Some(facet.map_or(view_w, |f| f.legend_w))))?;
-    let series_keys = crate::selected::series_keys(&legend_entries_typed, &bar_link_keys(r, &color_domain, &wide_labels));
-    let legend_entries_typed = r.selection.legend(with_drawn_labels(&legend_entries_typed, &legend_labels), &series_keys);
 
     let val_font_size = ax_y.labels.font.size_or(11.0);
     // Own-side alignment (the default: value axis on the right with labels
@@ -1413,7 +1415,7 @@ pub(crate) fn render_vertical_panel(
     let strip_axis_gap_growth = match r.effective_support_table_style.as_ref() {
         Some(style) if style.position == "bottom" => {
             let quantitative =
-                crate::families::temporal::infer_vega_type(&r.column_types, rows, cat_field)? == crate::families::temporal::VegaType::Quantitative;
+                ::bind::temporal::infer_vega_type(&r.column_types, rows, cat_field)? == ::bind::temporal::VegaType::Quantitative;
             let block = match (ax_x.labels.angle, detected_data_tu) {
                 (Some(_), _) if quantitative => cat_font_size,
                 (Some(angle), Some(data_tu)) if all_dates => {
@@ -1599,6 +1601,19 @@ pub(crate) fn render_vertical_panel(
     } else {
         gutter_of(max_val_w)?
     };
+    // A top or bottom legend row starts at the plot's left edge and runs to the card's right padding;
+    // the value axis's gutter, title and offset take their room on whichever side it sits.
+    let legend_span = facet.map_or_else(
+        || {
+            let value_axis_reach = ax_y.ticks.offset.unwrap_or(0.0) + val_gutter + crate::common::y_title_extra(val_title_style, &val_title_paint);
+            let (left_reach, right_reach) = if val_on_right { (0.0, value_axis_reach) } else { (value_axis_reach, 0.0) };
+            view_w - pad_r - right_reach - (pad_l + left_reach)
+        },
+        |f| f.legend_w - VEGA_LEGEND_OFFSET,
+    );
+    let legend_labels = limited_labels(&legend_entries_typed, numeric_legends.unlisted_line, &legend_title, &r.legend, fonts, legend_room(&r.legend, legend_span))?;
+    let series_keys = crate::selected::series_keys(&legend_entries_typed, &bar_link_keys(r, &color_domain, &wide_labels));
+    let legend_entries_typed = r.selection.legend(with_drawn_labels(&legend_entries_typed, &legend_labels), &series_keys);
     // Dual axis: the layer's own INDEPENDENT y scale — probed law
     // (docs/laws-layers.md "Dual axis"). Zero union then
     // `d3_nice(_, _, 10)` (d3's own default nice count — NOT the axis's
@@ -1677,6 +1692,9 @@ pub(crate) fn render_vertical_panel(
     let stroke_color = r.style.mark.border.color.as_deref().unwrap_or("none");
     let stroke_w = r.style.mark.border.width.unwrap_or(0.0);
     let drawn_stroke_w = if stroke_color == "none" { 0.0 } else { stroke_w };
+    // A border centered on a bar's edge paints half its width over the bar: one that leaves under half a
+    // pixel of the bar's own fill would draw as border alone, so it goes without.
+    let halo_w = |stroke_w: f64, bar_w: f64| if bar_w - stroke_w < 0.5 { 0.0 } else { stroke_w };
     let data_map = build_data_map(rows, cat_field, val_field, color_field, r.y_start.is_none())?;
     let extras = Extras::build(rows, cat_field, color_field, r.y_start.is_none(), &r.tooltip, &r.column_types)?;
     let link = r.datum_link(
@@ -1843,6 +1861,20 @@ pub(crate) fn render_vertical_panel(
         fonts,
     )?;
     title.warn_truncated(&r.id);
+    // A side legend starts at the plot's top, below the title, and may reach the bottom inset.
+    let title_stack = title.ink().map_or(0.0, |ti| ti.ink_h + ti.offset - ti.dy_quirk);
+    let folded_label;
+    let legend_entries_typed = match (legend_shown && facet.is_none())
+        .then(|| fold_to_height(&legend_entries_typed, numeric_legends.unlisted_line, &legend_title, &r.legend, fonts, h - pad_t - pad_b - title_stack))
+        .transpose()?
+        .flatten()
+    {
+        Some((kept, label)) => {
+            folded_label = label;
+            folded_entries(&legend_entries_typed, kept, &folded_label)
+        }
+        None => legend_entries_typed,
+    };
     let title_fs = title.font_size;
     let mut rail_anchors: Vec<(String, f64)> = Vec::new();
     // The cascade's packing bounds — production's raw stacked extent, not
@@ -2015,7 +2047,7 @@ pub(crate) fn render_vertical_panel(
             .chain(scatters)
             .map(|(ml, layer_x, y, is_house, layer, rows, band_step)| {
                 let style = crate::families::layers::LayerLabelStyle::new(ml, is_house, rows, payload.board_style.as_ref())?;
-                let items = crate::common::valued_rows(rows.iter(), y)
+                let items = ::bind::rows::valued_rows(rows.iter(), y)
                     .into_iter()
                     .map(|(row, val)| {
                         let cat = row_str(row, layer_x);
@@ -3671,19 +3703,23 @@ pub(crate) fn render_vertical_panel(
     } else {
         LegendSymbol::Square(swatch_stroke)
     };
+    let mut floating: Vec<Node> = Vec::new();
     let mut facet_legend: Option<facet_compose::FacetLegend> = None;
     if legend_top || (legend_shown && facet.is_some()) {
         match &vega_legend {
             Some((_, _, lg)) if facet.is_some() => {
-                let mut nodes: Vec<scene::Node> = drawn_symbol_legend(&legend_entries_typed, lg, &r.legend, facet_swatch, 0.0, 0.0, stamp_legend_series).into_iter().collect();
-                nodes.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (plot_w, plot_h), (0.0, 0.0))?);
+                let mut nodes: Vec<scene::Node> = drawn_symbol_legend(&legend_entries_typed, lg, &r.legend, facet_swatch, 0.0, 0.0, stamp_legend_series, r.canvas.as_str()).into_iter().collect();
+                nodes.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (plot_w, plot_h), (0.0, 0.0), r.canvas.as_str())?);
                 facet_legend = Some(facet_compose::FacetLegend { nodes, box_w: lg.box_w, box_h: lg.box_h() });
             }
             Some((lx, ly, lg)) => {
                 let (dx, dy) = legend_slide(&r.id, &r.legend.position, lg, (plot_w, plot_h))?;
-                head.extend(drawn_symbol_legend(&legend_entries_typed, lg, &r.legend, LegendSymbol::Square(swatch_stroke), *lx + dx, *ly + dy, stamp_legend_series));
-                head.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (plot_w, plot_h), (*lx + dx, *ly + dy))?);
-                head.extend(crate::legend_view::legend_clear(lg, &legend_entries_typed, &r.legend, (*lx + dx, *ly + dy), crate::legend_view::Inset::below_titles(&head, pad_t, canvas_w - pad_r, canvas_h - pad_b), fonts)?);
+                let inset = crate::legend_view::Inset::below_titles(&head, pad_t, canvas_w - pad_r, canvas_h - pad_b);
+                // A floating legend paints over the plot, so it follows the marks.
+                let drawn = if r.legend.position.overlay { &mut floating } else { &mut head };
+                drawn.extend(drawn_symbol_legend(&legend_entries_typed, lg, &r.legend, LegendSymbol::Square(swatch_stroke), *lx + dx, *ly + dy, stamp_legend_series, r.canvas.as_str()));
+                drawn.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (plot_w, plot_h), (*lx + dx, *ly + dy), r.canvas.as_str())?);
+                drawn.extend(crate::legend_view::legend_clear(lg, &legend_entries_typed, &r.legend, (*lx + dx, *ly + dy), inset, fonts)?);
             }
             None => return Err("bar: a shown legend reached an arm that lays none out".into()),
         }
@@ -3703,9 +3739,12 @@ pub(crate) fn render_vertical_panel(
         match &vega_legend {
             Some((lx, ly, lg)) => {
                 let (dx, dy) = legend_slide(&r.id, &r.legend.position, lg, (plot_w, plot_h))?;
-                head.extend(drawn_symbol_legend(&legend_entries_typed, lg, &r.legend, LegendSymbol::Square(swatch_stroke), *lx + dx, *ly + dy, stamp_legend_series));
-                head.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (plot_w, plot_h), (*lx + dx, *ly + dy))?);
-                head.extend(crate::legend_view::legend_clear(lg, &legend_entries_typed, &r.legend, (*lx + dx, *ly + dy), crate::legend_view::Inset::below_titles(&head, pad_t, canvas_w - pad_r, canvas_h - pad_b), fonts)?);
+                let inset = crate::legend_view::Inset::below_titles(&head, pad_t, canvas_w - pad_r, canvas_h - pad_b);
+                // A floating legend paints over the plot, so it follows the marks.
+                let drawn = if r.legend.position.overlay { &mut floating } else { &mut head };
+                drawn.extend(drawn_symbol_legend(&legend_entries_typed, lg, &r.legend, LegendSymbol::Square(swatch_stroke), *lx + dx, *ly + dy, stamp_legend_series, r.canvas.as_str()));
+                drawn.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (plot_w, plot_h), (*lx + dx, *ly + dy), r.canvas.as_str())?);
+                drawn.extend(crate::legend_view::legend_clear(lg, &legend_entries_typed, &r.legend, (*lx + dx, *ly + dy), inset, fonts)?);
             }
             None => return Err("bar: a shown legend reached an arm that lays none out".into()),
         }
@@ -3973,7 +4012,7 @@ pub(crate) fn render_vertical_panel(
                 let (top_y, bottom_y) = if y1 <= y2 { (y1, y2) } else { (y2, y1) };
                 let seg_h = bottom_y - top_y;
                 let paint = crate::common::series_color(base_series(series), palette_domain, &r.series_palette, category_scale, &r.patterns)?;
-                let mark = paint.for_mark(columns.width.min(seg_h), stroke_color, stroke_w);
+                let mark = paint.for_mark(columns.width.min(seg_h), stroke_color, halo_w(stroke_w, columns.width));
                 // Corner radius flips with sign (Vega's mixed-sign layer
                 // split — see `bar_passes`'s doc comment): a positive
                 // segment rounds its top (far) end, a negative one its
@@ -3986,7 +4025,7 @@ pub(crate) fn render_vertical_panel(
                     segment_r,
                     Rounded::by_sign(raw_val), false, next_clip().as_deref(), aria.as_deref(), anchor_of(&key))?);
             }
-            if let (Some((top, bottom)), true) = (stack_ends, continuous_time && stroke_color != "none" && stroke_w > 0.0) {
+            if let (Some((top, bottom)), true) = (stack_ends, continuous_time && stroke_color != "none" && halo_w(stroke_w, columns.width) > 0.0) {
                 let (r, x2) = (crate::common::bar_corner_radius(corner_r, columns.width, bottom - top), col_x + columns.width);
                 let outline = PathData::new()
                     .move_to(col_x, bottom)
@@ -4054,7 +4093,7 @@ pub(crate) fn render_vertical_panel(
             if ghosts_on {
                 ghost_points.push((aria.clone(), col_x + columns.width / 2.0, bar_top, fill.clone(), hrefs.get(&key).cloned()));
             }
-            let mark = paint.for_mark(columns.width.min(bar_h), stroke_color, stroke_w);
+            let mark = paint.for_mark(columns.width.min(bar_h), stroke_color, halo_w(stroke_w, columns.width));
             let (edge, edge_w) = mark.seam(crate::pattern::STACK_EDGE_W);
             plot.extend(bar_passes(base_mark(&datum_of, &key), false, col_x, bar_top, columns.width, bar_h, &mark.fill, mark.ink.as_deref(), r.style.mark.opacity, edge, edge_w,
                 corner_r,
@@ -4118,7 +4157,7 @@ pub(crate) fn render_vertical_panel(
             if ghosts_on {
                 ghost_points.push((aria.clone(), col_x + columns.width / 2.0, bar_top, ghost_ink.clone(), hrefs.get(&key).cloned()));
             }
-            let mark = r.single_series_paint(rows, &cat_domain, cat)?.for_mark(columns.width.min(bar_h), stroke_color, stroke_w);
+            let mark = r.single_series_paint(rows, &cat_domain, cat)?.for_mark(columns.width.min(bar_h), stroke_color, halo_w(stroke_w, columns.width));
             plot.extend(bar_passes(base_mark(&datum_of, &key), false, col_x, bar_top, columns.width, bar_h, &mark.fill, mark.ink.as_deref(), r.style.mark.opacity, &mark.stroke, mark.stroke_w, corner_r,
                 ends, double_stroke, next_clip().as_deref(), aria.as_deref(), anchor_of(&key))?);
         }
@@ -4407,7 +4446,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
                 let (seen, unseen): (Vec<String>, Vec<String>) = layer_domain.iter().cloned().partition(|v| color_domain.contains(v));
                 unseen
                     .into_iter()
-                    .chain(crate::common::sorted_series_by_stack_order(&seen, bar_layer_rows, layer_color_field, &bl.y, None)?)
+                    .chain(::bind::stack::sorted_series_by_stack_order(&seen, bar_layer_rows, layer_color_field, &bl.y, None)?)
                     .map(Some)
                     .collect()
             } else {
@@ -4747,7 +4786,8 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
     let mut occupied = crate::annotation::DataMark::plot_marks(&plot);
     occupied.extend(crate::annotation::DataMark::labels_in(&tail, (plot_left, plot_top)));
     let annotations = crate::annotation::AnnotationCtx { occupied, ..annotation_ctx((plot_left, plot_top), plot_w, plot_h) };
-    tail.extend(crate::annotation::nodes(&annotations, crate::annotation::Plane::Foreground)?);
+    // Built where the data marks are known, painted right after the x axis so a rule on the plot edge covers its ticks.
+    let foreground_annotations = crate::annotation::nodes(&annotations, crate::annotation::Plane::Foreground)?;
 
     // Shaped widths, the fit arm's `cat_label_ink` measurer (Vega bounds the
     // drawn label); the title reads the same ink the margin reserves.
@@ -4810,6 +4850,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
     if paint_x_axis {
         tail.extend(x_axis.nodes(ax_x, plot_left, plot_w, (plot_top + x_edge.edge_y(plot_h), plot_top + x_edge.edge_y(plot_h)), fonts)?);
     }
+    tail.extend(foreground_annotations);
 
     // Value-axis labels — one per tick, anchored to whichever side
     // val_on_right names. Vega-fit: flip-aligned right labels share one
@@ -5119,6 +5160,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
         let mut body = head;
         body.push(plot_group(plot));
         body.extend(tail);
+        body.extend(floating);
         frame.svg(body)
     };
 

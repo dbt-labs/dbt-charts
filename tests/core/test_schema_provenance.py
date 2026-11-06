@@ -16,11 +16,12 @@ point.
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import Mock
 
 from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.dbt_manifest import LoadedManifest, RefIndex, ref_index
-from dbt_charts.core.execute.adapters.base import QueryResult, ResolvedRelation
-from dbt_charts.core.execute.adapters.dbt_utils import resolve_dbt_refs_with_provenance
+from dbt_charts.core.execute.dbt_utils import resolve_dbt_refs_with_provenance
+from dbt_charts.core.execute.query_result import QueryResult, ResolvedRelation
 
 # ---------------------------------------------------------------------------
 # Provenance data model
@@ -138,14 +139,16 @@ class TestResolveDbtRefsWithProvenance:
 class TestExecutorProvenance:
     """Executor caches and exposes per-query provenance."""
 
-    def test_get_query_provenance_after_execute(self) -> None:
+    def test_provenance_after_execute(self, routes: Mock) -> None:
         """After executing a query, provenance is accessible."""
         from unittest.mock import MagicMock
 
         from dbt_charts.core.compile.models.board.normalized import Board
         from dbt_charts.core.compile.models.primitives import Regional
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.executor import Executor
+
+        from .._run import Run
+        from .._scripted_env import ScriptedBackend, scripted_env
 
         board = MagicMock(spec=Board)
         board.queries = {
@@ -163,13 +166,9 @@ class TestExecutorProvenance:
             schema=literal_schema([{"id": 1}]),
         )
 
-        mock_registry = MagicMock()
-        mock_registry.execute.return_value = mock_result
+        routes.return_value = mock_result
 
-        executor = Executor(board, adapter_registry=mock_registry)
-        executor.execute_query("orders")
-
-        provenance = executor.get_query_provenance("orders")
-        assert provenance is not None
+        executor = Run(board, env=scripted_env(ScriptedBackend()))
+        provenance = executor.results(["orders"], {}).provenance["orders"]
         assert len(provenance) == 1
         assert provenance[0].schema == "dev_dave"

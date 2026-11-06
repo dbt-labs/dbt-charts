@@ -129,7 +129,7 @@ fn every_expression_vega_ran_paints_what_vega_painted() {
 const UNMODELED_OUTCOMES: usize = 39;
 
 fn replay(text: &str, mismatches: &mut Vec<String>, checked: &mut usize, unmodeled: &mut usize) {
-    let _locale = crate::time_locale::en_us_scope();
+    let _locale = ::bind::time_locale::en_us_scope();
     let corpus: Value = serde_json::from_str(text).unwrap();
     let kinds = corpus["kinds"].as_object().unwrap();
     for case in corpus["cases"].as_array().unwrap() {

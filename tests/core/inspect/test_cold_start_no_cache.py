@@ -17,7 +17,7 @@ import duckdb
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.inspect.renderer import render_inspect_dashboard
 
 
@@ -58,12 +58,12 @@ def test_cold_start_no_cache_renders_column_inventory(
     assert not (cold_project / "target" / "super_schema.json").exists()
 
     project = local_project(cold_project)
-    adapter_registry = build_adapter_registry(project)
+    env = build_exec_env(project)
     html = render_inspect_dashboard(
         _template("model"),
         {"model": "orders"},
         project=project,
-        adapter_registry=adapter_registry,
+        env=env,
     )
 
     # The resolver should discover schema "main" for table "orders" and the
@@ -84,11 +84,11 @@ def test_cold_start_no_cache_file_not_created(
 ) -> None:
     """Rendering must not create a super_schema.json as a side effect."""
     project = local_project(cold_project)
-    adapter_registry = build_adapter_registry(project)
+    env = build_exec_env(project)
     render_inspect_dashboard(
         _template("model"),
         {"model": "orders"},
         project=project,
-        adapter_registry=adapter_registry,
+        env=env,
     )
     assert not (cold_project / "target" / "super_schema.json").exists()

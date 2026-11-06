@@ -54,6 +54,7 @@
   "controls.range": "{start}～{end}",
   "controls.range_same_month": "{year}年{month}{start_day}～{end_day}日",
   "controls.reset": "リセット",
+  "controls.remove_value": "{value} を削除",
   "controls.search": "検索",
   "controls.search_values": "値を検索",
   "controls.select_all": "すべて選択",

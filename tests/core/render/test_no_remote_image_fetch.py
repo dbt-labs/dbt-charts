@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from dbt_charts.core.board import render_dashboard
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import InMemoryBoard
 
 from ...conftest import InMemoryProject
@@ -43,7 +43,7 @@ def test_rendering_a_board_never_fetches_a_remote_image() -> None:
         result = render_dashboard(
             board=InMemoryBoard(_BOARD, path=None),
             project=project,
-            adapter_registry=build_adapter_registry(project, read_only=False),
+            env=build_exec_env(project, read_only=False),
             result_cache=None,
             format="svg",
         )

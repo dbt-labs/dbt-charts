@@ -15,11 +15,8 @@ pub(crate) mod placement;
 pub mod font_normalize;
 pub mod frame;
 pub mod href;
-pub mod js_date;
-pub mod label_template;
 pub mod labels_expr;
 pub(crate) mod legend_view;
-pub mod number_locale;
 pub mod payload_schema;
 pub mod pattern;
 pub mod prose;
@@ -29,9 +26,8 @@ pub mod sizing;
 pub mod step_band;
 pub mod svg;
 pub mod text;
-pub mod time_axis;
-pub mod time_locale;
-pub mod time_zone;
+#[cfg(test)]
+mod time_axis_laws;
 pub mod torn;
 pub mod title;
 pub mod title_shift;
@@ -194,14 +190,14 @@ pub struct BoardStyle {
     /// The board's resolved `regional.format_locale` (`HouseLocale`): the
     /// vocabulary every number on the board prints in. Required — a payload
     /// without it names the field rather than printing en-US.
-    pub format_locale: number_locale::NumberLocale,
+    pub format_locale: ::bind::formats::locale::NumberLocale,
     /// The board's resolved `regional.locale.time`: the month, day and period
     /// names (and the `%c %x %X` patterns) a date prints in. Required, like
     /// `format_locale`.
     pub time_locale: d3rs::time_format::Locale,
     /// The board's `regional.time_zone`: the zone an instant prints its wall
     /// clock in. Absent is UTC, the authored default.
-    #[serde(default = "time_zone::utc", deserialize_with = "time_zone::deserialize")]
+    #[serde(default = "::bind::time_zone::utc", deserialize_with = "::bind::time_zone::deserialize")]
     pub time_zone: jiff::tz::TimeZone,
     /// The board's `regional.week_start`, 0 = Sunday: the day a week tick in
     /// the board zone falls on. Absent is Sunday, d3's `timeWeek`.
@@ -217,10 +213,10 @@ impl BoardStyle {
     /// Run `render` in this board's number and time locales, time zone and
     /// language.
     pub fn scoped<T>(&self, render: impl FnOnce() -> T) -> T {
-        number_locale::with_number_locale(&self.format_locale, || {
-            time_locale::with_time_locale(&self.time_locale, || {
-                time_zone::with_time_zone(&self.time_zone, || {
-                    time_locale::with_week_start(self.week_start, || {
+        ::bind::formats::locale::with_number_locale(&self.format_locale, || {
+            ::bind::time_locale::with_time_locale(&self.time_locale, || {
+                ::bind::time_zone::with_time_zone(&self.time_zone, || {
+                    ::bind::time_locale::with_week_start(self.week_start, || {
                         display_text::language::with_language(self.language, render)
                     })
                 })
@@ -309,8 +305,8 @@ impl PlaceholderStyle {
 #[cfg(test)]
 fn with_required_board_fields(mut style: Value) -> Value {
     let fields = style.as_object_mut().expect("board_style is an object");
-    fields.entry("format_locale").or_insert_with(number_locale::en_us_wire);
-    fields.entry("time_locale").or_insert_with(time_locale::en_us_wire);
+    fields.entry("format_locale").or_insert_with(::bind::formats::locale::en_us_wire);
+    fields.entry("time_locale").or_insert_with(::bind::time_locale::en_us_wire);
     fields.entry("pagination_control_height").or_insert(serde_json::json!(28.0));
     fields.entry("text_mark_font").or_insert_with(|| {
         serde_json::json!({"family": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif", "size": 11.0})
@@ -369,7 +365,7 @@ pub(crate) fn test_payload(mut payload: Value) -> Payload {
 /// Canvas is always exactly `width × height`. All chrome (title, axes, rail)
 /// is inset within `padding` on all four sides; treat missing padding as zeros.
 ///
-/// `Clone` exists for the wide-measures fold (`common::unfold_wide_rows`'s
+/// `Clone` exists for the wide-measures fold (`bind::wide::unfold_wide_rows`'s
 /// two callers, `line.rs`/`bar.rs`): each rebinds its local `payload` to a
 /// clone whose `rows` are the unfolded long rows. That deep-clones
 /// `resolved` too, which is wasted work (both callers deserialize `r` from
@@ -506,7 +502,7 @@ pub struct Payload {
     /// The `str()` text of each cell the wire tagged (a Decimal, a non-finite
     /// value) in `rows`, by row and column; filled when the payload is parsed.
     #[serde(skip)]
-    pub cell_text: common::CellText,
+    pub cell_text: ::bind::rows::CellText,
 }
 
 impl Payload {
@@ -623,7 +619,7 @@ pub(crate) fn painted_no_marks(card_width: f64, chart_id: Value, row_count: usiz
     )
 }
 
-/// The one place the wire's cell markers are decoded (`common::decode_cells`):
+/// The one place the wire's cell markers are decoded (`bind::rows::decode_cells`):
 /// every family reads plain numbers from `rows` and `datasets`.
 impl<'de> Deserialize<'de> for Payload {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -634,9 +630,9 @@ impl<'de> Deserialize<'de> for Payload {
             .map_err(serde::de::Error::custom)?;
         #[cfg(not(test))]
         let mut payload = Payload::deserialize(deserializer)?;
-        payload.cell_text = common::decode_cells(&mut payload.rows).map_err(serde::de::Error::custom)?;
+        payload.cell_text = ::bind::rows::decode_cells(&mut payload.rows).map_err(serde::de::Error::custom)?;
         for rows in payload.datasets.iter_mut().flat_map(HashMap::values_mut) {
-            common::decode_cells(rows).map_err(serde::de::Error::custom)?;
+            ::bind::rows::decode_cells(rows).map_err(serde::de::Error::custom)?;
         }
         Ok(payload)
     }

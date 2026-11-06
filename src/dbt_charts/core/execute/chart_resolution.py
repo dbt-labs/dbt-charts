@@ -81,14 +81,14 @@ class _LayerRows(Mapping[str, CacheRows]):
     ) -> None:
         self._rows = rows
         self._deferred = deferred - rows.keys()
-        self._executor = results
+        self._results = results
         self._variables = variables
 
     def __getitem__(self, query_name: str) -> CacheRows:
         if query_name not in self._rows:
             if query_name not in self._deferred:
                 raise KeyError(query_name)
-            self._rows[query_name] = self._executor.execute_query(
+            self._rows[query_name] = self._results.execute_query(
                 query_name, self._variables
             )
         return self._rows[query_name]

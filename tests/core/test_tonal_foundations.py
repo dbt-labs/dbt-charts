@@ -9,7 +9,7 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import get_config, reset_config
 from dbt_charts.core.compile.resolve.style.palette import color
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 
 from .._svg_normalize import normalize_same_run_svg
 
@@ -32,9 +32,10 @@ class TestTonalFoundationDefaults:
         from pathlib import Path
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from .._run import Run
 
         yaml = (
             "title: T\nstyle:\n  background: '#cc1122'\n"
@@ -46,12 +47,12 @@ class TestTonalFoundationDefaults:
         assert result.board is not None
         assert result.query_registry is not None
         assert result.success
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
-        svg = render(result.board, executor, format="svg").output
+        svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
         assert "#cc1122" in svg
 
     def test_scaffold_endpoints_are_white_and_black(self):
@@ -92,19 +93,22 @@ class TestHtmlPageCanvas:
         **opts,
     ):
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
         from dbt_charts.core.render import render
+
+        from .._run import Run
 
         result = compile(yaml if yaml is not None else self._YAML)
         assert result.board is not None
         assert result.query_registry is not None
         assert result.success
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
-        return render(result.board, executor, format="html", **opts).output
+        return render(
+            result.board, executor.ctx, executor.ledger, format="html", **opts
+        ).output
 
     def test_html_body_uses_board_background_not_the_svg_background_override(
         self, local_project: Callable[..., FilesystemProject]
@@ -163,8 +167,9 @@ class TestRenderedSurfaceBackground:
         self, monkeypatch, local_project: Callable[..., FilesystemProject]
     ):
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
         from dbt_charts.core.render import renderer as renderer_module
+
+        from .._run import Run, render_run
 
         config = get_config()
         monkeypatch.setattr(config.rendering.png, "scale", 1.5)
@@ -175,12 +180,12 @@ class TestRenderedSurfaceBackground:
         assert result.board is not None
         assert result.query_registry is not None
         assert result.success
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
-        output = renderer_module.render(result.board, executor, format="png").output
+        output = render_run(result.board, executor, format="png").output
 
         assert output == b"png-bytes"
         fake_to_png.assert_called_once()
@@ -191,8 +196,9 @@ class TestRenderedSurfaceBackground:
     ):
         """Format selection converts the canonical SVG instead of rerendering it."""
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
         from dbt_charts.core.render import renderer as renderer_module
+
+        from .._run import Run, render_run
 
         yaml = """\
 title: Canonical SVG
@@ -220,17 +226,17 @@ rows:
         assert result.board is not None
         assert result.query_registry is not None
         assert result.success
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
-        viewer_svg = renderer_module.render(result.board, executor, format="svg").output
+        viewer_svg = render_run(result.board, executor, format="svg").output
         assert isinstance(viewer_svg, str)
 
         fake_to_png = mock.Mock(return_value=b"png-bytes")
         monkeypatch.setattr(renderer_module, "to_png", fake_to_png)
-        renderer_module.render(result.board, executor, format="png")
+        render_run(result.board, executor, format="png")
         converted_svg = fake_to_png.call_args.args[0]
 
         assert normalize_same_run_svg(converted_svg) == normalize_same_run_svg(

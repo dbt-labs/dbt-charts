@@ -28,7 +28,7 @@ from dbt_charts.core.compile.models.source import (
     LakeComputeTokenSource,
 )
 from dbt_charts.core.diagnostics.codes_execute import ERR_ADAPTER_NOT_INSTALLED
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+from dbt_charts.core.execute.backends.dbt_adapter_factory import (
     AdapterNotInstalledError,
 )
 from dbt_charts.core.execute.drivers._cdn import open_cdn_driver

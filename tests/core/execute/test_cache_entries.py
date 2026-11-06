@@ -5,24 +5,23 @@ from __future__ import annotations
 from collections.abc import Iterator
 from datetime import UTC
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, cast
 
 import pytest
 import yaml
 
 from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile import compile as compile_board
-from dbt_charts.core.execute.adapters import AdapterRegistry
-from dbt_charts.core.execute.adapters.base import QueryResult
+from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.execute.cache_backend import (
     BrowsableResultCache,
     CacheUser,
 )
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.query_result import QueryResult
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 from ..._results import rows_result
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 _SH = "s" * 16
 _VH = "v" * 16
@@ -194,40 +193,37 @@ def test_a_file_of_another_layout_is_rebuilt_even_when_only_a_type_changed(
         cache.close()
 
 
-class _OneResultRegistry:
+_SOURCE = DuckDBSourceConfig(type="duckdb", path=":memory:")
+
+
+def _one_result_backend() -> ScriptedBackend:
     """Runs a query once; a second warehouse call is a test failure."""
 
-    def __init__(self) -> None:
-        self.calls = 0
-        self.project_sources = SimpleNamespace(sources={})
-
-    def resolve_query_source(self, *args: Any, **kwargs: Any) -> None:
-        return None
-
-    def project_file_sources(self) -> dict[str, Any]:
-        return {}
-
-    def execute(self, *args: Any, **kwargs: Any) -> QueryResult:
-        self.calls += 1
-        assert self.calls == 1, "the second board should have read the cache"
+    def answer(_source: object, _query: object) -> QueryResult:
+        assert backend.execute.call_count == 1, (
+            "the second board should have read the cache"
+        )
         return QueryResult(data=[{"v": 1}], schema=literal_schema([{"v": 1}]))
+
+    backend = ScriptedBackend(side_effect=answer)
+    return backend
 
 
 def _board_executor(
     name: str,
     query: str,
-    registry: _OneResultRegistry,
+    backend: ScriptedBackend,
     cache: TrivialDuckDBCache,
-) -> Executor:
+) -> Run:
     document = {
         "queries": {query: {"sql": "SELECT 1 AS v", "source": "wh"}},
         "charts": {"c": {"query": query, "type": "table"}},
     }
     board = compile_board(yaml.dump(document)).board
     assert board is not None
-    return Executor(
+    return Run(
         board,
-        adapter_registry=cast("AdapterRegistry", registry),
+        env=scripted_env(backend, source=_SOURCE),
         query_registry={query: board.queries[query]},
         result_cache=cache,
         board_slug=name,
@@ -239,11 +235,11 @@ def test_a_board_served_from_the_cache_is_named_on_the_entry(
 ) -> None:
     """Two boards share a query: the second reads the first's rows, and the
     entry lists both, each under its own query name."""
-    registry = _OneResultRegistry()
-    _board_executor("rev", "q", registry, cache).execute_query("q")
-    _board_executor("exec", "arr", registry, cache).execute_query("arr")
+    backend = _one_result_backend()
+    _board_executor("rev", "q", backend, cache).execute_query("q")
+    _board_executor("exec", "arr", backend, cache).execute_query("arr")
 
     [entry] = cache.entries()
 
-    assert registry.calls == 1
+    assert backend.execute.call_count == 1
     assert entry.used_by == [CacheUser("rev", "q"), CacheUser("exec", "arr")]

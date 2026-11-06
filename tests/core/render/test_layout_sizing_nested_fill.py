@@ -18,9 +18,10 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.board.normalized import Board, LayoutItem
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.renderer import render
+
+from ..._run import Run
 
 _TALL_TEXT = json.dumps("# Tall card\n\n" + "line\n\n" * 18)
 _MID_TEXT = json.dumps("# Mid card\n\n" + "line\n\n" * 12)
@@ -63,12 +64,12 @@ def render_board(
         text = _PREAMBLE + "".join(_chart(c) for c in ids) + body
         result = compile(text)
         assert result.success, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
-        svg = render(result.board, executor, format="svg").output
+        svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
         assert isinstance(svg, str)
         return (
             result.board,
@@ -270,12 +271,12 @@ def render_stack(
             preamble + _MORE_CHARTS + "".join(_chart(c) for c in ids) + body
         )
         assert result.success, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
-        svg = render(result.board, executor, format="svg").output
+        svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
         assert isinstance(svg, str)
         boxes: dict[str, float] = {}
         for cid, height in _CHART_BOX.findall(svg):

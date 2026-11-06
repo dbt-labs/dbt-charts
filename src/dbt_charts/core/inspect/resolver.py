@@ -48,8 +48,9 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 # won).
 from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_NOT_FOUND
 from dbt_charts.core.diagnostics.codes_execute import ERR_SOURCE_NOT_FOUND_EMPTY
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 from dbt_charts.core.execute.drivers import DRIVER_SOURCE_TYPES
+from dbt_charts.core.execute.plan_sources import list_sql_sources, resolve_source_config
 from dbt_charts.core.execute.source_resolver import AD_HOC_QUERY_NAME
 from dbt_charts.core.inspect.sources.dbt import (
     DbtSchemaSource,
@@ -62,7 +63,7 @@ from dbt_charts.core.project import Project, is_absolute_any_os
 if TYPE_CHECKING:
     # SuperSchemaSource lives in the private dbt-charts-super-schema package.
     # Import only for type-checking; at runtime it is injected by the caller.
-    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts_super_schema.inspect.sources.super_schema import SuperSchemaSource
 
 
@@ -140,12 +141,12 @@ class LayeredSchemaResolver:
         self,
         *,
         cache: SuperSchemaSource | None = None,
-        adapter_registry: AdapterRegistry,
+        env: ExecEnv,
         project: Project,
         adapter_factory: AdapterFactory | None = None,
     ) -> None:
         self.cache = cache
-        self.adapter_registry = adapter_registry
+        self.env = env
         self.project = project
         self._adapter_factory = adapter_factory or _schema_adapter_factory
         # NOTE: adapter_factory is accepted for callers with custom dispatch
@@ -282,7 +283,11 @@ class LayeredSchemaResolver:
         check for ``None``.
         """
         if source_name not in self._dbt_sources:
-            cfg = self.adapter_registry.resolve_source_config(source_name)
+            cfg = resolve_source_config(
+                self.env.sources,
+                self.env.project,
+                source_name,
+            )
             if (
                 cfg.get(
                     "type", ""
@@ -314,19 +319,12 @@ class LayeredSchemaResolver:
                     resolved_path = str(self.project.data_path(path))
                 self._dbt_sources[source_name] = SQLiteSchemaSource(path=resolved_path)
             else:
-                # Mirror the registry's DuckDB config so cold introspection
+                # Mirror the env's DuckDB config so cold introspection
                 # and execute open the same file with the same config.
                 # DuckDB rejects a second connection with a different posture.
                 # This covers every LayeredSchemaResolver construction site
                 # without requiring each caller to thread factory plumbing.
-                # getattr: real AdapterRegistry always has this attribute (set
-                # in __init__), but test-stub registries (_FakeRegistry in
-                # libs/super-schema/tests) may not — None is the safe default.
-                introspection_cfg = getattr(
-                    self.adapter_registry,
-                    "schema_introspection_duckdb_config",
-                    None,
-                )
+                introspection_cfg = self.env.schema_introspection_duckdb_config
                 if (
                     introspection_cfg
                     and self._adapter_factory is _schema_adapter_factory
@@ -684,7 +682,7 @@ class LayeredSchemaResolver:
     def _source_entries(self) -> dict[str, dict[str, Any]]:
         if self._source_lookup_cache is None:
             self._source_lookup_cache = {}
-            for raw in self.adapter_registry.list_sql_sources():
+            for raw in list_sql_sources(self.env.sources):
                 name = raw["name"]
                 self._source_lookup_cache[name] = {
                     k: v for k, v in raw.items() if k != "name"

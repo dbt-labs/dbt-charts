@@ -1,7 +1,9 @@
 //! What a panel derives from its rows before it draws: the value domain and ticks, the stacks, the category
 //! order and the data map.
 
-use crate::common::{AxisStyle, ChartSort, SortAggregate, color_domain_of, dimension_sort_domain, row_num, row_str};
+use ::bind::rows::color_domain_of;
+use crate::common::AxisStyle;
+use ::bind::rows::{ChartSort, SortAggregate, dimension_sort_domain, row_num, row_str};
 use crate::families::cartesian::vl_default_tick_count;
 use crate::families::span::RangedBars;
 
@@ -10,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::facet::color_1to1_with_cat;
 use super::labels::label_position;
-use super::{BarResolved, BarStyle, CHROME_PX, NORMALIZE_QUARTILE_TICKS, continuous_max_size};
+use super::{BAND_LABEL_LEADING, BarResolved, BarStyle, CHROME_PX, NORMALIZE_QUARTILE_TICKS, continuous_max_size};
 
 /// The order a categorical band domain renders in.
 ///
@@ -77,7 +79,7 @@ pub(super) fn cat_order<'a>(
 /// Build the category domain in `order` (see `CatOrder`).
 ///
 /// `CatOrder::Field`'s rank-and-trail shape (stable sort, unranked
-/// categories trailing in both directions) is `common::dimension_sort_domain`
+/// categories trailing in both directions) is `bind::rows::dimension_sort_domain`
 /// — the same law line/area/heatmap share for their own dimension axis, here
 /// called with the aggregate `cat_order` chose. `CatOrder::ValueDesc` folds a
 /// SUM (`vl_sort_op`'s unpinned fallback; a facet repeats a category across
@@ -115,7 +117,7 @@ pub(super) fn build_cat_domain(
         // domain itself, so a `min` key compares as JavaScript does.
         CatOrder::Field(sort, SortAggregate::Min) => {
             let refs: Vec<&serde_json::Map<String, Value>> = rows.iter().collect();
-            crate::common::min_ranked_domain(domain, &refs, |row| row_str(row, cat_field), sort).map_err(|e| format!("bar: {e}"))
+            ::bind::rows::min_ranked_domain(domain, &refs, |row| row_str(row, cat_field), sort).map_err(|e| format!("bar: {e}"))
         }
         CatOrder::Field(sort, SortAggregate::Sum) => {
             dimension_sort_domain(rows, cat_field, domain, Some(sort), SortAggregate::Sum, "bar")
@@ -549,9 +551,12 @@ pub(super) fn collapsed_authored_domain(ax_y: &AxisStyle, rows: &[serde_json::Ma
 /// The `(lowest, highest)` end a layer's per-category zero stack reaches
 /// (positives pile up from 0, negatives down from it).
 pub(super) fn stack_reach(rows: &[serde_json::Map<String, Value>], cat_field: &str, val_field: &str) -> (f64, f64) {
-    let piles = crate::common::zero_piles(rows.iter().filter_map(|row| Some((row_str(row, cat_field), row_num(row, val_field)?))));
+    let piles = ::bind::stack::zero_piles(rows.iter().filter_map(|row| Some((row_str(row, cat_field), row_num(row, val_field)?))));
     piles.into_iter().fold((0.0, 0.0), |(lo, hi), (start, end)| (lo.min(start), hi.max(end)))
 }
+
+/// The share of the median column total a column needs to anchor the rail.
+const RAIL_MEATY_TOTAL: f64 = 0.25;
 
 /// Port of `_stacked_midpoints` (features/endpoint_labels.py), default
 /// stack order only (this renderer refuses authored stack orders at the
@@ -562,6 +567,11 @@ pub(super) fn stack_reach(rows: &[serde_json::Map<String, Value>], cat_field: &s
 /// anywhere anchors zero-height at the domain's last column (its label must
 /// still appear: the rail replaces the legend). The anchor is the middle of
 /// the series' span in `stack_spans`, a share under normalize.
+///
+/// A final period that is still filling in (all its segments thin) must not drag the rail onto it, so
+/// every series anchors no later than the latest column whose TOTAL is at least `RAIL_MEATY_TOTAL` of
+/// the median column total. A thin or zero segment inside a full column does not move the rail: its label
+/// stays at that column and the cascade nudges it. When no column qualifies (all empty), the last column.
 pub(super) fn stacked_rail_anchors(
     cat_domain: &[String],
     stack_order: &[String],
@@ -585,17 +595,28 @@ pub(super) fn stacked_rail_anchors(
         })
         .collect();
     let spans = stack_spans(cat_domain, stack_order, &filled, normalize, center)?;
-    Ok(stack_order
+    let carries = |cat: &String, series: &String| data_map.contains_key(&(cat.clone(), series.clone()));
+    let totals: Vec<f64> = cat_domain
+        .iter()
+        .map(|cat| stack_order.iter().filter_map(|series| data_map.get(&(cat.clone(), series.clone()))).sum())
+        .collect();
+    let mut sorted = totals.clone();
+    sorted.sort_by(f64::total_cmp);
+    let median = sorted[sorted.len() / 2];
+    let anchor_limit = totals.iter().rposition(|&total| total > 0.0 && total >= RAIL_MEATY_TOTAL * median).unwrap_or(cat_domain.len() - 1);
+    stack_order
         .iter()
         .map(|series| {
-            let anchor = cat_domain
+            let anchor = cat_domain[..=anchor_limit]
                 .iter()
-                .rposition(|c| data_map.contains_key(&(c.clone(), series.clone())))
+                .rposition(|c| carries(c, series))
+                .or_else(|| cat_domain.iter().rposition(|c| carries(c, series)))
                 .unwrap_or(cat_domain.len() - 1);
-            let span = spans[&(cat_domain[anchor].clone(), series.clone())];
-            (series.clone(), crate::common::rail_anchor([span.start, span.end]))
+            let key = (cat_domain[anchor].clone(), series.clone());
+            let span = spans.get(&key).ok_or_else(|| format!("stacked rail: no segment span for series {:?} in column {:?}", key.1, key.0))?;
+            Ok((series.clone(), ::bind::stack::rail_anchor([span.start, span.end])))
         })
-        .collect())
+        .collect()
 }
 
 /// A grouped bar's rail anchors (`endpoint_labels.py`'s non-stacked branch): each series at its own last
@@ -610,8 +631,8 @@ pub(super) fn grouped_rail_anchors(
     authored: Option<(f64, f64)>,
 ) -> Result<(Vec<(String, f64)>, (f64, f64)), String> {
     // The walk-back reads the axis's own order, not raw x.
-    let ranked = crate::common::x_ranked_rows(rows, cat_field, cat_domain)?;
-    let last = crate::common::last_nonnull_value_per_series(&ranked, cat_field, val_field, color_field)?;
+    let ranked = ::bind::rows::x_ranked_rows(rows, cat_field, cat_domain)?;
+    let last = ::bind::rows::last_nonnull_value_per_series(&ranked, cat_field, val_field, color_field)?;
     let mut seen = HashSet::new();
     let anchors = rows
         .iter()
@@ -656,7 +677,7 @@ impl BarResolved {
         for row in rows {
             let (Some(x), Some(y)) = (row.get(&self.x).filter(|x| !x.is_null()), row_num(row, &self.y)) else { continue };
             let mut key: Vec<String> = self.panel_axes.iter().map(|axis| row_str(row, &axis.field)).collect();
-            key.push(crate::common::cell_str(Some(x)));
+            key.push(::bind::rows::cell_str(Some(x)));
             *piles.entry(key).or_insert(0.0) += y.max(0.0);
         }
         let tallest = piles.values().copied().reduce(f64::max)?;
@@ -673,7 +694,7 @@ pub(super) fn tallest_total(totals: &HashMap<String, f64>) -> f64 {
     totals.values().copied().fold(0.0, f64::max)
 }
 
-/// The `center` stack (`common::centered`): each category's pile of `|v|` floats to
+/// The `center` stack (`bind::stack::centered`): each category's pile of `|v|` floats to
 /// the middle of the tallest, which is all this carries. A chart holding both signs with a corner radius
 /// splits into a `>= 0` and a `< 0` layer (`_layers.py::emit_bar_layer`); each
 /// layer is a stack of its own, so each centers on its own tallest pile. A
@@ -713,7 +734,7 @@ impl CenterStack {
             }
             for layer in 0..2 {
                 let piles = columns.values().map(|column| column.iter().copied().filter(|&v| stack.layer(v) == layer));
-                stack.tallest[layer] = stack.tallest[layer].max(crate::common::tallest_pile(piles));
+                stack.tallest[layer] = stack.tallest[layer].max(::bind::stack::tallest_pile(piles));
             }
         }
         stack
@@ -1038,7 +1059,7 @@ pub(super) fn build_chart_domains(
         color_field.map_or_else(Vec::new, |cf| color_domain_of(rows, cf))
     };
     let stack_order: Vec<String> = if is_stacked {
-        crate::common::sorted_series_by_stack_order(
+        ::bind::stack::sorted_series_by_stack_order(
             &color_domain,
             rows,
             color_field.expect("is_stacked implies color"),
@@ -1071,10 +1092,9 @@ pub(super) fn build_chart_domains(
 pub(super) fn horizontal_min_height(r: &BarResolved, n_categories: usize) -> Result<f64, String> {
     let ax_x = &r.style.axis_x;
     let font_size = ax_x.labels.font.size.ok_or("bar: axis_x.labels.font.size absent (theme required)")?;
-    let pad = ax_x.labels.padding.ok_or("bar: axis_x.labels.padding absent (theme required)")?;
     let min_gap = ax_x.labels.min_gap.ok_or("bar: axis_x.labels.min_gap absent (theme required)")?;
     let mark_size = r.style.mark.size.unwrap_or_else(|| continuous_max_size(&r.style.mark));
-    let band_step = mark_size.max(font_size + 2.0 * pad) + min_gap;
+    let band_step = mark_size.max(font_size + 2.0 * BAND_LABEL_LEADING) + min_gap;
     Ok(CHROME_PX + n_categories as f64 * band_step)
 }
 
@@ -1119,10 +1139,10 @@ pub(super) fn stack_spans(
                     .iter()
                     .map(|series| series.iter().map(|&v| if center.layer(v) == layer { v } else { f64::NAN }).collect())
                     .collect();
-                crate::common::centered(&kept, center.tallest[layer])
+                ::bind::stack::centered(&kept, center.tallest[layer])
             })
             .collect(),
-        None => vec![crate::common::grammar_stack(if normalize { "normalize" } else { "zero" }, &values)?],
+        None => vec![::bind::stack::grammar_stack(if normalize { "normalize" } else { "zero" }, &values)?],
     };
     let mut spans = SegmentSpans::new();
     for (si, series) in stack_order.iter().enumerate() {

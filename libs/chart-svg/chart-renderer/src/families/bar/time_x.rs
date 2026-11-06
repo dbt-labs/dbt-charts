@@ -9,19 +9,21 @@ use std::collections::{HashMap, HashSet};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::common::{row_num, row_str, AxisStyle};
+use crate::common::{AxisStyle};
+use ::bind::rows::{row_num, row_str};
 use crate::families::scatter_axis::{authored_day_domain, DateColumn, Indexed, TemporalXAxis};
 use crate::families::subday::SubdaySource;
 use crate::families::support_table_strip::{first_bucket_of_each_label, Align, Column};
-use crate::families::temporal::{complete_ordinal_rows, floor_to_bucket_start, next_bucket, normalize_labeled_temporal, TimePart, TimeUnit};
+use ::bind::temporal::{complete_ordinal_rows, normalize_labeled_temporal};
+use ::bind::temporal::{floor_to_bucket_start, next_bucket, TimePart, TimeUnit};
 use d3rs::calendar::{civil_from_days, days_from_civil};
 use diagnostic::Diagnostic;
-use crate::time_axis::{TimeAxis, Unreadable};
-use crate::families::x_type::{Grain, XResolution};
+use ::bind::time_axis::{TimeAxis, Unreadable};
+use ::bind::x_type::{Grain, XResolution};
 use crate::labels_expr::Expr;
 use measure::FontBook;
 
-use crate::common::RAW_X;
+use ::bind::wide::RAW_X;
 use super::marks::{BandColumns, ColumnSplit};
 use super::{continuous_pad_px, x_resolution, BarResolved, ContinuousWidth, MarkStyle};
 
@@ -433,7 +435,7 @@ impl TimeX {
         let tooltip_grain = if timed {
             None
         } else {
-            crate::families::temporal::detect_time_unit(&axis.dates(shown_dates))
+            ::bind::temporal::detect_time_unit(&axis.dates(shown_dates))
         };
         let own_dates: Vec<&str> = originals.iter().map(String::as_str).chain(layer_x.iter().flat_map(|l| l.dates.iter().map(String::as_str))).collect();
         let timed = SubdaySource::of(axis, own_dates.iter().copied());
@@ -662,8 +664,7 @@ impl TimeX {
                     (Sizing::Instant { .. } | Sizing::Stepped { .. }, None) => BandColumns::unsplit(span, 0.0, span, if axis.knows(cat) { span / 2.0 } else { 0.0 }),
                     (Sizing::Instant { .. } | Sizing::Stepped { .. }, Some(_)) => BandColumns::coincident(span),
                     (Sizing::Bucket { size: Some(size), .. }, None) => BandColumns::centered(span, *size),
-                    // Vega-Lite offsets both edges by half a pixel, inward on a bucket
-                    // narrower than a quarter pixel.
+                    // Edge insets follow `bucket_bar_extent`.
                     (Sizing::Bucket { size: None, band_width, .. }, None) => {
                         let (left, width) = super::bucket_bar_extent(0.0, span, *band_width);
                         BandColumns::unsplit(span, left, width, 0.0)
@@ -685,7 +686,7 @@ mod tests {
     use serde_json::json;
 
     fn plain_axis() -> TimeAxis {
-        TimeAxis::new(crate::time_axis::Grain::default(), HashMap::new())
+        TimeAxis::new(::bind::time_axis::Grain::default(), HashMap::new())
     }
 
     fn range(start: &str, end: &str) -> DateRange {
@@ -752,7 +753,7 @@ mod tests {
     #[test]
     fn a_layer_row_is_keyed_by_the_bucket_start_of_its_date() {
         let rows: Vec<Row> = vec![serde_json::from_value(json!({"month": "2024-01-15", "cost": 1})).unwrap()];
-        let keyed = at_bucket_starts(&mut TimeAxis::new(crate::time_axis::Grain { unit: Some(TimeUnit::YearMonth), part: None, band: false }, HashMap::new()), Cow::Borrowed(&rows), "month");
+        let keyed = at_bucket_starts(&mut TimeAxis::new(::bind::time_axis::Grain { unit: Some(TimeUnit::YearMonth), part: None, band: false }, HashMap::new()), Cow::Borrowed(&rows), "month");
         assert_eq!(keyed[0]["month"], json!("2024-01-01"));
         assert!(matches!(at_bucket_starts(&mut plain_axis(), Cow::Borrowed(&rows), "month"), Cow::Borrowed(_)));
     }

@@ -7,10 +7,11 @@ Purpose: When the store held prior rows for an ``incremental:`` query, run the
 
 Entry Points:
     - incremental_safety_reason(sql, dialect_name) -> str | None
-    - run_incremental_tail(ctx, query_name, query, variables, tail, dialect,
-      source_config) -> (ResultRows, TruncationInfo | None)
+    - run_incremental_tail(query_name, query, tail, dialect, execute)
+      -> (ResultRows, TruncationInfo | None)
 """
 
+from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -20,11 +21,10 @@ import sqlglot.errors
 import sqlglot.expressions as exp
 
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.compile.models.source import ResolvedSourceConfig
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.cache_backend import ResultRows, TruncationInfo
 from dbt_charts.core.execute.lookup import Tail, limit_rows
-from dbt_charts.core.execute.plan import ExecContext
+from dbt_charts.core.execute.query_result import QueryResult
 
 
 def watermark_to_sql_node(
@@ -155,15 +155,15 @@ def merge_incremental_rows(
 
 
 def run_incremental_tail(
-    ctx: ExecContext,
     query_name: str,
     query: SqlQuery,
-    variables: dict[str, Any],  # type-state: explicit_any — variable values
     tail: Tail,
     dialect: str | None,
-    source_config: ResolvedSourceConfig | None,
+    execute: Callable[[SqlQuery], QueryResult],
 ) -> tuple[ResultRows, TruncationInfo | None]:
     """Fetch only new rows (>= watermark) and merge with the prior cached set.
+
+    ``execute`` runs the tail query on the query's own route.
 
     The merged set carries no data age of its own: its prior rows' age was
     recorded when the lookup served them.
@@ -184,13 +184,7 @@ def run_incremental_tail(
     )
     tail_query = query.model_copy(update={"sql": tail_sql})
 
-    result = ctx.adapter_registry.execute(
-        tail_query,
-        variables,
-        board=ctx.board,
-        query_name=query_name,
-        source_config=source_config,
-    )
+    result = execute(tail_query)
     if not result.is_success:
         assert result.error is not None
         result.error.fields.setdefault("query_name", query_name)

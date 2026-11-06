@@ -42,6 +42,7 @@ from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 from dbt_charts.core.render.board_variables import (
     committed_text,
+    current_context_variables,
     current_daterange_presets,
 )
 from dbt_charts.core.render.chart.rendering import render_layout_item
@@ -320,16 +321,17 @@ def _build_toggle_url(
 ) -> str:
     """Build URL that changes one param while preserving all others.
 
-    Every set variable rides along; a preset daterange links its preset id,
-    so the link stays rolling.
+    Every set board variable rides along, never host-injected render context;
+    a preset daterange links its preset id, so the link stays rolling.
     """
     from urllib.parse import urlencode
 
     presets = current_daterange_presets()
+    context = current_context_variables()
     params = {
         k: presets[k] if k in presets else committed_text(v)
         for k, v in variables.items()
-        if v is not None
+        if v is not None and k not in context
     }
     params[param_name] = new_value
     return "?" + urlencode(params)

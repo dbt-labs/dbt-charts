@@ -1,7 +1,7 @@
 """The execute boundary establishes attribution for each query it runs.
 
 `test_attribution.py` covers the module in isolation; this pins the seam where it
-meets the engine — the scope `AdapterRegistry.execute` opens around the backend call,
+meets the engine — the scope `ExecEnv.execute` opens around the backend call,
 including the case the pool-sharing design depends on: two sources with identical
 connection identity but different `attribution:` must each get their own labels.
 """
@@ -17,9 +17,10 @@ from dbt_charts.core.attribution import current_attribution
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.dialects import SQLDialect
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 from dbt_charts.core.execute.backends.base import BackendRegistry
 from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.env import ExecEnv, make_exec_env
+from dbt_charts.core.execute.run import run_query
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 from dbt_charts.core.project import Project
 
@@ -45,9 +46,9 @@ class _RecordingBackend:
 
 def _registry(
     project: Project, sources: dict[str, dict[str, Any]]
-) -> tuple[AdapterRegistry, _RecordingBackend]:
+) -> tuple[ExecEnv, _RecordingBackend]:
     backend = _RecordingBackend()
-    registry = AdapterRegistry(
+    registry = make_exec_env(
         project=project,
         project_sources=ProjectSourcesConfig(sources=sources),
         backends=BackendRegistry({"postgres": backend}),
@@ -66,8 +67,8 @@ _PG: dict[str, Any] = {
 
 def test_query_name_reaches_the_payload(local_project: Any, tmp_path: Any) -> None:
     registry, adapter = _registry(local_project(tmp_path), {"wh": _PG})
-    registry.execute(
-        SqlQuery(sql="SELECT 1", source="wh"), query_name="revenue_by_month"
+    run_query(
+        registry, SqlQuery(sql="SELECT 1", source="wh"), query_name="revenue_by_month"
     )
     assert adapter.seen["dbt_charts_query"] == "revenue_by_month"
 
@@ -78,7 +79,7 @@ def test_authored_attribution_reaches_the_payload(
     registry, adapter = _registry(
         local_project(tmp_path), {"wh": {**_PG, "attribution": {"team": "finance"}}}
     )
-    registry.execute(SqlQuery(sql="SELECT 1", source="wh"), query_name="q")
+    run_query(registry, SqlQuery(sql="SELECT 1", source="wh"), query_name="q")
     assert adapter.seen["team"] == "finance"
 
 
@@ -95,9 +96,9 @@ def test_two_sources_sharing_a_connection_keep_their_own_labels(
             "finance": {**_PG, "attribution": {"team": "finance"}},
         },
     )
-    registry.execute(SqlQuery(sql="SELECT 1", source="marketing"), query_name="q")
+    run_query(registry, SqlQuery(sql="SELECT 1", source="marketing"), query_name="q")
     first = adapter.seen["team"]
-    registry.execute(SqlQuery(sql="SELECT 1", source="finance"), query_name="q")
+    run_query(registry, SqlQuery(sql="SELECT 1", source="finance"), query_name="q")
     second = adapter.seen["team"]
     assert (first, second) == ("marketing", "finance")
 
@@ -106,5 +107,5 @@ def test_scope_unwinds_after_the_query(local_project: Any, tmp_path: Any) -> Non
     registry, _ = _registry(
         local_project(tmp_path), {"wh": {**_PG, "attribution": {"team": "finance"}}}
     )
-    registry.execute(SqlQuery(sql="SELECT 1", source="wh"), query_name="q")
+    run_query(registry, SqlQuery(sql="SELECT 1", source="wh"), query_name="q")
     assert "team" not in current_attribution()

@@ -1256,6 +1256,7 @@ def _resolve_bar(
         drop_legend=stack_legend_yield,
         top_legend=naming.top_legend,
         wrap_legend=naming.wrap_legend,
+        plot_filled_legend=orientation == "horizontal",
         legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
     )
     resolved_layers = _resolve_layer_list(

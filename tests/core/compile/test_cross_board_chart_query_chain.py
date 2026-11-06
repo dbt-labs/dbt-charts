@@ -21,8 +21,9 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import compile
 from dbt_charts.core.compile.config import ProjectSourcesConfig
-from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
+
+from ..._run import Run
 
 
 def _project_with_db_source(
@@ -139,8 +140,8 @@ rows:
         assert result.success, [str(e) for e in result.errors]
         assert result.board is not None
 
-        registry = build_adapter_registry(project)
-        executor = Executor(
+        registry = build_exec_env(project)
+        executor = Run(
             result.board,
             registry,
             query_registry=result.query_registry,
@@ -306,8 +307,8 @@ rows:
         assert result.success, [str(e) for e in result.errors]
         assert result.board is not None
 
-        registry = build_adapter_registry(project)
-        executor = Executor(
+        registry = build_exec_env(project)
+        executor = Run(
             result.board,
             registry,
             query_registry=result.query_registry,
@@ -365,8 +366,8 @@ rows:
         assert result.success, [str(e) for e in result.errors]
         assert result.board is not None
 
-        registry = build_adapter_registry(project)
-        executor = Executor(
+        registry = build_exec_env(project)
+        executor = Run(
             result.board,
             registry,
             query_registry=result.query_registry,
@@ -417,8 +418,8 @@ rows:
         assert result.success, [str(e) for e in result.errors]
         assert result.board is not None
 
-        registry = build_adapter_registry(project)
-        executor = Executor(
+        registry = build_exec_env(project)
+        executor = Run(
             result.board,
             registry,
             query_registry=result.query_registry,
@@ -478,8 +479,8 @@ rows:
         assert result.success, [str(e) for e in result.errors]
         assert result.board is not None
 
-        registry = build_adapter_registry(project)
-        executor = Executor(
+        registry = build_exec_env(project)
+        executor = Run(
             result.board,
             registry,
             query_registry=result.query_registry,
@@ -533,8 +534,8 @@ rows:
         assert result.success, [str(e) for e in result.errors]
         assert result.board is not None
 
-        registry = build_adapter_registry(project)
-        executor = Executor(
+        registry = build_exec_env(project)
+        executor = Run(
             result.board,
             registry,
             query_registry=result.query_registry,
@@ -651,8 +652,8 @@ rows:
         assert result.success, [str(e) for e in result.errors]
         assert result.board is not None
 
-        registry = build_adapter_registry(project)
-        executor = Executor(
+        registry = build_exec_env(project)
+        executor = Run(
             result.board,
             registry,
             query_registry=result.query_registry,
@@ -695,8 +696,8 @@ rows:
         assert result.success, [str(e) for e in result.errors]
         assert result.board is not None
 
-        registry = build_adapter_registry(project)
-        executor = Executor(
+        registry = build_exec_env(project)
+        executor = Run(
             result.board,
             registry,
             query_registry=result.query_registry,
@@ -751,8 +752,8 @@ rows:
         assert result.success, [str(e) for e in result.errors]
         assert result.board is not None
 
-        registry = build_adapter_registry(project)
-        executor = Executor(
+        registry = build_exec_env(project)
+        executor = Run(
             result.board,
             registry,
             query_registry=result.query_registry,

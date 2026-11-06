@@ -12,17 +12,16 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import Mock
 
 import pytest
 
 from dbt_charts.core.compile import compile
 from dbt_charts.core.diagnostics import WARN_REDUNDANT_ENCODING, Diagnostic
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 from dbt_charts.core.render.warnings import registry as _registry
 
-from ..._results import rows_schema
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 _BOARD_YAML = """
 title: Test
@@ -42,18 +41,10 @@ rows:
 
 
 def _make_executor(board, query_registry, rows=None):
-    ok = Mock()
-    ok.is_success = True
-    ok.data = rows if rows is not None else [{"category": "a", "value": 1}]
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.return_value = ok
-    return Executor(
-        board, adapter_registry=mock_registry, query_registry=query_registry
+    mock_registry = scripted_env(
+        ScriptedBackend(rows if rows is not None else [{"category": "a", "value": 1}])
     )
+    return Run(board, env=mock_registry, query_registry=query_registry)
 
 
 def test_render_result_has_render_warnings_field_empty_by_default() -> None:
@@ -62,7 +53,7 @@ def test_render_result_has_render_warnings_field_empty_by_default() -> None:
     assert result.success
     assert result.board is not None
     executor = _make_executor(result.board, result.query_registry)
-    render_result = render(result.board, executor, format="json")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="json")
     assert render_result.warnings == []
 
 
@@ -89,7 +80,7 @@ rows:
     assert result.board is not None
     executor = _make_executor(result.board, result.query_registry, rows)
 
-    render_result = render(result.board, executor, format="json")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="json")
 
     assert [
         w.code for w in render_result.warnings if w.code.startswith("WARN-PIE-")
@@ -117,7 +108,7 @@ def test_render_result_propagates_detector_warnings(
     fake.detect = _detect  # type: ignore[attr-defined]
     monkeypatch.setattr(_registry, "DETECTORS", [fake])
 
-    render_result = render(result.board, executor, format="json")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="json")
     assert len(render_result.warnings) == 1
     assert render_result.warnings[0].code == WARN_REDUNDANT_ENCODING.code
     assert render_result.warnings[0].chart == "c"
@@ -152,17 +143,12 @@ def test_failed_query_chart_omitted_from_chart_results(
     assert result.board is not None
 
     # Executor whose only chart query raises.
-    failing_ok = Mock()
-    failing_ok.is_success = True
-    failing_ok.data = []
-    failing_ok.schema = rows_schema(failing_ok.data)
-    failing_ok.resolved_relations = None
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.side_effect = RuntimeError("query failed")
-    failing_executor = Executor(
+    mock_registry = scripted_env(
+        ScriptedBackend(sequence=[RuntimeError("query failed")])
+    )
+    failing_executor = Run(
         result.board,
-        adapter_registry=mock_registry,
+        env=mock_registry,
         query_registry=result.query_registry,
     )
 
@@ -177,7 +163,7 @@ def test_failed_query_chart_omitted_from_chart_results(
     fake.detect = _detect  # type: ignore[attr-defined]
     monkeypatch.setattr(_registry, "DETECTORS", [fake])
 
-    render(result.board, failing_executor, format="json")
+    render(result.board, failing_executor.ctx, failing_executor.ledger, format="json")
 
     assert len(captured_ctx) == 1
     # Failed chart must be absent — not present as an empty list.

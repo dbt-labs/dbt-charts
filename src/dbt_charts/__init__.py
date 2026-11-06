@@ -13,19 +13,21 @@ Architecture:
 
 Quick Start:
     >>> from pathlib import Path
-    >>> from dbt_charts import compile, Executor, render
-    >>> from dbt_charts.core.execute.adapters import build_adapter_registry
+    >>> from dbt_charts import compile, render
+    >>> from dbt_charts.core.execute.env import build_exec_env
     >>>
     >>> # Compile YAML to Board
     >>> result = compile(yaml_content)
     >>> if result.success:
     ...     board = result.board
     ...
-    ...     # Create executor and render
+    ...     # Make the render's context and ledger, then render
     ...     from dbt_charts.cli.filesystem_project import FilesystemProject
-    ...     registry = build_adapter_registry(FilesystemProject(Path.cwd()))
-    ...     executor = Executor(board, registry, query_registry=result.query_registry)
-    ...     svg = render(board, executor, format="svg")
+    ...     from dbt_charts.core.execute.lookup import Ledger
+    ...     from dbt_charts.core.execute.plan import make_context
+    ...     env = build_exec_env(FilesystemProject(Path.cwd()))
+    ...     ctx = make_context(board, env, query_registry=result.query_registry)
+    ...     svg = render(board, ctx, Ledger(), format="svg")
 """
 
 from __future__ import annotations
@@ -63,10 +65,7 @@ if TYPE_CHECKING:
         compile as compile,
         compile_file as compile_file,
     )
-    from dbt_charts.core.execute import (
-        ExecutionError as ExecutionError,
-        Executor as Executor,
-    )
+    from dbt_charts.core.execute import ExecutionError as ExecutionError
 
     # `render` shadows `dbt_charts.render` module access — see _LAZY_ATTRS note below.
     from dbt_charts.core.render import RenderError as RenderError, render as render
@@ -88,7 +87,6 @@ __all__ = [
     "Variable",
     "CompilationError",
     # Execute
-    "Executor",
     "ExecutionError",
     # Render
     "render",
@@ -115,7 +113,6 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "compile": ("dbt_charts.core.compile", "compile"),
     "compile_file": ("dbt_charts.core.compile", "compile_file"),
     "ExecutionError": ("dbt_charts.core.execute", "ExecutionError"),
-    "Executor": ("dbt_charts.core.execute", "Executor"),
     # `render` shadows `dbt_charts.render` module access (pre-existing, not
     # introduced by laziness) — tests patching render internals import
     # dbt_charts.core.render.renderer directly instead.

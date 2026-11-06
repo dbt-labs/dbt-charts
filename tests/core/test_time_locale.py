@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import ast
-import importlib.util
 import json
 import re
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import get_args
 
 import pytest
 import vl_convert as vlc
@@ -31,7 +27,6 @@ from dbt_charts.core.text.format_d3 import (
     time_locale_definition,
 )
 
-from .._paths import DBT_CHARTS_DIR
 from ._svg_render import render_board_to_svg
 
 _INSTANTS = [
@@ -71,34 +66,8 @@ def test_the_time_locale_must_have_a_d3_time_set() -> None:
     assert RegionalLocale.model_validate({"number": "pt-PT"}).number == "pt-PT"
 
 
-@pytest.mark.parametrize("name", get_args(TimeLocaleName))
-def test_every_named_time_locale_loads(name: TimeLocaleName) -> None:
-    assert time_locale_definition(name) == vlc.get_time_format_locale(name)
-
-
-def _stubbed_time_locale_names() -> set[str]:
-    stub = Path(vlc.__file__).with_name("__init__.pyi")
-    for node in ast.walk(ast.parse(stub.read_text())):
-        if (
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.target.id == "TimeFormatLocaleName"
-            and node.value is not None
-        ):
-            return {
-                const.value
-                for const in ast.walk(node.value)
-                if isinstance(const, ast.Constant)
-            }
-    raise AssertionError("vl_convert's stub no longer names TimeFormatLocaleName")
-
-
-def test_the_time_locale_names_are_exactly_vl_converts() -> None:
-    assert _stubbed_time_locale_names() == set(get_args(TimeLocaleName))
-
-
 def test_an_authored_time_locale_needs_seven_days_and_twelve_months() -> None:
-    definition = vlc.get_time_format_locale("de-DE")
+    definition = time_locale_definition("de-DE")
     authored = {
         "date_time": definition["dateTime"],
         "date": definition["date"],
@@ -116,7 +85,7 @@ def test_an_authored_time_locale_needs_seven_days_and_twelve_months() -> None:
 
 
 def test_an_authored_time_locale_reaches_vega_as_a_d3_definition() -> None:
-    definition = vlc.get_time_format_locale("fr-FR")
+    definition = time_locale_definition("fr-FR")
     authored = TimeLocale.model_validate(
         {
             "date_time": definition["dateTime"],
@@ -135,7 +104,7 @@ def test_an_authored_time_locale_reaches_vega_as_a_d3_definition() -> None:
 
 
 def test_the_default_time_locale_is_en_us() -> None:
-    assert Regional().time_locale == vlc.get_time_format_locale("en-US")
+    assert Regional().time_locale == time_locale_definition("en-US")
 
 
 @pytest.mark.parametrize("locale", ["de-DE", "fr-FR", "ja-JP", "ar-EG", "en-US"])
@@ -156,7 +125,7 @@ def test_portable_strftime_names_match_vega(
 
 
 def test_a_percent_in_a_locale_word_prints_literally() -> None:
-    definition = vlc.get_time_format_locale("en-US")
+    definition = time_locale_definition("en-US")
     months = ["100%"] + definition["shortMonths"][1:]
     custom = TimeLocale.model_validate(
         {
@@ -225,7 +194,7 @@ def test_a_de_de_board_names_its_axis_months_in_german() -> None:
 
 
 def _authored_time(**overrides: object) -> dict[str, object]:
-    d = vlc.get_time_format_locale("en-US")
+    d = time_locale_definition("en-US")
     return {
         "date_time": d["dateTime"],
         "date": d["date"],
@@ -394,13 +363,6 @@ def test_a_named_time_locale_starts_its_week_where_cldr_says(
     assert Regional(locale=RegionalLocale(time=name)).week_start == start
 
 
-def test_every_time_locale_region_has_a_cldr_first_day() -> None:
-    from dbt_charts.core.text.format_d3 import CLDR_FIRST_DAY
-
-    regions = {name[3:] for name in get_args(TimeLocaleName)}
-    assert regions <= set(CLDR_FIRST_DAY)
-
-
 def test_an_authored_week_start_is_a_weekday_name() -> None:
     custom = TimeLocale.model_validate(_authored_time(week_start="saturday"))
     assert Regional(locale=RegionalLocale(time=custom)).week_start == 6
@@ -410,18 +372,3 @@ def test_an_authored_week_start_is_a_weekday_name() -> None:
     del missing["week_start"]
     with pytest.raises(ValidationError):
         TimeLocale.model_validate(missing)
-
-
-def test_the_first_day_table_keeps_only_the_wanted_regions() -> None:
-    spec = importlib.util.spec_from_file_location(
-        "gen_cldr_first_day", DBT_CHARTS_DIR / "scripts" / "gen_cldr_first_day.py"
-    )
-    assert spec is not None and spec.loader is not None
-    script = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(script)
-    first_day_table = script.first_day_table
-
-    week_data = {"001": "mon", "DE": "mon", "US": "sun", "FR": "mon"}
-    assert first_day_table(week_data, ["US", "DE"]) == {"DE": "mon", "US": "sun"}
-    with pytest.raises(KeyError, match="IR"):
-        first_day_table(week_data, ["IR"])

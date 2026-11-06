@@ -41,10 +41,11 @@ def test_titled_support_table_cols_card_heights_equal(tmp_path):
 
     from dbt_charts.cli.filesystem_project import FilesystemProject
     from dbt_charts.core.compile import compile as compile_board
-    from dbt_charts.core.execute.adapters import build_adapter_registry
-    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.execute.env import build_exec_env
     from dbt_charts.core.render.board_resolve import build_resolved_board
     from dbt_charts.core.render.boards import render_board_svg
+
+    from ..._run import Run
 
     _YAML = """
 title: Height Equality Test
@@ -82,9 +83,9 @@ cols:
     assert result.success and result.board is not None, result.errors
 
     project = FilesystemProject(tmp_path)
-    executor = Executor(
+    executor = Run(
         result.board,
-        build_adapter_registry(project),
+        build_exec_env(project),
         query_registry=result.query_registry,
     )
     variables: dict = {}

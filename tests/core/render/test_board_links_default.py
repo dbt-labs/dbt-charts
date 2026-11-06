@@ -16,11 +16,12 @@ from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.chart.resolved import ResolvedTableChart
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
 from dbt_charts.core.render.board_resolve import build_resolved_board
 from dbt_charts.core.render.board_to_dict import board_to_dict
+
+from ..._run import Run
 
 _ANCHOR_RE = re.compile(r"<a\b[^>]*>")
 
@@ -58,12 +59,12 @@ _TABLE = """    type: table
 def _svg(links: str, chart: str) -> str:
     result = compile_board(_BOARD.format(links=links, chart=chart))
     assert result.success and result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        env=build_exec_env(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
     )
-    rendered = render(result.board, executor, format="svg")
+    rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert not rendered.chart_errors, rendered.chart_errors
     assert isinstance(rendered.output, str)
     return rendered.output
@@ -228,12 +229,12 @@ tabs:
 """
 
 
-def _inactive_tab_board() -> tuple[Board, Executor]:
+def _inactive_tab_board() -> tuple[Board, Run]:
     result = compile_board(_INACTIVE_TAB)
     assert result.success and result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        env=build_exec_env(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
     )
     return result.board, executor

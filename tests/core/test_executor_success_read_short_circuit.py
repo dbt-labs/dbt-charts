@@ -6,10 +6,7 @@ Verifies that:
 - force_refresh=True bypasses the DuckDB success cache and calls the adapter.
 """
 
-from unittest.mock import Mock
-
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.duckdb_cache import (
     compute_cache_key,
     compute_query_hash,
@@ -18,7 +15,9 @@ from dbt_charts.core.execute.duckdb_cache import (
 )
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
-from .._results import rows_result, rows_schema
+from .._results import rows_result
+from .._run import Run
+from .._scripted_env import ScriptedBackend, scripted_env
 
 BOARD_YAML = """
 title: Test
@@ -42,21 +41,21 @@ def _compiled():
     return compile(BOARD_YAML)
 
 
-def _make_executor(result_cache: TrivialDuckDBCache) -> tuple[Executor, Mock]:
-    """Return (executor, mock_registry) with an adapter that raises if called."""
+def _make_executor(result_cache: TrivialDuckDBCache) -> tuple[Run, ScriptedBackend]:
+    """Return (executor, backend) with a backend that raises if called."""
     result = _compiled()
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.side_effect = AssertionError(
-        "adapter.execute() must not be called — should have hit result cache",
+    mock_registry_backend = ScriptedBackend(
+        error=AssertionError(
+            "backend.execute() must not be called — should have hit result cache",
+        )
     )
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=mock_registry,
+        env=scripted_env(mock_registry_backend),
         query_registry=result.query_registry,
         result_cache=result_cache,
     )
-    return executor, mock_registry
+    return executor, mock_registry_backend
 
 
 def _board_slug() -> str:
@@ -98,12 +97,12 @@ class TestDuckDBSuccessCacheShortCircuit:
         cache = TrivialDuckDBCache()
         try:
             _seed_cache(cache)
-            executor, mock_registry = _make_executor(cache)
+            executor, mock_registry_backend = _make_executor(cache)
 
             rows = executor.execute_query("revenue")
 
             assert rows == CACHED_ROWS
-            assert mock_registry.execute.call_count == 0
+            assert mock_registry_backend.execute.call_count == 0
         finally:
             cache.close()
 
@@ -112,7 +111,7 @@ class TestDuckDBSuccessCacheShortCircuit:
         cache = TrivialDuckDBCache()
         try:
             _seed_cache(cache)
-            executor, mock_registry = _make_executor(cache)
+            executor, mock_registry_backend = _make_executor(cache)
 
             # Patch get() to count real DuckDB reads
             original_get = cache.get
@@ -133,7 +132,7 @@ class TestDuckDBSuccessCacheShortCircuit:
             assert rows2 == CACHED_ROWS
             # DuckDB should have been read exactly once; second served from in-memory
             assert len(duckdb_read_count) == 1
-            assert mock_registry.execute.call_count == 0
+            assert mock_registry_backend.execute.call_count == 0
         finally:
             cache.close()
 
@@ -143,20 +142,13 @@ class TestDuckDBSuccessCacheShortCircuit:
         try:
             _seed_cache(cache)
             result = _compiled()
-            mock_registry = Mock()
-            mock_registry.project_file_sources.return_value = {}
             fresh_rows = [{"amount": 1}]
-            ok = Mock()
-            ok.is_success = True
-            ok.data = fresh_rows
-            ok.schema = rows_schema(ok.data)
-            ok.resolved_relations = None
-            ok.truncated_reason = None
-            mock_registry.execute.return_value = ok
+            mock_registry_backend = ScriptedBackend(fresh_rows)
+            mock_registry = scripted_env(mock_registry_backend)
 
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=mock_registry,
+                env=mock_registry,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
@@ -164,33 +156,26 @@ class TestDuckDBSuccessCacheShortCircuit:
             rows = executor.execute_query("revenue", force_refresh=True)
 
             assert rows == fresh_rows
-            assert mock_registry.execute.call_count == 1
+            assert mock_registry_backend.execute.call_count == 1
         finally:
             cache.close()
 
     def test_no_result_cache_configured_hits_adapter(self):
         """When no result cache is configured, adapter is always called."""
         result = _compiled()
-        mock_registry = Mock()
-        mock_registry.project_file_sources.return_value = {}
-        ok = Mock()
-        ok.is_success = True
-        ok.data = [{"amount": 42}]
-        ok.schema = rows_schema(ok.data)
-        ok.resolved_relations = None
-        ok.truncated_reason = None
-        mock_registry.execute.return_value = ok
+        mock_registry_backend = ScriptedBackend([{"amount": 42}])
+        mock_registry = scripted_env(mock_registry_backend)
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=mock_registry,
+            env=mock_registry,
             query_registry=result.query_registry,
             result_cache=None,
         )
 
         rows = executor.execute_query("revenue", use_cache=False)
         assert rows == [{"amount": 42}]
-        assert mock_registry.execute.call_count == 1
+        assert mock_registry_backend.execute.call_count == 1
 
     def test_stale_cache_entry_with_different_query_hash_misses(self):
         """A cache entry with a different query_hash is not returned (stale SQL guard).
@@ -221,19 +206,12 @@ class TestDuckDBSuccessCacheShortCircuit:
 
             # Adapter returns fresh data
             fresh_rows = [{"amount": 999}]
-            mock_registry = Mock()
-            mock_registry.project_file_sources.return_value = {}
-            ok = Mock()
-            ok.is_success = True
-            ok.data = fresh_rows
-            ok.schema = rows_schema(ok.data)
-            ok.resolved_relations = None
-            ok.truncated_reason = None
-            mock_registry.execute.return_value = ok
+            mock_registry_backend = ScriptedBackend(fresh_rows)
+            mock_registry = scripted_env(mock_registry_backend)
 
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=mock_registry,
+                env=mock_registry,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
@@ -242,6 +220,6 @@ class TestDuckDBSuccessCacheShortCircuit:
 
             # Stale cache entry must be ignored; fresh data from adapter
             assert rows == fresh_rows
-            assert mock_registry.execute.call_count == 1
+            assert mock_registry_backend.execute.call_count == 1
         finally:
             cache.close()

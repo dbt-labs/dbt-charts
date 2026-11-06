@@ -1,4 +1,4 @@
-"""Regression tests for dbt_profile source routing through the adapter registry.
+"""Regression tests for dbt_profile source routing through the exec env.
 
 The bug: dbt_profile sources expand LATE (inside the dbt backend) after
 routing already committed. A dbt_profile→duckdb query stays on the dbt backend and
@@ -12,7 +12,7 @@ Tests:
 - test_allowlisted_resolver_rejects_dbt_profile:
   trust boundary - deployed-mode resolver refuses to expand a dbt_profile (no off-disk read)
 - test_dbt_profile_duckdb_select_returns_correct_rows:
-  integration - SELECT through build_adapter_registry returns seeded data; write rejected (read-only)
+  integration - SELECT through build_exec_env returns seeded data; write rejected (read-only)
 - test_dbt_profile_missing_raises_query_error:
   error path - missing profile name surfaces as QueryResult error
 - TestDbtProfileDuckdbRefResolution:
@@ -37,7 +37,9 @@ import pytest
 import yaml
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+from dbt_charts.core.execute.compose import compose_query
+from dbt_charts.core.execute.env import ExecEnv
+from dbt_charts.core.execute.run import run_query
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -201,7 +203,7 @@ class TestDbtProfileDuckdbRouting:
     ) -> None:
         """End-to-end: dbt_profile→duckdb SELECT returns the seeded row."""
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
 
@@ -209,7 +211,7 @@ class TestDbtProfileDuckdbRouting:
         _make_duckdb_file(db_path)
         _make_project(tmp_path, db_path)
 
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
 
         # 'prod' names the dbt_profile source registered in dbt_charts.yml
         # (_make_project) — a query's source is a validated name, never an
@@ -218,7 +220,7 @@ class TestDbtProfileDuckdbRouting:
             sql="SELECT n FROM numbers",
             source="prod",
         )
-        result = registry.execute(query)
+        result = run_query(registry, query)
         assert result.error is None, f"SELECT failed: {result.error}"
         assert result.data == [{"n": 42}]
 
@@ -229,7 +231,7 @@ class TestDbtProfileDuckdbRouting:
             sql="INSERT INTO numbers VALUES (99)",
             source="prod",
         )
-        write_result = registry.execute(write)
+        write_result = run_query(registry, write)
         assert write_result.error is not None, (
             "Expected read-only DuckDB to reject the write"
         )
@@ -244,7 +246,7 @@ class TestDbtProfileDuckdbRouting:
         not an uncaught exception.
         """
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
 
@@ -252,7 +254,7 @@ class TestDbtProfileDuckdbRouting:
         _make_duckdb_file(db_path)
         _make_project(tmp_path, db_path)
 
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
 
         # 'missing_prod' names the dbt_profile source registered in dbt_charts.yml
         # (_make_project) whose profile name doesn't exist in profiles.yml.
@@ -260,7 +262,7 @@ class TestDbtProfileDuckdbRouting:
             sql="SELECT 1",
             source="missing_prod",
         )
-        result = registry.execute(query)
+        result = run_query(registry, query)
         assert result.error is not None
         assert "nonexistent_profile" in str(result.error)
 
@@ -312,7 +314,7 @@ class TestDbtProfileDuckdbRefResolution:
     ) -> None:
         """A ref() query against a dbt_profile→duckdb source returns the model's rows."""
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
 
@@ -324,10 +326,11 @@ class TestDbtProfileDuckdbRefResolution:
         _make_project(tmp_path, db_path)
         _write_manifest(tmp_path)
 
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
 
-        result = registry.execute(
-            SqlQuery(sql="SELECT revenue FROM {{ ref('orders') }}", source="prod")
+        result = run_query(
+            registry,
+            SqlQuery(sql="SELECT revenue FROM {{ ref('orders') }}", source="prod"),
         )
         assert result.error is None, f"ref() query failed: {result.error}"
         assert result.data == [{"revenue": 100}]
@@ -341,7 +344,7 @@ class TestDbtProfileDuckdbRefResolution:
         """`target_path:` on the source routes ref() to that manifest's relation;
         the default manifest (a different schema here) is never consulted."""
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
         monkeypatch.delenv("DBT_TARGET_PATH", raising=False)
@@ -367,10 +370,11 @@ class TestDbtProfileDuckdbRefResolution:
         _write_manifest(tmp_path)
         _write_manifest(tmp_path, "target/prod/manifest.json", schema="prod_main")
 
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
 
-        result = registry.execute(
-            SqlQuery(sql="SELECT revenue FROM {{ ref('orders') }}", source="prod")
+        result = run_query(
+            registry,
+            SqlQuery(sql="SELECT revenue FROM {{ ref('orders') }}", source="prod"),
         )
         assert result.error is None, f"ref() query failed: {result.error}"
         assert result.data == [{"revenue": 200}]
@@ -384,7 +388,7 @@ class TestDbtProfileDuckdbRefResolution:
         """With no manifest, the author is told to build one — not that `ref` is
         an undefined Jinja variable."""
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
 
@@ -392,10 +396,10 @@ class TestDbtProfileDuckdbRefResolution:
         _make_duckdb_file(db_path)
         _make_project(tmp_path, db_path)
 
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
 
-        result = registry.execute(
-            SqlQuery(sql="SELECT * FROM {{ ref('orders') }}", source="prod")
+        result = run_query(
+            registry, SqlQuery(sql="SELECT * FROM {{ ref('orders') }}", source="prod")
         )
         assert result.error is not None
         assert "manifest" in str(result.error).lower()
@@ -412,8 +416,8 @@ class TestDbtProfileSourceWithoutDbtProject:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         local_project: Callable[..., FilesystemProject],
-    ) -> AdapterRegistry:
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+    ) -> ExecEnv:
+        from dbt_charts.core.execute.env import build_exec_env
 
         project_dir = tmp_path / "charts_project"
         project_dir.mkdir()
@@ -427,7 +431,7 @@ class TestDbtProfileSourceWithoutDbtProject:
         _write_profiles_yml(profiles_dir, db_path)
         monkeypatch.setenv("DBT_PROFILES_DIR", str(profiles_dir))
         monkeypatch.setenv("DBT_PROFILE", "test_project")
-        return build_adapter_registry(local_project(project_dir), read_only=True)
+        return build_exec_env(local_project(project_dir), read_only=True)
 
     def test_select_runs(
         self,
@@ -439,7 +443,9 @@ class TestDbtProfileSourceWithoutDbtProject:
 
         registry = self._registry(tmp_path, monkeypatch, local_project)
 
-        result = registry.execute(SqlQuery(sql="SELECT n FROM numbers", source="prod"))
+        result = run_query(
+            registry, SqlQuery(sql="SELECT n FROM numbers", source="prod")
+        )
         assert result.error is None, f"SELECT failed: {result.error}"
         assert result.data == [{"n": 42}]
 
@@ -453,8 +459,8 @@ class TestDbtProfileSourceWithoutDbtProject:
 
         registry = self._registry(tmp_path, monkeypatch, local_project)
 
-        result = registry.execute(
-            SqlQuery(sql="SELECT * FROM {{ ref('orders') }}", source="prod")
+        result = run_query(
+            registry, SqlQuery(sql="SELECT * FROM {{ ref('orders') }}", source="prod")
         )
         assert result.error is not None
         assert "manifest" in str(result.error).lower()
@@ -464,7 +470,7 @@ class TestDbtProfileBoardRenderRefResolution:
     """`{{ ref() }}` in a board query must resolve on the `dct render` path too.
 
     `TestDbtProfileDuckdbRefResolution` above only exercises the ad-hoc `dct
-    query` path (``registry.execute(query)``, no ``board=``). Passing a compiled
+    query` path (``run_query(registry, query)``, no ``board=``). Passing a compiled
     board with populated ``board.queries`` takes a different branch inside
     ```compose```: with ``source_config`` resolved
     (non-None, since 'prod' is a named dbt_profile source) that guard used to
@@ -482,7 +488,7 @@ class TestDbtProfileBoardRenderRefResolution:
         """A board query using ref() against a dbt_profile source resolves when
         executed with board= set — the same path `dct render`/`dct serve` use."""
         from dbt_charts.core.compile.compiler import compile
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
 
@@ -511,9 +517,9 @@ class TestDbtProfileBoardRenderRefResolution:
         assert result.success, result.diagnostics
         board = result.board
 
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
 
-        query_result = registry.execute(board.queries["q"], board=board)
+        query_result = run_query(registry, board.queries["q"], board=board)
         assert query_result.error is None, f"ref() query failed: {query_result.error}"
         assert query_result.data == [{"revenue": 100}]
 
@@ -532,7 +538,7 @@ class TestDbtProfileBoardRenderRefResolution:
         ``test_unbound_strict_variable_is_not_swallowed_as_a_ref_resolution_error``
         below for that.)"""
         from dbt_charts.core.compile.compiler import compile
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
 
@@ -557,9 +563,9 @@ class TestDbtProfileBoardRenderRefResolution:
         assert result.success, result.diagnostics
         board = result.board
 
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
 
-        query_result = registry.execute(board.queries["q"], board=board)
+        query_result = run_query(registry, board.queries["q"], board=board)
         assert query_result.error is not None
         assert "manifest" in str(query_result.error).lower()
         assert "undefined" not in str(query_result.error).lower()
@@ -586,7 +592,7 @@ class TestDbtProfileBoardRenderRefResolution:
         """
         from dbt_charts.core.compile.compiler import compile
         from dbt_charts.core.compile.errors import JinjaError
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
 
@@ -614,13 +620,13 @@ class TestDbtProfileBoardRenderRefResolution:
         assert result.success, result.diagnostics
         board = result.board
 
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
 
         # No `variables=` passed — the registry composition path receives an
         # empty variables dict, so `region` (declared but unbound) is
         # StrictUndefined in the render.
         with pytest.raises(JinjaError, match="region"):
-            registry.execute(board.queries["q"], board=board)
+            run_query(registry, board.queries["q"], board=board)
 
 
 # ---------------------------------------------------------------------------
@@ -1048,7 +1054,7 @@ class TestBoardPrepareSqlTargetPath:
     ) -> None:
         from dbt_charts.core.compile.compiler import compile
         from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
         _write_manifest(tmp_path)
@@ -1068,12 +1074,14 @@ class TestBoardPrepareSqlTargetPath:
             "  - c\n"
         )
         assert compiled.board is not None, compiled.errors
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
 
-        prepared = registry.compose_query(
+        prepared = compose_query(
             compiled.query_registry["q"],
             board=compiled.board,
             variables={},
+            refs=registry.dbt_refs,
+            project=registry.project,
             source_config=DbtTargetSourceConfig(
                 type="postgres", host="h", target_path="target/prod"
             ),
@@ -1090,8 +1098,8 @@ class TestBoardPrepareSqlTargetPath:
         """compose's ref() pass, which sees SQL composition left raw."""
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
-        from dbt_charts.core.execute.adapters import build_adapter_registry
         from dbt_charts.core.execute.compose import compose
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
         _write_manifest(tmp_path)
@@ -1101,7 +1109,7 @@ class TestBoardPrepareSqlTargetPath:
             type="postgres", host="h", target_path="target/prod"
         )
         query = SqlQuery(sql="SELECT revenue FROM {{ ref('orders') }}", source="prod")
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
 
         prepared = compose(
             query,

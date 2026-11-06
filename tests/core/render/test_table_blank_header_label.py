@@ -10,9 +10,10 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.config import reset_config
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
+
+from ..._run import Run
 
 _BOARD = """\
 queries:
@@ -42,12 +43,12 @@ def _svg(label: str, local_project: Callable[..., FilesystemProject]) -> str:
     result = compile_board(_BOARD.format(label=label))
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
     )
-    svg = render(result.board, executor, format="svg").output
+    svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
     assert isinstance(svg, str)
     return svg
 

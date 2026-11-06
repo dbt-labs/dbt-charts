@@ -92,16 +92,16 @@ class TestFreeFunctionPathContract:
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
         from dbt_charts.agent_api.query import QueryBoardResult, query_board
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
-        registry = build_adapter_registry(
+        registry = build_exec_env(
             local_project(Path("/tmp/nonexistent")), read_only=True
         )
         result = query_board(
             "revenue",
             Path("charts/x.yml"),
             project=local_project(Path("/tmp/nonexistent")),
-            adapter_registry=registry,
+            env=registry,
         )
         assert isinstance(result, QueryBoardResult)
         assert result.success is False

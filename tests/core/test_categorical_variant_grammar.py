@@ -15,9 +15,6 @@ from typing import Any
 
 import pytest
 
-from dbt_charts.core.compile.migrations.versions.v0_9_0 import (
-    ROLE_ALIASES as _ROLE_ALIASES,
-)
 from dbt_charts.core.compile.resolve.style.palette import (
     UnknownColorError,
     UnknownPaletteError,
@@ -458,30 +455,6 @@ class TestEveryHintedReplacementResolvesOnTheShippedThemes:
         return [
             t for t in list_built_in_themes() if not t.startswith(("_", "diagnostics-"))
         ]
-
-    @pytest.mark.parametrize("theme", _themes.__func__())
-    def test_role_forms_resolve_through_color_from_theme(self, theme: str) -> None:
-        from dbt_charts.core.compile.config import get_theme_style
-        from dbt_charts.core.diagnostics.hints import respell_retired_variant_token
-
-        style = get_theme_style(theme)
-        assert style.palettes is not None
-        palettes, roles = style.palettes, style.roles
-        stop_count = len(palette(palettes["category"]))
-        for suffix in _RETIRED_SUFFIX_TO_VARIANT:
-            for slot in range(1, stop_count + 1):
-                hinted = respell_retired_variant_token(f"category_{suffix}[{slot}]")
-                assert hinted is not None
-                assert color_from_theme(hinted, palettes=palettes, roles=roles)
-            # The alias set lives on the palette, not on the retired
-            # companion: every alias the migration enumerates was addressable
-            # as `category_<suffix>.<alias>` under the old grammar, so its
-            # replacement must resolve on every shipped theme -- a miss here
-            # is a real gap, never one to skip past.
-            for alias in _ROLE_ALIASES:
-                hinted = respell_retired_variant_token(f"category_{suffix}.{alias}")
-                assert hinted is not None
-                assert color_from_theme(hinted, palettes=palettes, roles=roles)
 
     @pytest.mark.parametrize("theme", _themes.__func__())
     def test_bare_role_form_resolves_as_a_whole_list_reference(

@@ -168,6 +168,28 @@ def current_overridden_variables() -> frozenset[str]:
     return _OVERRIDDEN_VARIABLES.get()
 
 
+# Render context the host injects (a directory listing, say) beside the board's
+# variables. Text reads it; a link back to this board must not carry it.
+_CONTEXT_VARIABLES: ContextVar[frozenset[str]] = ContextVar(
+    "dct_context_variables", default=frozenset()
+)
+
+
+@contextmanager
+def context_variables(names: frozenset[str]) -> Generator[None]:
+    """Scope the names of the host-injected render context among the variables."""
+    token = _CONTEXT_VARIABLES.set(names)
+    try:
+        yield
+    finally:
+        _CONTEXT_VARIABLES.reset(token)
+
+
+def current_context_variables() -> frozenset[str]:
+    """Host-injected render context names, for the render in progress."""
+    return _CONTEXT_VARIABLES.get()
+
+
 def committed_text(
     value: object,  # type-state: object_annotation — any variable value; VariableValues is dict[str, Any]
 ) -> str:

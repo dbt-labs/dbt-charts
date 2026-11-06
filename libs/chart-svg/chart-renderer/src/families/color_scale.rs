@@ -228,7 +228,7 @@ impl ContinuousColor {
             // The legend's data join keys its entries by value, so a repeat (`NaN` included) is one entry.
             Some(tokens) => {
                 let mut values: Vec<f64> = Vec::new();
-                for v in tokens.iter().map(|t| crate::common::js_string_to_number(t).unwrap_or(f64::NAN)) {
+                for v in tokens.iter().map(|t| ::bind::rows::js_string_to_number(t).unwrap_or(f64::NAN)) {
                     if !values.iter().any(|&seen| seen == v || (seen.is_nan() && v.is_nan())) {
                         values.push(v);
                     }
@@ -237,13 +237,13 @@ impl ContinuousColor {
             }
             None => gradient_labeled_values(d3rs::ticks::d3_ticks(self.lo, self.hi, count), self.lo, self.hi),
         };
-        let spec = crate::number_locale::vega_tick_spec(d3rs::ticks::d3_tick_step(self.lo, self.hi, count));
+        let spec = ::bind::formats::locale::vega_tick_spec(d3rs::ticks::d3_tick_step(self.lo, self.hi, count));
         let labels = values
             .iter()
             .map(|&v| match format {
                 _ if v.is_nan() => Ok("NaN".to_string()),
                 Some(format) => format.paint_tick(v),
-                None => crate::number_locale::d3_format(&spec, v),
+                None => ::bind::formats::locale::d3_format(&spec, v),
             })
             .collect::<Result<_, _>>()?;
         Ok((values, labels))
@@ -554,13 +554,13 @@ const SYMBOL_LEGEND_TICKS: usize = 5;
 impl ContinuousColor {
     /// A symbol legend's entries over this scale: each tick's text and color.
     pub(crate) fn symbol_ladder(&self, format: Option<&FormatSlot>) -> Result<Vec<(String, String)>, String> {
-        let spec = crate::number_locale::vega_tick_spec(d3rs::ticks::d3_tick_step(self.lo, self.hi, SYMBOL_LEGEND_TICKS));
+        let spec = ::bind::formats::locale::vega_tick_spec(d3rs::ticks::d3_tick_step(self.lo, self.hi, SYMBOL_LEGEND_TICKS));
         d3rs::ticks::d3_ticks(self.lo, self.hi, SYMBOL_LEGEND_TICKS)
             .into_iter()
             .map(|v| {
                 let label = match format {
                     Some(slot) => slot.paint(v)?,
-                    None => crate::number_locale::d3_format(&spec, v)?,
+                    None => ::bind::formats::locale::d3_format(&spec, v)?,
                 };
                 Ok((label, self.fill(v)))
             })
@@ -649,6 +649,7 @@ impl<'a> NumericLegends<'a> {
         fonts: &FontBook,
         unit: (f64, f64),
         (x, y): (f64, f64),
+        canvas: &str,
     ) -> Result<Vec<Node>, String> {
         let part = &self.parts[index];
         if part.gradient {
@@ -674,6 +675,7 @@ impl<'a> NumericLegends<'a> {
             x,
             y,
             false,
+            canvas,
         )
         .into_iter()
         .collect())
@@ -721,11 +723,12 @@ impl<'a> NumericLegends<'a> {
         fonts: &FontBook,
         unit: (f64, f64),
         (x, y): (f64, f64),
+        canvas: &str,
     ) -> Result<Vec<Node>, String> {
         let stack = base.stack.as_ref().expect("a legend stacked with numeric legends carries its stack");
         let mut nodes = Vec::new();
         for (index, (dx, dy)) in stack.offsets.iter().skip(usize::from(stack.base_block)).enumerate() {
-            nodes.extend(self.part_nodes(index, cfg, fonts, unit, (x + dx, y + dy))?);
+            nodes.extend(self.part_nodes(index, cfg, fonts, unit, (x + dx, y + dy), canvas)?);
         }
         Ok(nodes)
     }
@@ -1261,7 +1264,7 @@ mod tests {
 
     #[test]
     fn gradient_legend_markup_is_pinned() {
-        let _en = crate::time_locale::en_us_scope();
+        let _en = ::bind::time_locale::en_us_scope();
         assert_eq!(gradient_legend_markup(), include_str!("gradient_legends_golden.svg"));
     }
 }

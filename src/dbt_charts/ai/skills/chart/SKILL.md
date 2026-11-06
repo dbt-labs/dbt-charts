@@ -79,7 +79,7 @@ A source with `metricflow:` carries a semantic bundle: its queries aggregate wit
 
 `charts.<name>`:
 - `query` (text|{}): Where this chart reads its data
-- `title`: Heading naming what the chart shows. Rejected on type: kpi
+- `title`: Heading naming what the chart shows, in Title Case like every heading. Rejected on type: kpi
 - `subtitle`: Supporting text beneath the chart title; a KPI uses `support.label` instead
 - `x`: X-axis column name from the query result
 - `y` (text|list of text): Y-axis column name(s)

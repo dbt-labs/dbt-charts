@@ -15,7 +15,7 @@ from dbt_charts.agent_api.doctor import DoctorCheck, DoctorReport, run_doctor
 from dbt_charts.core.compile.models.source import ResolvedSourceConfig
 from dbt_charts.core.connections import WarehouseAuthError, WarehouseProbeError
 from dbt_charts.core.diagnostics import ERR_ADAPTER_NOT_INSTALLED
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+from dbt_charts.core.execute.backends.dbt_adapter_factory import (
     AdapterNotInstalledError,
 )
 

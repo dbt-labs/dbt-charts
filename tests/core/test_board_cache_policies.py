@@ -14,7 +14,7 @@ from textwrap import dedent
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import render_dashboard
 from dbt_charts.core.compile.config import reset_config
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 
 _BOARD = """
     title: Freshness
@@ -64,7 +64,7 @@ def _rendered_policies(tmp_path: Path) -> dict[str, str | None]:
     result = render_dashboard(
         board=project.path("charts/board.yml").read_board(),
         project=project,
-        adapter_registry=build_adapter_registry(project, read_only=False),
+        env=build_exec_env(project, read_only=False),
         result_cache=None,
         format="svg",
     )
@@ -124,7 +124,7 @@ def test_a_board_of_only_inline_queries_still_reports_policies(
     result = render_dashboard(
         board=project.path("charts/board.yml").read_board(),
         project=project,
-        adapter_registry=build_adapter_registry(project, read_only=False),
+        env=build_exec_env(project, read_only=False),
         result_cache=None,
         format="svg",
     )

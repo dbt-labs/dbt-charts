@@ -21,7 +21,6 @@ from dbt_charts.core.compile.migrations import (
     migrate_yaml_text,
     prepare_board_mapping,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.parse.parser import load_yaml_mapping
 
@@ -123,11 +122,8 @@ def test_theme_cannot_set_row_role() -> None:
 
 
 def test_text_rewrite_moves_the_chart_key() -> None:
-    catalog, registry = _board_migration_context()
     text = _BOARD % "    style:\n      row:\n        role: kind\n        height: 20"
-    migrated = migrate_yaml_text(
-        text, catalog=catalog, registry=registry, stop_target=catalog.dev.version
-    )
+    migrated = migrate_yaml_text(text)
     doc = load_yaml_mapping(migrated)
     assert doc["charts"]["t"]["row_role"] == "kind"
     assert doc["charts"]["t"]["style"] == {"row": {"height": 20}}

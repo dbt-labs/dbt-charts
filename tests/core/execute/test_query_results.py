@@ -7,7 +7,8 @@ from unittest.mock import Mock
 import pytest
 
 from dbt_charts.core.diagnostics.execution import QueryError
-from dbt_charts.core.execute.lookup import CachedRows
+from dbt_charts.core.execute.lookup import CachedRows, Ledger, Lookup
+from dbt_charts.core.execute.plan import make_context
 from dbt_charts.core.execute.query_results import (
     QueryResults,
     UncollectedQueryError,
@@ -24,19 +25,10 @@ VARS: dict[str, Any] = {"year": 2024}
 def _collect(
     hits: dict[str, CachedRows], outcomes: dict[str, Rows | Failed]
 ) -> QueryResults:
-    return collect(
-        hits,
-        outcomes,
-        variables=VARS,
-        rendered_at=AT,
-        cache_hit_ats=[AT],
-        truncations={},
-        listings=Mock(),
-        board=Mock(),
-        adapter_registry=Mock(),
-        column_format_errors={},
-        range_filters=Mock(),
-    )
+    queries = {name: Mock(formats={}) for name in (*hits, *outcomes)}
+    ctx = make_context(Mock(queries=queries), Mock(), clock=lambda: AT)
+    ledger = Ledger(ages=[("cached", AT, Mock(), True)])
+    return collect(ctx, ledger, Lookup(hits, (), {}), outcomes, VARS)
 
 
 def test_rows_come_from_hits_and_outcomes() -> None:
@@ -80,6 +72,8 @@ def test_same_name_under_another_variable_set_is_served_from_its_own_collection(
         AT,
         [],
         {},
+        {},
+        Mock(),
         Mock(),
         Mock(),
         Mock(),

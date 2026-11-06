@@ -21,13 +21,12 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style_and_context,
 )
 from dbt_charts.core.compile.resolve.style.palette import color as resolve_palette_color
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.render.chart.rendering import render_chart_item
 from dbt_charts.core.render.chart.vega_lite import render_chart
 from dbt_charts.core.render.engine import render_callout_card
-from dbt_charts.core.render.renderer import render
 
-from ...._lookup import collect_via_execute_query
+from ...._lookup import render_via
 from ...._results import rows_result
 from ..._board_utils import merged_patch
 from ..._svg_render import PINNED_RENDER_TIME
@@ -391,7 +390,7 @@ def test_callout_skips_query_execution(make_chart) -> None:
         title="No Query",
         message="No query should run",
     )
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.side_effect = AssertionError(
         "callout must not execute queries"
     )
@@ -451,7 +450,7 @@ def test_chart_data_error_fallback_renders_as_a_quiet_callout_tile(make_chart) -
     from dbt_charts.core.compile.config import get_theme_style
 
     chart = make_chart("kpi", x=None, y=None, value="value", label="Broken KPI")
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = [{"value": 1}, {"value": 2}]
     executor.execute_query_result.return_value = rows_result(
         executor.execute_query.return_value
@@ -941,12 +940,11 @@ def _render_board_svg(yaml_src: str) -> str:
     assert result.success, result.errors
     assert result.board is not None
 
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.cache_hit_ats = []
     executor.rendered_at = PINNED_RENDER_TIME
-    collect_via_execute_query(executor)
 
-    svg = render(result.board, executor, format="svg").output
+    svg = render_via(executor, result.board, format="svg").output
     assert isinstance(svg, str)
     return svg
 

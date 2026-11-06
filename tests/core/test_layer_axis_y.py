@@ -184,6 +184,59 @@ def test_chart_level_domain_with_split_dual_axis_raises_error() -> None:
     assert "sets axis_y.scale.continuous.domain=[0, 300]" in str(exc_info.value)
 
 
+def test_line_layer_wholly_outside_the_pinned_base_domain_is_refused() -> None:
+    """A pinned base y domain of 100-200 draws a 4000+ layer off the plot."""
+    from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.compile.models.chart.normalized import LineChart
+    from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
+    from dbt_charts.core.compile.resolve import resolve
+
+    chart = LineChart(
+        id="trend",
+        type="line",
+        x="month",
+        y="revenue",
+        query=_sql(),
+        query_name="q",
+        variable_dependencies=set(),
+        layers=[LineLayer(type="line", y="target", label="Target")],
+        style=LineChartStylePatch.model_validate(
+            {"axis_y": {"scale": {"continuous": {"domain": [100, 200]}}}}
+        ),
+    )
+
+    with pytest.raises(CompilationError) as exc_info:
+        resolve(chart, _DATA, _default_board_style())
+    assert exc_info.value.code is not None
+    assert exc_info.value.code.code == "ERR-LAYER-OUTSIDE-PINNED-DOMAIN"
+    assert "layers[0]" in str(exc_info.value)
+    assert "[100, 200]" in str(exc_info.value)
+
+
+def test_line_layer_inside_a_reversed_pinned_domain_is_not_refused() -> None:
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.compile.models.chart.normalized import LineChart
+    from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
+    from dbt_charts.core.compile.resolve import resolve
+
+    chart = LineChart(
+        id="trend",
+        type="line",
+        x="month",
+        y="revenue",
+        query=_sql(),
+        query_name="q",
+        variable_dependencies=set(),
+        layers=[LineLayer(type="line", y="target", label="Target")],
+        style=LineChartStylePatch.model_validate(
+            {"axis_y": {"scale": {"continuous": {"domain": [6000, 0]}}}}
+        ),
+    )
+
+    resolve(chart, _DATA, _default_board_style())
+
+
 # ── Dual-axis base orientation ────────────────────────────────────────────
 #
 # Regression: a right-pinned overlay on a base whose theme-default y-axis is

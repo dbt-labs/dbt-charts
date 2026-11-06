@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from itertools import cycle
 from pathlib import Path
-from unittest.mock import Mock
 
 import pytest
 from pydantic import ValidationError
@@ -17,8 +16,7 @@ from dbt_charts.core.compile.resolve.chart.label_data import (
     pie_presentation_fingerprint,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import ExecEnv, build_exec_env
 from dbt_charts.core.execute.recording import (
     BoardRecording,
     load_board_recording,
@@ -26,7 +24,8 @@ from dbt_charts.core.execute.recording import (
 )
 from dbt_charts.core.render.board_resolve import build_resolved_board
 
-from ..._results import rows_schema
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, backend_of, scripted_env
 
 _YAML = """
 title: Recording Board
@@ -47,14 +46,14 @@ rows:
 """
 
 
-def _build_executor(tmp_path: Path) -> tuple[object, Executor, dict[str, object]]:
+def _build_executor(tmp_path: Path) -> tuple[object, Run, dict[str, object]]:
     result = compile_board(_YAML)
     assert result.success, result.errors
     assert result.board is not None
     project = FilesystemProject(tmp_path)
-    executor = Executor(
+    executor = Run(
         result.board,
-        build_adapter_registry(project),
+        build_exec_env(project),
         query_registry=result.query_registry,
     )
     variables: dict[str, object] = {}
@@ -65,7 +64,9 @@ def _build_executor(tmp_path: Path) -> tuple[object, Executor, dict[str, object]
 def test_record_board_captures_rows_by_query(tmp_path: Path) -> None:
     resolved, executor, variables = _build_executor(tmp_path)
 
-    recording = record_board(resolved, executor, variables)
+    recording = record_board(
+        resolved, executor.results(list(resolved.queries), variables), variables
+    )
 
     assert recording.results_by_query["channel_mix"].rows == [
         {"month": "2026-01-01", "signups": 90},
@@ -76,7 +77,9 @@ def test_record_board_captures_rows_by_query(tmp_path: Path) -> None:
 def test_record_board_captures_variables_and_timestamp(tmp_path: Path) -> None:
     resolved, executor, variables = _build_executor(tmp_path)
 
-    recording = record_board(resolved, executor, variables)
+    recording = record_board(
+        resolved, executor.results(list(resolved.queries), variables), variables
+    )
 
     assert recording.variables == variables
     assert recording.recorded_at == executor.rendered_at
@@ -85,14 +88,18 @@ def test_record_board_captures_variables_and_timestamp(tmp_path: Path) -> None:
 def test_record_board_provenance_empty_for_non_dbt_queries(tmp_path: Path) -> None:
     resolved, executor, variables = _build_executor(tmp_path)
 
-    recording = record_board(resolved, executor, variables)
+    recording = record_board(
+        resolved, executor.results(list(resolved.queries), variables), variables
+    )
 
     assert recording.provenance == {}
 
 
 def test_board_recording_round_trips_through_json(tmp_path: Path) -> None:
     resolved, executor, variables = _build_executor(tmp_path)
-    recording = record_board(resolved, executor, variables)
+    recording = record_board(
+        resolved, executor.results(list(resolved.queries), variables), variables
+    )
 
     reloaded = load_board_recording(recording.model_dump_json().encode())
 
@@ -147,23 +154,14 @@ _TIE_ORDER_B = [
 ]
 
 
-def _tie_flipping_registry() -> Mock:
-    """Adapter registry returning a different tie order on every execution."""
+def _tie_flipping_registry() -> ExecEnv:
+    """Exec env returning a different tie order on every execution."""
     orders = cycle([_TIE_ORDER_A, _TIE_ORDER_B])
 
-    def _execute(*args: object, **kwargs: object) -> Mock:
-        ok = Mock()
-        ok.is_success = True
-        ok.data = [dict(row) for row in next(orders)]
-        ok.schema = rows_schema(ok.data)
-        ok.resolved_relations = None
-        ok.truncated_reason = None
-        return ok
-
-    registry = Mock()
-    registry.project_file_sources.return_value = {}
-    registry.execute.side_effect = _execute
-    return registry
+    registry_backend = ScriptedBackend(
+        side_effect=lambda _source, _query: [dict(row) for row in next(orders)]
+    )
+    return scripted_env(registry_backend)
 
 
 def test_record_board_records_the_rows_resolve_saw_even_with_cache_off() -> None:
@@ -179,9 +177,9 @@ def test_record_board_records_the_rows_resolve_saw_even_with_cache_off() -> None
     assert result.success, result.errors
     assert result.board is not None
     registry = _tie_flipping_registry()
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=registry,
+        env=registry,
         query_registry=result.query_registry,
         use_cache=False,
     )
@@ -190,7 +188,9 @@ def test_record_board_records_the_rows_resolve_saw_even_with_cache_off() -> None
     resolved, _ = build_resolved_board(
         result.board, executor, variables, render_first=False
     )
-    recording = record_board(resolved, executor, variables)
+    recording = record_board(
+        resolved, executor.results(list(resolved.queries), variables), variables
+    )
 
     pie = resolved.charts["industry_pie"]
     assert isinstance(pie, ResolvedPieChart)
@@ -198,7 +198,7 @@ def test_record_board_records_the_rows_resolve_saw_even_with_cache_off() -> None
         pie_presentation_fingerprint(recording.results_by_query["industry_counts"].rows)
         == pie.presentation_fingerprint
     )
-    assert registry.execute.call_count == 1
+    assert backend_of(registry).execute.call_count == 1
 
 
 def test_board_recording_rejects_unknown_fields() -> None:

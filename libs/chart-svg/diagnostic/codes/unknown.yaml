@@ -1,0 +1,8 @@
+- code: ERR-INTERNAL
+  level: error
+  title: Internal error
+  template: '{message}'
+  doc: Fired when an unclassified internal failure occurs that does not map to a more specific
+    error code. Check the full traceback for details. If this appears in normal usage, file
+    a bug report.
+  docs_topic: errors

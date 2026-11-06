@@ -1827,9 +1827,9 @@ mod format_tests {
     #[test]
     fn a_value_with_no_spec_prints_in_the_board_locale() {
         let parts = FormatParts::default();
-        let de = crate::number_locale::de_de();
+        let de = ::bind::formats::locale::de_de();
         let number = |v: f64| {
-            crate::number_locale::with_number_locale(&de, || kpi_lanes(v, &parts, false)).1
+            ::bind::formats::locale::with_number_locale(&de, || kpi_lanes(v, &parts, false)).1
         };
         assert_eq!(number(1234.567), "1.234,57");
         assert_eq!(number(1234567.0), "1.234.567");
@@ -2152,8 +2152,8 @@ mod render_tests {
                     "warning": "#8a6d00",
                     "info": "#0b57d0"
                 },
-                "format_locale": crate::number_locale::en_us_wire(),
-                "time_locale": crate::time_locale::en_us_wire(),
+                "format_locale": ::bind::formats::locale::en_us_wire(),
+                "time_locale": ::bind::time_locale::en_us_wire(),
                 "sub_unit_specs": {"currency": "$,.2f", "number": ",.2f"}
             }
         }))

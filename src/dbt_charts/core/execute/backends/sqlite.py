@@ -32,7 +32,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
 )
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.dialects import SQLDialect, get_dialect
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import ConnectionSetupFailed
+from dbt_charts.core.execute.backends.dbt_adapter_factory import ConnectionSetupFailed
 from dbt_charts.core.execute.sqlite_utils import sqlite_ro_uri
 from dbt_charts.core.project import is_absolute_any_os
 

@@ -7,14 +7,14 @@
 use d3rs::format::{format, format_float, parse_parts, vega_tick_format};
 
 use super::table_dates::{strftime, Moment};
-use super::temporal::{
-    axis_time_format, time_unit_specifier, LabelUnit, TimeUnit, VegaType,
-};
-use crate::time_axis::{Grain as AxisGrain, TimeAxis};
-use super::x_type::{Grain, XResolution};
+use super::temporal::{axis_time_format, time_unit_specifier, LabelUnit};
+use ::bind::temporal::{VegaType};
+use ::bind::temporal::{TimeUnit};
+use ::bind::time_axis::{Grain as AxisGrain, TimeAxis};
+use ::bind::x_type::{Grain, XResolution};
 use crate::common::{axis_title_band, AxisStyle, AxisTitle, FormatSlot};
 use crate::contract::AxisChannel;
-use crate::number_locale::active_number_locale;
+use ::bind::formats::locale::active_number_locale;
 
 /// How many values a discrete domain lists before it elides the middle
 /// (`domainCaption`'s `maxlen`, 7).
@@ -177,7 +177,7 @@ pub fn x_axis_caption(
 ) -> Result<AxisCaption, String> {
     match resolution.vl_type {
         VegaType::Ordinal | VegaType::Nominal => {
-            let dates = crate::time_axis::Dates::read(domain);
+            let dates = ::bind::time_axis::Dates::read(domain);
             let values: Vec<String> = domain.iter().zip(&dates.date).map(|(v, &date)| bucket_text(v, date, resolution.grain)).collect();
             category_axis_caption(text, axis, &values)
         }
@@ -332,13 +332,13 @@ fn time_text(utc: bool, aware: bool, spec: Option<&str>, value: &f64) -> Result<
     let ms = value.round() as i64;
     let moment = Moment::from_epoch_millis(ms)?;
     // d3-time-format pads `%Y` to four digits; strftime does not below 1000. The year is the printed clock's.
-    let year = if aware { Moment::from_epoch_millis(crate::time_zone::wall_ms(ms)?)?.year() } else { moment.year() };
+    let year = if aware { Moment::from_epoch_millis(::bind::time_zone::wall_ms(ms)?)?.year() } else { moment.year() };
     let text = || strftime(moment, &spec.replace("%Y", &format!("{year:04}")));
     if aware {
         return text();
     }
     // A naive axis holds wall clocks on the UTC reckoning: they print as written.
-    crate::time_zone::with_time_zone(&crate::time_zone::utc(), text)
+    ::bind::time_zone::with_time_zone(&::bind::time_zone::utc(), text)
 }
 
 /// The `format` Vega's axis carries for `axis.labels.format`
@@ -375,8 +375,8 @@ pub fn slot_format(slot: &FormatSlot, composed: bool, quantitative: bool) -> Res
 mod tests {
     use super::*;
     use crate::common::FormatSlot;
-    use crate::number_locale::{with_number_locale, NumberLocale};
-    use crate::time_locale::{en_us, with_time_locale};
+    use ::bind::formats::locale::{with_number_locale, NumberLocale};
+    use ::bind::time_locale::{en_us, with_time_locale};
 
     fn describe(scale: CaptionScale, title: Option<&str>) -> String {
         let caption = AxisCaption { title: title.map(String::from), scale, bare: false };
@@ -524,7 +524,7 @@ mod tests {
     fn x_caption(axis: &AxisStyle, vl_type: VegaType, grain: Grain, domain: &[&str]) -> String {
         let resolution = XResolution { vl_type, from_data: vl_type, grain, fill_grain: grain };
         let domain: Vec<String> = domain.iter().map(|d| d.to_string()).collect();
-        let aware = crate::time_zone::all_aware(domain.iter().map(String::as_str));
+        let aware = ::bind::time_zone::all_aware(domain.iter().map(String::as_str));
         let caption = x_axis_caption("", axis, &resolution, &domain, 600.0, aware).expect("a caption");
         with_number_locale(&NumberLocale::en_us(), || {
             with_time_locale(&en_us(), || caption.describe(AxisChannel::X).expect("describes"))
@@ -598,7 +598,7 @@ mod tests {
 
     #[test]
     fn aware_instants_caption_in_the_board_zone_and_bucket_on_its_calendar() {
-        let _zone = crate::time_zone::zone_scope("America/New_York");
+        let _zone = ::bind::time_zone::zone_scope("America/New_York");
         let axis = plain(axis(serde_json::json!({})));
         let instants = x_caption(&axis, VegaType::Temporal, Grain::None, &["2024-03-10T07:30:00Z", "2024-03-10T09:30:00Z"]);
         assert!(instants.contains("3:30:00 AM") && instants.contains("5:30:00 AM"), "{instants}");
@@ -634,7 +634,7 @@ mod tests {
     #[test]
     fn a_time_part_is_a_time_scale_under_its_own_format() {
         let axis = plain(axis(serde_json::json!({})));
-        let part = Grain::Part(super::super::temporal::TimePart::MonthOfYear);
+        let part = Grain::Part(::bind::temporal::TimePart::MonthOfYear);
         assert_eq!(
             x_caption(&axis, VegaType::Temporal, part, &["2024-02-10", "2024-07-04"]),
             "X-axis for a time scale with values from February to July"

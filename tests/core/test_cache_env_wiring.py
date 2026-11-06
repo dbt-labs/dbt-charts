@@ -21,10 +21,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from dbt_charts.core.compile import compile as df_compile
-from dbt_charts.core.execute import Executor, QueryError
+from dbt_charts.core.execute import QueryError
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure
 from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+from .._run import Run
 
 BOARD_YAML = """\
 title: Test
@@ -43,7 +45,7 @@ rows:
 
 
 def _ok_adapter() -> MagicMock:
-    """Mock adapter registry that returns one row successfully."""
+    """Mock exec env that returns one row successfully."""
     ok = MagicMock()
     ok.is_success = True
     ok.data = [{"value": 42}]
@@ -83,9 +85,9 @@ class TestExecutorFailureCacheBlocksAdapter:
         result = df_compile(BOARD_YAML)
         adapter = _ok_adapter()
         try:
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )

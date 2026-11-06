@@ -14,14 +14,15 @@ Submodules:
 High-Level API:
     >>> from pathlib import Path
     >>> from dbt_charts.core.compile import compile
-    >>> from dbt_charts.core.execute import Executor
-    >>> from dbt_charts.core.execute.adapters import build_adapter_registry
+    >>> from dbt_charts.core.execute.lookup import Ledger
+    >>> from dbt_charts.core.execute.plan import make_context
+    >>> from dbt_charts.core.execute.env import build_exec_env
     >>> from dbt_charts.core.render import render
     >>> result = compile(yaml_content)
     >>> from dbt_charts.cli.filesystem_project import FilesystemProject
-    >>> registry = build_adapter_registry(FilesystemProject(Path.cwd()))
-    >>> executor = Executor(result.board, registry, query_registry=result.query_registry)
-    >>> html = render(result.board, executor, format="html")
+    >>> env = build_exec_env(FilesystemProject(Path.cwd()))
+    >>> ctx = make_context(result.board, registry, query_registry=result.query_registry)
+    >>> html = render(result.board, ctx, Ledger(), format="html")
 """
 
 from __future__ import annotations
@@ -46,10 +47,7 @@ if TYPE_CHECKING:
         Variable as Variable,
         compile_file as compile_file,
     )
-    from dbt_charts.core.execute import (
-        ExecutionError as ExecutionError,
-        Executor as Executor,
-    )
+    from dbt_charts.core.execute import ExecutionError as ExecutionError
     from dbt_charts.core.render import RenderError as RenderError
 
 # `compile` and `render` are deliberately NOT re-exported here: both names
@@ -73,7 +71,6 @@ __all__ = [
     "Variable",
     "CompilationError",
     # Execute
-    "Executor",
     "ExecutionError",
     # Render
     "RenderError",
@@ -93,7 +90,6 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "Variable": ("dbt_charts.core.compile", "Variable"),
     "compile_file": ("dbt_charts.core.compile", "compile_file"),
     "ExecutionError": ("dbt_charts.core.execute", "ExecutionError"),
-    "Executor": ("dbt_charts.core.execute", "Executor"),
     "RenderError": ("dbt_charts.core.render", "RenderError"),
 }
 

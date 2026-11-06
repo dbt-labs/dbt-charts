@@ -12,7 +12,6 @@ from dbt_charts.core.compile.models.chart.normalized._base import _BaseChartFiel
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.sql_guard import dialect_for_source, sqlglot_dialect
-from dbt_charts.core.dbt_ref_check import named_source_target_path
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
 from dbt_charts.core.execute.dbt_jinja import has_dbt_jinja
@@ -120,12 +119,7 @@ def _derive(
     one cannot fail. None, with the failure recorded, when lineage fails."""
     authored = {} if query.formats is None else query.formats
     try:
-        target_path = named_source_target_path(
-            query.source,
-            results.board.sources,
-            results.adapter_registry.project.sources.sources,
-        )
-        base_formats = results.adapter_registry.dbt_refs.column_formats(target_path)
+        base_formats = results.base_column_formats(query.source)
         if not base_formats:
             return {}
         dialect = sqlglot_dialect(query.dialect) or sqlglot_dialect(

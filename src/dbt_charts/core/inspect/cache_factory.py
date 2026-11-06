@@ -1,6 +1,6 @@
 """Cache-source factory and schema resolver builder.
 
-Builds a LayeredSchemaResolver from an adapter registry. When the private
+Builds a LayeredSchemaResolver from an exec env. When the private
 ``dbt-charts-super-schema`` package is installed, the resolver uses a warm
 SuperSchemaSource cache; otherwise it operates in dbt-only mode.
 
@@ -16,7 +16,7 @@ import importlib.util
 from pathlib import Path  # noqa: TID251 — super-schema cache file on disk
 from typing import TYPE_CHECKING, Any
 
-from dbt_charts.core.execute.adapters import AdapterRegistry
+from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.inspect.resolver import LayeredSchemaResolver
 
 if TYPE_CHECKING:
@@ -73,14 +73,14 @@ def make_cache_source_for_project(project: Project) -> Any:
 
 
 def build_resolver(
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     cache_path: Path | None = None,
     cache_source: SuperSchemaSource | None = None,
 ) -> LayeredSchemaResolver:
-    """Build a LayeredSchemaResolver from an adapter registry and optional cache.
+    """Build a LayeredSchemaResolver from an exec env and optional cache.
 
     Args:
-        adapter_registry: Registry providing source configs and project.
+        env: Provides source configs and the project.
         cache_path: Explicit path to a ``super_schema.json`` file — a local
             disk artifact (sanctioned Path edge — like exports). When ``None``,
             the committed cache is read through the project's file-access seam
@@ -88,7 +88,7 @@ def build_resolver(
         cache_source: Explicit warm-cache source. Takes priority over
             ``cache_path`` when provided.
     """
-    project = adapter_registry.project
+    project = env.project
     resolved_cache: Any = cache_source
     if resolved_cache is None:
         resolved_cache = (
@@ -98,6 +98,6 @@ def build_resolver(
         )
     return LayeredSchemaResolver(
         cache=resolved_cache,
-        adapter_registry=adapter_registry,
+        env=env,
         project=project,
     )

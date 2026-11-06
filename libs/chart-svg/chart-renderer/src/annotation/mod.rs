@@ -431,15 +431,16 @@ pub fn x_day_bounds(annotations: &[Annotation]) -> impl Iterator<Item = i64> + '
 
 /// The earliest and latest annotation day on x, as ISO dates, that fall before
 /// or after every day in `data` (the days of the axis's dates): they extend a bucket scaffold as data
-/// does. A range's exclusive end adds none by itself. A day inside the data maps onto its existing bucket and adds none.
-pub fn x_dates_outside(data: &[f64], annotations: &[Annotation]) -> crate::time_axis::Dates {
-    let mut out = crate::time_axis::Dates::default();
+/// does. A range's exclusive end adds none by itself, and with `with_ranges`
+/// false (a line, whose bands are clipped) a range adds nothing. A day inside the data maps onto its existing bucket and adds none.
+pub fn x_dates_outside(data: &[f64], annotations: &[Annotation], with_ranges: bool) -> ::bind::time_axis::Dates {
+    let mut out = ::bind::time_axis::Dates::default();
     let (Some(lo), Some(hi)) = (data.iter().copied().reduce(f64::min), data.iter().copied().reduce(f64::max)) else {
         return out;
     };
     let days: Vec<i64> = annotations
         .iter()
-        .flat_map(Annotation::x_covered_days)
+        .flat_map(|a| if with_ranges { a.x_covered_days().collect::<Vec<_>>() } else { a.x_point_days().collect() })
         .flat_map(|d| [d.floor() as i64, d.ceil() as i64])
         .collect();
     let before = days.iter().copied().filter(|&d| (d as f64) < lo.floor()).min();
@@ -451,10 +452,11 @@ pub fn x_dates_outside(data: &[f64], annotations: &[Annotation]) -> crate::time_
     out
 }
 
-/// A temporal x extent in whole days, widened to every date the annotations
-/// place on x: anchors join the axis domain as data does.
+/// A temporal x extent in whole days, widened to every point date the
+/// annotations place on x: point anchors join the axis domain as data does. A
+/// range does not, so a band past the data is clipped at the plot edge.
 pub fn widen_extent(extent: (f64, f64), annotations: &[Annotation]) -> (f64, f64) {
-    x_day_bounds(annotations).map(|d| d as f64).fold(extent, |(lo, hi), d| (lo.min(d), hi.max(d)))
+    annotations.iter().flat_map(Annotation::x_point_days).flat_map(|d| [d.floor(), d.ceil()]).fold(extent, |(lo, hi), d| (lo.min(d), hi.max(d)))
 }
 
 /// The `axis` y extent widened to every number the annotations on that scale
@@ -547,7 +549,7 @@ mod tests {
     use super::text::tests::fonts;
     use super::*;
     use diagnostic::collect;
-    use crate::time_axis::testing::day;
+    use ::bind::time_axis::testing::day;
     use d3rs::scale::Band;
 
     /// A 200x100 plot at (30, 20) on a dated x and a 0..40M y.
@@ -558,7 +560,7 @@ mod tests {
             panel: None,
             plot: PlotRect { x: 30.0, y: 20.0, w: 200.0, h: 100.0 },
             reach: Reach::default(),
-            x: AxisMap::Time { extent: (day("2024-01-01"), day("2024-12-31")), range: (0.0, 200.0) },
+            x: AxisMap::Time { extent: (day("2024-01-01"), day("2024-12-31")), range: (0.0, 200.0), grain: None },
             y: AxisMap::Linear { domain: (0.0, 40_000_000.0), range: (100.0, 0.0) },
             layer_y: vec![AxisMap::Linear { domain: (0.0, 20.0), range: (100.0, 0.0) }],
             orientation: Orientation::Vertical,
@@ -623,11 +625,19 @@ mod tests {
     fn only_dates_past_the_data_extend_it() {
         let domain: Vec<String> = ["2024-01-01", "2024-06-01", "2025-12-01"].map(String::from).to_vec();
         let inside = [Scalar::Date("2024-06-01".into()), Scalar::Date("2025-12-01".into())].map(rule_x);
-        assert!(x_dates_outside(&days(&domain), &inside).is_empty());
+        assert!(x_dates_outside(&days(&domain), &inside, true).is_empty());
         let anns = [Scalar::Date("2030-01-01".into()), Scalar::Date("2020-03-05".into()), Scalar::Date("2024-01-01".into())]
             .map(rule_x);
-        assert_eq!(x_dates_outside(&days(&domain), &anns).text, ["2020-03-05", "2030-01-01"]);
-        assert!(x_dates_outside(&days(&domain), &[]).is_empty());
+        assert_eq!(x_dates_outside(&days(&domain), &anns, true).text, ["2020-03-05", "2030-01-01"]);
+        assert!(x_dates_outside(&days(&domain), &[], true).is_empty());
+    }
+
+    #[test]
+    fn a_range_adds_no_bucket_unless_asked() {
+        let domain = days(&["2024-01-01".to_string(), "2024-06-01".to_string()]);
+        let band = [band_x("2024-08-01", "2025-03-01")];
+        assert!(x_dates_outside(&domain, &band, false).is_empty());
+        assert_eq!(x_dates_outside(&domain, &band, true).text, ["2025-02-28"]);
     }
 
     fn band_x(from: &str, to: &str) -> Annotation {
@@ -638,10 +648,11 @@ mod tests {
 
     /// The monthly bucket scaffold the bar and line families build from the data and the annotations.
     fn monthly_scaffold(domain: &[&str], anns: &[Annotation]) -> Vec<String> {
-        use crate::families::temporal::{complete_buckets, TimeUnit};
+        use ::bind::temporal::{complete_buckets};
+        use ::bind::temporal::{TimeUnit};
         let domain: Vec<String> = domain.iter().map(|d| d.to_string()).collect();
-        let mut widened = crate::time_axis::testing::dates(&domain);
-        widened.extend(x_dates_outside(&days(&domain), anns));
+        let mut widened = ::bind::time_axis::testing::dates(&domain);
+        widened.extend(x_dates_outside(&days(&domain), anns, true));
         complete_buckets(&widened, TimeUnit::YearMonth, 1).text
     }
 
@@ -656,10 +667,11 @@ mod tests {
     }
 
     #[test]
-    fn a_range_end_still_widens_the_continuous_extent() {
-        let anns = [band_x("2026-10-01", "2026-11-01")];
-        let hi = day("2026-11-01");
-        assert_eq!(widen_extent((day("2026-05-01"), day("2026-10-01")), &anns), (day("2026-05-01"), hi));
+    fn a_range_never_widens_the_continuous_extent() {
+        let anns = [band_x("2026-10-01", "2026-11-01"), rule_x(Scalar::Date("2026-12-01".into()))];
+        let extent = (day("2026-05-01"), day("2026-10-01"));
+        assert_eq!(widen_extent(extent, &anns[..1]), extent);
+        assert_eq!(widen_extent(extent, &anns), (extent.0, day("2026-12-01")));
     }
 
     #[test]
@@ -670,7 +682,7 @@ mod tests {
     #[test]
     fn background_paints_the_clip_and_its_own_plane_only() {
         let svg = painted(&dated(), Plane::Background);
-        assert!(svg.starts_with("<clipPath id=\"rev-ann0\"><rect x=\"0\" y=\"0\" width=\"200\" height=\"100\"/></clipPath>"));
+        assert!(svg.starts_with("<clipPath id=\"rev-ann0\"><rect x=\"-0.75\" y=\"-0.75\" width=\"201.5\" height=\"101.5\"/></clipPath>"));
         let fonts = fonts();
         let group = nodes(&ctx(&dated(), &fonts), Plane::Background).unwrap().pop().unwrap();
         assert_eq!(group.attrs.get("class"), Some("annotations annotations-background"));
@@ -716,9 +728,22 @@ mod tests {
     }
 
     #[test]
+    fn the_clip_leaves_room_for_the_full_stroke_of_a_rule_on_the_plot_edge() {
+        let anns: Vec<Annotation> = contract().into_iter().filter(|a| a.index == 0).collect();
+        let fonts = fonts();
+        let c = ctx(&anns, &fonts);
+        let placed = resolve(&c).unwrap();
+        let half = placed.iter().filter(|p| matches!(p.mark, Some(Mark::Segment { .. }))).map(|p| p.style.rule().stroke.width / 2.0).fold(0.0, f64::max);
+        assert!(half > 0.0);
+        let svg = painted(&anns, Plane::Background);
+        let rect = format!("<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>", -half, -half, 200.0 + 2.0 * half, 100.0 + 2.0 * half);
+        assert!(svg.contains(&rect), "{svg}");
+    }
+
+    #[test]
     fn a_foreground_only_chart_still_gets_its_clip_from_background() {
         let anns: Vec<Annotation> = contract().into_iter().filter(|a| a.index == 0).collect();
-        assert_eq!(painted(&anns, Plane::Background), "<clipPath id=\"rev-ann0\"><rect x=\"0\" y=\"0\" width=\"200\" height=\"100\"/></clipPath>");
+        assert_eq!(painted(&anns, Plane::Background), "<clipPath id=\"rev-ann0\"><rect x=\"-0.75\" y=\"-0.75\" width=\"201.5\" height=\"101.5\"/></clipPath>");
     }
 
     #[test]
@@ -755,7 +780,9 @@ mod tests {
 
     /// The dated annotations with halo `auto`, and the box of the one whose text reads `label`.
     fn over_marks(label: &str) -> (Vec<Annotation>, Bounds) {
+        // Without the band: its wrapped label would sit in the test bar too.
         let mut anns = dated();
+        anns.retain(|a| a.index != 3);
         for a in &mut anns {
             a.style.text.halo_over_marks = true;
         }

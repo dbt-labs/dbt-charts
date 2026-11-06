@@ -31,10 +31,10 @@ from dbt_charts.core.compile.models.schema_names import (
 from dbt_charts.core.compile.parse.parser import load_yaml_mapping, parse_yaml
 from dbt_charts.core.compile.parse.source_map import build_source_index
 from dbt_charts.core.compile.schema.introspection import introspect
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
 
+from .._run import Run
 from .._svg_normalize import normalize_same_run_svg
 from ..core._svg_render import pinned_clock
 
@@ -1292,12 +1292,12 @@ def _render_failures(board: str) -> list[str]:
     compiled_board = result.board
     if not result.success or compiled_board is None:
         return [d.code for d in result.errors]
-    executor = Executor(
+    executor = Run(
         compiled_board,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        env=build_exec_env(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
     )
-    rendered = render(compiled_board, executor, format="svg")
+    rendered = render(compiled_board, executor.ctx, executor.ledger, format="svg")
     codes = [d.code for d in rendered.chart_errors]
     if rendered.board_error is not None:
         codes.append(rendered.board_error.code)
@@ -3413,13 +3413,13 @@ def _render_output(board: str) -> str:
     )
     compiled = result.board
     assert compiled is not None
-    executor = Executor(
+    executor = Run(
         compiled,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        env=build_exec_env(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
         clock=pinned_clock,
     )
-    svg = render(compiled, executor, format="svg").output
+    svg = render(compiled, executor.ctx, executor.ledger, format="svg").output
     # `output` is `str | bytes | None` because a png render returns bytes.
     # Asserting beats narrowing silently: a None here would compare equal to
     # itself and pass every assertion below without rendering anything.

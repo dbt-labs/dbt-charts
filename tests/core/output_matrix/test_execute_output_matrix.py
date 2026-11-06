@@ -31,12 +31,13 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.models.source import ResolvedSourceConfig
 from dbt_charts.core.execute import cache_composition
-from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
 from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
 from dbt_charts.core.execute.compose import ResolvedQuery
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+from ..._run import Run
 
 SNAPSHOT_DIR = Path(__file__).parent / "snapshots"
 
@@ -222,9 +223,9 @@ def test_execute_output_matrix(
     compiled = compile_board(case.board)
     assert compiled.board is not None, compiled.errors
 
-    executor = Executor(
+    executor = Run(
         compiled.board,
-        build_adapter_registry(project),
+        build_exec_env(project),
         query_registry=compiled.query_registry,
         result_cache=TrivialDuckDBCache(),
     )

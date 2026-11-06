@@ -1,6 +1,6 @@
 """Source resolver: execute-boundary resolution of authored `source:` values.
 
-The `SourceResolver` Protocol runs in `AdapterRegistry.execute()` before the
+The `SourceResolver` Protocol runs in `run_query` before the
 adapter receives the query. When the authored source resolves to a configured
 profile (board-level, project-level, or an inline dict), the adapter receives a
 typed source config. For source-less queries (values, http, schema),
@@ -37,6 +37,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_SOURCE_NOT_FOUND,
 )
 from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_DBT_PROFILE_UNRESOLVED,
     ERR_SOURCE_CROSS_FILE_FORBIDDEN,
     ERR_SOURCE_INVALID_TYPE,
     ERR_SOURCE_MISSING_TYPE,
@@ -88,7 +89,7 @@ class SourceResolver(Protocol):
     Implementations map an authored `source:` value (str | dict | None) to a
     typed `ResolvedSourceConfig | None` before any database driver is loaded.
 
-    Callers (AdapterRegistry) invoke resolve() once per query, then forward the
+    Callers (ExecEnv) invoke resolve() once per query, then forward the
     result to the matched adapter via a `source_config` kwarg.
     """
 
@@ -264,15 +265,18 @@ class DefaultSourceResolver:
                 validation fails (FileNotFoundError / ValueError from
                 _read_target_dict).
         """
-        from dbt_charts.core.execute.adapters.dbt_profile import _read_target_dict
+        from dbt_charts.core.execute.backends.dbt_profile import _read_target_dict
 
         project_path = dbt_context.dbt_project_path if dbt_context is not None else None
         profiles_dir = None
         if cfg.profiles_dir is not None:
             if project_path is None:
-                raise ExecutionError(
-                    f"profiles_dir {cfg.profiles_dir!r} is relative to the linked "
-                    "dbt project, but no dbt project is linked."
+                raise ExecutionError.from_code(
+                    ERR_DBT_PROFILE_UNRESOLVED,
+                    detail=(
+                        f"profiles_dir {cfg.profiles_dir!r} is relative to the "
+                        "linked dbt project, but no dbt project is linked."
+                    ),
                 )
             profiles_dir = (project_path / cfg.profiles_dir).resolve()
 
@@ -286,7 +290,9 @@ class DefaultSourceResolver:
                 profiles_dir=profiles_dir,
             )
         except (FileNotFoundError, ValueError) as exc:
-            raise ExecutionError(str(exc)) from exc
+            raise ExecutionError.from_code(
+                ERR_DBT_PROFILE_UNRESOLVED, detail=str(exc)
+            ) from exc
 
         # The resolved models render dbt Jinja over their raw input, so the bundle
         # crosses as the mapping it was authored as.
@@ -310,7 +316,9 @@ class DefaultSourceResolver:
                 )
             except ValueError as exc:
                 # Validation errors hide their input, so no credential is quoted.
-                raise ExecutionError(str(exc)) from exc
+                raise ExecutionError.from_code(
+                    ERR_DBT_PROFILE_UNRESOLVED, detail=str(exc)
+                ) from exc
 
         if target_dict["type"] == "trino":
             # A manifest directory would need a field only a dbt_profile source
@@ -397,11 +405,11 @@ class AllowlistedSourceResolver(DefaultSourceResolver):
     refuses an authored source *dict* on a query, and any non-file `board.sources`
     entry, whatever its type.
 
-    The execute paths then dispatch a resolved file config themselves: `Executor`
+    The execute paths then dispatch a resolved file config themselves: the run stage
     (the render path) short-circuits a file-source query into the
-    `FileSourceMaterializer` before resolution ("Step 4c"), and `agent_api`'s
+    `FileSourceMaterializer` before resolution, and `agent_api`'s
     `execute_sql`, which Cloud exposes over MCP and chat, goes
-    through `AdapterRegistry.execute`, which hands the resolved file config to the
+    through `run_query`, which hands the resolved file config to the
     registry's materializer — or refuses it when none is configured. That refusal
     is the one place the "you need a materializer" answer lives.
 

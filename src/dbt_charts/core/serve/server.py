@@ -36,6 +36,8 @@ from pathlib import Path, PurePosixPath  # noqa: TID251 — local dev server fil
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
+from dbt_charts.core.execute.plan_sources import resolve_source_config
+
 _SUPER_SCHEMA_AVAILABLE: bool = (
     importlib.util.find_spec("dbt_charts_super_schema") is not None
 )
@@ -66,13 +68,14 @@ from dbt_charts.core.compile.template.variables import variables_from_query_pair
 from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.registry import ERROR_GUIDE_PATH, REGISTRY
-from dbt_charts.core.execute.adapters.adapter_registry import (
-    LOCAL_AUTHORING_REGISTRY_KWARGS,
-    AdapterRegistry,
-    build_adapter_registry,
-)
 from dbt_charts.core.execute.cache_backend import QueryResultCache
-from dbt_charts.core.execute.executor import utc_now
+from dbt_charts.core.execute.env import (
+    LOCAL_AUTHORING_ENV_KWARGS,
+    ExecEnv,
+    build_exec_env,
+    close_env,
+)
+from dbt_charts.core.execute.plan import utc_now
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 from dbt_charts.core.fonts import get_fonts_dir
 from dbt_charts.core.inspect import INSPECT_TEMPLATES
@@ -120,7 +123,7 @@ _BUILTIN_ROUTER: RouteRouter = RouteRouter(load_builtin_registry())
 # by it (BOARD_CANDIDATE_SUFFIXES contains .yaml).
 _URL_FORMAT_SUFFIXES: dict[str, str] = {".svg": "svg", ".png": "png", ".pdf": "pdf"}
 
-# Paths that skip the per-request change check (registry / alias-index rebuild) —
+# Paths that skip the per-request change check (env / alias-index rebuild) —
 # they serve static data and never need a live project state.
 _SKIP_REFRESH_PATHS = frozenset({"/health", "/templates", "/__livereload"})
 
@@ -129,70 +132,70 @@ _SKIP_REFRESH_PATHS = frozenset({"/health", "/templates", "/__livereload"})
 _NO_REQUEST_VARS: dict[str, str] = {}
 
 
-class RegistryLeases:
-    """Keeps a replaced registry open until the requests using it finish.
+class EnvLeases:
+    """Keeps a replaced env open until the requests using it finish.
 
-    Renders run on worker threads, so a config reload can swap the registry
+    Renders run on worker threads, so a config reload can swap the env
     while a render still queries the old one.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._counts: Counter[AdapterRegistry] = Counter()
-        self._retired: set[AdapterRegistry] = set()
-        # None until shutdown begins; then the registries already interrupted.
-        self._interrupted: set[AdapterRegistry] | None = None
+        self._counts: Counter[ExecEnv] = Counter()
+        self._retired: set[ExecEnv] = set()
+        # None until shutdown begins; then the envs already interrupted.
+        self._interrupted: set[ExecEnv] | None = None
 
-    def acquire(self, registry: AdapterRegistry) -> None:
+    def acquire(self, env: ExecEnv) -> None:
         late = False
         with self._lock:
-            self._counts[registry] += 1
+            self._counts[env] += 1
             interrupted = self._interrupted
-            if interrupted is not None and registry not in interrupted:
-                interrupted.add(registry)
+            if interrupted is not None and env not in interrupted:
+                interrupted.add(env)
                 late = True
         if late:
             # Built by a reload after shutdown began.
-            registry.interrupt()
+            env.backends.interrupt()
 
-    def release(self, registry: AdapterRegistry) -> None:
+    def release(self, env: ExecEnv) -> None:
         with self._lock:
-            self._counts[registry] -= 1
-            if self._counts[registry]:
+            self._counts[env] -= 1
+            if self._counts[env]:
                 return
-            del self._counts[registry]
-            if registry not in self._retired:
+            del self._counts[env]
+            if env not in self._retired:
                 return
-            self._retired.remove(registry)
-        registry.close()
+            self._retired.remove(env)
+        close_env(env)
 
-    def retire(self, registry: AdapterRegistry) -> None:
-        """Close `registry` now, or once its last lease is released."""
+    def retire(self, env: ExecEnv) -> None:
+        """Close `env` now, or once its last lease is released."""
         with self._lock:
-            leased = registry in self._counts
+            leased = env in self._counts
             if leased:
-                self._retired.add(registry)
+                self._retired.add(env)
         if not leased:
-            registry.close()
+            close_env(env)
 
-    def interrupt_all(self, current: AdapterRegistry) -> None:
-        """Interrupt `current`, every leased registry, and any leased later."""
+    def interrupt_all(self, current: ExecEnv) -> None:
+        """Interrupt `current`, every leased env, and any leased later."""
         with self._lock:
-            registries = dict.fromkeys([current, *self._counts])
-            self._interrupted = set(registries)
-        for registry in registries:
-            registry.interrupt()
+            envs = dict.fromkeys([current, *self._counts])
+            self._interrupted = set(envs)
+        for env in envs:
+            env.backends.interrupt()
 
     def close_retired(self) -> None:
-        """Close retired registries a render still holds; for shutdown."""
+        """Close retired envs a render still holds; for shutdown."""
         with self._lock:
             retired, self._retired = self._retired, set()
-        for registry in retired:
-            registry.close()
+        for env in retired:
+            close_env(env)
 
 
 def interrupt_queries(state: Any) -> None:  # type-state: explicit_any — starlette State
-    state.registry_leases.interrupt_all(state.adapter_registry)
+    state.env_leases.interrupt_all(state.env)
 
 
 def _board_dir_mtime(scan_root: Path) -> float:
@@ -215,7 +218,7 @@ def _board_dir_mtime(scan_root: Path) -> float:
 
 
 def _all_board_roots_mtime(project: FilesystemProject) -> tuple[float, frozenset[str]]:
-    """Invalidation signature for the alias index / adapter registry watch:
+    """Invalidation signature for the alias index / exec env watch:
     max board mtime across every board root (the host charts/ plus every
     installed package's charts/), paired with the SET of package charts/
     directories currently present.
@@ -238,7 +241,7 @@ def _config_mtime(root: Path) -> float:
 
     Probes the filesystem directly rather than a cached ``config_file`` so a
     freshly-created config is detected. A change here rebuilds the adapter
-    registry so edited sources take effect without a restart.
+    env so edited sources take effect without a restart.
     """
     candidate = root / PROJECT_CONFIG_NAME
     return candidate.stat().st_mtime if candidate.exists() else 0.0
@@ -466,7 +469,7 @@ def _render_board_file(
     file_path: ProjectPath,
     variables: dict[str, Any],
     project: FilesystemProject,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     clock: Callable[[], datetime],
     serve_storage_prefix: str | None = None,
     max_workers: int | None = None,
@@ -488,7 +491,7 @@ def _render_board_file(
             fmt=download_format,
             variables=variables,
             project=project,
-            adapter_registry=adapter_registry,
+            env=env,
             max_workers=max_workers,
             result_cache=result_cache,
             include_nav=include_nav,
@@ -536,7 +539,7 @@ def _render_board_file(
         strict_variables=False,
         restated_check=True,
         project=project,
-        adapter_registry=adapter_registry,
+        env=env,
         format="html",
         link_context=link_context,
         url_mount_dir=url_mount_dir,
@@ -561,7 +564,7 @@ def _render_board_file(
                 board,
                 variables,
                 project=project,
-                adapter_registry=adapter_registry,
+                env=env,
                 result_cache=result_cache,
                 max_workers=max_workers,
                 compile_result=compile_result,
@@ -600,7 +603,7 @@ def _render_board_download(
     fmt: str,
     variables: dict[str, Any],
     project: FilesystemProject,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     clock: Callable[[], datetime],
     max_workers: int | None = None,
     result_cache: QueryResultCache | None = None,
@@ -618,7 +621,7 @@ def _render_board_download(
         variables=variables,
         strict_variables=False,
         project=project,
-        adapter_registry=adapter_registry,
+        env=env,
         format=fmt,
         result_cache=result_cache,
         max_workers=max_workers,
@@ -661,28 +664,32 @@ def _render_board_download(
     )
 
 
-def _build_inspect_registry(project: FilesystemProject) -> AdapterRegistry:
-    """Build the read-only adapter registry shared by both /inspect/* routes.
+def _build_inspect_env(project: FilesystemProject) -> ExecEnv:
+    """Build the read-only exec env shared by both /inspect/* routes.
 
     The inspect HTML server is always DuckDB — dialect is not a parameter.
     Resolves against the project's configured `sources:` only; a project
     with none renders with an empty source_name and the schema/SQL queries
     raise ERR-SOURCE-NOT-FOUND-EMPTY at execute time.
     """
-    return build_adapter_registry(
+    return build_exec_env(
         project,
         read_only=True,
         profile_type="duckdb",
     )
 
 
-def _resolve_inspect_source_config(adapter_registry: AdapterRegistry) -> dict[str, Any]:
+def _resolve_inspect_source_config(
+    env: ExecEnv,
+) -> dict[str, Any]:  # type-state: explicit_any — raw source config dict
     """Resolve the source_config the /inspect/profile/ and /inspect/exists/
     routes should target. Raises when the project has no configured source —
     no connection-URL fallback, no ``:memory:`` default.
     """
-    return adapter_registry.resolve_source_config(
-        resolve_source_name(adapter_registry) or None
+    return resolve_source_config(
+        env.sources,
+        env.project,
+        resolve_source_name(env) or None,
     )
 
 
@@ -694,7 +701,7 @@ def _handle_inspect_route(
     """Handle /inspect/* routes with custom template fallback.
 
     The inspect HTML server is DuckDB-only and builds its own fixed-config
-    (read-only DuckDB) registry, so the render-path knobs (target/read_only)
+    (read-only DuckDB) env, so the render-path knobs (target/read_only)
     do not apply here. Project templates under ``charts/inspect/`` use the same
     Jinja-then-compile pipeline as the built-in copies (``dct init`` ejects
     Jinja-heavy YAML).
@@ -762,7 +769,7 @@ def _handle_inspect_route(
                 status_override=404,
             )
 
-    adapter_registry = _build_inspect_registry(project)
+    env = _build_inspect_env(project)
 
     try:
         return HTMLResponse(
@@ -770,7 +777,7 @@ def _handle_inspect_route(
                 template_yaml,
                 variables,
                 project=project,
-                adapter_registry=adapter_registry,
+                env=env,
             )
         )
     except InspectProfileCompileError as e:
@@ -859,13 +866,11 @@ def _render_directory_listing(
             if include_nav
             else ""
         )
-        from dbt_charts.core.execute.adapters import (  # noqa: PLC0415
-            AdapterRegistry,
-        )
+        from dbt_charts.core.execute.env import make_exec_env  # noqa: PLC0415
 
         result = render_dashboard(
             project=project,
-            adapter_registry=AdapterRegistry(project=project),
+            env=make_exec_env(project=project),
             format="html",
             result_cache=result_cache,
             compile_result=compile_result,
@@ -904,7 +909,7 @@ def _render_directory_listing(
 def _render_registered_view_response(
     request_path: str,
     project: Project,
-    adapter_registry: Any,
+    env: ExecEnv,
     result_cache: QueryResultCache | None,
     max_workers: int | None = None,
     request_variables: dict[str, str] = _NO_REQUEST_VARS,
@@ -927,7 +932,7 @@ def _render_registered_view_response(
     result = render_registered_view(
         request_path=request_path,
         project=project,
-        adapter_registry=adapter_registry,
+        env=env,
         result_cache=result_cache,
         max_workers=max_workers,
         request_variables=request_variables,
@@ -944,7 +949,7 @@ def _render_registered_view_response(
 _DuckDBConfig = dict[str, Any]  # type-state: explicit_any — passthrough
 
 
-def build_serve_registry(
+def build_serve_env(
     project: FilesystemProject,
     *,
     dialect: str,
@@ -953,13 +958,13 @@ def build_serve_registry(
     read_only: bool = True,
     allow_external_access_in_readonly: bool = False,
     duckdb_config: _DuckDBConfig | None = None,
-) -> AdapterRegistry:
-    """The adapter registry a served board renders with.
+) -> ExecEnv:
+    """The exec env a served board renders with.
 
     The one construction both ``create_server`` and the ``--detach`` check use,
     so the check cannot run under different settings than the server.
     """
-    return build_adapter_registry(
+    return build_exec_env(
         project,
         read_only=read_only,
         allow_external_access_in_readonly=allow_external_access_in_readonly,
@@ -989,7 +994,7 @@ def create_server(
         project: The dbt charts project — resolved before this call by the CLI edge.
         dialect: SQL dialect for board rendering (duckdb, postgres, etc.).
             The /inspect/* HTML path is always DuckDB — dialect is not forwarded there.
-        target: dbt target name override for the registry's dbt project
+        target: dbt target name override for the env's dbt project
         serve_storage_prefix: Override for rendered board-link URLs in serve mode
         read_only: DuckDB read-only driver flag for board rendering (default True).
         allow_external_access_in_readonly: Allow author SQL to reach the filesystem
@@ -999,20 +1004,20 @@ def create_server(
             reads them on a private connection, out of band from author SQL.
         duckdb_config: DuckDB config dict; defaults to enable_external_access when
             allow_external_access_in_readonly is True.
-        no_cache: Skip the query-result cache entirely (Executor runs uncached).
+        no_cache: Skip the query-result cache entirely (queries run uncached).
             Explicit override — wins over the project's dbt_charts.yml cache: block.
         cache_path: Persist the query-result cache to this DuckDB file (created
             if absent). Explicit override — wins over dbt_charts.yml. None (the
             default) falls through to the project's cache: block (path: null
             there means the per-user file). Ignored when
             no_cache=True.
-        clock: Every render's time source, handed to its ``Executor``.
+        clock: Every render's time source, handed to its render context.
 
     Returns:
         Configured FastAPI application
     """
     if duckdb_config is None and allow_external_access_in_readonly:
-        duckdb_config = LOCAL_AUTHORING_REGISTRY_KWARGS["duckdb_config"]
+        duckdb_config = LOCAL_AUTHORING_ENV_KWARGS["duckdb_config"]
 
     # Permanent handle to the served project: file reads hit disk fresh on every
     # call, so board and data-file edits are picked up with no rebuild.
@@ -1023,8 +1028,8 @@ def create_server(
     # this same value rather than resolving it a second time at startup.
     boot = resolve_cache_boot(core_project, no_cache=no_cache, cache_path=cache_path)
 
-    def _build_registry(project: FilesystemProject) -> AdapterRegistry:
-        return build_serve_registry(
+    def _build_env(project: FilesystemProject) -> ExecEnv:
+        return build_serve_env(
             project,
             dialect=dialect,
             target=target,
@@ -1040,9 +1045,9 @@ def create_server(
         # once, above) applies flag (no_cache/cache_path) > project
         # dbt_charts.yml cache: block precedence; core/ cannot import
         # agent_api (layering), so the cache is constructed directly here.
-        # The cache is process-lifetime: it survives the per-change registry
+        # The cache is process-lifetime: it survives the per-change env
         # rebuilds below (file_version keys invalidate stale entries). The
-        # registry is built eagerly here (not lazily on first request), so a
+        # env is built eagerly here (not lazily on first request), so a
         # malformed dbt_charts.yml surfaces at startup rather than on the
         # first page load.
         cache = (
@@ -1052,19 +1057,21 @@ def create_server(
         )
         try:
             _app.state.result_cache = cache
-            _app.state.adapter_registry = _build_registry(core_project)
+            _app.state.env = _build_env(core_project)
             _app.state.config_mtime = _config_mtime(core_project.root)
             _app.state.alias_index_mtime = _all_board_roots_mtime(core_project)
             _app.state.alias_index = AliasIndex.build(core_project)
             await _app.state.watcher.start()
             yield
         finally:
-            # The registry closes must not strand the cache close.
-            registry = getattr(_app.state, "adapter_registry", None)
+            # The env closes must not strand the cache close.
+            env = getattr(
+                _app.state, "env", None
+            )  # type-state: silent_fallback — a failed startup never built the env, and teardown must still close the cache
             try:
-                _app.state.registry_leases.close_retired()
-                if registry is not None:
-                    registry.close()
+                _app.state.env_leases.close_retired()
+                if env is not None:
+                    close_env(env)
             finally:
                 if cache is not None:
                     cache.close()
@@ -1093,8 +1100,8 @@ def create_server(
     # Built here so shutdown.py can take it before the app runs. Watches the
     # root, not charts_dir, which lives under it and need not exist yet.
     app.state.watcher = FileWatcher(str(core_project.root), cache_path=boot.path)
-    app.state.registry_leases = RegistryLeases()
-    # Serializes concurrent registry / alias-index rebuilds.
+    app.state.env_leases = EnvLeases()
+    # Serializes concurrent env / alias-index rebuilds.
     _refresh_lock = asyncio.Lock()
 
     @app.exception_handler(DbtChartsError)
@@ -1121,9 +1128,9 @@ def create_server(
             return await call_next(request)
         state = request.app.state
         project: FilesystemProject = state.project
-        leases: RegistryLeases = state.registry_leases
+        leases: EnvLeases = state.env_leases
         async with _refresh_lock:
-            # dbt_charts.yml edit → rebuild the registry from fresh sources and close
+            # dbt_charts.yml edit → rebuild the env from fresh sources and close
             # the old one (releasing its DuckDB handles). The project is a permanent
             # handle; only its cached config needs busting so the rebuild sees the edit.
             config_mtime = _config_mtime(project.root)
@@ -1137,9 +1144,9 @@ def create_server(
                     "locked_schema_version",
                 ):
                     vars(project).pop(key, None)
-                old_registry = state.adapter_registry
-                state.adapter_registry = _build_registry(project)
-                leases.retire(old_registry)
+                old_env = state.env
+                state.env = _build_env(project)
+                leases.retire(old_env)
                 state.config_mtime = config_mtime
             # Board add/edit/remove → rebuild the alias index.
             charts_mtime = _all_board_roots_mtime(project)
@@ -1148,13 +1155,13 @@ def create_server(
                 state.alias_index_mtime = charts_mtime
             # Leased under the lock, so a reload cannot close it before the route
             # reads it from request.state.
-            registry: AdapterRegistry = state.adapter_registry
-            leases.acquire(registry)
-        request.state.adapter_registry = registry
+            env: ExecEnv = state.env
+            leases.acquire(env)
+        request.state.env = env
         try:
             return await call_next(request)
         finally:
-            leases.release(registry)
+            leases.release(env)
 
     # Mount the bundled webfonts at /static/fonts so the @font-face URLs
     # injected into rendered HTML/SVG (Inter Variable, dbt Sans Tabular,
@@ -1239,12 +1246,12 @@ def create_server(
             raise HTTPException(status_code=400, detail=str(e)) from e
 
         inspect_project: FilesystemProject = app.state.project
-        adapter_registry = _build_inspect_registry(inspect_project)
+        env = _build_inspect_env(inspect_project)
         super_schema_path = inspect_project.root / InspectionStorage.DEFAULT_PATH
         storage = InspectionStorage(output_path=super_schema_path)
 
         try:
-            source_config = _resolve_inspect_source_config(adapter_registry)
+            source_config = _resolve_inspect_source_config(env)
             with TableInspector(source_config) as inspector:
                 profile = inspector.inspect_table(model_name)
             storage.save_inspection(profile)
@@ -1260,7 +1267,7 @@ def create_server(
             template_path.read_text(encoding="utf-8"),
             variables,
             project=inspect_project,
-            adapter_registry=adapter_registry,
+            env=env,
         )
 
     @app.get("/inspect/exists/")
@@ -1287,9 +1294,9 @@ def create_server(
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
 
-        adapter_registry = _build_inspect_registry(app.state.project)
+        env = _build_inspect_env(app.state.project)
         try:
-            source_config = _resolve_inspect_source_config(adapter_registry)
+            source_config = _resolve_inspect_source_config(env)
             with InspectConnection(source_config, read_only=True) as conn:
                 rows = conn.execute(
                     "SELECT 1 FROM information_schema.tables WHERE table_name = ? LIMIT 1",
@@ -1359,7 +1366,7 @@ def create_server(
                     file_path,
                     raw_variables,
                     app.state.project,
-                    adapter_registry=request.state.adapter_registry,
+                    env=request.state.env,
                     serve_storage_prefix=app.state.serve_storage_prefix,
                     max_workers=app.state.max_workers,
                     clock=clock,
@@ -1429,7 +1436,7 @@ def create_server(
                 resolved,
                 variables,
                 project,
-                adapter_registry=request.state.adapter_registry,
+                env=request.state.env,
                 serve_storage_prefix=app.state.serve_storage_prefix,
                 max_workers=app.state.max_workers,
                 clock=clock,
@@ -1462,7 +1469,7 @@ def create_server(
             registered_response = _render_registered_view_response(
                 request_path=request_abs_path,
                 project=app.state.project,
-                adapter_registry=request.state.adapter_registry,
+                env=request.state.env,
                 result_cache=app.state.result_cache,
                 max_workers=app.state.max_workers,
                 request_variables=variables_from_query_pairs(
@@ -1505,7 +1512,7 @@ def create_server(
             file_path,
             variables,
             app.state.project,
-            adapter_registry=request.state.adapter_registry,
+            env=request.state.env,
             serve_storage_prefix=app.state.serve_storage_prefix,
             max_workers=app.state.max_workers,
             clock=clock,

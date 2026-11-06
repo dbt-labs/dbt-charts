@@ -3,20 +3,19 @@
 Stage: EXECUTE (Service)
 Purpose: Execute queries for compiled boards.
 
-This is a SERVICE module, not a sequential stage. It's called lazily
-by the render module when charts need data.
+Four stages over plain data: plan, lookup, run, collect. Render reads rows only
+from the ``QueryResults`` that collect returns.
 
 Entry Points:
-    - Executor: Main executor class
-    - Executor.execute_query(query_name, variables) -> List[Dict]
-    - Executor.execute_chart(chart, variables) -> List[Dict]
+    - plan.make_context(board, env, ...) -> ExecContext
+    - query_results.execute(ctx, names, variables) -> QueryResults
 
 Inputs:
     - Board: Board with compiled queries
-    - Query name and variables
+    - Query names and variables
 
 Outputs:
-    - List[Dict[str, Any]]: Query results (list of row dictionaries)
+    - QueryResults: rows (or the error) of each query
 
 Dependencies:
     - dbt_charts.compile (for Board, AnyQuery types)
@@ -46,11 +45,8 @@ if TYPE_CHECKING:
         compute_source_hash,
         compute_variables_hash,
     )
-    from dbt_charts.core.execute.executor import Executor
 
 __all__ = [
-    # Executor
-    "Executor",
     # Cache Protocol
     "QueryResultCache",
     # DuckDB Cache
@@ -68,7 +64,7 @@ __all__ = [
 
 # Submodule (sqlite_utils, adapters, etc.) imports run this __init__ first, so
 # these convenience re-exports must not eagerly pull in cache_keys' (and
-# transitively core.compile's) heavy import chain just to expose Executor.
+# transitively core.compile's) heavy import chain just to expose these names.
 _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "AdapterError": ("dbt_charts.core.diagnostics.execution", "AdapterError"),
     "ExecutionError": ("dbt_charts.core.diagnostics.execution", "ExecutionError"),
@@ -92,7 +88,6 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
         "dbt_charts.core.execute.duckdb_cache",
         "compute_variables_hash",
     ),
-    "Executor": ("dbt_charts.core.execute.executor", "Executor"),
 }
 
 

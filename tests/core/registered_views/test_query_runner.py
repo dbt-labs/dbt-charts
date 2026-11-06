@@ -12,7 +12,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -22,19 +22,23 @@ from dbt_charts.core.compile.template.query_result import (
     QueryResult as TemplateQueryResult,
 )
 from dbt_charts.core.diagnostics.execution import QueryError
-from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.execute.cache_backend import (
     CachedQueryFailure,
     CacheHit,
     CacheOutcome,
     ResultRows,
 )
+from dbt_charts.core.execute.env import ExecEnv
+from dbt_charts.core.execute.query_result import QueryResult
+from dbt_charts.core.execute.schema_adapter import schema_rows
 from dbt_charts.core.registered_views.models import RegisteredView
 from dbt_charts.core.registered_views.query_runner import (
     RegistryQueryError,
     materialize_path_params,
     run_registry_queries,
 )
+
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -50,11 +54,10 @@ def _make_view(queries: dict[str, Any] | None = None) -> RegisteredView:
     )
 
 
-def _mock_registry(rows: list[dict[str, Any]]) -> MagicMock:
-    """Build a mock AdapterRegistry that returns ``rows`` from execute()."""
-    registry = MagicMock()
-    registry.execute.return_value = QueryResult(data=rows, schema=literal_schema(rows))
-    return registry
+def _mock_registry(routes: Mock, rows: list[dict[str, Any]]) -> ExecEnv:
+    """An env whose routes answer with ``rows``."""
+    routes.return_value = QueryResult(data=rows, schema=literal_schema(rows))
+    return scripted_env(ScriptedBackend())
 
 
 def _fake_table_profile_envelope(
@@ -127,7 +130,7 @@ class TestMaterializePathParams:
 
 
 # ---------------------------------------------------------------------------
-# run_registry_queries — happy paths (mock adapter_registry)
+# run_registry_queries — happy paths (mock env)
 # ---------------------------------------------------------------------------
 
 
@@ -142,7 +145,7 @@ class TestRunRegistryQueriesHappyPath:
         result = run_registry_queries(view, {}, MagicMock())
         assert result == {}
 
-    def test_returns_registry_query_result_for_each_name(self) -> None:
+    def test_returns_registry_query_result_for_each_name(self, routes: Mock) -> None:
         rows = [{"name": "id", "type": "BIGINT"}, {"name": "status", "type": "VARCHAR"}]
         view = _make_view(
             queries={
@@ -154,7 +157,7 @@ class TestRunRegistryQueriesHappyPath:
                 }
             }
         )
-        registry = _mock_registry(rows)
+        registry = _mock_registry(routes, rows)
         result = run_registry_queries(view, {}, registry)
 
         assert "columns" in result
@@ -162,7 +165,7 @@ class TestRunRegistryQueriesHappyPath:
         assert [r.name for r in result["columns"].rows] == ["id", "status"]
         assert result["columns"].rows[0].type == "BIGINT"
 
-    def test_path_params_materialized_before_execution(self) -> None:
+    def test_path_params_materialized_before_execution(self, routes: Mock) -> None:
         """{{ path.X }} is replaced with literal values before normalize_query."""
         rows = [{"name": "id", "type": "BIGINT"}]
         view = _make_view(
@@ -176,18 +179,18 @@ class TestRunRegistryQueriesHappyPath:
             }
         )
         path_params = {"source": "snowflake", "schema": "raw", "table": "events"}
-        registry = _mock_registry(rows)
+        registry = _mock_registry(routes, rows)
         result = run_registry_queries(view, path_params, registry)
 
         assert "columns" in result
         assert result["columns"].one.type == "BIGINT"
         # Verify the normalized query that was executed had literals, not templates
-        executed_query = registry.execute.call_args[0][0]
+        executed_query = routes.call_args[0][0]
         assert executed_query.source == "snowflake"
         assert executed_query.schema_name == "raw"
         assert executed_query.table == "events"
 
-    def test_multiple_queries_all_executed(self) -> None:
+    def test_multiple_queries_all_executed(self, routes: Mock) -> None:
         view = _make_view(
             queries={
                 "cols": {"type": "schema", "source": "dw", "schema": "s", "table": "t"},
@@ -200,8 +203,8 @@ class TestRunRegistryQueriesHappyPath:
                 },
             }
         )
-        registry = MagicMock()
-        registry.execute.side_effect = [
+        registry = scripted_env(ScriptedBackend())
+        routes.side_effect = [
             QueryResult(data=[{"name": "id"}], schema=literal_schema([{"name": "id"}])),
             QueryResult(
                 data=[{"name": "id", "type": "BIGINT"}],
@@ -212,11 +215,11 @@ class TestRunRegistryQueriesHappyPath:
 
         assert "cols" in result
         assert "profile" in result
-        assert registry.execute.call_count == 2
+        assert routes.call_count == 2
         assert result["cols"].rows[0]["name"] == "id"
         assert result["profile"].rows[0]["name"] == "id"
 
-    def test_result_columns_from_row_keys(self) -> None:
+    def test_result_columns_from_row_keys(self, routes: Mock) -> None:
         rows = [{"name": "id", "type": "BIGINT"}, {"name": "status", "type": "VARCHAR"}]
         view = _make_view(
             queries={
@@ -228,7 +231,7 @@ class TestRunRegistryQueriesHappyPath:
                 }
             }
         )
-        registry = _mock_registry(rows)
+        registry = _mock_registry(routes, rows)
         result = run_registry_queries(view, {}, registry)
         assert set(result["columns"].columns) == {"name", "type"}
 
@@ -267,7 +270,7 @@ class TestRunRegistryQueriesValidationErrors:
             run_registry_queries(view, {"schema": "s", "table": "t"}, MagicMock())
         assert "path.source" in str(exc_info.value)
 
-    def test_execution_error_raises_registry_query_error(self) -> None:
+    def test_execution_error_raises_registry_query_error(self, routes: Mock) -> None:
         """When the adapter returns an error, RegistryQueryError is raised."""
         view = _make_view(
             queries={
@@ -279,16 +282,14 @@ class TestRunRegistryQueriesValidationErrors:
                 }
             }
         )
-        registry = MagicMock()
-        registry.execute.return_value = QueryResult(
-            data=[], error=QueryError("Source not found")
-        )
+        registry = scripted_env(ScriptedBackend())
+        routes.return_value = QueryResult(data=[], error=QueryError("Source not found"))
 
         with pytest.raises(RegistryQueryError) as exc_info:
             run_registry_queries(view, {}, registry)
         assert "Source not found" in str(exc_info.value)
 
-    def test_truncated_result_raises_registry_query_error(self) -> None:
+    def test_truncated_result_raises_registry_query_error(self, routes: Mock) -> None:
         """A ceiling-truncated result would feed the board-generation template
         incomplete data — RegistryQueryError must raise instead of silently
         proceeding with a partial result."""
@@ -302,8 +303,8 @@ class TestRunRegistryQueriesValidationErrors:
                 }
             }
         )
-        registry = MagicMock()
-        registry.execute.return_value = QueryResult(
+        registry = scripted_env(ScriptedBackend())
+        routes.return_value = QueryResult(
             data=[{"a": 1}],
             truncated_reason="max_rows",
             schema=literal_schema([{"a": 1}]),
@@ -336,7 +337,9 @@ class TestRunRegistryQueriesValidationErrors:
 
 
 class TestSlowQueryWarning:
-    def test_slow_query_emits_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_slow_query_emits_warning(
+        self, caplog: pytest.LogCaptureFixture, routes: Mock
+    ) -> None:
         """A registry query exceeding the threshold emits a logger.warning."""
         rows = [{"name": "id", "type": "BIGINT"}]
         view = _make_view(
@@ -349,7 +352,7 @@ class TestSlowQueryWarning:
                 }
             }
         )
-        registry = _mock_registry(rows)
+        registry = _mock_registry(routes, rows)
 
         with caplog.at_level(
             logging.WARNING, logger="dbt_charts.core.registered_views.query_runner"
@@ -366,7 +369,9 @@ class TestSlowQueryWarning:
         assert "columns" in slow_records[0].message
         assert "entity_table" in slow_records[0].message
 
-    def test_fast_query_no_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_fast_query_no_warning(
+        self, caplog: pytest.LogCaptureFixture, routes: Mock
+    ) -> None:
         """A registry query within threshold emits no slow-query warning."""
         rows = [{"name": "id", "type": "BIGINT"}]
         view = _make_view(
@@ -379,7 +384,7 @@ class TestSlowQueryWarning:
                 }
             }
         )
-        registry = _mock_registry(rows)
+        registry = _mock_registry(routes, rows)
 
         with caplog.at_level(
             logging.WARNING, logger="dbt_charts.core.registered_views.query_runner"
@@ -419,23 +424,22 @@ class TestSchemaQueryAsRegistryQuery:
             "dbt_charts.core.inspect.cache_factory.build_resolver",
             return_value=MagicMock(profile_table=MagicMock(return_value=envelope)),
         ):
-            from dbt_charts.core.execute.adapters import build_adapter_registry
+            from dbt_charts.core.execute.env import build_exec_env
 
-            registry = build_adapter_registry(local_project(tmp_path))
-            # Call SchemaAdapter._execute directly to bypass source-resolution;
+            registry = build_exec_env(local_project(tmp_path))
+            # Call schema_rows directly to bypass source-resolution;
             # source resolution raises for unknown source names without a dbt project.
-            # The SchemaAdapter does not use source_config — it calls build_resolver.
-            schema_adapter = registry._schema  # noqa: SLF001
+            # The schema route does not use source_config — it calls build_resolver.
             from dbt_charts.core.compile.models.query.normalized import SchemaQuery
 
             query = SchemaQuery(source="warehouse", schema="analytics", table="orders")
-            qr = schema_adapter._execute(query)
+            qr = schema_rows(registry, query)
 
         assert qr.error is None
         names = {r["name"] for r in qr.data}
         assert names == {"order_id", "status"}
 
-    def test_schema_query_with_path_params_materialized(self) -> None:
+    def test_schema_query_with_path_params_materialized(self, routes: Mock) -> None:
         """{{ path.X }} is materialized before the SchemaQuery validator runs.
 
         SchemaQuery._no_jinja rejects raw Jinja templates, so materialization
@@ -453,16 +457,18 @@ class TestSchemaQueryAsRegistryQuery:
             }
         )
         path_params = {"source": "snowflake", "schema": "raw", "table": "events"}
-        registry = _mock_registry(rows)
+        registry = _mock_registry(routes, rows)
 
         result = run_registry_queries(view, path_params, registry)
 
         assert [r.name for r in result["columns"].rows] == [r["name"] for r in rows]
         # The query passed to execute must have literal source, not Jinja template
-        executed_query = registry.execute.call_args[0][0]
+        executed_query = routes.call_args[0][0]
         assert executed_query.source == "snowflake"
 
-    def test_schema_query_type_is_schema_not_schema_resolver(self) -> None:
+    def test_schema_query_type_is_schema_not_schema_resolver(
+        self, routes: Mock
+    ) -> None:
         """The renamed type: schema (not schema_resolver) is accepted."""
         rows = [{"name": "col1", "type": "TEXT"}]
         view = _make_view(
@@ -475,7 +481,7 @@ class TestSchemaQueryAsRegistryQuery:
                 }
             }
         )
-        registry = _mock_registry(rows)
+        registry = _mock_registry(routes, rows)
         result = run_registry_queries(view, {}, registry)
 
         assert "meta" in result
@@ -594,28 +600,26 @@ def _schema_view() -> RegisteredView:
 
 
 class TestRunRegistryQueriesCache:
-    def test_second_call_served_from_cache(self) -> None:
+    def test_second_call_served_from_cache(self, routes: Mock) -> None:
         """Two identical calls execute the adapter once; second hit from cache."""
         rows = [{"name": "id", "type": "BIGINT"}]
         view = _schema_view()
         path_params = {"source": "snowflake", "schema": "raw", "table": "events"}
 
-        registry = _mock_registry(rows)
+        registry = _mock_registry(routes, rows)
         cache = _FakeCache()
 
         run_registry_queries(view, path_params, registry, cache=cache)
         run_registry_queries(view, path_params, registry, cache=cache)
 
-        assert registry.execute.call_count == 1, (
-            "adapter called twice; expected cache hit"
-        )
+        assert routes.call_count == 1, "adapter called twice; expected cache hit"
 
-    def test_different_path_param_executes_again(self) -> None:
+    def test_different_path_param_executes_again(self, routes: Mock) -> None:
         """Different path params produce a different content hash — no cross-path dedup."""
         rows = [{"name": "id", "type": "BIGINT"}]
         view = _schema_view()
 
-        registry = _mock_registry(rows)
+        registry = _mock_registry(routes, rows)
         cache = _FakeCache()
 
         run_registry_queries(
@@ -631,11 +635,11 @@ class TestRunRegistryQueriesCache:
             cache=cache,
         )
 
-        assert registry.execute.call_count == 2, (
+        assert routes.call_count == 2, (
             "Different path params must produce different cache keys"
         )
 
-    def test_ttl_expiry_forces_re_execution(self) -> None:
+    def test_ttl_expiry_forces_re_execution(self, routes: Mock) -> None:
         """After the query's resolved ttl expires the adapter runs again."""
         rows = [{"name": "id", "type": "BIGINT"}]
         view = _make_view(
@@ -651,7 +655,7 @@ class TestRunRegistryQueriesCache:
         )
         path_params = {"source": "snowflake", "schema": "raw", "table": "events"}
 
-        registry = _mock_registry(rows)
+        registry = _mock_registry(routes, rows)
         cache = _FakeCache()
 
         # First call — populate cache; clock is at t=0 (datetime.now())
@@ -664,37 +668,35 @@ class TestRunRegistryQueriesCache:
         cache._now = lambda: t_expired
         run_registry_queries(view, path_params, registry, cache=cache)
 
-        assert registry.execute.call_count == 2, (
-            "Expected re-execution after TTL expiry"
-        )
+        assert routes.call_count == 2, "Expected re-execution after TTL expiry"
 
-    def test_no_cache_runs_adapter_every_time(self) -> None:
+    def test_no_cache_runs_adapter_every_time(self, routes: Mock) -> None:
         """When cache=None the adapter executes on every call (existing behavior)."""
         rows = [{"name": "id", "type": "BIGINT"}]
         view = _schema_view()
         path_params = {"source": "snowflake", "schema": "raw", "table": "events"}
 
-        registry = _mock_registry(rows)
+        registry = _mock_registry(routes, rows)
 
         run_registry_queries(view, path_params, registry, cache=None)
         run_registry_queries(view, path_params, registry, cache=None)
 
-        assert registry.execute.call_count == 2
+        assert routes.call_count == 2
 
-    def test_cache_stores_result_under_correct_key(self) -> None:
+    def test_cache_stores_result_under_correct_key(self, routes: Mock) -> None:
         """Cache.put is called once with the result rows."""
         rows = [{"name": "id", "type": "BIGINT"}]
         view = _schema_view()
         path_params = {"source": "snowflake", "schema": "raw", "table": "events"}
 
-        registry = _mock_registry(rows)
+        registry = _mock_registry(routes, rows)
         cache = _FakeCache()
 
         run_registry_queries(view, path_params, registry, cache=cache)
 
         assert cache.put_call_count == 1
 
-    def test_cache_false_never_reads_or_writes(self) -> None:
+    def test_cache_false_never_reads_or_writes(self, routes: Mock) -> None:
         """A registry query with cache: false always re-executes
         and never writes."""
         rows = [{"name": "id", "type": "BIGINT"}]
@@ -711,11 +713,11 @@ class TestRunRegistryQueriesCache:
         )
         path_params = {"source": "snowflake", "schema": "raw", "table": "events"}
 
-        registry = _mock_registry(rows)
+        registry = _mock_registry(routes, rows)
         cache = _FakeCache()
 
         run_registry_queries(view, path_params, registry, cache=cache)
         run_registry_queries(view, path_params, registry, cache=cache)
 
-        assert registry.execute.call_count == 2, "cache: false must re-run every call"
+        assert routes.call_count == 2, "cache: false must re-run every call"
         assert cache.put_call_count == 0, "cache: false must write nothing"

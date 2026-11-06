@@ -12,11 +12,13 @@ use super::{
     drop_invalid_color_rows, legend_date_label, legend_labels, tooltip_value_title, Cell, CellFill, CellMarks, CellPaint,
     CategoryScale, ColorKind, GradientColors, HeaderFmt, HeatmapResolved, SYMBOL_LEGEND_TICK_COUNT, FLAT_COLOR,
 };
-use crate::common::{dimension_sort_domain, row_str, MirrorGhost, SortAggregate};
+use crate::common::{MirrorGhost};
+use ::bind::rows::{dimension_sort_domain, row_str, SortAggregate};
 use diagnostic::Diagnostic;
 use crate::families::color_scale::ContinuousColor;
 use crate::families::heatmap_facet::{date_dimension, first_appearance};
-use crate::families::temporal::{infer_vega_type, TimeUnit, VegaType};
+use ::bind::temporal::{infer_vega_type, VegaType};
+use ::bind::temporal::{TimeUnit};
 use crate::{BoardStyle, Padding, Payload};
 
 /// A bound heatmap: the resolved chart as deserialized, with what the data derives from it.
@@ -289,11 +291,11 @@ pub(crate) fn fold_wide_y(payload: &Payload) -> Result<Option<Payload>, String> 
         .map(|labels| Deserialize::deserialize(labels).map_err(|e| format!("heatmap payload: field_labels: {e}")))
         .transpose()?
         .unwrap_or_default();
-    let labels = display_text::wide_measure_labels_for(&measures, &field_labels)?;
-    let mut rows = crate::common::unfold_wide_rows(&payload.rows, &measures, None);
+    let labels = display_text::wide_measure_labels(&measures, &field_labels)?.labels;
+    let mut rows = ::bind::wide::unfold_wide_rows(&payload.rows, &measures, None);
     for row in &mut rows {
-        let measure = row_str(row, crate::common::WIDE_KEY_FIELD);
-        row.insert(crate::common::WIDE_LABEL_FIELD.to_string(), Value::String(labels[&measure].clone()));
+        let measure = row_str(row, ::bind::wide::WIDE_KEY_FIELD);
+        row.insert(::bind::wide::WIDE_LABEL_FIELD.to_string(), Value::String(labels[&measure].clone()));
     }
     let mut resolved = payload.resolved.clone();
     let fields = resolved.as_object_mut().ok_or("heatmap payload: resolved is not an object")?;
@@ -301,13 +303,13 @@ pub(crate) fn fold_wide_y(payload: &Payload) -> Result<Option<Payload>, String> 
         fields.insert("y_label".into(), Value::String(crate::common::wide_measures_title(&measures, &field_labels)?));
     }
     fields.insert("wide_native_aria".into(), Value::Bool(true));
-    fields.insert("y".into(), Value::String(crate::common::WIDE_VALUE_FIELD.into()));
-    fields.insert("color".into(), Value::String(crate::common::WIDE_LABEL_FIELD.into()));
+    fields.insert("y".into(), Value::String(::bind::wide::WIDE_VALUE_FIELD.into()));
+    fields.insert("color".into(), Value::String(::bind::wide::WIDE_LABEL_FIELD.into()));
     fields.insert(
         "resolved_channels".into(),
         serde_json::json!({"color": {
-            "channel": "color", "mode": "series", "data_field": crate::common::WIDE_LABEL_FIELD, "quantitative_data": false
+            "channel": "color", "mode": "series", "data_field": ::bind::wide::WIDE_LABEL_FIELD, "quantitative_data": false
         }}),
     );
-    Ok(Some(payload.with_inputs(resolved, rows).with_row_types(crate::common::unfold_wide_types(&payload.schema.rows, &measures)?)))
+    Ok(Some(payload.with_inputs(resolved, rows).with_row_types(::bind::wide::unfold_wide_types(&payload.schema.rows, &measures)?)))
 }

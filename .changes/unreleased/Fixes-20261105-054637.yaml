@@ -1,0 +1,3 @@
+kind: Fixes
+body: A float (DOUBLE) column of years on a chart's x axis now reads as numbers, not as a time axis.
+time: 2026-11-05T05:46:37.232707492Z

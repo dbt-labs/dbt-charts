@@ -49,7 +49,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.render.chart.mark_extents import all_marks_degenerate
 from dbt_charts.core.render.chart.rendering import render_chart_item
 
@@ -294,7 +294,7 @@ def test_author_narrowed_compact_columns_is_read_by_the_classifier() -> None:
     assert resolved.legend.visible is False
 
     data = _stacked_data(12)
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
     executor.execute_query_result.return_value = rows_result(data)
     svg, _height = render_chart_item(
@@ -383,7 +383,7 @@ def test_twenty_five_series_at_narrow_card_draws_marks_with_real_height() -> Non
     """End-to-end: the actual render must not hit ERR-CHART-PAINTED-NO-MARKS."""
     data = _stacked_data(25)
     resolved = _resolved(25, _NARROW_WIDTH)
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
     executor.execute_query_result.return_value = rows_result(data)
 
@@ -412,7 +412,7 @@ def test_wide_measure_stacked_bar_at_narrow_card_draws_marks_with_real_height() 
     measure_count = 25
     data = _wide_stacked_data(measure_count)
     resolved = _resolved_wide(measure_count, _NARROW_WIDTH)
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
     executor.execute_query_result.return_value = rows_result(data)
 
@@ -439,7 +439,7 @@ def test_fourteen_series_at_floor_width_draws_marks_with_real_height() -> None:
     data = _stacked_data(14)
     resolved = _resolved(14, _FLOOR_WIDTH)
     assert resolved.legend.visible is False
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
     executor.execute_query_result.return_value = rows_result(data)
 

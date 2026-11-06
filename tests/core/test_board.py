@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import render_dashboard
 from dbt_charts.core.compile.compiler import compile_file
-from dbt_charts.core.execute.adapters import AdapterRegistry
+from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.project import InMemoryBoard
 from dbt_charts.core.render.render_result import RenderResult
 
@@ -55,16 +55,16 @@ def test_render_dashboard_does_not_mutate_a_shared_compile_result(
     assert compile_result.success
     assert compile_result.warnings == []
 
-    mock_registry = MagicMock(spec=AdapterRegistry)
+    mock_registry = MagicMock(spec=ExecEnv)
     render_result = RenderResult(output='{"id": "test", "title": "Board", "items": []}')
 
     with (
         patch("dbt_charts.core.board.render", return_value=render_result),
-        patch("dbt_charts.core.board.Executor"),
+        patch("dbt_charts.core.board.make_context"),
     ):
         first = render_dashboard(
             board=board,
-            adapter_registry=mock_registry,
+            env=mock_registry,
             format="json",
             project=project,
             result_cache=None,
@@ -72,7 +72,7 @@ def test_render_dashboard_does_not_mutate_a_shared_compile_result(
         )
         second = render_dashboard(
             board=board,
-            adapter_registry=mock_registry,
+            env=mock_registry,
             format="json",
             project=project,
             result_cache=None,

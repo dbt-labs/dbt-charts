@@ -22,6 +22,9 @@ chart-renderer = { path = "../chart-renderer" }
 diagnostic = { path = "../diagnostic" }
 display-text = { path = "../display-text" }
 measure = { path = "../measure" }
+migrate = { path = "../migrate" }
+yaml = { path = "../yaml" }
+indexmap = "2"
 serde = "1"
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 

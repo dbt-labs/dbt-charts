@@ -1,0 +1,34 @@
+{
+  "doc": "The words a number locale's magnitudes print (thousand, million, billion, trillion) in the analytic and narrative registers. A tag reads its region row, else its language row. Narrative is CLDR's short compact form; analytic the extra-short form; CLDR groups ja/zh/ko by 10^4, so those rows use the 10^3-tier words. A word carries its own gap (U+00A0, or none).",
+  "region": {
+    "es-BO": {"analytic": ["\u00a0K", "\u00a0M", "\u00a0mil\u00a0M", "\u00a0B"], "narrative": ["\u00a0K", "\u00a0M", "\u00a0mil\u00a0M", "\u00a0B"]},
+    "es-MX": {"analytic": ["\u00a0k", "\u00a0M", "\u00a0mil\u00a0M", "\u00a0B"], "narrative": ["\u00a0k", "\u00a0M", "\u00a0mil\u00a0M", "\u00a0B"]},
+    "fr-CA": {"analytic": ["\u00a0k", "\u00a0M", "\u00a0G", "\u00a0T"], "narrative": ["\u00a0k", "\u00a0M", "\u00a0G", "\u00a0T"]},
+    "pt-PT": {"analytic": ["\u00a0mil", "\u00a0M", "\u00a0mM", "\u00a0Bi"], "narrative": ["\u00a0mil", "\u00a0M", "\u00a0mM", "\u00a0Bi"]}
+  },
+  "language": {
+    "ar": {"analytic": ["\u00a0ألف", "\u00a0مليون", "\u00a0مليار", "\u00a0ترليون"], "narrative": ["\u00a0ألف", "\u00a0مليون", "\u00a0مليار", "\u00a0ترليون"]},
+    "ca": {"analytic": ["\u00a0k", "\u00a0M", "\u00a0mil\u00a0M", "\u00a0B"], "narrative": ["\u00a0k", "\u00a0M", "\u00a0mil\u00a0M", "\u00a0B"]},
+    "cs": {"analytic": ["\u00a0k", "\u00a0M", "\u00a0mld", "\u00a0bil"], "narrative": ["\u00a0tis.", "\u00a0mil.", "\u00a0mld.", "\u00a0bil."]},
+    "da": {"analytic": ["\u00a0k", "\u00a0M", "\u00a0mia", "\u00a0bio"], "narrative": ["\u00a0t", "\u00a0mio.", "\u00a0mia.", "\u00a0bio."]},
+    "de": {"analytic": ["\u00a0k", "\u00a0M", "\u00a0Mrd", "\u00a0Bio"], "narrative": ["\u00a0Tsd.", "\u00a0Mio.", "\u00a0Mrd.", "\u00a0Bio."]},
+    "en": {"analytic": ["K", "M", "B", "T"], "narrative": ["k", "m", "bn", "trn"]},
+    "es": {"analytic": ["\u00a0mil", "\u00a0M", "\u00a0mil\u00a0M", "\u00a0B"], "narrative": ["\u00a0mil", "\u00a0M", "\u00a0mil\u00a0M", "\u00a0B"]},
+    "fi": {"analytic": ["\u00a0k", "\u00a0M", "\u00a0mrd", "\u00a0bilj"], "narrative": ["\u00a0t.", "\u00a0milj.", "\u00a0mrd.", "\u00a0bilj."]},
+    "fr": {"analytic": ["\u00a0k", "\u00a0M", "\u00a0Md", "\u00a0Bn"], "narrative": ["\u00a0k", "\u00a0M", "\u00a0Md", "\u00a0Bn"]},
+    "he": {"analytic": ["\u00a0K", "\u00a0M", "\u00a0B", "\u00a0T"], "narrative": ["\u00a0K", "\u00a0M", "\u00a0B", "\u00a0T"]},
+    "hu": {"analytic": ["\u00a0E", "\u00a0M", "\u00a0Mrd", "\u00a0B"], "narrative": ["\u00a0E", "\u00a0M", "\u00a0Mrd", "\u00a0B"]},
+    "it": {"analytic": ["\u00a0k", "\u00a0M", "\u00a0Mld", "\u00a0Bln"], "narrative": ["\u00a0mila", "\u00a0Mln", "\u00a0Mld", "\u00a0Bln"]},
+    "ja": {"analytic": ["千", "百万", "十億", "兆"], "narrative": ["千", "百万", "十億", "兆"]},
+    "ko": {"analytic": ["천", "백만", "십억", "조"], "narrative": ["천", "백만", "십억", "조"]},
+    "mk": {"analytic": ["\u00a0илј.", "\u00a0мил.", "\u00a0милј.", "\u00a0бил."], "narrative": ["\u00a0илј.", "\u00a0мил.", "\u00a0милј.", "\u00a0бил."]},
+    "nl": {"analytic": ["\u00a0K", "\u00a0M", "\u00a0mld", "\u00a0bln"], "narrative": ["K", "\u00a0mln.", "\u00a0mld.", "\u00a0bln."]},
+    "pl": {"analytic": ["\u00a0k", "\u00a0M", "\u00a0mld", "\u00a0bln"], "narrative": ["\u00a0tys.", "\u00a0mln", "\u00a0mld", "\u00a0bln"]},
+    "pt": {"analytic": ["\u00a0k", "\u00a0M", "\u00a0B", "\u00a0T"], "narrative": ["\u00a0mil", "\u00a0mi", "\u00a0bi", "\u00a0tri"]},
+    "ru": {"analytic": ["\u00a0к", "\u00a0М", "\u00a0млрд", "\u00a0трлн"], "narrative": ["\u00a0тыс.", "\u00a0млн", "\u00a0млрд", "\u00a0трлн"]},
+    "sl": {"analytic": ["\u00a0tis.", "\u00a0mio.", "\u00a0mrd.", "\u00a0bil."], "narrative": ["\u00a0tis.", "\u00a0mio.", "\u00a0mrd.", "\u00a0bil."]},
+    "sv": {"analytic": ["\u00a0tn", "\u00a0mn", "\u00a0md", "\u00a0bn"], "narrative": ["\u00a0tn", "\u00a0mn", "\u00a0md", "\u00a0bn"]},
+    "uk": {"analytic": ["\u00a0к", "\u00a0М", "\u00a0млрд", "\u00a0трлн"], "narrative": ["\u00a0тис.", "\u00a0млн", "\u00a0млрд", "\u00a0трлн"]},
+    "zh": {"analytic": ["千", "百万", "十亿", "万亿"], "narrative": ["千", "百万", "十亿", "万亿"]}
+  }
+}

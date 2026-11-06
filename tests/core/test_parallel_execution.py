@@ -11,17 +11,18 @@ from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.execute.duckdb_cache import compute_cache_key
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.lookup import Miss
+from dbt_charts.core.execute.query_result import QueryResult
 from dbt_charts.core.execute.run import Failed
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 from dbt_charts.core.render import render
 
 from .._lookup import planned_query
 from .._results import rows_result
+from .._run import Run
+from .._scripted_env import ScriptedBackend, scripted_env
 from ._board_utils import make_test_board
 
 
@@ -40,7 +41,7 @@ def _project_with_duckdb_source(
 
 
 def _run_parallel(
-    executor: Executor, names: set[str], max_workers: int = 8
+    executor: Run, names: set[str], max_workers: int = 8
 ) -> dict[str, Exception | None]:
     outcomes = executor.run_misses(executor.lookup(names), max_workers)
     return {
@@ -56,7 +57,7 @@ def _slow_adapter_execute(delay: float = 0.1):
     """
     call_log: list[dict] = []
 
-    def execute(query, variables=None, params=None, **kwargs):
+    def execute(_source, query):
         entry = {
             "sql": query.sql,
             "thread": threading.current_thread().ident,
@@ -181,11 +182,10 @@ class TestRunMisses:
         assert result.success, result.errors
         mock_execute, call_log = _slow_adapter_execute(delay=0.1)
 
-        mock_registry = Mock()
-        mock_registry.project_file_sources.return_value = {}
-        mock_registry.execute.side_effect = mock_execute
+        mock_registry_backend = ScriptedBackend(side_effect=mock_execute)
+        mock_registry = scripted_env(mock_registry_backend)
 
-        executor = Executor(result.board, adapter_registry=mock_registry)
+        executor = Run(result.board, env=mock_registry)
 
         start = time.monotonic()
         _run_parallel(executor, {"sales", "users", "orders"})
@@ -206,21 +206,22 @@ class TestRunMisses:
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
 
-        mock_registry = Mock()
-        mock_registry.project_file_sources.return_value = {}
-        mock_registry.execute.return_value = QueryResult(
-            data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+        mock_registry_backend = ScriptedBackend(
+            QueryResult(
+                data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+            )
         )
+        mock_registry = scripted_env(mock_registry_backend)
 
-        executor = Executor(result.board, adapter_registry=mock_registry)
+        executor = Run(result.board, env=mock_registry)
 
         _run_parallel(executor, {"sales", "users", "orders"})
 
         # Now execute_chart should be cache hits (no new adapter calls)
-        call_count_before = mock_registry.execute.call_count
+        call_count_before = mock_registry_backend.execute.call_count
         for chart in result.board.charts.values():
             executor.execute_chart(chart)
-        call_count_after = mock_registry.execute.call_count
+        call_count_after = mock_registry_backend.execute.call_count
 
         assert call_count_after == call_count_before, (
             "execute_chart made new adapter calls after parallel execution — cache not working"
@@ -231,18 +232,17 @@ class TestRunMisses:
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
 
-        def flaky_execute(query, variables=None, params=None, **kwargs):
+        def flaky_execute(_source, query):
             if "sales" in query.sql.lower():
                 raise RuntimeError("Connection refused")
             return QueryResult(
                 data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
             )
 
-        mock_registry = Mock()
-        mock_registry.project_file_sources.return_value = {}
-        mock_registry.execute.side_effect = flaky_execute
+        mock_registry_backend = ScriptedBackend(side_effect=flaky_execute)
+        mock_registry = scripted_env(mock_registry_backend)
 
-        executor = Executor(result.board, adapter_registry=mock_registry)
+        executor = Run(result.board, env=mock_registry)
 
         errors = _run_parallel(executor, {"sales", "users", "orders"})
 
@@ -259,11 +259,12 @@ class TestRunMisses:
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
 
-        mock_registry = Mock()
-        mock_registry.project_file_sources.return_value = {}
-        mock_registry.execute.return_value = QueryResult(
-            data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+        mock_registry_backend = ScriptedBackend(
+            QueryResult(
+                data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+            )
         )
+        mock_registry = scripted_env(mock_registry_backend)
         cache = Mock(spec=QueryResultCache)
         cache.get.return_value = None
 
@@ -272,9 +273,7 @@ class TestRunMisses:
                 raise OSError("store down")
 
         cache.put.side_effect = put
-        executor = Executor(
-            result.board, adapter_registry=mock_registry, result_cache=cache
-        )
+        executor = Run(result.board, env=mock_registry, result_cache=cache)
 
         errors = _run_parallel(executor, {"sales", "users", "orders"})
 
@@ -292,13 +291,13 @@ class TestRunMisses:
             sources={},
             variable_defaults={},
         )
-        mock_registry = Mock()
-        mock_registry.project_file_sources.return_value = {}
-        executor = Executor(board, adapter_registry=mock_registry)
+        mock_registry_backend = ScriptedBackend()
+        mock_registry = scripted_env(mock_registry_backend)
+        executor = Run(board, env=mock_registry)
 
         errors = _run_parallel(executor, set())
         assert errors == {}
-        assert mock_registry.execute.call_count == 0
+        assert mock_registry_backend.execute.call_count == 0
 
 
 class TestExecutorCacheThreadSafety:
@@ -308,12 +307,13 @@ class TestExecutorCacheThreadSafety:
         """Multiple threads writing to cache simultaneously shouldn't corrupt it."""
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
-        mock_registry = Mock()
-        mock_registry.project_file_sources.return_value = {}
-        mock_registry.execute.return_value = QueryResult(
-            data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+        mock_registry_backend = ScriptedBackend(
+            QueryResult(
+                data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+            )
         )
-        executor = Executor(result.board, adapter_registry=mock_registry)
+        mock_registry = scripted_env(mock_registry_backend)
+        executor = Run(result.board, env=mock_registry)
 
         errors = []
 
@@ -352,12 +352,10 @@ class TestDuckDBIntegration:
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(
-                _project_with_duckdb_source(local_project)
-            ),
-        )  # real adapter registry
+            env=build_exec_env(_project_with_duckdb_source(local_project)),
+        )  # real exec env
 
         query_names = collect_layout_chart_query_names(result.board)
         errors = _run_parallel(executor, query_names)
@@ -380,14 +378,14 @@ class TestDuckDBIntegration:
 
         cache = TrivialDuckDBCache(db_path=tmp_path / "query_cache.duckdb")
         try:
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=build_adapter_registry(
-                    _project_with_duckdb_source(local_project)
-                ),
+                env=build_exec_env(_project_with_duckdb_source(local_project)),
                 result_cache=cache,
             )
-            rendered = render(result.board, executor, format="html")
+            rendered = render(
+                result.board, executor.ctx, executor.ledger, format="html"
+            )
             assert rendered.output
 
             for query_name in ("sales", "users", "orders"):
@@ -417,7 +415,7 @@ class TestStoredPreExecutionErrors:
 
         call_count = 0
 
-        def counting_execute(query, variables=None, params=None, **kwargs):
+        def counting_execute(_source, query):
             nonlocal call_count
             if "'sales'" in query.sql:
                 call_count += 1
@@ -426,11 +424,10 @@ class TestStoredPreExecutionErrors:
                 data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
             )
 
-        mock_registry = Mock()
-        mock_registry.project_file_sources.return_value = {}
-        mock_registry.execute.side_effect = counting_execute
+        mock_registry_backend = ScriptedBackend(side_effect=counting_execute)
+        mock_registry = scripted_env(mock_registry_backend)
 
-        executor = Executor(result.board, adapter_registry=mock_registry)
+        executor = Run(result.board, env=mock_registry)
 
         from dbt_charts.core.execute.collect import collect_layout_chart_query_names
 
@@ -471,12 +468,13 @@ class TestCacheHitPartitioning:
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
 
-        mock_registry = Mock()
-        mock_registry.project_file_sources.return_value = {}
-        mock_registry.execute.return_value = QueryResult(
-            data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+        mock_registry_backend = ScriptedBackend(
+            QueryResult(
+                data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+            )
         )
-        executor = Executor(result.board, adapter_registry=mock_registry)
+        mock_registry = scripted_env(mock_registry_backend)
+        executor = Run(result.board, env=mock_registry)
 
         # Pre-warm cache for sales and users — these are cache hits.
         executor.execute_query("sales")
@@ -485,17 +483,19 @@ class TestCacheHitPartitioning:
 
         submitted_names: list[set] = []
 
-        def capturing_parallel(_exec, found, max_workers):
+        def capturing_parallel(_ctx, _ledger, found, max_workers):
             submitted_names.append({miss.name for miss in found.misses})
             return {}
 
         with (
-            patch.object(Executor, "run_misses", capturing_parallel),
+            patch("dbt_charts.core.render.renderer.run_misses", capturing_parallel),
             patch.object(
                 yaml_format_mod, "render_board_yaml", return_value="yaml: true\n"
             ),
         ):
-            renderer_mod.render(result.board, executor, format="yaml")
+            renderer_mod.render(
+                result.board, executor.ctx, executor.ledger, format="yaml"
+            )
 
         assert len(submitted_names) == 1, "run_misses not called exactly once"
         # Only the uncached query should be in the pool submit set.
@@ -516,12 +516,13 @@ class TestCacheHitPartitioning:
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
 
-        mock_registry = Mock()
-        mock_registry.project_file_sources.return_value = {}
-        mock_registry.execute.return_value = QueryResult(
-            data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+        mock_registry_backend = ScriptedBackend(
+            QueryResult(
+                data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+            )
         )
-        executor = Executor(result.board, adapter_registry=mock_registry)
+        mock_registry = scripted_env(mock_registry_backend)
+        executor = Run(result.board, env=mock_registry)
 
         # Pre-warm all three queries.
         executor.execute_query("sales")
@@ -530,17 +531,19 @@ class TestCacheHitPartitioning:
 
         submitted_names: list[set] = []
 
-        def capturing_parallel(_exec, found, max_workers):
+        def capturing_parallel(_ctx, _ledger, found, max_workers):
             submitted_names.append({miss.name for miss in found.misses})
             return {}
 
         with (
-            patch.object(Executor, "run_misses", capturing_parallel),
+            patch("dbt_charts.core.render.renderer.run_misses", capturing_parallel),
             patch.object(
                 yaml_format_mod, "render_board_yaml", return_value="yaml: true\n"
             ),
         ):
-            renderer_mod.render(result.board, executor, format="yaml")
+            renderer_mod.render(
+                result.board, executor.ctx, executor.ledger, format="yaml"
+            )
 
         assert len(submitted_names) == 1
         assert submitted_names[0] == set(), (
@@ -552,15 +555,16 @@ class TestLookupHits:
     """Direct contract for Executor.lookup — the success-cache peek used by
     the pre-render partition. True only for a warmed success cache."""
 
-    def _executor(self) -> Executor:
+    def _executor(self) -> Run:
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
-        mock_registry = Mock()
-        mock_registry.project_file_sources.return_value = {}
-        mock_registry.execute.return_value = QueryResult(
-            data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+        mock_registry_backend = ScriptedBackend(
+            QueryResult(
+                data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+            )
         )
-        return Executor(result.board, adapter_registry=mock_registry)
+        mock_registry = scripted_env(mock_registry_backend)
+        return Run(result.board, env=mock_registry)
 
     def test_false_before_execution(self):
         executor = self._executor()
@@ -587,14 +591,13 @@ class TestLookupHits:
         lookup must keep predicting execute_query, which serves memo rows."""
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
-        mock_registry = Mock()
-        mock_registry.project_file_sources.return_value = {}
-        mock_registry.execute.return_value = QueryResult(
-            data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+        mock_registry_backend = ScriptedBackend(
+            QueryResult(
+                data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+            )
         )
-        executor = Executor(
-            result.board, adapter_registry=mock_registry, use_cache=False
-        )
+        mock_registry = scripted_env(mock_registry_backend)
+        executor = Run(result.board, env=mock_registry, use_cache=False)
         assert "sales" not in executor.lookup(["sales"]).hits
         executor.execute_query("sales")
         assert "sales" in executor.lookup(["sales"]).hits

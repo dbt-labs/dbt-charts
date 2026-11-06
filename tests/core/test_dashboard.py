@@ -53,15 +53,15 @@ class TestRenderDashboardExistenceChecksReadThroughProject:
         in_memory_project: Callable[[Path, dict[str, str]], Project],
     ) -> None:
         """The default (non-link) render arm must also read via Project."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         project = in_memory_project(tmp_path, {"sales.yml": _MARKER_BOARD})
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
 
         result = render_dashboard(
             board=project.path("sales.yml").read_board(),
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
             format="html",
         )

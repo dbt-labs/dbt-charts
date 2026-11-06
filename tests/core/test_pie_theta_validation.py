@@ -29,7 +29,7 @@ from dbt_charts.core.diagnostics.codes_render import (
     ERR_PIE_NULL_THETA,
 )
 from dbt_charts.core.diagnostics.diagnostic import Diagnostic
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import InMemoryBoard
 
 
@@ -37,7 +37,7 @@ def _render_pie(
     tmp_path: Path, rows: list[tuple[str, Any]], *, chart_type: str = "pie"
 ) -> BoardRenderResult:
     project = FilesystemProject(tmp_path)
-    registry = build_adapter_registry(project, read_only=False)
+    registry = build_exec_env(project, read_only=False)
     values = json.dumps([list(row) for row in rows])
     yaml_content = f"""
 title: pie theta validation
@@ -57,7 +57,7 @@ rows:
     return render_dashboard(
         board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
         project=project,
-        adapter_registry=registry,
+        env=registry,
         result_cache=None,
     )
 

@@ -19,6 +19,7 @@ window.dbtControlsEnglish = {
     "sort_date_ascending": "Sort oldest → newest",
     "sort_date_descending": "Sort newest → oldest",
     "clear_sort": "Clear sort",
+    "remove_value": "Remove {value}",
     "search": "Search",
     "search_values": "Search values",
     "select_all": "Select all",

@@ -37,7 +37,9 @@ from dbt_charts.core.diagnostics.codes_execute import (
 from dbt_charts.core.diagnostics.codes_unknown import ERR_INTERNAL
 from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters import AdapterRegistry
+from dbt_charts.core.execute.env import ExecEnv
+from dbt_charts.core.execute.plan_sources import resolve_source_config
+from dbt_charts.core.execute.run import run_query
 from dbt_charts.core.execute.source_resolver import AD_HOC_QUERY_NAME
 from dbt_charts.core.execute.sql_translate import engine_dialect
 from dbt_charts.core.inspect.query_validator import QueryDiagnostic, validate_query
@@ -201,7 +203,7 @@ def _resolve_source(
     query_name: str,
 ) -> ResolvedSourceConfig | None:
     """Resolve a source the way execution does; reads a profile, opens no connection."""
-    from dbt_charts.core.execute.adapters.adapter_registry import linked_dbt_path
+    from dbt_charts.core.execute.env import linked_dbt_path
     from dbt_charts.core.execute.source_resolver import (
         DbtContext,
         DefaultSourceResolver,
@@ -261,7 +263,7 @@ def lookup_board_query_sql(
         render_parameterized_with_queries,
     )
     from dbt_charts.core.dbt_ref_check import named_source_target_path
-    from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
+    from dbt_charts.core.execute.dbt_utils import DbtRefResolver
     from dbt_charts.core.execute.plan import resolve_query_references
 
     loaded = _load_board_query(name, path, project)
@@ -288,8 +290,7 @@ def lookup_board_query_sql(
     # preview then falls to the default dialect's spelling rather than refusing.
     from dbt_charts.core.compile.models.source import is_file_source
     from dbt_charts.core.dialects import get_dialect
-    from dbt_charts.core.execute.executor import utc_now
-    from dbt_charts.core.execute.plan import merge_board_variables
+    from dbt_charts.core.execute.plan import merge_board_variables, utc_now
     from dbt_charts.core.execute.sql_literals import (
         INLINE_PLACEHOLDERS,
         inline_params_for_dialect,
@@ -311,7 +312,7 @@ def lookup_board_query_sql(
         with board_clock(clock):
             merged_vars = merge_board_variables(board, vars or {}, clock)
             # {{ queries.X }} is expanded to text first, recursively, exactly as the
-            # render/serve path does (Executor.execute_query Step 4) — don't move
+            # render/serve path does (the plan stage) — don't move
             # this after the two resolve calls below; it's what lets a template
             # left inside X's own SQL (a plain variable, `filter()`, a literal) reach
             # the single variable render instead of never.
@@ -532,7 +533,7 @@ class ExecuteQueryResult(BaseModel):
 
 
 def _query_diagnostics(
-    sql: str, source: str | None, adapter_registry: AdapterRegistry
+    sql: str, source: str | None, env: ExecEnv
 ) -> list[QueryDiagnostic]:
     """Run the structural validator over *sql*; never raise on a real query.
 
@@ -544,7 +545,7 @@ def _query_diagnostics(
         dialect: str | None = None
         try:
             dialect = source_dialect(
-                adapter_registry.resolve_source_config(source).get("type")
+                resolve_source_config(env.sources, env.project, source).get("type")
             )
         except Exception:  # noqa: BLE001 — best-effort dialect hint
             dialect = None
@@ -573,7 +574,7 @@ def execute_query(
     source: str | None = None,
     limit: int = 50,
     *,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     lenient_variables: bool = False,
 ) -> ExecuteQueryResult:
     """Execute a SQL query and return the results.
@@ -588,11 +589,11 @@ def execute_query(
     # Structural validation runs regardless of execution outcome: a query that
     # executes cleanly can still double-count (re-aggregation) or build a cartesian
     # product, which execution alone never flags.
-    diagnostics = _query_diagnostics(sql, source, adapter_registry)
+    diagnostics = _query_diagnostics(sql, source, env)
 
     try:
         # A sourceless query runs against the project's implicit dbt source, or
-        # raises ERR-SOURCE-NOT-NAMED inside adapter_registry.execute() itself —
+        # raises ERR-SOURCE-NOT-NAMED inside run_query() itself —
         # the single enforcement point.
         query = SqlQuery(
             sql=sql,
@@ -602,7 +603,7 @@ def execute_query(
         )
         board = None
         if source is not None and is_file_source_ref(source):
-            compiled = _inline_file_source_board(source, adapter_registry.project)
+            compiled = _inline_file_source_board(source, env.project)
             if isinstance(compiled, Diagnostic):
                 return ExecuteQueryResult(
                     success=False,
@@ -616,7 +617,7 @@ def execute_query(
                 )
             board = compiled
 
-        result = adapter_registry.execute(query, variables=variables, board=board)
+        result = run_query(env, query, variables=variables, board=board)
 
         if result.error:
             return ExecuteQueryResult(
@@ -710,13 +711,13 @@ def query_board(
     vars: dict[str, Any] | None = None,
     limit: int = 20,
     *,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
 ) -> QueryBoardResult:
     """Run one named query from a compiled board and return its sample rows."""
-    from dbt_charts.core.execute.executor import utc_now
     from dbt_charts.core.execute.plan import (
         merge_board_variables,
         resolve_query_references,
+        utc_now,
     )
 
     limit = min(limit, MAX_QUERY_LIMIT)
@@ -743,7 +744,7 @@ def query_board(
     sql = query.sql if isinstance(query, SqlQuery) else None
     noted = query.notes
 
-    # A SQL query against a file source runs through adapter_registry.execute's
+    # A SQL query against a file source runs through run_query's
     # own materializer dispatch (or its refusal, when no materializer is
     # configured for this registry) and surfaces through exec_result.error
     # below — one dispatch point, not a second copy here.
@@ -752,7 +753,7 @@ def query_board(
             # `compose` inlines {{ queries.X }} in a
             # single non-recursive Jinja pass — don't remove this call as
             # redundant with it. Expand refs to text first, exactly as the
-            # render/serve path does (Executor.execute_query Step 4), so
+            # render/serve path does (the plan stage), so
             # composition below sees one flat template with nothing left to
             # inline.
             query = resolve_query_references(
@@ -761,8 +762,12 @@ def query_board(
                 query_name=name,
             )
         with board_clock(clock):
-            exec_result = adapter_registry.execute(
-                query, variables=merged_vars, board=board, query_name=name
+            exec_result = run_query(
+                env,
+                query,
+                variables=merged_vars,
+                board=board,
+                query_name=name,
             )
     except Exception as e:  # noqa: BLE001
         return _fail(

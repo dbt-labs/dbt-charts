@@ -40,15 +40,15 @@ use diagnostic::codes;
 use crate::common::format_kpi_parts;
 use crate::common::KpiParts;
 use crate::common::py_rstrip;
-use crate::common::tag_at;
-use crate::common::CellRow;
-use crate::common::CellTag;
+use ::bind::rows::tag_at;
+use ::bind::rows::CellRow;
+use ::bind::rows::CellTag;
 use crate::common::FormatParts;
 use crate::common::FormatSlot;
 use crate::common::PartsOptions;
 use crate::common::ScaleTarget;
 use crate::common::ScaledColumn;
-use crate::common::{py_scalar_key, PyKey};
+use ::bind::rows::{py_scalar_key, PyKey};
 use diagnostic::py_repr;
 use diagnostic::py_str;
 use diagnostic::Diagnostic;
@@ -789,7 +789,7 @@ pub(super) fn resolve_cell_link(
 pub(crate) fn count_decimals(s: &str) -> usize {
     d3rs::numeral_pad::fractional_digit_count(
         s,
-        &crate::number_locale::active_number_locale().locale.decimal,
+        &::bind::formats::locale::active_number_locale().locale.decimal,
     )
 }
 
@@ -894,7 +894,7 @@ pub(super) fn resolve_row_roles(
 /// million does.
 pub(crate) fn is_magnitude_suffix(s: &str) -> bool {
     let bare = s.trim();
-    crate::number_locale::active_number_locale()
+    ::bind::formats::locale::active_number_locale()
         .magnitude_suffixes()
         .any(|suffix| suffix == bare)
 }
@@ -902,7 +902,7 @@ pub(crate) fn is_magnitude_suffix(s: &str) -> bool {
 /// The string production measures a numeric/date cell by — one rule, used at
 /// both of its measurement sites (`measure_column_demands` and
 /// `_has_overflow`): `format_table_cell_value`'s DISPLAY string, in which a
-/// magnitude word sits behind the gap it carries (`text/magnitude_words.py`:
+/// magnitude word sits behind the gap it carries (`display-text/locale/magnitude_words.json`:
 /// a no-break space or none) though the lanes paint the two apart. A
 /// shared-scale column measures its scaled digit string
 /// (`prefix + number + suffix`), since that, not the whole-precision SI
@@ -947,7 +947,7 @@ pub(super) fn non_anchor_suffix(suffix: String, explicit_suffix: &str) -> Option
     let computed = suffix
         .strip_suffix(py_rstrip(explicit_suffix))
         .unwrap_or(&suffix);
-    let magnitude = crate::number_locale::active_number_locale()
+    let magnitude = ::bind::formats::locale::active_number_locale()
         .magnitude_suffixes()
         .any(|word| computed.starts_with(word));
     (magnitude && !suffix.is_empty()).then_some(suffix)
@@ -1203,7 +1203,7 @@ pub(super) fn is_numeric_cell(col: &ColMeta, raw: Option<&Value>) -> bool {
 pub(crate) fn is_date_text(kind: &ColumnType, raw: Option<&Value>) -> bool {
     match (kind, raw) {
         (ColumnType::Date, Some(Value::String(s))) => !s.trim().is_empty(),
-        (ColumnType::String, Some(Value::String(s))) => is_date_like_str(s),
+        (ColumnType::String, Some(Value::String(s))) => column_types::is_date_like(s),
         _ => false,
     }
 }
@@ -1324,7 +1324,7 @@ pub(super) fn format_date_col(
                         // A timestamp is not `is_date_like`, so under an authored
                         // format it takes the numeric lane's paint path, which
                         // this lane never draws.
-                        Some(_) if authored.is_some() && !is_date_like_str(s) => {
+                        Some(_) if authored.is_some() && !column_types::is_date_like(s) => {
                             return Err(Diagnostic::from(refuse(format!(
                             "the timestamp {s:?} under an authored format paints on the numeric \
                              lane, which is not supported"
@@ -1354,66 +1354,6 @@ pub(super) fn format_date_col(
         .collect()
 }
 
-/// Port of production's `_DATE_RE` (core/utils.py:29): the seven
-/// recognized date shapes. Pattern-based, not semantic — production's
-/// regex accepts any `\d{2}/\d{2}/\d{4}`, impossible dates included.
-pub(super) fn is_date_like_str(s: &str) -> bool {
-    const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let s = s.trim();
-    let b = s.as_bytes();
-    let all_digits = |x: &[u8]| !x.is_empty() && x.iter().all(u8::is_ascii_digit);
-    // ^\d{4}$ and ^\d{4}-\d{2}(-\d{2})?$
-    if all_digits(b) && b.len() == 4 {
-        return true;
-    }
-    if b.len() >= 7 && all_digits(&b[..4]) && b[4] == b'-' && all_digits(&b[5..7]) {
-        if b.len() == 7 {
-            return true;
-        }
-        if b.len() == 10 && b[7] == b'-' && all_digits(&b[8..10]) {
-            return true;
-        }
-    }
-    // ^\d{2}/\d{2}/\d{4}$
-    if b.len() == 10
-        && all_digits(&b[..2])
-        && b[2] == b'/'
-        && all_digits(&b[3..5])
-        && b[5] == b'/'
-        && all_digits(&b[6..10])
-    {
-        return true;
-    }
-    // ^Q[1-4]\s+\d{4}$
-    if let Some(rest) = s.strip_prefix('Q') {
-        let mut it = rest.splitn(2, char::is_whitespace);
-        if let (Some(q), Some(y)) = (it.next(), it.next()) {
-            if matches!(q, "1" | "2" | "3" | "4")
-                && all_digits(y.trim_start().as_bytes())
-                && y.trim_start().len() == 4
-            {
-                return true;
-            }
-        }
-    }
-    // Month-name forms: "Mar 15", "Mar 15, 2024", "Mar 15 2024", "15 Mar 2024"
-    let parts: Vec<&str> = s.split_whitespace().collect();
-    let is_month = |t: &str| MONTHS.contains(&t);
-    let is_day = |t: &str| {
-        let t = t.trim_end_matches(',');
-        (1..=2).contains(&t.len()) && all_digits(t.as_bytes())
-    };
-    let is_year = |t: &str| t.len() == 4 && all_digits(t.as_bytes());
-    match parts.as_slice() {
-        [m, d] if is_month(m) && is_day(d) && !d.ends_with(',') => true,
-        [m, d, y] if is_month(m) && is_day(d) && is_year(y) => true,
-        [d, m, y] if is_day(d) && !d.ends_with(',') && is_month(m) && is_year(y) => true,
-        _ => false,
-    }
-}
-
 /// The wall day an ISO date or timestamp cell prints in, as `YYYY-MM-DD`; a
 /// year, a month or a date followed by anything but a clock has none.
 pub(super) fn iso_day(value: Option<&Value>) -> Option<String> {
@@ -1423,8 +1363,8 @@ pub(super) fn iso_day(value: Option<&Value>) -> Option<String> {
     if text.len() < 10 {
         return None;
     }
-    crate::time_axis::date_text_day(text)?;
-    let (y, m, d) = crate::time_axis::parse_iso_date(text)?;
+    ::bind::time_axis::date_text_day(text)?;
+    let (y, m, d) = ::bind::time_axis::parse_iso_date(text)?;
     Some(format!("{y:04}-{m:02}-{d:02}"))
 }
 
@@ -1785,7 +1725,7 @@ pub(super) fn order_col_tuples(
         if let Ok(Some(moment)) = table_dates::parse_iso(s) {
             return Some(moment.instant());
         }
-        let (y, m, d) = crate::families::temporal::parse_bucket_string(s)?;
+        let (y, m, d) = ::bind::temporal::parse_bucket_string(s)?;
         Some((u32::try_from(y).ok()?, m, d, 0, 0, 0, 0))
     };
     let dim_orders = columns

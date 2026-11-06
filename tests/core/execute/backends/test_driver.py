@@ -30,18 +30,19 @@ from dbt_charts.core.diagnostics.codes_execute import (
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.dialects.lakecompute import LakeComputeDialect
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-from dbt_charts.core.execute.adapters.base import (
+from dbt_charts.core.execute.backends.base import BackendRegistry
+from dbt_charts.core.execute.backends.dbt_adapter_factory import (
+    AdapterNotInstalledError,
+)
+from dbt_charts.core.execute.backends.driver import DriverBackend
+from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.env import ExecEnv, close_env, make_exec_env
+from dbt_charts.core.execute.query_result import (
     RowFetchLimit,
     WarehouseStatementError,
     resolve_effective_row_limit,
 )
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
-    AdapterNotInstalledError,
-)
-from dbt_charts.core.execute.backends.base import BackendRegistry
-from dbt_charts.core.execute.backends.driver import DriverBackend
-from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.run import execute_resolved
 
 _OPEN = "dbt_charts.core.execute.drivers.lakecompute.open_lakecompute"
 _CDN = "dbt_charts.core.execute.drivers.lakecompute.open_cdn_driver"
@@ -77,7 +78,7 @@ class _Connection:
 @pytest.fixture(autouse=True)
 def _dbt_path_is_forbidden() -> Generator[None]:
     with patch(
-        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+        "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
         side_effect=AssertionError("a driver source must never build a dbt adapter"),
     ):
         yield
@@ -86,13 +87,13 @@ def _dbt_path_is_forbidden() -> Generator[None]:
 @pytest.fixture
 def adapter(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
-) -> Generator[AdapterRegistry]:
-    registry = AdapterRegistry(
+) -> Generator[ExecEnv]:
+    registry = make_exec_env(
         project=local_project(tmp_path),
         backends=BackendRegistry({"lakecompute": DriverBackend(max_workers=1)}),
     )
     yield registry
-    registry.close()
+    close_env(registry)
 
 
 def _source(**fields: Any) -> LakeComputeTokenSource:
@@ -110,9 +111,9 @@ def _prepared(
     )
 
 
-def _run(adapter: AdapterRegistry, prepared: ResolvedQuery, source: Any = None) -> Any:
+def _run(adapter: ExecEnv, prepared: ResolvedQuery, source: Any = None) -> Any:
     query = SqlQuery(sql=prepared.sql, source="lake")
-    return adapter.execute_resolved(prepared, query, source_config=source or _source())
+    return execute_resolved(adapter, prepared, query, source_config=source or _source())
 
 
 @contextmanager
@@ -122,7 +123,7 @@ def _opened(*connections: _Connection) -> Generator[MagicMock]:
 
 
 def test_rows_come_back_with_the_case_the_query_gave_them(
-    adapter: AdapterRegistry,
+    adapter: ExecEnv,
 ) -> None:
     connection = _Connection(_TABLE)
     with _opened(connection):
@@ -133,7 +134,7 @@ def test_rows_come_back_with_the_case_the_query_gave_them(
     assert connection.statements == ['SELECT 1 AS "Month"']
 
 
-def test_the_ceiling_overfetch_is_sliced_and_flagged(adapter: AdapterRegistry) -> None:
+def test_the_ceiling_overfetch_is_sliced_and_flagged(adapter: ExecEnv) -> None:
     table = pa.table({"a": list(range(11))})
     prepared = ResolvedQuery(
         sql="SELECT a FROM t",
@@ -147,7 +148,7 @@ def test_the_ceiling_overfetch_is_sliced_and_flagged(adapter: AdapterRegistry) -
     assert result.truncated_reason == "max_rows"
 
 
-def test_ordinary_queries_reuse_one_session(adapter: AdapterRegistry) -> None:
+def test_ordinary_queries_reuse_one_session(adapter: ExecEnv) -> None:
     connection = _Connection()
     with _opened(connection) as opener:
         _run(adapter, _prepared())
@@ -157,7 +158,7 @@ def test_ordinary_queries_reuse_one_session(adapter: AdapterRegistry) -> None:
 
 
 def test_setup_sql_runs_first_and_the_next_query_gets_a_fresh_session(
-    adapter: AdapterRegistry,
+    adapter: ExecEnv,
 ) -> None:
     """Lake compute has no statement that clears session objects, so the pool
     drops the connection rather than let a temp object outlive its board."""
@@ -172,7 +173,7 @@ def test_setup_sql_runs_first_and_the_next_query_gets_a_fresh_session(
 
 
 def test_the_source_timeout_reaches_the_driver_as_its_own_option(
-    adapter: AdapterRegistry,
+    adapter: ExecEnv,
 ) -> None:
     with patch(_CDN) as open_cdn:
         open_cdn.return_value = _Connection()
@@ -181,7 +182,7 @@ def test_the_source_timeout_reaches_the_driver_as_its_own_option(
 
 
 def test_a_source_with_no_cap_gets_the_projects_default(
-    adapter: AdapterRegistry,
+    adapter: ExecEnv,
 ) -> None:
     """Resolved by the same function the dbt pool uses, so the number the driver
     enforces is the number a timeout error would report."""
@@ -193,7 +194,7 @@ def test_a_source_with_no_cap_gets_the_projects_default(
 
 
 def test_a_rejected_query_on_a_live_session_is_not_retried(
-    adapter: AdapterRegistry,
+    adapter: ExecEnv,
 ) -> None:
     """The warehouse read it and refused it; re-sending fails identically, and the
     reconnect would throw away a warm session to do it."""
@@ -206,7 +207,7 @@ def test_a_rejected_query_on_a_live_session_is_not_retried(
 
 
 def test_a_dead_session_is_replaced_and_the_query_retried_once(
-    adapter: AdapterRegistry,
+    adapter: ExecEnv,
 ) -> None:
     dead = _Connection(RuntimeError("socket closed"), RuntimeError("socket closed"))
     fresh = _Connection(_TABLE)
@@ -219,7 +220,7 @@ def test_a_dead_session_is_replaced_and_the_query_retried_once(
 
 
 def test_an_unclassified_failure_surfaces_as_a_warehouse_error(
-    adapter: AdapterRegistry,
+    adapter: ExecEnv,
 ) -> None:
     connection = _Connection(RuntimeError("boom"))
     with _opened(connection):
@@ -228,7 +229,7 @@ def test_an_unclassified_failure_surfaces_as_a_warehouse_error(
 
 
 def test_a_backend_warning_is_the_error_not_a_silently_short_result(
-    adapter: AdapterRegistry,
+    adapter: ExecEnv,
 ) -> None:
     from dbt_charts.core.diagnostics.codes_execute import (
         ERR_WAREHOUSE_RESULT_WARNING as code,
@@ -242,14 +243,14 @@ def test_a_backend_warning_is_the_error_not_a_silently_short_result(
 
 
 def test_a_connect_failure_is_a_connection_error_not_a_query_rejection(
-    adapter: AdapterRegistry,
+    adapter: ExecEnv,
 ) -> None:
     with patch(_OPEN, side_effect=RuntimeError("could not reach the API")):
         result = _run(adapter, _prepared())
     assert result.error.code is ERR_WAREHOUSE_CONNECTION
 
 
-def test_a_missing_extra_reports_its_install_command(adapter: AdapterRegistry) -> None:
+def test_a_missing_extra_reports_its_install_command(adapter: ExecEnv) -> None:
     from dbt_charts.core.diagnostics.codes_execute import ERR_ADAPTER_NOT_INSTALLED
 
     missing = AdapterNotInstalledError.from_code(
@@ -263,11 +264,11 @@ def test_a_missing_extra_reports_its_install_command(adapter: AdapterRegistry) -
     assert "dbt-charts[lakecompute]" in str(result.error)
 
 
-def test_close_releases_every_open_session(adapter: AdapterRegistry) -> None:
+def test_close_releases_every_open_session(adapter: ExecEnv) -> None:
     connection = _Connection()
     with _opened(connection):
         _run(adapter, _prepared())
-        adapter.close()
+        close_env(adapter)
     assert connection.closed
 
 
@@ -286,7 +287,7 @@ def _checksum_mismatch() -> ExecutionError:
 _DRIVER_PATH = "dbt_charts.core.execute.drivers._fetch.driver_path"
 
 
-def test_a_driver_download_verdict_keeps_its_own_code(adapter: AdapterRegistry) -> None:
+def test_a_driver_download_verdict_keeps_its_own_code(adapter: ExecEnv) -> None:
     """A checksum mismatch can mean a tampered binary; it must not read as a
     warehouse connectivity problem."""
     from dbt_charts.core.diagnostics.codes_execute import ERR_DRIVER_CHECKSUM_MISMATCH
@@ -328,7 +329,7 @@ class _TimeoutDialect(LakeComputeDialect):
 
 
 def test_a_dialect_recognized_timeout_becomes_the_duration_error(
-    adapter: AdapterRegistry,
+    adapter: ExecEnv,
 ) -> None:
     from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_DURATION_EXCEEDED
 
@@ -364,7 +365,7 @@ class _BlockingConnection(_Connection):
 
 class TestInterrupt:
     def test_interrupt_cancels_an_in_flight_driver_statement(
-        self, adapter: AdapterRegistry
+        self, adapter: ExecEnv
     ) -> None:
         from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_INTERRUPTED
 
@@ -376,17 +377,17 @@ class TestInterrupt:
             )
             thread.start()
             assert connection.entered.wait(10)
-            adapter.interrupt()
+            adapter.backends.interrupt()
             thread.join(10)
         assert not thread.is_alive(), "query kept running after interrupt"
         assert out[0].error.code is ERR_QUERY_INTERRUPTED
 
     def test_an_interrupted_adapter_refuses_new_driver_queries(
-        self, adapter: AdapterRegistry
+        self, adapter: ExecEnv
     ) -> None:
         from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_INTERRUPTED
 
-        adapter.interrupt()
+        adapter.backends.interrupt()
         with _opened(_Connection()) as opener:
             result = _run(adapter, _prepared())
         assert result.error.code is ERR_QUERY_INTERRUPTED

@@ -157,10 +157,10 @@ rows:
 class TestAnnotateNoDBConnection:
     """annotate_with_data_lint must not open any warehouse connection."""
 
-    def test_validate_does_not_build_adapter_registry(
+    def test_validate_does_not_build_exec_env(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """annotate_with_data_lint must not build an adapter registry."""
+        """annotate_with_data_lint must not build an exec env."""
         board = tmp_path / "charts" / "override.yml"
         board.parent.mkdir()
         board.write_text(
@@ -186,14 +186,12 @@ rows:
         project = local_project(tmp_path)
         result = validate(board, project=project)
 
-        # No adapter registry may be constructed during annotate_with_data_lint.
+        # No exec env may be constructed during annotate_with_data_lint.
         # Patching the constructor itself catches every build path, regardless of
-        # how build_adapter_registry is imported at the call site.
+        # how build_exec_env is imported at the call site.
         with patch(
-            "dbt_charts.core.execute.adapters.adapter_registry.AdapterRegistry.__init__",
-            side_effect=AssertionError(
-                "adapter_registry must not be built during validate"
-            ),
+            "dbt_charts.core.execute.env.ExecEnv.__init__",
+            side_effect=AssertionError("env must not be built during validate"),
         ):
             annotated = annotate_with_data_lint([result], project=project)
 

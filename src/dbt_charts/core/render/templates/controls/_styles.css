@@ -185,6 +185,103 @@
   margin: 0;
 }
 
+{# A multiselect's bar is one field: its pills, then the search. It wraps
+   and grows down; contained, so a long pill never widens the menu. #}
+.dbt-select-field {
+  flex-wrap: wrap;
+  contain: inline-size;
+  padding: 3px 4px;
+  border: 1px solid var(--dbt-system-input-border, #ced4da);
+  border-radius: 6px;
+}
+
+.dbt-select-field:focus-within {
+  border-color: var(--dbt-system-accent, #667eea);
+}
+
+.dbt-select-field .dbt-select-search {
+  flex: 1 1 6em;
+  min-width: 6em;
+  padding: 3px 4px;
+  border: 0;
+  outline: none;
+}
+
+.dbt-select-chip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 2px 0 7px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--dbt-system-text, #333333);
+  background: color-mix(in srgb, var(--dbt-system-accent, #667eea) 14%, transparent);
+}
+
+.dbt-select-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dbt-select-chip-x {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--dbt-system-muted, #6c757d);
+  background: none;
+  cursor: pointer;
+}
+
+.dbt-select-chip-x::before {
+  content: "\00d7";
+}
+
+.dbt-select-chip-x:hover {
+  color: var(--dbt-system-text, #333333);
+}
+
+{# The closed field's pills: SVG the runtime draws over the render's summary
+   on a live page only. #}
+.dbt-select-pill > rect {
+  fill: color-mix(in srgb, var(--dbt-system-accent, #667eea) 14%, transparent);
+}
+
+.dbt-select-pill > text {
+  fill: var(--dbt-system-text, #333333);
+}
+
+.dbt-select-pill-more > text {
+  fill: var(--dbt-system-muted, #6c757d);
+}
+
+.dbt-select-pill-x {
+  cursor: pointer;
+}
+
+.dbt-select-pill-x > rect {
+  fill: transparent;
+}
+
+.dbt-select-pill-x > path {
+  fill: none;
+  stroke: var(--dbt-system-muted, #6c757d);
+  stroke-width: 1.3;
+  stroke-linecap: round;
+}
+
+.dbt-select-pill-x:hover > path {
+  stroke: var(--dbt-system-text, #333333);
+}
+
 {# Three bars, shortest last — drawn, not a glyph, so no font decides it. #}
 .dbt-select-sort {
   flex: none;

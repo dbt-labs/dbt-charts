@@ -328,7 +328,7 @@ impl Object for Formatter {
         let site = std::format!("d3.format({:?})()", self.spec);
         let [value] = bind(&site, ["value"], 1, args)?.map(|v| v.expect("required"));
         let value = finite(&site, "value", &value)?;
-        crate::number_locale::d3_format(&self.spec, value)
+        ::bind::formats::locale::d3_format(&self.spec, value)
             .map(Value::from)
             .map_err(|e| invalid(std::format!("{site}: {e}")))
     }

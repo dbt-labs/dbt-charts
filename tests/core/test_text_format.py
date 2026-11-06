@@ -4,7 +4,7 @@ import pytest
 
 from dbt_charts.core.compile.models.primitives import BoardLinks
 
-from .._results import rows_result, rows_schema
+from .._results import rows_result
 
 """Tests for text render output format."""
 
@@ -18,10 +18,11 @@ from dbt_charts.core.compile.models.board.normalized import Board, Layout, Layou
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
-from dbt_charts.core.execute.executor import Executor
-from dbt_charts.core.render.renderer import render
+from dbt_charts.core.execute.query_results import QueryResults
 
-from .._lookup import collect_via_execute_query
+from .._lookup import render_via
+from .._run import Run
+from .._scripted_env import ScriptedBackend, scripted_env
 from ._board_utils import _default_chart_style_context, _default_resolved_style
 from ._svg_render import PINNED_RENDER_TIME
 
@@ -40,21 +41,18 @@ def _make_executor(data: list[dict]) -> MagicMock:
     were a zero-row query result, firing a spurious
     WARN-QUERY-RETURNED-ZERO-ROWS into every test's text output.
     """
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.render_with_range_filters.return_value = None
     executor.execute_query.return_value = data
     executor.execute_query.return_value = data
     executor.execute_query_result.return_value = rows_result(data)
-    executor.execute_chart_result.return_value = rows_result(data)
+    executor.execute_query_result.return_value = rows_result(data)
     executor.cache_hit_ats = []
     executor.rendered_at = PINNED_RENDER_TIME
-    collect_via_execute_query(executor)
     return executor
 
 
-def _make_compiled_executor(
-    compile_result: CompileResult, data: list[dict]
-) -> Executor:
+def _make_compiled_executor(compile_result: CompileResult, data: list[dict]) -> Run:
     """Build a real Executor for a ``compile()`` result, returning ``data``
     for every query.
 
@@ -65,20 +63,11 @@ def _make_compiled_executor(
     against -- a hand-built ``Board`` + mocked ``execute_chart`` never
     exercises the axis cascade's board/chart-local layers.
     """
-    from unittest.mock import Mock
 
-    ok = Mock()
-    ok.is_success = True
-    ok.data = data
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.return_value = ok
-    return Executor(
+    mock_registry = scripted_env(ScriptedBackend(data))
+    return Run(
         compile_result.board,
-        adapter_registry=mock_registry,
+        env=mock_registry,
         query_registry=compile_result.query_registry,
     )
 
@@ -110,7 +99,7 @@ class TestTextFormat:
         board = _make_board([chart], title="Revenue Dashboard")
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert isinstance(result, str)
         assert "# Revenue Dashboard" in result
@@ -122,7 +111,7 @@ class TestTextFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "## Sales Chart (bar)" in result
 
@@ -133,7 +122,7 @@ class TestTextFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "x: month" in result
         assert "y: revenue" in result
@@ -169,7 +158,7 @@ rows:
         ]
         executor = _make_compiled_executor(result, data)
 
-        output = render(result.board, executor, format="text").output
+        output = render_via(executor, result.board, format="text").output
 
         assert "y: created, completed" in output
         assert "__dbt_charts_wide_value__" not in output
@@ -181,7 +170,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "5 rows" in result
 
@@ -198,7 +187,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "revenue: 100–1.2K" in result
 
@@ -209,7 +198,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "x: 5–50" in result
 
@@ -224,7 +213,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "East" in result
         assert "West" in result
@@ -237,7 +226,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "8 distinct" in result
 
@@ -253,7 +242,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "kpi" in result.lower()
         assert "4200000" not in result
@@ -285,7 +274,7 @@ rows:
         )
         executor = _make_executor([{"x": 1}])
 
-        result = render(outer, executor, format="text").output
+        result = render_via(executor, outer, format="text").output
 
         assert "row0" not in result
         assert result == "# Outer Dashboard"
@@ -339,7 +328,7 @@ rows:
         )
         executor = _make_executor(data)
 
-        result = render(outer, executor, format="text").output
+        result = render_via(executor, outer, format="text").output
 
         assert "row1" not in result
         assert "\n## test_bar (bar)\n" in result
@@ -378,7 +367,7 @@ rows:
         )
         executor = _make_executor(data)
 
-        result = render(outer_board, executor, format="text").output
+        result = render_via(executor, outer_board, format="text").output
 
         assert "# Outer Dashboard" in result
         assert "## Inner Section" in result
@@ -391,7 +380,7 @@ rows:
         board = _make_board([chart1, chart2])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "Chart One" in result
         assert "Chart Two" in result
@@ -404,7 +393,7 @@ rows:
         board = _make_board([make_chart("bar", x="month", y="revenue")])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text", max_rows_per_query=2).output
+        result = render_via(executor, board, format="text", max_rows_per_query=2).output
 
         assert "first 1 and last 1 of 7 rows" in result
 
@@ -421,7 +410,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "$210" in result
         assert "210.0" not in result
@@ -440,7 +429,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "5.0%" in result
         assert "vs last month" in result
@@ -458,8 +447,8 @@ rows:
             ),
             support={"value": "delta", "label": "vs last month"},
         )
-        result = render(
-            _make_board([chart]), _make_executor(data), format="text"
+        result = render_via(
+            _make_executor(data), _make_board([chart]), format="text"
         ).output
 
         assert "5.0% vs last month" in result
@@ -476,7 +465,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "420" in result
         assert "(" not in result.split("value:")[1].splitlines()[0]
@@ -496,7 +485,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "$80" in result
         assert "$120" in result
@@ -514,7 +503,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "revenue: 80K–120K" in result
 
@@ -535,7 +524,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "revenue: $80–$120" in result
 
@@ -551,7 +540,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "revenue: 0.2–0.8" in result
 
@@ -574,7 +563,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "revenue: −$40–$20" in result
         assert "$−40" not in result
@@ -598,7 +587,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "columns: account, industry, Revenue (currency_whole)" in result
 
@@ -609,7 +598,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "columns: account, revenue" in result
 
@@ -620,7 +609,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "+5 more" in result
         assert "col19" in result
@@ -641,7 +630,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "y: created" in result
         assert "y: solved" in result
@@ -662,7 +651,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "created: 10–20" in result
         assert "solved: 4–8" in result
@@ -677,7 +666,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "Acme" in result
         assert "100K" in result
@@ -702,7 +691,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "$1,200,001" in result
         assert "$3,400" in result
@@ -717,7 +706,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "Acct0" in result
         assert "Acct9" not in result
@@ -736,7 +725,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        rendered = render(board, executor, format="text")
+        rendered = render_via(executor, board, format="text")
 
         assert (
             "- 1,200 rows, 5 a page, 240 pages; "
@@ -755,7 +744,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert (
             "- 60 rows, 5 a page, 12 pages; the static file carries all 12 pages"
@@ -767,7 +756,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "a page" not in result
 
@@ -780,7 +769,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "columns: account, revenue" in result
         assert "internal_id" not in result
@@ -809,7 +798,7 @@ class TestTextFormatFormattingCorrectness:
         board = _make_board([kpi, money])
         executor = _make_executor([{"amount": 140_093_000}])
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "- value: 140M" in result
         assert "- value: $140M" in result
@@ -828,7 +817,7 @@ class TestTextFormatFormattingCorrectness:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "$0.45" in result
         assert "$450m" not in result
@@ -848,7 +837,7 @@ class TestTextFormatFormattingCorrectness:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "$0.50" in result
         assert "$0.90" in result
@@ -867,7 +856,7 @@ class TestTextFormatFormattingCorrectness:
         board = _make_board([chart], chart_style_context=ctx)
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "$4,200" in result
         assert "[chart error:" not in result
@@ -887,7 +876,7 @@ class TestTextFormatFormattingCorrectness:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "$80" in result
         assert "$120" in result
@@ -927,7 +916,7 @@ rows:
         ]
         executor = _make_compiled_executor(result, data)
 
-        output = render(result.board, executor, format="text").output
+        output = render_via(executor, result.board, format="text").output
 
         assert "revenue: $80–$120" in output
 
@@ -967,7 +956,7 @@ rows:
         ]
         executor = _make_compiled_executor(result, data)
 
-        output = render(result.board, executor, format="text").output
+        output = render_via(executor, result.board, format="text").output
 
         assert "revenue: −€41,500–€168,000" in output
 
@@ -1012,7 +1001,7 @@ rows:
         ]
         executor = _make_compiled_executor(result, data)
 
-        output = render(result.board, executor, format="text").output
+        output = render_via(executor, result.board, format="text").output
 
         assert "revenue: €80–€120" in output
 
@@ -1059,7 +1048,7 @@ rows:
         ]
         executor = _make_compiled_executor(result, data)
 
-        output = render(result.board, executor, format="text").output
+        output = render_via(executor, result.board, format="text").output
 
         assert "revenue: EUR 80–EUR 120" in output
 
@@ -1072,7 +1061,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "15 Jan 2024" in result
         assert "2024-01-15 00:00:00" not in result
@@ -1092,7 +1081,7 @@ rows:
         board = _make_board([good, bad])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "## good (kpi)" in result
         assert "value: 100" in result
@@ -1114,7 +1103,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "ERR-PERCENT-RANGE" in result
         assert "[chart error:" in result
@@ -1133,7 +1122,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="json").output
+        result = render_via(executor, board, format="json").output
 
         payload = json.loads(result)
         item = payload["items"][0]
@@ -1156,7 +1145,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="json").output
+        result = render_via(executor, board, format="json").output
 
         payload = json.loads(result)
         item = payload["items"][0]
@@ -1172,7 +1161,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "▲ 210" in result
 
@@ -1192,7 +1181,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "[chart error:" in result
         assert "vs last month" not in result
@@ -1207,7 +1196,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "[chart error:" in result
 
@@ -1215,11 +1204,14 @@ rows:
 class TestTextFormatWarnings:
     """Render-time warnings surface inline under a `## Warnings` heading."""
 
-    def test_render_warning_appears_in_text_output(self) -> None:
-        from unittest.mock import Mock
+    def test_render_warning_appears_in_text_output(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "2")
 
         from dbt_charts.core.compile import compile as compile_board
-        from dbt_charts.core.execute import Executor
+
+        from .._run import Run, render_run
 
         board_yaml = """\
 title: Probe
@@ -1239,22 +1231,14 @@ rows:
         result = compile_board(board_yaml)
         assert result.success and result.board is not None, result.errors
 
-        ok = Mock()
-        ok.is_success = True
-        ok.data = [{"x": 1}, {"x": 2}, {"x": 3}]
-        ok.schema = rows_schema(ok.data)
-        ok.resolved_relations = None
-        ok.truncated_reason = "max_rows"
-        mock_registry = Mock()
-        mock_registry.project_file_sources.return_value = {}
-        mock_registry.execute.return_value = ok
-        executor = Executor(
+        mock_registry = scripted_env(ScriptedBackend([{"x": 1}, {"x": 2}, {"x": 3}]))
+        executor = Run(
             result.board,
-            adapter_registry=mock_registry,
+            env=mock_registry,
             query_registry=result.query_registry,
         )
 
-        render_result = render(result.board, executor, format="text")
+        render_result = render_run(result.board, executor, format="text")
 
         assert "## Warnings" in render_result.output
         assert "WARN-QUERY-RESULT-TRUNCATED" in render_result.output
@@ -1265,7 +1249,7 @@ rows:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "## Warnings" not in result
 
@@ -1280,7 +1264,7 @@ class TestTextDataFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text-data").output
+        result = render_via(executor, board, format="text-data").output
 
         assert "## Data" in result
         assert "Jan" in result
@@ -1294,7 +1278,7 @@ class TestTextDataFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text").output
+        result = render_via(executor, board, format="text").output
 
         assert "## Data" not in result
 
@@ -1306,7 +1290,7 @@ class TestTextDataFormat:
         board = _make_board([chart1, chart2])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text-data").output
+        result = render_via(executor, board, format="text-data").output
 
         assert result.count("### q") == 1
 
@@ -1319,8 +1303,8 @@ class TestTextDataFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(
-            board, executor, format="text-data", max_rows_per_query=50
+        result = render_via(
+            executor, board, format="text-data", max_rows_per_query=50
         ).output
 
         assert "showing first 25 and last 25 of 60 rows" in result
@@ -1339,7 +1323,7 @@ class TestTextDataFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text-data").output
+        result = render_via(executor, board, format="text-data").output
 
         assert "showing" not in result.split("## Data", 1)[1]
         assert "m59" in result
@@ -1349,7 +1333,7 @@ class TestTextDataFormat:
         chart = make_chart("bar", x="month", y="revenue")
         executor = _make_executor(data)
 
-        result = render(_make_board([chart]), executor, format="text-data").output
+        result = render_via(executor, _make_board([chart]), format="text-data").output
         data_section = result.split("## Data", 1)[1]
 
         assert "| Jan | null |" in data_section
@@ -1360,7 +1344,7 @@ class TestTextDataFormat:
         chart = make_chart("bar", x="month", y="revenue")
         executor = _make_executor(data)
 
-        result = render(_make_board([chart]), executor, format="text-data").output
+        result = render_via(executor, _make_board([chart]), format="text-data").output
 
         assert "| Feb | null |" in result.split("## Data", 1)[1]
 
@@ -1372,7 +1356,7 @@ class TestTextDataFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text-data").output
+        result = render_via(executor, board, format="text-data").output
         data_section = result.split("## Data", 1)[1]
 
         assert "13356.399999999998" not in data_section
@@ -1392,7 +1376,7 @@ class TestTextDataFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text-data").output
+        result = render_via(executor, board, format="text-data").output
         data_section = result.split("## Data", 1)[1]
 
         assert "1234567.89" in data_section
@@ -1409,7 +1393,7 @@ class TestTextDataFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="text-data").output
+        result = render_via(executor, board, format="text-data").output
         data_section = result.split("## Data", 1)[1]
 
         assert "0.0 " not in data_section
@@ -1424,7 +1408,7 @@ def _render_yaml_text(
     result = compile_board(board_yaml)
     assert result.success and result.board is not None, result.errors
     executor = _make_compiled_executor(result, data)
-    return render(result.board, executor, format=output_format, **kwargs).output
+    return render_via(executor, result.board, format=output_format, **kwargs).output
 
 
 _ONE_QUERY = """\

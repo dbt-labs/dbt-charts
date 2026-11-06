@@ -85,8 +85,10 @@ def parse_yaml(content: str) -> AuthoredBoard:
         >>> board.title
         'My dbt charts'
     """
-    # Step 1a–1b: YAML string → mapping
-    parsed_data = load_yaml_mapping(content)
+    # Step 1a–1b: YAML string → raw mapping, migrated to the current grammar
+    from dbt_charts.core.compile.migrations import prepare_board_mapping
+
+    parsed_data = prepare_board_mapping(load_yaml_mapping(content))
     # Step 1c–1d: mapping → AuthoredBoard
     return parse_mapping(parsed_data, content)
 
@@ -282,12 +284,11 @@ def parse_mapping(parsed_data: dict[str, Any], content: str = "") -> AuthoredBoa
     enrich validation errors with line context; pass the original board text when
     available, else leave empty.
 
+    The mapping must already be migrated to the current grammar
+    (``prepare_board_mapping``, on the raw document before any merge).
+
     Raises ``ParseError`` on schema-validation failure.
     """
-    from dbt_charts.core.compile.migrations import prepare_board_mapping
-
-    parsed_data = prepare_board_mapping(parsed_data)
-
     from pydantic import ValidationError as PydanticValidationError
 
     try:

@@ -228,17 +228,17 @@ def test_static_render_has_no_nav(
 ) -> None:
     """A plain html render must not carry the serve-injected nav."""
     from dbt_charts.core.compile import compile
-    from dbt_charts.core.execute import Executor
-    from dbt_charts.core.execute.adapters import build_adapter_registry
-    from dbt_charts.core.render import render
+    from dbt_charts.core.execute.env import build_exec_env
+
+    from ..._run import Run, render_run
 
     result = compile(_BOARD)
     assert result.board is not None
-    rendered = render(
+    rendered = render_run(
         result.board,
-        Executor(
+        Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         ),
         format="html",
     )

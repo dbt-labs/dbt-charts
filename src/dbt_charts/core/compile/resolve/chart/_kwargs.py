@@ -12,8 +12,12 @@ from dbt_charts.core.compile.format import column_format, declared_column_format
 from dbt_charts.core.compile.merge import to_padding_style
 from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
 from dbt_charts.core.compile.models.chart.normalized import (
+    AreaChart,
+    BarChart,
     Chart,
+    LineChart,
     PieChart,
+    ScatterChart,
 )
 from dbt_charts.core.compile.models.chart.normalized._base import (
     _BaseChartFields,
@@ -156,6 +160,7 @@ def _base_kwargs(
     top_legend: Literal["compact", "row", "off"] = "off",
     legend_position_overridden_by_width: LegendEdge | None = None,
     radial_legend: bool = False,
+    plot_filled_legend: bool = False,
     legendless: bool = False,
     wrap_legend: bool,
 ) -> dict[str, Any]:
@@ -188,6 +193,8 @@ def _base_kwargs(
     hold a row; "row" leaves the entry count to the renderer.
     radial_legend: True for pie and donut, whose key never overlays
     (``decide_legend_position``'s ``radial``).
+    plot_filled_legend: True for a horizontal bar, whose marks leave no empty
+    plot space for a floating key (``decide_legend_position``'s ``plot_filled``).
     wrap_legend: True when one horizontal row cannot hold the entries; wraps an
     inferred-horizontal legend at compact_columns. An authored direction or
     columns wins.
@@ -227,7 +234,10 @@ def _base_kwargs(
                 normalized.id,
             )
         decided = decide_legend_position(
-            authored_position, top_strip=top_legend != "off", radial=radial_legend
+            authored_position,
+            top_strip=top_legend != "off",
+            radial=radial_legend,
+            plot_filled=plot_filled_legend,
         )
         # The top strip ignores an authored direction.
         direction = decide_legend_direction(
@@ -347,6 +357,27 @@ def _resolve_text(
     return resolve_display_text(
         value, display_text.variables, display_text.query_results, formats
     )
+
+
+def resolve_layer_labels(
+    normalized: Chart, display_text: ChartDisplayText, formats: FormatTable | None
+) -> Chart:
+    """``normalized`` with each layer's label Jinja-resolved like the title."""
+    if not isinstance(normalized, (AreaChart, BarChart, LineChart, ScatterChart)):
+        return normalized
+    layers = [
+        layer
+        if layer.label is None
+        else layer.model_copy(
+            update={
+                "label": _resolve_text(
+                    layer.label, display_text, formats, normalized.id, "layer label"
+                )
+            }
+        )
+        for layer in normalized.layers
+    ]
+    return normalized.model_copy(update={"layers": layers})
 
 
 def _color_column_format(

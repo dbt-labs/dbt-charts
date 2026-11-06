@@ -31,16 +31,16 @@ from dbt_charts._install_hint import install_hint
 from dbt_charts.core.attribution import attribution_payload, connection_identity
 from dbt_charts.core.compile.models.source import TrinoSourceConfig
 from dbt_charts.core.diagnostics.codes_execute import ERR_ADAPTER_NOT_INSTALLED
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+from dbt_charts.core.execute.arrow_ingest import encode, table
+from dbt_charts.core.execute.backends.dbt_adapter_factory import (
     AdapterNotInstalledError,
 )
-from dbt_charts.core.execute.arrow_ingest import encode, table
 from dbt_charts.core.execute.result import read_bounded_table
 
 if TYPE_CHECKING:
     from nanoarrow._array import CArray
 
-    from dbt_charts.core.execute.adapters.base import RowFetchLimit
+    from dbt_charts.core.execute.query_result import RowFetchLimit
 
 logger = logging.getLogger(__name__)
 

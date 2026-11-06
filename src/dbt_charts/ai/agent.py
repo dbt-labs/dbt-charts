@@ -37,9 +37,10 @@ from dbt_charts.ai.prompts import (
 )
 from dbt_charts.ai.tool_schemas import AGENT_TOOLS
 from dbt_charts.ai.tools import ToolHandler, dispatch_tool_call, tool_call_outcome
+from dbt_charts.core.execute.plan_sources import list_sql_sources
 
 if TYPE_CHECKING:
-    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
 
 logger = logging.getLogger(__name__)
 
@@ -101,13 +102,13 @@ Never invent columns or assume a schema you have not read: check a table's \
 columns before writing a query against it."""
 
 
-def schema_exploration_guidance(adapter_registry: AdapterRegistry) -> str:
+def schema_exploration_guidance(env: ExecEnv) -> str:
     """Teach the agent to explore schema via its own metadata-view SQL.
 
     Reads only registered connection config (source types) — never the
     warehouse. Returns "" when no sources are configured (nothing to explore).
     """
-    types = {s["type"] for s in adapter_registry.list_sql_sources()}
+    types = {s["type"] for s in list_sql_sources(env.sources)}
     if not types:
         return ""
     hints = [
@@ -128,7 +129,7 @@ an admin of their organization."""
 
 
 def build_sources_context(
-    adapter_registry: AdapterRegistry, no_query_access: frozenset[str] = frozenset()
+    env: ExecEnv, no_query_access: frozenset[str] = frozenset()
 ) -> str:
     """List configured data sources + exploration guidance, from config only.
 
@@ -139,7 +140,7 @@ def build_sources_context(
     Core has no principal; a host that authorizes callers passes the source
     names its caller may not query as *no_query_access*.
     """
-    sources = adapter_registry.list_sql_sources()
+    sources = list_sql_sources(env.sources)
     if not sources:
         return ""
     lines = [
@@ -153,7 +154,7 @@ def build_sources_context(
     ]
     if no_query_access & {s["name"] for s in sources}:
         parts.append(_NO_QUERY_ACCESS_GUIDANCE)
-    parts.append(schema_exploration_guidance(adapter_registry))
+    parts.append(schema_exploration_guidance(env))
     return "\n\n".join(parts)
 
 
@@ -194,7 +195,7 @@ def build_agent_system_prompt(context: DbtChartsAIContext) -> str:
     parts = [
         "Write in American English.",
         build_skills_index(),
-        build_sources_context(context.project_session.adapter_registry),
+        build_sources_context(context.project_session.env),
     ]
 
     project_instructions = load_project_instructions(context.project_session.project)

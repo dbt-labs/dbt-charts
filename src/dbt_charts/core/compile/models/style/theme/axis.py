@@ -280,7 +280,7 @@ class AxisTicksStyle(BaseModel):
     count: Annotated[
         int | Literal["auto"] | None,
         SkipInheritSlots(),
-        Absent("Vega-Lite picks the ticks"),
+        Absent("no tick ladder is baked; Vega-Lite picks the ticks"),
     ] = Field(
         default=None,
         description=(

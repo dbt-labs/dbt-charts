@@ -1,0 +1,3 @@
+kind: Fixes
+body: An unreadable dbt profile now reports ERR-DBT-PROFILE-UNRESOLVED instead of ERR-INTERNAL.
+time: 2026-11-03T18:45:59.700588-08:00

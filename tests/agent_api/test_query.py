@@ -10,18 +10,18 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters import AdapterRegistry, build_adapter_registry
+from dbt_charts.core.execute.env import ExecEnv, build_exec_env
 from dbt_charts.core.project import Project
 
 
 @pytest.fixture
 def registry(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
-) -> AdapterRegistry:
+) -> ExecEnv:
     (tmp_path / "dbt_charts.yml").write_text(
         "sources:\n  db:\n    type: duckdb\n    path: ':memory:'\n"
     )
-    return build_adapter_registry(local_project(tmp_path), read_only=False)
+    return build_exec_env(local_project(tmp_path), read_only=False)
 
 
 def _write_board(tmp_path: Path, yaml_content: str, name: str = "test.yml") -> Path:
@@ -90,7 +90,7 @@ class TestExecuteQueryLenientVariables:
     """lenient_variables=True lets undefined Jinja variables produce 1=1 fallback."""
 
     def test_lenient_undefined_var_does_not_raise(
-        self, tmp_path: Path, registry: AdapterRegistry
+        self, tmp_path: Path, registry: ExecEnv
     ) -> None:
         from dbt_charts.agent_api.query import execute_query
 
@@ -98,13 +98,13 @@ class TestExecuteQueryLenientVariables:
             sql="SELECT 1 WHERE {{ filter('city', city) }}",
             variables={},
             source="db",
-            adapter_registry=registry,
+            env=registry,
             lenient_variables=True,
         )
         assert result.success is True
 
     def test_strict_undefined_var_returns_error(
-        self, tmp_path: Path, registry: AdapterRegistry
+        self, tmp_path: Path, registry: ExecEnv
     ) -> None:
         from dbt_charts.agent_api.query import execute_query
 
@@ -112,7 +112,7 @@ class TestExecuteQueryLenientVariables:
             sql="SELECT 1 WHERE {{ filter('city', city) }}",
             variables={},
             source="db",
-            adapter_registry=registry,
+            env=registry,
         )
         assert result.success is False
 
@@ -121,23 +121,21 @@ class TestExecuteQuerySourcelessHardError:
     """execute_query hard-errors on source=None — no default-DuckDB fallback."""
 
     def test_sourceless_query_fails_even_with_a_configured_source(
-        self, registry: AdapterRegistry
+        self, registry: ExecEnv
     ) -> None:
         """A registry with a real named source ("db") must not let a sourceless
         query silently fall through to the engine's scratch DuckDB."""
         from dbt_charts.agent_api.query import execute_query
 
-        result = execute_query(sql="SELECT 1 as x", adapter_registry=registry)
+        result = execute_query(sql="SELECT 1 as x", env=registry)
         assert result.success is False
         assert result.errors
         assert "names no source" in result.errors[0]
 
-    def test_named_source_still_works(self, registry: AdapterRegistry) -> None:
+    def test_named_source_still_works(self, registry: ExecEnv) -> None:
         from dbt_charts.agent_api.query import execute_query
 
-        result = execute_query(
-            sql="SELECT 1 as x", source="db", adapter_registry=registry
-        )
+        result = execute_query(sql="SELECT 1 as x", source="db", env=registry)
         assert result.success is True
         assert result.data == [{"x": 1}]
 
@@ -146,12 +144,12 @@ class TestExecuteQueryTypedReturn:
     """execute_query returns a typed Pydantic model, not a bare dict."""
 
     def test_error_result_is_typed_with_expected_attributes(
-        self, empty_registry: AdapterRegistry
+        self, empty_registry: ExecEnv
     ) -> None:
         from dbt_charts.agent_api.query import ExecuteQueryResult, execute_query
 
         # Empty registry has no adapters — execute will fail, but return is still typed.
-        result = execute_query(sql="SELECT 1", adapter_registry=empty_registry)
+        result = execute_query(sql="SELECT 1", env=empty_registry)
         assert isinstance(result, ExecuteQueryResult)
         assert result.success is False
         assert isinstance(result.errors, list)
@@ -160,9 +158,7 @@ class TestExecuteQueryTypedReturn:
         assert result.row_count == 0
         assert result.truncated is False
 
-    def test_model_dump_produces_wire_shape(
-        self, empty_registry: AdapterRegistry
-    ) -> None:
+    def test_model_dump_produces_wire_shape(self, empty_registry: ExecEnv) -> None:
         from dbt_charts.agent_api.query import execute_query
 
         # A re-aggregation query so diagnostics is non-empty — this is the JSON wire
@@ -172,7 +168,7 @@ class TestExecuteQueryTypedReturn:
         result = execute_query(
             sql="SELECT AVG(t) FROM (SELECT r, SUM(x) AS t FROM a GROUP BY r) s",
             source="db",
-            adapter_registry=empty_registry,
+            env=empty_registry,
         )
         assert result.diagnostics
 
@@ -190,7 +186,7 @@ class TestExecuteQueryTypedReturn:
             assert diag["detail"]
 
     def test_diagnostics_are_typed_query_diagnostic_not_dict(
-        self, empty_registry: AdapterRegistry
+        self, empty_registry: ExecEnv
     ) -> None:
         """ExecuteQueryResult.diagnostics carries QueryDiagnostic objects, not
         pre-flattened dicts — agent_api return types are never dict[str, Any]."""
@@ -200,7 +196,7 @@ class TestExecuteQueryTypedReturn:
         result = execute_query(
             sql="SELECT AVG(t) FROM (SELECT r, SUM(x) AS t FROM a GROUP BY r) s",
             source="db",
-            adapter_registry=empty_registry,
+            env=empty_registry,
         )
         assert result.diagnostics
         for d in result.diagnostics:
@@ -217,15 +213,13 @@ class TestQueryBoardReturnsData:
     def test_success_result_has_typed_data_and_attributes(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import QueryBoardResult, query_board
 
         path = _write_board(tmp_path, SIMPLE_BOARD)
-        result = query_board(
-            "revenue", path, local_project(tmp_path), adapter_registry=registry
-        )
+        result = query_board("revenue", path, local_project(tmp_path), env=registry)
         assert isinstance(result, QueryBoardResult)
         assert result.success is True
         # Data facets
@@ -245,15 +239,13 @@ class TestQueryBoardUnknownName:
     def test_unknown_name_surfaces_failure_with_available_queries(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
 
         path = _write_board(tmp_path, SIMPLE_BOARD)
-        result = query_board(
-            "missing", path, local_project(tmp_path), adapter_registry=registry
-        )
+        result = query_board("missing", path, local_project(tmp_path), env=registry)
         assert result.success is False
         assert any("missing" in e for e in result.errors)
         assert result.available_queries == ["revenue"]
@@ -263,23 +255,21 @@ class TestQueryBoardCompileErrors:
     def test_compile_error_surfaces_failure_with_errors(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
 
         # Invalid YAML (unclosed bracket) triggers a parse/compile error
         path = _write_board(tmp_path, "queries:\n  bad: [\n")
-        result = query_board(
-            "bad", path, local_project(tmp_path), adapter_registry=registry
-        )
+        result = query_board("bad", path, local_project(tmp_path), env=registry)
         assert result.success is False
         assert len(result.errors) > 0
 
     def test_missing_file_returns_failure(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -288,7 +278,7 @@ class TestQueryBoardCompileErrors:
             "revenue",
             tmp_path / "nonexistent.yml",
             local_project(tmp_path),
-            adapter_registry=registry,
+            env=registry,
         )
         assert result.success is False
         assert any("not found" in e.lower() for e in result.errors)
@@ -298,7 +288,7 @@ class TestQueryFaceTruncation:
     def test_truncates_at_limit(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -321,7 +311,7 @@ rows:
             "many",
             path,
             local_project(tmp_path),
-            adapter_registry=registry,
+            env=registry,
             limit=5,
         )
         assert result.success is True
@@ -332,7 +322,7 @@ rows:
     def test_no_truncation_when_under_limit(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -342,7 +332,7 @@ rows:
             "revenue",
             path,
             local_project(tmp_path),
-            adapter_registry=registry,
+            env=registry,
             limit=20,
         )
         assert result.success is True
@@ -351,7 +341,7 @@ rows:
     def test_limit_clamps_at_max(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import MAX_QUERY_LIMIT, query_board
@@ -374,7 +364,7 @@ rows:
             "many",
             path,
             local_project(tmp_path),
-            adapter_registry=registry,
+            env=registry,
             limit=100000,
         )
         assert result.success is True
@@ -386,7 +376,7 @@ class TestQueryBoardVarOverrides:
     def test_applies_var_overrides(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -413,7 +403,7 @@ rows:
             path,
             local_project(tmp_path),
             vars={"country": "FR"},
-            adapter_registry=registry,
+            env=registry,
         )
         assert result.success is True
         assert result.data[0]["country"] == "FR"
@@ -446,15 +436,13 @@ class TestQueryBoardVariables:
     def test_an_unset_date_range_covers_every_date(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
 
         path = _write_board(tmp_path, _DATE_RANGE_BOARD)
-        result = query_board(
-            "by_day", path, local_project(tmp_path), adapter_registry=registry
-        )
+        result = query_board("by_day", path, local_project(tmp_path), env=registry)
 
         assert result.success is True, result.errors
         assert result.data == [{"n": 1}]
@@ -462,15 +450,13 @@ class TestQueryBoardVariables:
     def test_an_unset_multiselect_covers_every_option(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
 
         path = _write_board(tmp_path, MULTISELECT_BOARD)
-        result = query_board(
-            "picked", path, local_project(tmp_path), adapter_registry=registry
-        )
+        result = query_board("picked", path, local_project(tmp_path), env=registry)
 
         assert result.success is True, result.errors
         assert result.data == [{"n": 2}]
@@ -478,7 +464,7 @@ class TestQueryBoardVariables:
     def test_an_unset_variable_outside_a_filter_binds_as_it_renders(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -502,9 +488,7 @@ rows:
   - c
 """
         path = _write_board(tmp_path, board)
-        result = query_board(
-            "region_rows", path, local_project(tmp_path), adapter_registry=registry
-        )
+        result = query_board("region_rows", path, local_project(tmp_path), env=registry)
 
         assert result.success is True, result.errors
         assert result.data == [{"n": 0}]
@@ -512,7 +496,7 @@ rows:
     def test_a_bound_value_narrows_the_rows(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -523,7 +507,7 @@ rows:
             path,
             local_project(tmp_path),
             vars={"date_range": '["2024-02-01", "2024-02-29"]'},
-            adapter_registry=registry,
+            env=registry,
         )
 
         assert result.success is True
@@ -532,7 +516,7 @@ rows:
     def test_a_declared_default_still_binds(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -542,9 +526,7 @@ rows:
             "    input: daterange\n    default: ['2024-01-01', '2024-01-31']\n",
         )
         path = _write_board(tmp_path, board)
-        result = query_board(
-            "by_day", path, local_project(tmp_path), adapter_registry=registry
-        )
+        result = query_board("by_day", path, local_project(tmp_path), env=registry)
 
         assert result.success is True
         assert result.data == [{"n": 1}]
@@ -555,7 +537,7 @@ rows:
         preset: str,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -563,7 +545,7 @@ rows:
         # One pinned instant feeds the preset; the row's date is that same day,
         # so the run cannot straddle midnight or differ between UTC and local.
         monkeypatch.setattr(
-            "dbt_charts.core.execute.executor.utc_now",
+            "dbt_charts.core.execute.plan.utc_now",
             lambda: datetime(2024, 6, 15, 12, 0, tzinfo=UTC),
         )
         board = _DATE_RANGE_BOARD.replace("2024-01-05", "2024-06-15").replace(
@@ -575,7 +557,7 @@ rows:
             path,
             local_project(tmp_path),
             vars={"date_range": preset},
-            adapter_registry=registry,
+            env=registry,
         )
 
         assert result.success is True, result.errors
@@ -584,7 +566,7 @@ rows:
     def test_an_unknown_preset_names_the_presets(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -595,7 +577,7 @@ rows:
             path,
             local_project(tmp_path),
             vars={"date_range": "last_week"},
-            adapter_registry=registry,
+            env=registry,
         )
 
         assert result.success is False
@@ -604,7 +586,7 @@ rows:
     def test_a_malformed_date_is_rejected_before_the_query(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -615,7 +597,7 @@ rows:
             path,
             local_project(tmp_path),
             vars={"date_range": '["2024-01-01", "nope"]'},
-            adapter_registry=registry,
+            env=registry,
         )
 
         assert result.success is False
@@ -626,7 +608,7 @@ class TestQueryBoardPathSecurity:
     def test_path_escape_rejected(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -635,7 +617,7 @@ class TestQueryBoardPathSecurity:
             "revenue",
             Path("../../etc/passwd"),
             local_project(tmp_path),
-            adapter_registry=registry,
+            env=registry,
         )
         assert result.success is False
         assert len(result.errors) > 0
@@ -646,7 +628,7 @@ class TestQueryBoardPathSecurity:
 class TestQueryBoardDisplayPath:
     def test_missing_file_reports_relpath_not_project_root(
         self,
-        empty_registry: AdapterRegistry,
+        empty_registry: ExecEnv,
         in_memory_project: Callable[[Path, dict[str, str]], Project],
     ) -> None:
         """The not-found path must carry the ProjectPath relpath identity, never
@@ -661,7 +643,7 @@ class TestQueryBoardDisplayPath:
             "revenue",
             Path("missing.yml"),
             project,
-            adapter_registry=empty_registry,
+            env=empty_registry,
         )
         assert result.success is False
         assert result.path == PurePosixPath("missing.yml")
@@ -672,7 +654,7 @@ class TestQueryBoardNonFilesystemProject:
     def test_non_filesystem_project_is_not_refused(
         self,
         tmp_path: Path,
-        empty_registry: AdapterRegistry,
+        empty_registry: ExecEnv,
         in_memory_project: Callable[[Path, dict[str, str]], Project],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -683,9 +665,7 @@ class TestQueryBoardNonFilesystemProject:
         # both: no filesystem-only refusal, AND no not-found fallback, so a
         # revert of the `path_for_fspath(...).exists()` swap fails this test.
         project = in_memory_project(tmp_path, {"test.yml": SIMPLE_BOARD})
-        result = query_board(
-            "revenue", Path("test.yml"), project, adapter_registry=empty_registry
-        )
+        result = query_board("revenue", Path("test.yml"), project, env=empty_registry)
         assert not any(
             "requires a local filesystem project" in e for e in result.errors
         )
@@ -701,7 +681,7 @@ class TestQueryBoardNonSqlQuery:
     def test_values_query_returns_data(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -721,9 +701,7 @@ rows:
   - c
 """
         path = _write_board(tmp_path, board)
-        result = query_board(
-            "inline", path, local_project(tmp_path), adapter_registry=registry
-        )
+        result = query_board("inline", path, local_project(tmp_path), env=registry)
         assert result.success is True
         assert result.query_type == "values"
         assert result.sql is None
@@ -741,7 +719,7 @@ class TestQueryBoardNote:
     def test_authored_notes_is_returned(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -764,7 +742,7 @@ rows:
             "leads_by_industry",
             path,
             local_project(tmp_path),
-            adapter_registry=registry,
+            env=registry,
         )
         assert result.success is True
         assert result.notes == "Leads grouped by industry"
@@ -772,15 +750,13 @@ rows:
     def test_unnoted_query_returns_none(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
 
         path = _write_board(tmp_path, SIMPLE_BOARD)
-        result = query_board(
-            "revenue", path, local_project(tmp_path), adapter_registry=registry
-        )
+        result = query_board("revenue", path, local_project(tmp_path), env=registry)
         assert result.success is True
         assert result.notes is None
 
@@ -798,7 +774,7 @@ class TestQueryBoardFailureCarriesSql:
     def test_execution_failure_reports_sql(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -816,9 +792,7 @@ rows:
   - c
 """
         path = _write_board(tmp_path, board)
-        result = query_board(
-            "leads", path, local_project(tmp_path), adapter_registry=registry
-        )
+        result = query_board("leads", path, local_project(tmp_path), env=registry)
         assert result.success is False
         assert result.errors
         assert result.sql == "select industry from no_such_table"
@@ -826,14 +800,14 @@ rows:
     def test_failure_before_lookup_has_no_sql(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
 
         path = _write_board(tmp_path, SIMPLE_BOARD)
         result = query_board(
-            "no_such_query", path, local_project(tmp_path), adapter_registry=registry
+            "no_such_query", path, local_project(tmp_path), env=registry
         )
         assert result.success is False
         assert result.sql is None
@@ -887,7 +861,7 @@ class TestVariableBinding:
     def test_a_multiselect_binds_to_a_list(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
         selection: list[str],
         selected: int,
@@ -906,7 +880,7 @@ class TestVariableBinding:
             path,
             local_project(tmp_path),
             vars=bound,
-            adapter_registry=registry,
+            env=registry,
         )
 
         assert result.errors == []
@@ -1032,17 +1006,15 @@ class TestQueryBoardNestedQueries:
     def test_nested_query_runs_with_its_own_variable(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
 
         path = _write_board(tmp_path, NESTED_BOARD)
         project = local_project(tmp_path)
-        default = query_board("nested_q", path, project, adapter_registry=registry)
-        bound = query_board(
-            "nested_q", path, project, vars={"n": 9}, adapter_registry=registry
-        )
+        default = query_board("nested_q", path, project, env=registry)
+        bound = query_board("nested_q", path, project, vars={"n": 9}, env=registry)
         assert default.success is True, default.errors
         assert default.data == [{"n": 5}]
         assert bound.data == [{"n": 9}]
@@ -1050,15 +1022,15 @@ class TestQueryBoardNestedQueries:
     def test_root_query_unchanged_and_unknown_lists_all_names(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
 
         path = _write_board(tmp_path, NESTED_BOARD)
         project = local_project(tmp_path)
-        root = query_board("root_q", path, project, adapter_registry=registry)
-        missing = query_board("nested", path, project, adapter_registry=registry)
+        root = query_board("root_q", path, project, env=registry)
+        missing = query_board("nested", path, project, env=registry)
         assert root.data == [{"a": 1}]
         assert missing.success is False
         assert missing.available_queries == ["nested_q", "root_q"]
@@ -1066,7 +1038,7 @@ class TestQueryBoardNestedQueries:
     def test_duplicate_name_in_two_nested_boards_is_an_error(
         self,
         tmp_path: Path,
-        registry: AdapterRegistry,
+        registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
@@ -1084,9 +1056,7 @@ rows:
     rows: []
 """
         path = _write_board(tmp_path, board)
-        result = query_board(
-            "dup", path, local_project(tmp_path), adapter_registry=registry
-        )
+        result = query_board("dup", path, local_project(tmp_path), env=registry)
         assert result.success is False
         assert any("Duplicate query name 'dup'" in e for e in result.errors)
         assert result.error_code == "ERR-DUPLICATE-QUERY-NAME"

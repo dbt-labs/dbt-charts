@@ -13,9 +13,7 @@ from dbt_charts.core.compile.config import get_config, get_theme_style
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.chart.authored import PointMapChart
 from dbt_charts.core.compile.models.chart.normalized.geoshape import (
@@ -40,6 +38,8 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._engine_migrations import migrate_mapping
 
 VEGA_PROJECTIONS = {
     "mercator",
@@ -157,10 +157,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: dict[str, Any], catalog: YamlSchemaCatalog) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 @pytest.mark.parametrize("family", ["geoshape", "point_map"])

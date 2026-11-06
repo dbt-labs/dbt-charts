@@ -1,0 +1,332 @@
+"""Schema adapter — queries the LayeredSchemaResolver in-process.
+
+Stage: EXECUTE
+Purpose: Dispatch board queries to the LayeredSchemaResolver without a subprocess.
+
+Routing by field population:
+- (no source)        → list_sql_sources via exec env (source name rows)
+- source only        → list_schemas(source); returns QueryResult(error=...) on unknown source
+- source + schema    → list_tables(source, schema)
+- source + schema + table        → profile_table → column rows
+- source + schema + table + column → profile_column → single column row
+
+Field-prerequisite and Jinja-rejection invariants are enforced at compile time
+by SchemaQuery's Pydantic validators — the adapter trusts them.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from dbt_charts.core.column_types import ColumnKind, ColumnType, column_type_error
+from dbt_charts.core.compile.models.query.normalized import SchemaQuery
+from dbt_charts.core.execute.plan_sources import list_sql_sources
+from dbt_charts.core.execute.query_result import QueryResult, plain_error
+
+if TYPE_CHECKING:
+    from dbt_charts.core.execute.env import ExecEnv
+
+
+def _t(kind: ColumnKind) -> ColumnType:
+    return ColumnType(kind=kind)
+
+
+def _list_of(element: ColumnType) -> ColumnType:
+    return ColumnType(kind="list", element=element)
+
+
+def _struct_of(**fields: ColumnType) -> ColumnType:
+    return ColumnType(kind="struct", fields=tuple(fields.items()))
+
+
+_STR, _INT, _FLOAT, _BOOL, _JSON = (
+    _t("string"),
+    _t("integer"),
+    _t("float"),
+    _t("boolean"),
+    _t("json"),
+)
+
+_SOURCE_LIST_COLUMNS = {"name": _STR, "type": _STR, "path": _STR, "in_memory": _BOOL}
+_SCHEMAS_COLUMNS = {"name": _STR, "table_count": _INT}
+_TABLES_COLUMNS = {
+    "name": _STR,
+    "kind": _STR,
+    "row_count": _INT,
+    "primary_date_column": _STR,
+    "size_bytes": _INT,
+    "grain": _STR,
+    "description": _STR,
+    "tags": _list_of(_STR),
+    "owner": _JSON,
+    "joins": _list_of(
+        _struct_of(column=_STR, references=_STR, multiplicity=_STR, source=_STR)
+    ),
+    "referenced_by": _list_of(_struct_of(from_table=_STR, from_column=_STR)),
+    "linked_via": _list_of(
+        _struct_of(
+            through_column_a=_STR,
+            hop_table_a=_STR,
+            through_column_b=_STR,
+            hop_table_b=_STR,
+        )
+    ),
+}
+_COLUMN_COLUMNS = {
+    "name": _STR,
+    "actual_type": _STR,
+    "declared_type": _STR,
+    "description": _STR,
+    "tags": _list_of(_STR),
+    "granularity": _STR,
+    "tests": _list_of(_struct_of(name=_STR, kwargs=_JSON)),
+    "relationships": _list_of(_struct_of(to_table=_STR, to_column=_STR)),
+    "role": _STR,
+    "semantic_type": _STR,
+    "semantic_type_confidence": _FLOAT,
+    "distribution": _STR,
+    "completeness": _STR,
+    "key_role": _STR,
+    "distinct_count": _INT,
+    "uniqueness_ratio": _FLOAT,
+    "null_percentage": _FLOAT,
+    "min_value": _JSON,
+    "max_value": _JSON,
+    "mean_value": _FLOAT,
+    "median_value": _FLOAT,
+    "stddev_value": _FLOAT,
+    "min_length": _INT,
+    "max_length": _INT,
+    "avg_length": _FLOAT,
+    "top_values": _JSON,
+    "enum_values": _list_of(_STR),
+    "histogram_bins": _JSON,
+    "date_distribution": _JSON,
+    **dict.fromkeys(
+        (
+            "approximate",
+            "is_non_negative",
+            "is_normalized",
+            "is_zero_inflated",
+            "has_outliers",
+            "is_skewed",
+            "is_incremental",
+            "is_sequential",
+            "is_fixed_length",
+            "is_free_text",
+            "is_ordinal",
+            "is_currency",
+            "is_geo",
+            "is_pii",
+        ),
+        _BOOL,
+    ),
+}
+
+
+def _declared_columns(query: SchemaQuery) -> dict[str, ColumnType]:
+    """The columns the query's level (sources, schemas, tables, columns) declares."""
+    if query.source is None:
+        return _SOURCE_LIST_COLUMNS
+    if query.schema_name is None:
+        return _SCHEMAS_COLUMNS
+    if query.table is None:
+        return _TABLES_COLUMNS
+    return _COLUMN_COLUMNS
+
+
+def schema_query_result(
+    rows: list[dict[str, Any]],  # type-state: explicit_any — metadata cell values
+    query: SchemaQuery,
+) -> QueryResult:
+    """Rows whose columns are the projected ``query.fields``, or else the declared
+    columns the rows carry, in declared order. A column the level does not
+    declare raises."""
+    declared = _declared_columns(query)
+    fields = query.fields
+    present = {key for row in rows for key in row}
+    columns = (
+        list(fields) if fields is not None else [c for c in declared if c in present]
+    )
+    for column in (*columns, *sorted(present)):
+        if column not in declared:
+            raise column_type_error(column, "is not a column the schema query declares")
+    return QueryResult(
+        data=rows,
+        columns=columns,
+        schema={column: declared[column] for column in columns},
+    )
+
+
+def _walk(
+    envelope: dict[str, Any],  # type-state: explicit_any — resolver envelope cells
+    *path: str,
+) -> dict[str, Any]:  # type-state: explicit_any — resolver envelope cells
+    """The mapping at *path* in a resolver envelope. The resolver omits a level
+    that is empty or unknown, and the caller reports that by name."""
+    node = envelope
+    for key in path:
+        node = node.get(key) or {}  # type-state: silent_fallback — see docstring
+    return node
+
+
+def schema_rows(env: ExecEnv, query: SchemaQuery) -> QueryResult:
+    """Answer a schema query from the LayeredSchemaResolver, in process.
+
+    Dispatches to list_schemas / list_tables / profile_table / profile_column
+    on which fields are populated.
+    """
+    source = query.source
+    schema = query.schema_name
+    table = query.table
+    column = query.column
+
+    if source is None:
+        # No source specified: list all configured sources via the env.
+        source_rows = [dict(entry) for entry in list_sql_sources(env.sources)]
+        return schema_query_result(query.project(query.apply_limit(source_rows)), query)
+
+    from dbt_charts.core.inspect.cache_factory import (
+        build_resolver,  # noqa: PLC0415
+    )
+
+    resolver = build_resolver(env)
+
+    if schema is None:
+        # An unknown source raises DbtChartsError(ERR-SOURCE-NOT-FOUND)
+        # here; that propagates through the run and renders as a
+        # structured error page. No catch needed — fail loud by propagation,
+        # symmetric with the list_tables/profile_table branches below.
+        schemas = _walk(resolver.list_schemas(source), "sources", source, "schemas")
+        rows = [{**m, "name": n} for n, m in schemas.items()]
+        return schema_query_result(query.project(query.apply_limit(rows)), query)
+
+    if table is None:
+        source_schemas = _walk(
+            resolver.list_tables(source, schema), "sources", source, "schemas"
+        )
+        if schema not in source_schemas:
+            return plain_error(f"Schema {schema!r} not found in source {source!r}")
+        rows = [{**m, "name": n} for n, m in source_schemas[schema]["tables"].items()]
+        return schema_query_result(query.project(query.apply_limit(rows)), query)
+
+    if column is None:
+        all_tables = _walk(
+            resolver.profile_table(source, schema, table),
+            "sources",
+            source,
+            "schemas",
+            schema,
+            "tables",
+        )
+        if table not in all_tables:
+            return plain_error(f"Table {schema}.{table} not found in source {source!r}")
+        columns = _walk(all_tables, table, "columns")
+        rows = [{**m, "name": n} for n, m in columns.items()]
+        return schema_query_result(query.project(query.apply_limit(rows)), query)
+
+    # column specified → profile_column
+    col_map = _walk(
+        resolver.profile_column(source, schema, table, column),
+        "sources",
+        source,
+        "schemas",
+        schema,
+        "tables",
+        table,
+        "columns",
+    )
+    if column not in col_map:
+        # The resolver drops the schemas key for both "table missing" and
+        # "column missing" — probe profile_table to emit the right message.
+        table_found = table in _walk(
+            resolver.profile_table(source, schema, table),
+            "sources",
+            source,
+            "schemas",
+            schema,
+            "tables",
+        )
+        if not table_found:
+            return plain_error(f"Table {schema}.{table} not found in source {source!r}")
+        return plain_error(f"Column {column!r} not found in {schema}.{table}")
+    return schema_query_result(
+        query.project([{**col_map[column], "name": column}]), query
+    )
+
+
+def fetch_fk_edges(
+    env: ExecEnv,
+    table: str,
+) -> list[dict[str, str]]:
+    """Return FK edges for ``table`` from dbt manifest + super-schema heuristics.
+
+    Declared dbt relationship edges (confidence 1.0) are always included.
+    Super-schema heuristic edges are included when ``is_recommended=True``
+    (confidence >= 0.80 — the bimodal high-confidence naming case).
+
+    All edges are returned in the canonical ``from_table/from_column/to_table/
+    to_column`` format that ``resolve_fk_column_links`` expects.
+
+    Only outbound edges (where the FK column lives on ``table``) are returned.
+    Inbound edges (another table referencing ``table``) are skipped — they are
+    not FK columns on the queried table.
+
+    **Schema not consulted.** Both the dbt manifest and the super-schema cache
+    key relationships by bare table name only, not by schema. A project with
+    two tables named ``deal`` in different schemas will see edges from both
+    merged together. Cross-schema disambiguation is deferred to Phase 3.
+
+    Returns an empty list when:
+    - No manifest exists at target/manifest.json.
+    - No super-schema cache exists or no recommended heuristic edges found.
+
+    Args:
+        env: The exec env (provides project).
+        table: Table name to fetch FK edges for.
+    """
+
+    from dbt_charts.core.inspect.cache_factory import build_resolver  # noqa: PLC0415
+
+    resolver = build_resolver(env)
+
+    # Declared FK edges from dbt manifest (confidence=1.0, always included).
+    edges: list[dict[str, str]] = [
+        e for e in resolver._all_manifest_relationships() if e["from_table"] == table
+    ]
+
+    # Heuristic recommended edges from the super-schema cache.
+    # Use left_table/left_column/right_table/right_column format; normalize to
+    # from_*/to_* for resolve_fk_column_links. Only outbound edges (left_table
+    # == table) are included; inbound edges are skipped.
+    if resolver.cache is not None:
+        declared_cols = {e["from_column"] for e in edges}
+        raw = resolver.cache._read_raw()  # noqa: SLF001 — no public equivalent
+        if isinstance(raw, dict):
+            _tables = raw.get("tables")
+            if isinstance(_tables, dict):
+                for tbl_data in _tables.values():
+                    tbl_name = tbl_data.get("table_name")
+                    if tbl_name != table:
+                        continue
+                    _rels = tbl_data.get("relationships")
+                    if not isinstance(_rels, list):
+                        continue
+                    for rel in _rels:
+                        if not rel.get("is_recommended"):
+                            continue
+                        if rel.get("left_table") != table:
+                            continue  # inbound edge — skip
+                        from_col = rel["left_column"]
+                        if from_col in declared_cols:
+                            continue  # declared edge already covers this column
+                        edges.append(
+                            {
+                                "from_table": table,
+                                "from_column": from_col,
+                                "to_table": rel["right_table"],
+                                "to_column": rel["right_column"],
+                            }
+                        )
+
+    return edges

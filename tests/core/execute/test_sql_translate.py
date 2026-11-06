@@ -13,7 +13,7 @@ from dbt_charts.core.diagnostics.codes_execute import ERR_SQL_DIALECT_UNSUPPORTE
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.dialects import get_dialect
 from dbt_charts.core.execute import sql_translate
-from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
+from dbt_charts.core.execute.dbt_utils import DbtRefResolver
 from dbt_charts.core.execute.sql_translate import (
     dialect_differs,
     engine_dialect,
@@ -61,6 +61,7 @@ def test_integer_division_keeps_source_meaning_on_postgres() -> None:
         "select 1; select 2",
         "select from where",
         f"select * from t where a = '{PARAM}'",
+        "select * from __dct_rel_1__",
     ],
 )
 def test_untranslatable_sql_raises_named_error(sql: str) -> None:
@@ -75,6 +76,14 @@ def test_untranslatable_sql_raises_named_error(sql: str) -> None:
         # sqlglot moves the placeholder inside the interval's string literal
         (f"select d + interval {PARAM} day from t", "duckdb", "postgres"),
         (f"select d + interval {PARAM} day from t", "duckdb", "snowflake"),
+        # a struct field name becomes a DuckDB string key
+        (f"select struct(1 as {PARAM}) as s", "bigquery", "duckdb"),
+        (
+            f"select date /* {PARAM} */ '2020-01-01' as d,"
+            " struct(1 as `__dct\\x5fparam_1__`) as s",
+            "bigquery",
+            "duckdb",
+        ),
         # a raw-text Command is passed through verbatim, untranslated
         ("explain select safe_divide(a, b) from t", "bigquery", "postgres"),
         ("select * from t where a in (explain select 1)", "bigquery", "postgres"),

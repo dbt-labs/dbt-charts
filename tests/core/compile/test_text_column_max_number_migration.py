@@ -12,8 +12,7 @@ from __future__ import annotations
 import warnings
 from typing import Any
 
-from dbt_charts.core.compile.migrations import SchemaMigrationWarning, migrate_mapping
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
+from dbt_charts.core.compile.migrations import SchemaMigrationWarning
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     JsonObject,
@@ -21,12 +20,13 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     load_yaml_schema_catalog,
 )
 
+from ._engine_migrations import migrate_mapping
+
 
 def _migrate(raw: JsonObject, catalog: YamlSchemaCatalog) -> JsonObject:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 def _minimal_board(style: dict[str, Any]) -> dict[str, Any]:
@@ -43,19 +43,6 @@ def _minimal_board(style: dict[str, Any]) -> dict[str, Any]:
             }
         },
     }
-
-
-def test_registry_covers_the_0_4_0_text_column_number_rename() -> None:
-    _, registry = _board_migration_context()
-
-    moves = registry.transition_from("0.4.0")
-
-    assert any(
-        move.old_path == ("style", "text", "column", "number")
-        and move.new_path == ("style", "text", "column", "max_number")
-        and move.target_schema == "0.5.0"
-        for move in moves
-    )
 
 
 def test_text_column_number_migrates_to_max_number_in_memory() -> None:

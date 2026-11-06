@@ -11,22 +11,15 @@ record_text_truncation call from the source makes its surface's test fail.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import Mock
 
-from ..._results import rows_schema
+from dbt_charts.core.execute.env import ExecEnv
+
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 
-def _mock_adapter(rows: list[dict[str, Any]]) -> Mock:
-    """Adapter registry mock that returns ``rows`` for every query."""
-    ok = Mock()
-    ok.is_success = True
-    ok.data = rows
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    registry = Mock()
-    registry.execute.return_value = ok
-    registry.project_file_sources.return_value = {}
+def _mock_adapter(rows: list[dict[str, Any]]) -> ExecEnv:
+    """Exec env mock that returns ``rows`` for every query."""
+    registry = scripted_env(ScriptedBackend(rows))
     return registry
 
 
@@ -70,7 +63,7 @@ rows:
     )
     result = render_dashboard(
         board=truncated_board,
-        adapter_registry=registry,
+        env=registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -104,7 +97,7 @@ rows:
     )
     clean = render_dashboard(
         board=clean_board,
-        adapter_registry=registry,
+        env=registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -159,7 +152,7 @@ rows:
     )
     result = render_dashboard(
         board=overflow_board,
-        adapter_registry=registry,
+        env=registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -199,7 +192,7 @@ rows:
     )
     clean = render_dashboard(
         board=clean_board,
-        adapter_registry=registry,
+        env=registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -241,7 +234,7 @@ rows:
     )
     result = render_dashboard(
         board=truncated_board,
-        adapter_registry=registry,
+        env=registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -274,7 +267,7 @@ rows:
     )
     clean = render_dashboard(
         board=clean_board,
-        adapter_registry=registry,
+        env=registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -318,7 +311,7 @@ rows:
     )
     result = render_dashboard(
         board=truncated_board,
-        adapter_registry=registry,
+        env=registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -349,7 +342,7 @@ rows:
     clean_registry = _mock_adapter([{"col": "v1"}, {"col": "v2"}])
     clean = render_dashboard(
         board=clean_board,
-        adapter_registry=clean_registry,
+        env=clean_registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -391,7 +384,7 @@ rows:
     )
     result = render_dashboard(
         board=truncated_board,
-        adapter_registry=registry,
+        env=registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -417,7 +410,7 @@ rows:
     )
     clean = render_dashboard(
         board=clean_board,
-        adapter_registry=registry,
+        env=registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -458,7 +451,7 @@ rows:
     )
     result = render_dashboard(
         board=truncated_board,
-        adapter_registry=registry,
+        env=registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -488,7 +481,7 @@ rows:
     clean_registry = _mock_adapter([{"category": "Jan", "value": 10}])
     clean = render_dashboard(
         board=clean_board,
-        adapter_registry=clean_registry,
+        env=clean_registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -534,7 +527,7 @@ rows:
     )
     result = render_dashboard(
         board=board,
-        adapter_registry=registry,
+        env=registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -582,7 +575,7 @@ rows:
     )
     result = render_dashboard(
         board=board,
-        adapter_registry=registry,
+        env=registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -634,7 +627,7 @@ rows:
     )
     result = render_dashboard(
         board=overflow_board,
-        adapter_registry=registry,
+        env=registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -672,7 +665,7 @@ rows:
     )
     clean = render_dashboard(
         board=clean_board,
-        adapter_registry=registry,
+        env=registry,
         format="svg",
         project=project,
         result_cache=None,
@@ -719,7 +712,7 @@ rows:
         )
         result = render_dashboard(
             board=board,
-            adapter_registry=registry,
+            env=registry,
             format="svg",
             project=project,
             result_cache=None,

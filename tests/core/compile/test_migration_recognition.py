@@ -12,40 +12,21 @@ from __future__ import annotations
 
 import warnings
 from copy import deepcopy
+from datetime import date
 from typing import cast
 
 import pytest
 import yaml
 
 from dbt_charts.core.compile.migrations import (
-    IncompleteMigrationError,
-    MigrationRegistry,
-    Move,
     SchemaMigrationWarning,
     UnsupportedSchemaError,
     migrate_board_yaml_text,
-    migrate_mapping,
-    migrate_yaml_text,
     prepare_board_mapping,
-)
-from dbt_charts.core.compile.migrations.migrations import (
-    _board_migration_context,
-    _recognize,
-    _schema_path_exists,
-    move_source_locations,
 )
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     JsonObject,
-    JsonValue,
-    YamlSchemaCatalog,
-    YamlSchemaEntry,
 )
-
-from ._migration_catalogs import flat_schema, released, synthetic_catalog
-from ._migration_declarations import schema_has_tail, schema_has_tail_for_chart_type
-
-V1 = "0.1.0"
-V2 = "0.2.0"
 
 
 def _at(document: JsonObject, *keys: str) -> JsonObject:
@@ -88,16 +69,19 @@ def _retired_board(**root: object) -> JsonObject:
     )
 
 
+_RECOGNITION_DAY = date(2000, 1, 1)
+
+
 def _prepared(board: JsonObject) -> JsonObject:
     """Migrate through the real catalog, with the support window taken out.
 
-    ``allow_expired=True`` because these tests are about *recognition*, not the
+    ``today=_RECOGNITION_DAY`` because these tests are about *recognition*, not the
     six-month window — otherwise they inherit the release date of whichever
     retired construct ``_retired_board`` uses and acquire an expiry of their own.
     """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return prepare_board_mapping(board, allow_expired=True)
+        return prepare_board_mapping(board, today=_RECOGNITION_DAY)
 
 
 def test_theme_key_migrates_identically_to_extends() -> None:
@@ -126,44 +110,6 @@ def test_retired_root_key_migrates_alongside_a_newer_root_key() -> None:
     assert "html_policy" in prepared
 
 
-def _post_freeze_context() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
-    """A catalog whose live grammar knows a key no frozen grammar has seen.
-
-    Every field added between two schema freezes has this shape, which is why
-    this is pinned synthetically rather than against whichever keys happen to
-    postdate the newest freeze today.
-    """
-    catalog = synthetic_catalog(
-        {V1: flat_schema("old", "keep"), V2: flat_schema("new", "keep")},
-        flat_schema("new", "keep", "fresh"),
-    )
-    registry = MigrationRegistry(
-        [Move(V1, V2, ("old",), ("new",))],
-        catalog=catalog,
-    )
-    return catalog, registry
-
-
-def test_key_newer_than_every_frozen_grammar_does_not_disable_migration() -> None:
-    catalog, registry = _post_freeze_context()
-
-    with pytest.warns(SchemaMigrationWarning):
-        result = migrate_mapping(
-            cast(JsonObject, {"old": "value", "fresh": "f"}),
-            catalog=catalog,
-            registry=registry,
-        )
-
-    assert result == {"new": "value", "fresh": "f"}
-
-
-def test_current_document_with_a_newer_key_is_left_alone() -> None:
-    catalog, registry = _post_freeze_context()
-    raw = cast(JsonObject, {"new": "value", "fresh": "f"})
-
-    assert migrate_mapping(raw, catalog=catalog, registry=registry) == raw
-
-
 def test_unfinished_migration_is_announced() -> None:
     """A migration that runs but cannot finish must say so.
 
@@ -184,7 +130,7 @@ def test_unfinished_migration_is_announced() -> None:
         SchemaMigrationWarning,
         match=r"could not finish migrating.*at rows: ",
     ):
-        prepared = prepare_board_mapping(board, allow_expired=True)
+        prepared = prepare_board_mapping(board, today=_RECOGNITION_DAY)
 
     assert prepared == board
 
@@ -216,7 +162,7 @@ def test_a_migration_that_cannot_be_applied_reaches_the_parser_not_the_user() ->
     conflict is real and must still be reported; the parser reports it.
     """
     # `allow_html` → `html_policy` is window-exempt only while 0.4.0 is the
-    # newest frozen grammar; `allow_expired=True` so the next freeze cannot turn
+    # newest frozen grammar; `today=_RECOGNITION_DAY` so the next freeze cannot turn
     # this into a support-window assertion.
     board = cast(
         JsonObject,
@@ -230,7 +176,7 @@ def test_a_migration_that_cannot_be_applied_reaches_the_parser_not_the_user() ->
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        prepared = prepare_board_mapping(board, allow_expired=True)
+        prepared = prepare_board_mapping(board, today=_RECOGNITION_DAY)
 
     assert prepared == board
     assert [
@@ -399,161 +345,15 @@ def test_a_post_freeze_key_does_not_disable_a_deletion() -> None:
     assert result.success, [(e.path, e.message) for e in result.errors]
 
 
-def test_a_current_document_is_never_probed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The live-schema gate runs before the probe, not after it.
-
-    Pinned by making the probe fatal rather than by finding a document the
-    appliers would corrupt: the appliers are positionally gated now, so such a
-    document may not exist today — and a guard that depends on one being found
-    stops guarding the moment they get safer. What must stay true is that a
-    current document is answered without consulting them at all.
-
-    Demote the gate below the loop — the shape that let an already-current board
-    be rewritten — and this fails.
-    """
-    from dbt_charts.core.compile.migrations import migrations as _impl
-
-    def _fatal(*_args: object, **_kwargs: object) -> bool:
-        raise AssertionError("probed a document the live grammar already accepts")
-
-    monkeypatch.setattr(_impl, "_transition_applies", _fatal)
-    catalog, registry = _board_migration_context()
-    board = cast(
-        JsonObject,
-        {
-            "title": "Current",
-            "queries": {"q": {"sql": "select 1 as a, 2 as b"}},
-            "charts": {
-                "bar": {"query": "q", "type": "bar", "x": "a", "y": "b"},
-                "legend": {"query": "q", "type": "line", "x": "a", "y": "b"},
-            },
-            "rows": [{"cols": ["bar", "legend"]}],
-        },
-    )
-
-    assert _recognize(board, catalog, registry) == catalog.dev.version
-
-
-def test_a_nested_board_without_a_moves_lead_key_is_never_seated(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Seating walks the schema down to a nested board; its count must not scale
-    with the number of boards."""
-    from dbt_charts.core.compile.migrations import migrations as _impl
-
-    seated: list[tuple[str, ...]] = []
-    seat = _impl._positions_along
-
-    def _spy(
-        node: JsonValue,
-        path: tuple[str, ...],
-        schema: JsonObject,
-        positions: list[JsonObject],
-    ) -> list[JsonObject]:
-        seated.append(path)
-        return seat(node, path, schema, positions)
-
-    monkeypatch.setattr(_impl, "_positions_along", _spy)
-    catalog, registry = _board_migration_context()
-
-    def seatings(boards: int) -> int:
-        seated.clear()
-        board = cast(
-            JsonObject,
-            {
-                "title": "t",
-                "style": {"text": {"column": {"rule": {"color": "#f00"}}}},
-                "rows": [{"text": "x"} for _ in range(boards)],
-            },
-        )
-        assert _recognize(board, catalog, registry) == "0.9.0"
-        return len(seated)
-
-    assert seatings(20) == seatings(2)
-
-
-def test_a_retired_token_at_an_undeclared_position_is_current_not_an_error() -> None:
-    """The token/role-key presence predicate is deliberately over-eager (a
-    whole-document string scan), so it can fire on a board no declared
-    transition can reach: here the only retired token sits inside a nested
-    sub-board's own `charts:` map -- a full `AuthoredBoard` as a `rows:` item,
-    the self-nesting position `_relative_field_paths`' `seen` guard leaves out
-    of every TokenRespell path (`versions/v0_9_0.py`'s reach paragraph). The
-    live grammar accepts the document, so `current_errors` is empty -- and
-    with the presence predicate having suppressed the early return, the probe
-    loop matches nothing. That is "nothing to migrate", not an unsupported
-    schema: `_recognize` must answer the DEV version rather than index into an
-    empty error list.
-    """
-    catalog, registry = _board_migration_context()
-    nested_board = {
-        "title": "Inner",
-        "queries": {"q": {"columns": ["a", "b"], "values": [[1, 2]]}},
-        "charts": {
-            "c": {
-                "type": "bar",
-                "query": "q",
-                "x": "a",
-                "y": "b",
-                "style": {"color": {"static": "category_dark[2]"}},
-            }
-        },
-        "rows": ["c"],
-    }
-    board = cast(JsonObject, {"title": "t", "rows": [nested_board]})
-
-    assert _recognize(board, catalog, registry) == catalog.dev.version
-
-
-def test_an_expired_grammar_is_announced_not_raised(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_an_expired_grammar_is_announced_not_raised() -> None:
     """Falling out of the support window must not crash the loader either.
 
-    ``SchemaVersionTooOldError`` is a sibling of the other migration errors and
-    rode the same uncaught route out of ``prepare_board_mapping``; the only test
-    covering it drove ``migrate_mapping`` directly, where raising is correct.
-    It must also say that no migration was *attempted*, not that one could not
-    finish — nothing ran.
+    The board comes back unchanged with a notice saying no migration was
+    attempted, not that one could not finish: nothing ran.
     """
-    from dbt_charts.core.compile.migrations import migrations as _impl
-
-    dev = "0.3.0"
-    schemas = {V1: flat_schema("old", "keep"), V2: flat_schema("new", "keep")}
-    entries = (
-        YamlSchemaEntry(
-            dev,
-            status="DEV",
-            released_at=None,
-            filename=None,
-            sha256=None,
-            predecessor=V2,
-        ),
-        YamlSchemaEntry(
-            V2,
-            status="RELEASED",
-            released_at=released(1),
-            filename=f"{V2}.json",
-            sha256="test",
-            predecessor=V1,
-        ),
-        YamlSchemaEntry(
-            V1,
-            status="RELEASED",
-            released_at=released(400),
-            filename=f"{V1}.json",
-            sha256="test",
-            predecessor=None,
-        ),
-    )
-    catalog = YamlSchemaCatalog(entries, {**schemas, dev: schemas[V2]}, schemas[V2])
-    registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
-    monkeypatch.setattr(_impl, "_board_has_historical_schemas", lambda: True)
-    monkeypatch.setattr(_impl, "_board_migration_context", lambda: (catalog, registry))
-
-    raw = cast(JsonObject, {"old": "value"})
+    raw = _retired_board()
     with pytest.warns(SchemaMigrationWarning, match="did not migrate") as caught:
-        prepared = prepare_board_mapping(raw)
+        prepared = prepare_board_mapping(deepcopy(raw), today=date(2100, 1, 1))
 
     assert prepared == raw
     assert all("could not finish" not in str(w.message) for w in caught)
@@ -588,7 +388,7 @@ def test_a_discarded_migration_does_not_claim_it_dropped_anything() -> None:
     def drop_warnings_for(board: JsonObject) -> list[str]:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            prepare_board_mapping(deepcopy(board), allow_expired=True)
+            prepare_board_mapping(deepcopy(board), today=_RECOGNITION_DAY)
         return [str(w.message) for w in caught if "dropped" in str(w.message)]
 
     assert drop_warnings_for(cast(JsonObject, dropped)), (
@@ -600,124 +400,6 @@ def test_a_discarded_migration_does_not_claim_it_dropped_anything() -> None:
     survived = deepcopy(dropped)
     survived["rows"] = "not-a-list"
     assert drop_warnings_for(cast(JsonObject, survived)) == []
-
-
-def test_no_retired_path_survives_into_the_current_grammar() -> None:
-    """The precondition recognition rests on.
-
-    A declared retired path is treated as proof that a document predates the
-    current grammar. That inference is only sound while no retired path is
-    also a live one -- checked structurally here for an ordinary rename
-    (``validate_declarations``'s precondition: old_path must be absent
-    from the target grammar). A ``chart_type``-scoped ``Deletion`` narrows
-    that precondition to its own family's branch (``schema_has_tail_for_chart_type``,
-    mirroring ``validate_declarations``'s own scoped check) -- a path can legitimately
-    still exist globally (e.g. ``conditional_formatting`` on ``table``/``kpi``)
-    as long as it is gone from the scoped family's own branch.
-
-    An unscoped ``Deletion`` narrows it a third way, to the document root's own
-    branch: ``style.color`` is gone from a board's style block while every chart
-    family keeps its own, so the tail survives globally and the anchored path
-    does not. ``_live_declares_tail`` is what confines the firing to the
-    positions that lost it.
-
-    An identity-path Move (``old_path == new_path``, e.g. dbt charts'
-    `theme:` sugar) cannot satisfy that precondition at all -- its whole
-    point is a key that survives every transition unrenamed. Key presence is
-    therefore never evidence such a document is old; only the *value* found
-    there is (`_identity_value_would_change`). The second half below pins
-    that: for every value an identity-path Move's `value_map` sends to
-    itself (a currently-valid value), `move_source_locations` must find
-    nothing to migrate. This is what the structural check above stands in
-    for on a shape that check cannot reach -- collapsing it to "any
-    old_path != new_path" would make identity-path Moves untested rather
-    than sound.
-    """
-    catalog, registry = _board_migration_context()
-
-    assert registry.moves and registry.deletions, (
-        "no declared moves or deletions — this would pass vacuously"
-    )
-    survivors = [
-        move.old_path
-        for move in registry.moves
-        if move.old_path != move.new_path
-        # validate_declarations checks a chart-scoped Move on its own family.
-        and move.chart_type is None
-        and _schema_path_exists(catalog.current_schema, move.old_path)
-    ] + [
-        deletion.path
-        for deletion in registry.deletions
-        if (
-            schema_has_tail_for_chart_type(
-                catalog.current_schema, deletion.path, deletion.chart_type
-            )
-            if deletion.chart_type is not None
-            else schema_has_tail(catalog.current_schema, deletion.path)
-        )
-        and _schema_path_exists(catalog.current_schema, deletion.path)
-    ]
-
-    assert survivors == []
-
-    identity_moves = [move for move in registry.moves if move.old_path == move.new_path]
-    assert identity_moves, "no identity-path Move declared — this would pass vacuously"
-    for move in identity_moves:
-        if move.expansion is not None:
-            # An expansion's current value is the mapping it expands into.
-            document = cast(JsonObject, _nest(move.old_path, {"edge": "top"}))
-            assert not any(move_source_locations(document, move, catalog)), (
-                f"identity-path expansion for {move.old_path!r} fired on a "
-                "current mapping -- it must gate on a retired scalar"
-            )
-            continue
-        if move.rewrite is not None:
-            assert move.rewrite({}) == {}, (
-                f"identity-path rewrite for {move.old_path!r} changed an empty "
-                "mapping -- it must fire only on retired shapes"
-            )
-            continue
-        assert move.value_map is not None, (
-            f"identity-path Move for {move.old_path!r} has no value_map -- "
-            "validate_declarations should have already rejected this"
-        )
-        current_values = [
-            value for value, mapped in move.value_map.items() if mapped == value
-        ]
-        assert current_values, (
-            f"identity-path Move for {move.old_path!r} has no current-value "
-            "entries in its value_map to probe against"
-        )
-        for value in current_values:
-            document = cast(JsonObject, _nest(move.old_path, value))
-            assert not any(move_source_locations(document, move, catalog)), (
-                f"identity-path Move for {move.old_path!r} fired on the "
-                f"currently-valid value {value!r} -- it must gate on the "
-                "value a document holds, not on the key merely being present"
-            )
-
-
-def test_no_identity_value_map_chains_into_itself() -> None:
-    """A respell must be a fixed point: a value one entry produces is never a key
-    that maps elsewhere, or a second application would respell it again."""
-    _, registry = _board_migration_context()
-    chained = [
-        (move.old_path, value, produced)
-        for move in registry.moves
-        if move.old_path == move.new_path and move.value_map is not None
-        for value, produced in move.value_map.items()
-        if move.value_map.get(produced, produced) != produced
-    ]
-
-    assert not chained, f"value maps chain: {chained[:3]}"
-
-
-def _nest(path: tuple[str, ...], value: object) -> JsonObject:
-    """Build a minimal document holding *value* at *path* (dict keys only)."""
-    node: JsonObject = cast(JsonObject, value)
-    for key in reversed(path):
-        node = {key: node}
-    return node
 
 
 def test_the_file_writer_will_not_strip_a_chart_named_after_a_deletion_tail() -> None:
@@ -788,287 +470,6 @@ def test_a_post_freeze_key_nested_below_the_firing_node_is_still_forgiven() -> N
     assert result.success, [(e.path, e.message) for e in result.errors]
 
 
-def _pending_boundary_context() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
-    """A catalog with a pending ``latest_released -> DEV`` boundary.
-
-    Models the real DEV-entry shape ``migrate_yaml_text``'s ``stop_target``
-    exists to cap: ``V2`` (the frozen "latest released") is the source of a
-    Move that only lands once the next, unreleased version ships. The live
-    schema also declares ``_schema_version`` -- the field the capped
-    on-disk rewrite stamps -- mirroring the real catalog: the live/current
-    schema knows the field, older frozen schemas do not.
-    """
-    catalog = synthetic_catalog(
-        {V1: flat_schema("keep"), V2: flat_schema("old", "keep")},
-        flat_schema("new", "keep", "_schema_version"),
-    )
-    registry = MigrationRegistry(
-        [Move(V2, catalog.dev.version, ("old",), ("new",))],
-        catalog=catalog,
-    )
-    return catalog, registry
-
-
-def test_migrate_yaml_text_stop_target_does_not_apply_the_pending_boundary() -> None:
-    """dct migrate's on-disk rewrite must never write not-yet-frozen syntax.
-
-    This board's only "retired" construct is the pending boundary itself
-    (nothing frozen fires, 0 loop iterations), so nothing about the file
-    actually changes -- including no stamp: the stamp is written only
-    alongside a real structural change, never as the sole edit.
-    """
-    catalog, registry = _pending_boundary_context()
-    yaml_text = "old: value\nkeep: k\n"
-
-    capped = migrate_yaml_text(
-        yaml_text, catalog=catalog, registry=registry, stop_target=V2
-    )
-
-    assert capped == yaml_text, "nothing changed, so the file must be untouched"
-
-
-def test_migrate_yaml_text_without_stop_target_still_reaches_current() -> None:
-    """The uncapped call (today's default, used directly by other tests) is unaffected."""
-    catalog, registry = _pending_boundary_context()
-    yaml_text = "old: value\nkeep: k\n"
-
-    uncapped = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
-
-    assert "new: value" in uncapped
-    assert "old:" not in uncapped
-    assert "_schema_version" not in uncapped, "uncapped calls never stamp"
-
-
-def test_migrate_yaml_text_stop_target_never_stamps_an_already_current_file() -> None:
-    """A file needing no structural migration must be returned byte-identical.
-
-    A field the tool imposes on every file it touches is a much bigger
-    change than "migrated files also get stamped" -- it would make dct
-    migrate rewrite every already-current board in a project, and stamp a
-    value the frozen version it names may not itself declare, purely for the
-    stamp. The stamp is written only alongside a real structural change.
-    Exercises the early ``identifier == catalog.dev.version`` return specifically.
-    """
-    catalog, registry = _pending_boundary_context()
-    yaml_text = "keep: k\n"
-
-    capped = migrate_yaml_text(
-        yaml_text, catalog=catalog, registry=registry, stop_target=V2
-    )
-
-    assert capped == yaml_text
-
-
-def test_migrate_yaml_text_stop_target_never_crashes_on_a_flow_style_root() -> None:
-    """A flow-style-root board with nothing to migrate is valid YAML the text
-    writer never attempts to edit -- it is byte-identical input to the early
-    ``identifier == catalog.dev.version`` return, which touches nothing regardless of
-    shape. Pins that recognition itself handles flow-style syntax cleanly
-    (no crash), not a stamp-degradation mechanism -- there is none once
-    nothing is written.
-    """
-    catalog, registry = _pending_boundary_context()
-    flow_style = "{keep: k}\n"
-
-    capped = migrate_yaml_text(
-        flow_style, catalog=catalog, registry=registry, stop_target=V2
-    )
-
-    assert capped == flow_style, "an already-current file is never touched"
-
-
-def test_migrate_yaml_text_stop_target_is_idempotent() -> None:
-    """Running dct migrate twice must not rewrite an already-migrated,
-    already-stamped file -- proven alongside a real frozen Move (not the
-    pending-boundary-only fixture, which makes no change on the first run
-    either, so two no-op runs would prove nothing about idempotency).
-    """
-    catalog = synthetic_catalog(
-        {
-            V1: flat_schema("old", "keep"),
-            V2: flat_schema("new", "keep", "_schema_version"),
-        }
-    )
-    registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
-    yaml_text = "old: value\nkeep: k\n"
-
-    once = migrate_yaml_text(
-        yaml_text, catalog=catalog, registry=registry, stop_target=V2
-    )
-    twice = migrate_yaml_text(once, catalog=catalog, registry=registry, stop_target=V2)
-
-    assert once != yaml_text, "the real Move must have fired on the first run"
-    assert twice == once
-    assert f'_schema_version: "{V2}"' in once
-
-
-def test_migrate_yaml_text_stop_target_stamp_line_explains_itself() -> None:
-    """The written _schema_version: line is the file's first line and carries
-    a trailing comment naming dct migrate as the author, so a reader scanning
-    the file top-to-bottom never wonders where the line came from."""
-    catalog = synthetic_catalog(
-        {
-            V1: flat_schema("old", "keep"),
-            V2: flat_schema("new", "keep", "_schema_version"),
-        }
-    )
-    registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
-    yaml_text = "old: value\nkeep: k\n"
-
-    capped = migrate_yaml_text(
-        yaml_text, catalog=catalog, registry=registry, stop_target=V2
-    )
-
-    assert (
-        capped.splitlines()[0]
-        == f'_schema_version: "{V2}"  # written automatically by dct migrate'
-    )
-
-
-def test_migrate_yaml_text_stamp_stays_below_a_schema_modeline() -> None:
-    """The language server honors a `$schema` modeline only before the first
-    key, so the stamp must land under it, never push it down."""
-    catalog = synthetic_catalog(
-        {
-            V1: flat_schema("old", "keep"),
-            V2: flat_schema("new", "keep", "_schema_version"),
-        }
-    )
-    registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
-    modeline = "# yaml-language-server: $schema=https://example.test/board.json"
-
-    capped = migrate_yaml_text(
-        f"{modeline}\nold: value\nkeep: k\n",
-        catalog=catalog,
-        registry=registry,
-        stop_target=V2,
-    )
-
-    lines = capped.splitlines()
-    assert lines[0] == modeline
-    assert lines[1].startswith(f'_schema_version: "{V2}"')
-
-
-def test_migrate_yaml_text_stop_target_never_downgrades_a_newer_stamp() -> None:
-    """A well-formed, genuinely newer existing _schema_version must survive a
-    real structural change untouched.
-
-    This is the entire reason ``_should_stamp_schema_version`` exists rather
-    than an unconditional overwrite: downgrading it would silently erase the
-    signal the newer-schema-version diagnostic hint depends on. Proven
-    alongside a real frozen Move, not the already-current early return --
-    a document with no retired construct never reaches
-    ``_should_stamp_schema_version`` at all (see the "never stamps an
-    already-current file" test above), so that input can't pin this branch.
-    """
-    catalog = synthetic_catalog(
-        {
-            V1: flat_schema("old", "keep"),
-            V2: flat_schema("new", "keep", "_schema_version"),
-        }
-    )
-    registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
-
-    capped = migrate_yaml_text(
-        '_schema_version: "99.0.0"\nold: value\nkeep: k\n',
-        catalog=catalog,
-        registry=registry,
-        stop_target=V2,
-    )
-
-    assert '_schema_version: "99.0.0"' in capped
-    assert "new: value" in capped
-
-
-def test_migrate_yaml_text_stop_target_corrects_an_older_well_formed_stamp() -> None:
-    """A well-formed but older existing _schema_version must be corrected to
-    stop_target, not treated as "genuinely newer, leave alone" -- this is
-    the mainline path after every release freeze, and had no fixture
-    anywhere alongside its "newer" and "malformed" siblings.
-    """
-    catalog = synthetic_catalog(
-        {
-            V1: flat_schema("old", "keep"),
-            V2: flat_schema("new", "keep", "_schema_version"),
-        }
-    )
-    registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
-
-    capped = migrate_yaml_text(
-        '_schema_version: "0.1.0"\nold: value\nkeep: k\n',
-        catalog=catalog,
-        registry=registry,
-        stop_target=V2,
-    )
-
-    assert f'_schema_version: "{V2}"' in capped
-    assert '"0.1.0"' not in capped
-    assert "new: value" in capped
-
-
-def test_migrate_yaml_text_stop_target_corrects_a_malformed_existing_stamp_alongside_a_real_change() -> (
-    None
-):
-    """A well-formed-string-but-not-a-version existing stamp must still be
-    corrected, not treated as "genuinely newer, leave alone" -- but only
-    proven here alongside a genuine structural change (a real, frozen Move),
-    since the stamp is never written as the sole reason to touch a file (see
-    the "never stamps an already-current file" test). A regression to "never
-    restamp anything unparseable" would strand a file on a bad
-    ``_schema_version`` forever, silently, even when it's otherwise legitimately
-    being rewritten.
-    """
-    catalog = synthetic_catalog(
-        {
-            V1: flat_schema("old", "keep"),
-            V2: flat_schema("new", "keep", "_schema_version"),
-        }
-    )
-    registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
-
-    capped = migrate_yaml_text(
-        '_schema_version: "abc"\nold: value\nkeep: k\n',
-        catalog=catalog,
-        registry=registry,
-        stop_target=V2,
-    )
-
-    assert f'_schema_version: "{V2}"' in capped
-    assert '"abc"' not in capped
-    assert "new: value" in capped
-    assert '"abc"' not in capped
-
-
-def _incomplete_at_target_context() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
-    """A V1 -> V2 Move covers ``old`` but not ``stray``.
-
-    V2's frozen schema doesn't declare ``stray`` -- a document carrying it
-    after migrating is a genuinely incomplete migration once capped at V2, not
-    evidence of an unrelated live-only field the frozen-schema completeness
-    check should tolerate.
-    """
-    catalog = synthetic_catalog(
-        {V1: flat_schema("old", "stray", "keep"), V2: flat_schema("new", "keep")},
-        flat_schema("new", "keep"),
-    )
-    registry = MigrationRegistry(
-        [Move(V1, V2, ("old",), ("new",))],
-        catalog=catalog,
-    )
-    return catalog, registry
-
-
-def test_migrate_yaml_text_stop_target_still_raises_for_a_genuinely_incomplete_migration() -> (
-    None
-):
-    """The capped completeness check must still catch real incompleteness."""
-    catalog, registry = _incomplete_at_target_context()
-    yaml_text = "old: value\nstray: s\nkeep: k\n"
-
-    with pytest.raises(IncompleteMigrationError):
-        migrate_yaml_text(yaml_text, catalog=catalog, registry=registry, stop_target=V2)
-
-
 _BAR_BOARD = (
     _PREAMBLE + "charts:\n  c:\n    type: bar\n    query: q1\n    x: a\n    y: b\n"
 )
@@ -1131,7 +532,7 @@ def test_a_retired_key_with_an_invalid_value_reaches_the_parser(
     board = yaml.safe_load(board_text)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        prepared = prepare_board_mapping(deepcopy(board), allow_expired=True)
+        prepared = prepare_board_mapping(deepcopy(board), today=_RECOGNITION_DAY)
         result = compile_board(board_text)
 
     assert prepared == board

@@ -13,15 +13,14 @@ resolve() -> render_resolved_chart() seam for fast structural assertions.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from unittest.mock import Mock
 
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
-from .._results import rows_schema
+from .._run import Run
+from .._scripted_env import ScriptedBackend, scripted_env
 
 _SVG_NS = "http://www.w3.org/2000/svg"
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
@@ -39,26 +38,16 @@ _WIDTH_TIERS: list[int] = [300, 450, 700, 1200]
 
 def _make_executor(
     board: object, query_registry: object, rows: list[dict[str, object]]
-) -> Executor:
-    ok = Mock()
-    ok.is_success = True
-    ok.data = rows
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.return_value = ok
-    return Executor(
-        board, adapter_registry=mock_registry, query_registry=query_registry
-    )
+) -> Run:
+    mock_registry = scripted_env(ScriptedBackend(rows))
+    return Run(board, env=mock_registry, query_registry=query_registry)
 
 
 def _render_svg(yaml_source: str, rows: list[dict[str, object]]) -> str:
     result = compile(yaml_source)
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, rows)
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert not render_result.chart_errors, render_result.chart_errors
     assert isinstance(render_result.output, str)
     return render_result.output

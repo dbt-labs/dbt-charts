@@ -33,7 +33,7 @@ def test_run_agent_accepts_content_array_prompt() -> None:
     client.stream_with_tools.return_value = iter([ContentDelta(delta="It's a chart.")])
 
     context = MagicMock()
-    context.project_session.adapter_registry = MagicMock()
+    context.project_session.env = MagicMock()
 
     # Build a minimal profile that doesn't call real schema or file reads
     profile = AgentProfile(
@@ -76,7 +76,7 @@ def test_run_agent_threads_extra_handlers_to_dispatch(
         iter([ContentDelta(delta="done")]),
     ]
     context = MagicMock()
-    context.project_session.adapter_registry = MagicMock()
+    context.project_session.env = MagicMock()
     profile = AgentProfile(
         name="test", tools=[], build_system_prompt=lambda _ctx: "prompt"
     )
@@ -128,7 +128,7 @@ def test_run_agent_threads_profile_tool_overrides_to_dispatch(
         iter([ContentDelta(delta="done")]),
     ]
     context = MagicMock()
-    context.project_session.adapter_registry = MagicMock()
+    context.project_session.env = MagicMock()
 
     def governed_move_file(
         args: dict[str, Any], ctx: DbtChartsAIContext
@@ -163,7 +163,7 @@ def _run_agent_capture_conversation(
     client = MagicMock()
     client.stream_with_tools.side_effect = _stream
     context = MagicMock()
-    context.project_session.adapter_registry = MagicMock()
+    context.project_session.env = MagicMock()
     profile = AgentProfile(
         name="test",
         tools=[],
@@ -264,7 +264,7 @@ def test_identical_consecutive_calls_error_before_third_dispatch(
     client.stream_with_tools.side_effect = [iter([repeated_call]) for _ in range(10)]
 
     context = MagicMock()
-    context.project_session.adapter_registry = MagicMock()
+    context.project_session.env = MagicMock()
     profile = AgentProfile(
         name="test", tools=[], build_system_prompt=lambda _ctx: "prompt"
     )
@@ -311,7 +311,7 @@ def test_varied_arguments_repeat_runs_to_completion(
     ]
 
     context = MagicMock()
-    context.project_session.adapter_registry = MagicMock()
+    context.project_session.env = MagicMock()
     profile = AgentProfile(
         name="test", tools=[], build_system_prompt=lambda _ctx: "prompt"
     )
@@ -349,7 +349,7 @@ def test_interleaved_different_tool_resets_identical_counter(
     ]
 
     context = MagicMock()
-    context.project_session.adapter_registry = MagicMock()
+    context.project_session.env = MagicMock()
     profile = AgentProfile(
         name="test", tools=[], build_system_prompt=lambda _ctx: "prompt"
     )
@@ -376,7 +376,7 @@ def test_svg_tool_result_event_keeps_full_payload() -> None:
     client = MagicMock()
     client.stream_with_tools.side_effect = _stream
     context = MagicMock()
-    context.project_session.adapter_registry = MagicMock()
+    context.project_session.env = MagicMock()
     profile = AgentProfile(
         name="test",
         tools=[],
@@ -428,7 +428,7 @@ def test_a_truncated_turn_errors_instead_of_reporting_success() -> None:
     client = OpenAIAdapter(gateway, model="gpt-test")
 
     context = MagicMock()
-    context.project_session.adapter_registry = MagicMock()
+    context.project_session.env = MagicMock()
     profile = AgentProfile(
         name="test", tools=[], build_system_prompt=lambda _ctx: "prompt"
     )
@@ -461,7 +461,7 @@ class TestAgentErrorCarriesATypedReason:
 
     def _context(self) -> Any:
         context = MagicMock()
-        context.project_session.adapter_registry = MagicMock()
+        context.project_session.env = MagicMock()
         return context
 
     def test_a_provider_fault_carries_its_classified_reason(self) -> None:
@@ -609,7 +609,7 @@ def test_tool_result_duration_reflects_only_its_own_dispatch_call(
         iter([ContentDelta(delta="done")]),
     ]
     context = MagicMock()
-    context.project_session.adapter_registry = MagicMock()
+    context.project_session.env = MagicMock()
     profile = AgentProfile(
         name="test", tools=[], build_system_prompt=lambda _ctx: "prompt"
     )

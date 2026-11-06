@@ -270,9 +270,9 @@ impl LegendBox {
         }
     }
 
-    fn nodes(&self, entries: &[LegendEntry], cfg: &LegendConfig, x: f64, y: f64) -> Vec<Node> {
+    fn nodes(&self, entries: &[LegendEntry], cfg: &LegendConfig, x: f64, y: f64, canvas: &str) -> Vec<Node> {
         match self {
-            LegendBox::Vega(lg) => drawn_symbol_legend(entries, lg, cfg, LegendSymbol::Circle, x, y, false).into_iter().collect(),
+            LegendBox::Vega(lg) => drawn_symbol_legend(entries, lg, cfg, LegendSymbol::Circle, x, y, false, canvas).into_iter().collect(),
             LegendBox::Shape(lg) => lg.nodes(x, y, SymbolFill::Static("#000"), 1.0),
         }
     }
@@ -786,11 +786,11 @@ pub(crate) fn render(
     let (stack_x, stack_y) = (stack_x + slide_x, stack_y + slide_y);
     for (&i, &offset) in stacked.iter().zip(&stack_offsets) {
         let (dx, dy) = if stack_vertical { (0.0, offset) } else { (offset, 0.0) };
-        body.extend(legend_boxes[i].nodes(&legend_entries[i], &extra.legend, plot_left + stack_x + dx, plot_top + stack_y + dy));
+        body.extend(legend_boxes[i].nodes(&legend_entries[i], &extra.legend, plot_left + stack_x + dx, plot_top + stack_y + dy, &head.canvas));
     }
     if let Some(i) = loose_shape {
         let (x, y) = shape_xy.get();
-        body.extend(legend_boxes[i].nodes(&legend_entries[i], &extra.legend, plot_left + x, plot_top + y));
+        body.extend(legend_boxes[i].nodes(&legend_entries[i], &extra.legend, plot_left + x, plot_top + y, &head.canvas));
     }
     Ok(framed.svg(body))
 }

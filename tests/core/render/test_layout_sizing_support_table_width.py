@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import Project
 
 
@@ -72,18 +72,19 @@ def test_support_table_width_share_warns_before_the_floor(
     pytest.importorskip("vl_convert")
 
     from dbt_charts.core.compile import compile
-    from dbt_charts.core.execute.executor import Executor
     from dbt_charts.core.render.renderer import render
+
+    from ..._run import Run
 
     result = compile(_stacked_per_series_total_board_yaml(600))
     assert result.success and result.board is not None, result.errors
 
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
     )
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     assert render_result.board_error is None, render_result.board_error
     assert render_result.output is not None
@@ -103,18 +104,19 @@ def test_support_table_width_no_warning_or_error_at_a_comfortable_width(
     pytest.importorskip("vl_convert")
 
     from dbt_charts.core.compile import compile
-    from dbt_charts.core.execute.executor import Executor
     from dbt_charts.core.render.renderer import render
+
+    from ..._run import Run
 
     result = compile(_stacked_per_series_total_board_yaml(1125))
     assert result.success and result.board is not None, result.errors
 
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
     )
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     assert render_result.board_error is None, render_result.board_error
     warn_codes = {w.code for w in render_result.warnings}
@@ -174,18 +176,19 @@ def test_support_table_width_floor_does_not_fire_on_a_row_strip(
     pytest.importorskip("vl_convert")
 
     from dbt_charts.core.compile import compile
-    from dbt_charts.core.execute.executor import Executor
     from dbt_charts.core.render.renderer import render
+
+    from ..._run import Run
 
     result = compile(_grouped_bar_row_strip_board_yaml(250))
     assert result.success and result.board is not None, result.errors
 
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
     )
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     assert render_result.board_error is None, (
         f"the row strip's own width floor misfired on ordinary axis/legend "

@@ -122,17 +122,17 @@ style:
         from pathlib import Path
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
-        from dbt_charts.core.render import render
+        from dbt_charts.core.execute.env import build_exec_env
+
+        from .._run import Run, render_run
 
         result = compile(yaml)
         assert result.board is not None
-        rendered = render(
+        rendered = render_run(
             result.board,
-            Executor(
+            Run(
                 result.board,
-                adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+                env=build_exec_env(local_project(Path.cwd())),
             ),
             format="svg",
         )
@@ -166,17 +166,17 @@ style:
         from pathlib import Path
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
-        from dbt_charts.core.render import render
+        from dbt_charts.core.execute.env import build_exec_env
+
+        from .._run import Run, render_run
 
         result = compile(yaml)
         assert result.board is not None
-        rendered = render(
+        rendered = render_run(
             result.board,
-            Executor(
+            Run(
                 result.board,
-                adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+                env=build_exec_env(local_project(Path.cwd())),
             ),
             format="svg",
         )
@@ -211,17 +211,17 @@ style:
         from pathlib import Path
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
-        from dbt_charts.core.render import render
+        from dbt_charts.core.execute.env import build_exec_env
+
+        from .._run import Run, render_run
 
         result = compile(yaml)
         assert result.board is not None
-        rendered = render(
+        rendered = render_run(
             result.board,
-            Executor(
+            Run(
                 result.board,
-                adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+                env=build_exec_env(local_project(Path.cwd())),
             ),
             format="svg",
         )
@@ -267,17 +267,17 @@ style:
         from pathlib import Path
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
-        from dbt_charts.core.render import render
+        from dbt_charts.core.execute.env import build_exec_env
+
+        from .._run import Run, render_run
 
         result = compile(yaml)
         assert result.board is not None
-        rendered = render(
+        rendered = render_run(
             result.board,
-            Executor(
+            Run(
                 result.board,
-                adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+                env=build_exec_env(local_project(Path.cwd())),
             ),
             format="svg",
         )
@@ -306,17 +306,17 @@ style:
         from pathlib import Path
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
-        from dbt_charts.core.render import render
+        from dbt_charts.core.execute.env import build_exec_env
+
+        from .._run import Run, render_run
 
         result = compile(yaml)
         assert result.board is not None
-        rendered = render(
+        rendered = render_run(
             result.board,
-            Executor(
+            Run(
                 result.board,
-                adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+                env=build_exec_env(local_project(Path.cwd())),
             ),
             format="svg",
         )
@@ -347,17 +347,17 @@ style:
         from pathlib import Path
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
-        from dbt_charts.core.render import render
+        from dbt_charts.core.execute.env import build_exec_env
+
+        from .._run import Run, render_run
 
         result = compile(yaml)
         assert result.board is not None
-        rendered = render(
+        rendered = render_run(
             result.board,
-            Executor(
+            Run(
                 result.board,
-                adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+                env=build_exec_env(local_project(Path.cwd())),
             ),
             format="svg",
         )
@@ -407,17 +407,17 @@ style:
         from pathlib import Path
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
-        from dbt_charts.core.render import render
+        from dbt_charts.core.execute.env import build_exec_env
+
+        from .._run import Run, render_run
 
         result = compile(yaml)
         assert result.board is not None
-        rendered = render(
+        rendered = render_run(
             result.board,
-            Executor(
+            Run(
                 result.board,
-                adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+                env=build_exec_env(local_project(Path.cwd())),
             ),
             format="svg",
         )
@@ -441,23 +441,23 @@ def test_render_reads_its_clock_from_the_executor() -> None:
     from pathlib import Path
 
     from dbt_charts.core.compile import compile
-    from dbt_charts.core.execute import Executor
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
     from dbt_charts.core.render import render
 
+    from .._run import Run
     from .._svg_normalize import normalize_same_run_svg
     from ._svg_render import SAMPLE_BOARD_YAML
 
     pinned = datetime(2001, 2, 3, 4, 5, 6, tzinfo=UTC)
     result = compile(SAMPLE_BOARD_YAML)
     assert result.board is not None
-    registry = build_adapter_registry(FilesystemProject(Path.cwd()))
+    registry = build_exec_env(FilesystemProject(Path.cwd()))
 
     def render_once() -> str:
-        executor = Executor(
-            result.board, adapter_registry=registry, clock=lambda: pinned
-        )
-        output = render(result.board, executor, format="svg").output
+        executor = Run(result.board, env=registry, clock=lambda: pinned)
+        output = render(
+            result.board, executor.ctx, executor.ledger, format="svg"
+        ).output
         assert isinstance(output, str)
         return output
 

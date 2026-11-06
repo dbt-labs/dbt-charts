@@ -6,9 +6,10 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
+
+from ..._run import Run
 
 BOARD = """
 queries:
@@ -74,12 +75,12 @@ def test_unknown_chart_local_color_token_errors_only_that_chart(
         base_dir=project.directory(),
     )
     assert result.success, [d.message for d in result.errors]
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
-    out = render(result.board, executor, format="svg")
+    out = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     assert out.board_error is None
     assert [d.code for d in out.chart_errors] == ["ERR-COLOR-TOKEN"]

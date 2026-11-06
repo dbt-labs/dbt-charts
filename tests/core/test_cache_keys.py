@@ -21,7 +21,7 @@ from dbt_charts.core.execute.duckdb_cache import (
     compute_variables_hash,
 )
 
-from .._results import rows_schema
+from .._scripted_env import ScriptedBackend, backend_of, scripted_env
 
 
 class TestSourceIdentityStripsSecrets:
@@ -164,12 +164,12 @@ class TestExecutorCrossUserIsolation:
     """
 
     def test_two_users_same_source_name_distinct_cache_entries(self):
-        from unittest.mock import Mock
 
         from dbt_charts.core.compile import compile
         from dbt_charts.core.compile.config import ProjectSourcesConfig
-        from dbt_charts.core.execute import Executor
         from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+        from .._run import Run
 
         board_yaml = """
 title: Sales
@@ -207,19 +207,11 @@ rows:
                 }
             )
             result = compile(board_yaml, project_sources=project_sources)
-            ok = Mock()
-            ok.is_success = True
-            ok.data = rows
-            ok.schema = rows_schema(ok.data)
-            ok.resolved_relations = None
-            ok.truncated_reason = None
-            registry = Mock()
-            registry.project_file_sources.return_value = {}
-            registry.execute.return_value = ok
+            registry = scripted_env(ScriptedBackend(rows))
             return (
-                Executor(
+                Run(
                     result.board,
-                    adapter_registry=registry,
+                    env=registry,
                     query_registry=result.query_registry,
                     result_cache=cache,
                 ),
@@ -233,13 +225,13 @@ rows:
 
             # Alice runs first — seeds the cache under her identity.
             assert exec_alice.execute_query("revenue") == rows_alice
-            assert reg_alice.execute.call_count == 1
+            assert backend_of(reg_alice).execute.call_count == 1
 
             # Bob runs the SAME named source ("warehouse") but with a
             # different resolved user. He must NOT hit Alice's cache —
             # his adapter must be called and return his own data.
             assert exec_bob.execute_query("revenue") == rows_bob
-            assert reg_bob.execute.call_count == 1
+            assert backend_of(reg_bob).execute.call_count == 1
         finally:
             cache.close()
 

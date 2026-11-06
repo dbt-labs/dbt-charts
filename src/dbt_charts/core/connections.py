@@ -6,7 +6,7 @@ helpers hosts use to fill a connection form: build_bigquery_client,
 list_datasets, dataset_location, and Databricks' list_catalogs — these return
 real values on success, so they keep raising on failure rather than a tuple.
 
-All DB connection machinery lives in execute/adapters/dbt_adapter_factory.py.
+All DB connection machinery lives in execute/backends/dbt_adapter_factory.py.
 Cloud and other consumers call this, not dbt.adapters directly — Cloud in
 particular must never import google.cloud itself.
 
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
         SourceConfig,
     )
     from dbt_charts.core.dialects.base import SQLDialect
-    from dbt_charts.core.execute.adapters.base import RowFetchLimit
+    from dbt_charts.core.execute.query_result import RowFetchLimit
     from dbt_charts.core.inspect.bulk_schema import SchemaTree
     from dbt_charts.core.inspect.relations import Relation
 
@@ -109,7 +109,7 @@ _BIGQUERY_INVALID_GRANT_MESSAGE = (
     "was created in the last minute, it may not have propagated yet. Wait a "
     "moment and try again."
 )
-# A local copy, not execute.adapters.base.BIGQUERY_UNKNOWN_REF_SUBSTRINGS: that
+# A local copy, not execute.query_result.BIGQUERY_UNKNOWN_REF_SUBSTRINGS: that
 # tuple also matches a query's own column/table references, so importing it
 # here would let a binder-motivated edit silently change this classification.
 _BIGQUERY_NOT_FOUND_SUBSTRING = "Not found: Dataset"
@@ -391,7 +391,7 @@ def _adapter_credentials(
 def list_catalogs(source_config: SourceConfig) -> list[str]:
     """Catalogs these credentials can see; ``source_config.catalog`` is ignored."""
     from dbt_charts.core.compile.models.source import DatabricksSourceConfig
-    from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+    from dbt_charts.core.execute.backends.dbt_adapter_factory import (
         build_adapter,
         open_connection,
     )
@@ -449,8 +449,8 @@ def _send_one_statement(source_config: ResolvedSourceConfig, sql: str) -> na.Arr
     No query cap is applied here, so the driver's own default governs. The
     session is released whether or not the statement was accepted.
     """
-    from dbt_charts.core.execute.adapters.base import resolve_effective_row_limit
     from dbt_charts.core.execute.drivers import open_driver
+    from dbt_charts.core.execute.query_result import resolve_effective_row_limit
 
     connection = open_driver(source_config, None)
     try:
@@ -500,7 +500,7 @@ def test_connection(
     """
     from dbt_charts.core.diagnostics.base import DbtChartsError
     from dbt_charts.core.dialects import get_dialect
-    from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+    from dbt_charts.core.execute.backends.dbt_adapter_factory import (
         ConnectionSetupFailed,
         build_adapter,
         open_connection,
@@ -555,7 +555,7 @@ def bulk_schema_for_config(source_config: SourceConfig) -> SchemaTree:
 
     Connection-scoped sibling of ``bulk_schema`` — same SQL builder and
     row→tree parser, but keyed by a bare ``SourceConfig`` (via ``build_adapter``,
-    the ``test_connection`` pattern) instead of an ``AdapterRegistry``. For
+    the ``test_connection`` pattern) instead of an ``ExecEnv``. For
     hosts holding a connection's credentials with no project/registry, such
     as Cloud's per-connection schema profile.
 
@@ -620,15 +620,15 @@ def _bulk_rows_for_config(
     # without eagerly loading core.compile (pinned by test_lazy_imports).
     from dbt_charts.core.column_types import reject_duplicate_columns
     from dbt_charts.core.dialects import get_dialect
-    from dbt_charts.core.execute.adapters.base import (
-        apply_row_limit_truncation,
-        resolve_effective_row_limit,
-    )
-    from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+    from dbt_charts.core.execute.backends.dbt_adapter_factory import (
         build_adapter,
         open_connection,
     )
     from dbt_charts.core.execute.drivers import is_driver_source
+    from dbt_charts.core.execute.query_result import (
+        apply_row_limit_truncation,
+        resolve_effective_row_limit,
+    )
     from dbt_charts.core.inspect.bulk_schema import bulk_schema_scope
 
     creds = _adapter_credentials(source_config)
@@ -734,7 +734,7 @@ def probe_relation_readability(
         relation, unreachable warehouse. Never raises: a caller probes many
         relations in a loop and one failure must not abort the rest.
     """
-    from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+    from dbt_charts.core.execute.backends.dbt_adapter_factory import (
         build_adapter,
         open_connection,
     )

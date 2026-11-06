@@ -231,26 +231,21 @@ class TestSchemaQueryOptionalSource:
 # ---------------------------------------------------------------------------
 
 
-class TestSchemaAdapterNoSource:
+class TestSchemaRowsNoSource:
     """schema_adapter with source=None dispatches to list_sources."""
 
     def test_no_source_returns_source_rows(self) -> None:
-        """When source is None, SchemaAdapter returns rows with 'name' column."""
+        """When source is None, schema_rows returns rows with 'name' column."""
         from dbt_charts.core.compile.models.query.normalized import SchemaQuery
-        from dbt_charts.core.execute.adapters.schema_adapter import SchemaAdapter
+        from dbt_charts.core.execute.schema_adapter import schema_rows
 
         mock_registry = MagicMock()
-        # list_sql_sources returns two configured sources
-        mock_registry.list_sql_sources.return_value = [
-            {"name": "db", "type": "duckdb"},
-            {"name": "prod", "type": "snowflake"},
-        ]
+        mock_registry.sources.all.return_value = {
+            "db": {"type": "duckdb"},
+            "prod": {"type": "snowflake"},
+        }
 
-        adapter = SchemaAdapter(mock_registry)
-        query = SchemaQuery()  # source=None
-        from dbt_charts.core.compile.models.board.normalized import VariableValues
-
-        result = adapter._execute(query, variables=VariableValues({}))
+        result = schema_rows(mock_registry, SchemaQuery())  # source=None
         assert result.error is None, f"Expected no error, got: {result.error}"
         assert len(result.data) == 2
         names = {row["name"] for row in result.data}

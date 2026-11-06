@@ -16,9 +16,10 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
-from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+from ..._run import Run
 
 
 def _project(tmp_path: Path, files: dict[str, str]) -> FilesystemProject:
@@ -73,9 +74,9 @@ def _bump_mtime(path: Path) -> None:
 
 
 def _registry(project: FilesystemProject, **file_source: Any) -> Any:
-    from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
 
-    return build_adapter_registry(project, **file_source)
+    return build_exec_env(project, **file_source)
 
 
 def _bump_mtime_of(project: FilesystemProject, relpath: str) -> None:
@@ -94,9 +95,9 @@ class TestWarmRenderSkipsMaterializer:
 
         # Render 1 (cold): materializer runs, result written through to result_cache.
         mat1 = _CountingMaterializer(project)
-        ex1 = Executor(
+        ex1 = Run(
             board,
-            adapter_registry=_registry(project, file_materializer=mat1),
+            env=_registry(project, file_materializer=mat1),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
@@ -106,9 +107,9 @@ class TestWarmRenderSkipsMaterializer:
 
         # Render 2 (warm): a fresh executor sharing the persistent result_cache.
         mat2 = _CountingMaterializer(project)
-        ex2 = Executor(
+        ex2 = Run(
             board,
-            adapter_registry=_registry(project, file_materializer=mat2),
+            env=_registry(project, file_materializer=mat2),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
@@ -123,9 +124,9 @@ class TestWarmRenderSkipsMaterializer:
         result_cache = TrivialDuckDBCache()
 
         mat1 = _CountingMaterializer(project)
-        ex1 = Executor(
+        ex1 = Run(
             board,
-            adapter_registry=_registry(project, file_materializer=mat1),
+            env=_registry(project, file_materializer=mat1),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
@@ -139,9 +140,9 @@ class TestWarmRenderSkipsMaterializer:
         _bump_mtime_of(project, "data/sales.csv")
 
         mat2 = _CountingMaterializer(project)
-        ex2 = Executor(
+        ex2 = Run(
             board,
-            adapter_registry=_registry(project, file_materializer=mat2),
+            env=_registry(project, file_materializer=mat2),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
@@ -164,9 +165,9 @@ class TestSourceVersionMemoizedMidRender:
         project = _project(tmp_path, {"data/sales.csv": "region,amount\nNorth,100\n"})
         board = _board("SELECT * FROM sales")
         mat = _CountingMaterializer(project)
-        ex = Executor(
+        ex = Run(
             board,
-            adapter_registry=_registry(project, file_materializer=mat),
+            env=_registry(project, file_materializer=mat),
             query_registry={"q": board.queries["q"]},
             result_cache=TrivialDuckDBCache(),
         )
@@ -228,9 +229,9 @@ class TestMultiFileSource:
         result_cache = TrivialDuckDBCache()
 
         mat1 = _CountingMaterializer(project)
-        ex1 = Executor(
+        ex1 = Run(
             board,
-            adapter_registry=_registry(project, file_materializer=mat1),
+            env=_registry(project, file_materializer=mat1),
             query_registry={"j": board.queries["j"]},
             result_cache=result_cache,
         )
@@ -243,9 +244,9 @@ class TestMultiFileSource:
         _bump_mtime_of(project, "data/customers.csv")
 
         mat2 = _CountingMaterializer(project)
-        ex2 = Executor(
+        ex2 = Run(
             board,
-            adapter_registry=_registry(project, file_materializer=mat2),
+            env=_registry(project, file_materializer=mat2),
             query_registry={"j": board.queries["j"]},
             result_cache=result_cache,
         )
@@ -266,9 +267,9 @@ class TestLazySharedMaterializer:
             return FileSourceMaterializer(project)
 
         # Cold render: the factory builds exactly one shared materializer.
-        ex1 = Executor(
+        ex1 = Run(
             board,
-            adapter_registry=_registry(project, file_materializer_factory=_factory),
+            env=_registry(project, file_materializer_factory=_factory),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
@@ -277,9 +278,9 @@ class TestLazySharedMaterializer:
 
         # Warm render: everything is cached, so the factory is never called —
         # no DuckDB is opened at all.
-        ex2 = Executor(
+        ex2 = Run(
             board,
-            adapter_registry=_registry(project, file_materializer_factory=_factory),
+            env=_registry(project, file_materializer_factory=_factory),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
@@ -350,7 +351,7 @@ class TestRenderPathComposesFileSourceQueries:
     def test_a_rendered_file_source_query_goes_through_compose(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from dbt_charts.core.execute.adapters import adapter_registry
+        from dbt_charts.core.execute import run as run_stage
         from dbt_charts.core.execute.compose import compose
 
         composed: list[str] = []
@@ -359,12 +360,12 @@ class TestRenderPathComposesFileSourceQueries:
             composed.append(args[0].sql)
             return compose(*args, **kwargs)
 
-        monkeypatch.setattr(adapter_registry, "compose", spy)
+        monkeypatch.setattr(run_stage, "compose", spy)
         project = _project(tmp_path, {"data/sales.csv": "region,amount\nNorth,100\n"})
         board = _board("SELECT * FROM sales")
-        executor = Executor(
+        executor = Run(
             board,
-            adapter_registry=_registry(project),
+            env=_registry(project),
             query_registry={"q": board.queries["q"]},
         )
 
@@ -372,3 +373,68 @@ class TestRenderPathComposesFileSourceQueries:
 
         assert [r["amount"] for r in rows] == [100]
         assert composed == ["SELECT * FROM sales"]
+
+
+class TestRouteFollowsTheResolvedSource:
+    """The plan reads declared sources; the resolver decides which one runs. A
+    name two layers declare as different kinds runs on what the resolver chose."""
+
+    @staticmethod
+    def _duckdb_board() -> Any:
+        import yaml
+
+        board = compile_board(
+            yaml.dump(
+                {
+                    "queries": {"q": {"sql": "SELECT 7 AS n", "source": "x"}},
+                    "charts": {"c": {"query": "q", "type": "table"}},
+                }
+            )
+        ).board
+        assert board is not None
+        board.sources["x"] = {"type": "duckdb", "path": ":memory:"}
+        return board
+
+    def test_a_board_warehouse_shadows_a_project_file_source(
+        self, tmp_path: Path
+    ) -> None:
+        import yaml
+
+        (tmp_path / "data").mkdir()
+        (tmp_path / "data" / "x.csv").write_text("a\n1\n")
+        (tmp_path / "dbt_charts.yml").write_text(
+            yaml.dump({"sources": {"x": {"type": "csv", "files": {"x": "data/x.csv"}}}})
+        )
+        board = self._duckdb_board()
+        executor = Run(
+            board,
+            env=_registry(FilesystemProject(tmp_path)),
+            query_registry={"q": board.queries["q"]},
+        )
+
+        assert executor.execute_query("q") == [{"n": 7}]
+
+    def test_a_board_file_source_shadowed_by_a_project_warehouse(
+        self, tmp_path: Path
+    ) -> None:
+        from types import SimpleNamespace
+
+        from dbt_charts.core.compile.models.source import DuckDBSourceConfig
+
+        (tmp_path / "data").mkdir()
+        (tmp_path / "data" / "x.csv").write_text("a\n1\n")
+        (tmp_path / "dbt_charts.yml").write_text("sources: {}\n")
+        board = self._duckdb_board()
+        board.sources["x"] = {"type": "csv", "files": {"x": "data/x.csv"}}
+        registry = _registry(FilesystemProject(tmp_path))
+        # The allowlisted resolver answers with the project's entry.
+        registry.resolver = SimpleNamespace(
+            resolve=lambda **_: DuckDBSourceConfig(type="duckdb", path=":memory:")
+        )
+        executor = Run(
+            board,
+            env=registry,
+            query_registry={"q": board.queries["q"]},
+        )
+
+        assert executor.execute_query("q") == [{"n": 7}]

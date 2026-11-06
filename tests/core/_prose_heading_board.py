@@ -9,10 +9,11 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import compile as compile_board
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve.style.board import resolve_style
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.board_resolve import build_resolved_board
 from dbt_charts.core.render.boards import render_board_svg
+
+from .._run import Run
 
 
 def body_line() -> float:
@@ -27,9 +28,9 @@ def render_board_svg_text(yaml_text: str) -> str:
         result = compile_board(yaml_text)
         assert result.success, result.errors
         assert result.board is not None
-        executor = Executor(
+        executor = Run(
             result.board,
-            build_adapter_registry(FilesystemProject(Path(tmp))),
+            build_exec_env(FilesystemProject(Path(tmp))),
             query_registry=result.query_registry,
         )
         variables: dict[str, object] = {}

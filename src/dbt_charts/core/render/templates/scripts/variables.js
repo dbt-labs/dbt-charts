@@ -962,6 +962,8 @@
             sort.setAttribute('aria-label', words.sort);
             sort.setAttribute('aria-haspopup', 'menu');
             sort.setAttribute('aria-expanded', 'false');
+            /*{# A multiselect's bar is the field its pills and search share. #}*/
+            if (el.getAttribute('data-dbt-input') === 'multiselect') bar.classList.add('dbt-select-field');
             bar.appendChild(search);
             bar.appendChild(sort);
             popover.appendChild(bar);
@@ -995,6 +997,105 @@
         return popover;
     }
 
+    var _SVG_NS = 'http://www.w3.org/2000/svg';
+    /*{# Pill geometry in board units: label inset, the x's slot at the right #}*/
+    /*{# end, the space between pills, and the narrowest cut pill worth drawing. #}*/
+    var _PILL_PAD = 6;
+    var _PILL_X = 12;
+    var _PILL_GAP = 4;
+    var _PILL_MIN = 40;
+
+    function _svg(tag, attrs, parent) {
+        var node = document.createElementNS(_SVG_NS, tag);
+        Object.keys(attrs).forEach(function(k) { node.setAttribute(k, attrs[k]); });
+        parent.appendChild(node);
+        return node;
+    }
+
+    /*{# A multiselect's values as pills inside the field the board drew, in #}*/
+    /*{# place of its summary text. The field never changes size — the board's #}*/
+    /*{# layout is built on it — so pills pack from the value's left edge to the #}*/
+    /*{# arrow: whole ones while they fit, then one cut to fill what is left, #}*/
+    /*{# then "+N" for the rest. Only a live page draws them: an export keeps #}*/
+    /*{# the summary the render wrote. #}*/
+    function _drawPills(el, chosen, words) {
+        var field = el.querySelector('[data-dbt-field]');
+        var drawn = _drawnValueText(el, field);
+        var old = el.querySelector('.dbt-select-pills');
+        if (old) old.remove();
+        /*{# Like _drawCommitted: no drawn value, nothing to draw over. #}*/
+        if (!drawn) return;
+        if (!chosen.length) {
+            drawn.removeAttribute('visibility');
+            return;
+        }
+        drawn.setAttribute('visibility', 'hidden');
+        var arrow = el.querySelector('[data-dbt-ornament="arrow"]');
+        var left = parseFloat(drawn.getAttribute('x'));
+        var right = parseFloat(/M\s*([\d.]+)/.exec(arrow.getAttribute('d'))[1]) - _PILL_GAP - 2;
+        var top = parseFloat(field.getAttribute('y')) + 6;
+        var height = parseFloat(field.getAttribute('height')) - 12;
+        var font = {
+            y: drawn.getAttribute('y'),
+            'font-size': drawn.getAttribute('font-size'),
+            'font-family': drawn.getAttribute('font-family') || 'inherit'
+        };
+        var group = _svg('g', {'class': 'dbt-select-pills'}, el);
+        var probe = _svg('text', font, group);
+        function measure(text) {
+            probe.textContent = text;
+            return probe.getComputedTextLength();
+        }
+        /*{# The longest prefix that fits with its ellipsis. #}*/
+        function cut(text, room) {
+            if (measure(text) <= room) return text;
+            var lo = 0, hi = text.length;
+            while (lo < hi) {
+                var mid = Math.ceil((lo + hi) / 2);
+                if (measure(text.slice(0, mid) + '…') <= room) lo = mid; else hi = mid - 1;
+            }
+            return text.slice(0, lo) + '…';
+        }
+        function badge(n) { return n ? measure('+' + n) + 2 * _PILL_PAD + _PILL_GAP : 0; }
+        function pill(x, width, label, value) {
+            var g = _svg('g', {'class': value === null ? 'dbt-select-pill dbt-select-pill-more' : 'dbt-select-pill'}, group);
+            _svg('rect', {x: x, y: top, width: width, height: height, rx: 3}, g);
+            var text = _svg('text', Object.assign({x: x + _PILL_PAD}, font), g);
+            text.textContent = label;
+            if (value === null) return;
+            g.setAttribute('data-value', value);
+            var cx = x + width - _PILL_X / 2 - 1, cy = top + height / 2, r = 2.5;
+            /*{# A pointer shortcut: the menu's pill buttons are the keyboard's way. #}*/
+            var close = _svg('g', {'class': 'dbt-select-pill-x', 'aria-hidden': 'true'}, g);
+            _svg('rect', {x: x + width - _PILL_X - 2, y: top, width: _PILL_X + 2, height: height}, close);
+            _svg('path', {d: 'M' + (cx - r) + ' ' + (cy - r) + ' L' + (cx + r) + ' ' + (cy + r)
+                + ' M' + (cx + r) + ' ' + (cy - r) + ' L' + (cx - r) + ' ' + (cy + r)}, close);
+        }
+        var x = left;
+        var shown = 0;
+        for (var i = 0; i < chosen.length; i++) {
+            var label = String(chosen[i]);
+            var room = right - x - badge(chosen.length - i - 1);
+            var whole = measure(label) + _PILL_PAD + _PILL_X;
+            if (whole <= room) {
+                pill(x, whole, label, label);
+            } else if (room >= _PILL_MIN || (!shown && room > _PILL_PAD + _PILL_X)) {
+                pill(x, room, cut(label, room - _PILL_PAD - _PILL_X), label);
+                x += room + _PILL_GAP;
+                shown++;
+                break;
+            } else {
+                break;
+            }
+            x += whole + _PILL_GAP;
+            shown++;
+        }
+        if (shown < chosen.length) {
+            pill(x, measure('+' + (chosen.length - shown)) + 2 * _PILL_PAD, '+' + (chosen.length - shown), null);
+        }
+        probe.remove();
+    }
+
     /*{# Select / multiselect: open the page-level popover anchored off the #}*/
     /*{# drawn control's client rect. getBoundingClientRect() on an SVG element #}*/
     /*{# returns its on-screen box, so the existing positioning machinery works #}*/
@@ -1018,6 +1119,8 @@
         var members = Array.prototype.slice.call(
             popover.querySelectorAll('.dbt-select-option:not([data-unset])'));
         var words = _words(el);
+        var multi = el.getAttribute('data-dbt-input') === 'multiselect';
+        var field = popover.querySelector('.dbt-select-field');
         var sorted = '';
         var selectedOnly = false;
 
@@ -1113,7 +1216,12 @@
         /*{# that swallows the event is the one thing on the board it cannot #}*/
         /*{# see. The outside-click handler below already spares the trigger it #}*/
         /*{# came from, so nothing here needs stopPropagation to stay open. #}*/
-        _onValueGesture(el, function() {
+        _onValueGesture(el, function(e) {
+            var pillX = e.target.closest('.dbt-select-pill-x');
+            if (pillX) {
+                remove(pillX.parentNode.getAttribute('data-value'));
+                return;
+            }
             if (isOpen()) close(); else open();
         });
         el.addEventListener('keydown', function(e) {
@@ -1122,6 +1230,13 @@
         if (search) {
             search.addEventListener('input', narrow);
             search.addEventListener('keydown', function(e) {
+                if (e.key === 'Backspace' && multi && !search.value) {
+                    var last = _committedList(el).pop();
+                    if (last === undefined) return;
+                    e.preventDefault();
+                    remove(last);
+                    return;
+                }
                 if (e.key !== 'Enter' || !search.value) return;
                 e.preventDefault();
                 var first = popover.querySelector('.dbt-select-option:not([hidden]):not([data-unset])');
@@ -1146,9 +1261,14 @@
         /*{# A multiselect commits a list, so it toggles members and stays open; #}*/
         /*{# a select commits one value and closes. Binding both as "pick one" #}*/
         /*{# silently narrowed every multiselect to its first choice. #}*/
-        var multi = el.getAttribute('data-dbt-input') === 'multiselect';
         popover.addEventListener('click', function(e) {
             if (sortMenu && !e.target.closest('.dbt-select-sort, .dbt-select-sort-menu')) foldSortMenu(true);
+            var chipX = e.target.closest('.dbt-select-chip-x');
+            if (chipX) {
+                remove(chipX.parentNode.getAttribute('data-value'));
+                search.focus();
+                return;
+            }
             var opt = e.target.closest('.dbt-select-option');
             if (!opt) return;
             if (!multi) {
@@ -1160,27 +1280,72 @@
             }
             var value = opt.getAttribute('data-value');
             var committed = _committedList(el);
-            var chosen = opt.hasAttribute('data-unset') ? []
+            /*{# The unset row is the way out, so it closes; a member toggles and #}*/
+            /*{# stays open for the next pick. #}*/
+            commit(opt.hasAttribute('data-unset') ? []
                 : committed.indexOf(value) === -1 ? committed.concat([value])
-                : committed.filter(function(v) { return v !== value; });
+                : committed.filter(function(v) { return v !== value; }),
+                opt.hasAttribute('data-unset'));
+        });
+
+        /*{# Every change to a multiselect — a row, a pill's x, Backspace — lands #}*/
+        /*{# here. Empty commits '' either way: one spelling of "nothing", which #}*/
+        /*{# the server reads as the empty list. #}*/
+        function commit(chosen, closing) {
             /*{# A required control with no default has no legal empty state: #}*/
             /*{# committing one renders the next page with no board, and so no #}*/
             /*{# control to get back from. Refuse — nothing has changed yet. #}*/
             if (!chosen.length && el.getAttribute('data-dbt-can-unset') !== 'true') return;
             _reflectSelection(popover, chosen);
             if (search) narrow();
-            /*{# The unset row is the way out, so it closes; a member toggles and #}*/
-            /*{# stays open for the next pick. Empty commits '' either way: one #}*/
-            /*{# spelling of "nothing", which the server reads as the empty list. #}*/
-            if (opt.hasAttribute('data-unset')) close();
-            else if (search) search.focus();
+            if (closing) close();
+            else if (isOpen() && search) search.focus();
             /*{# The render's own summary, ahead of it: the count, then the first tick. #}*/
             /*{# The render also cuts it to the field; this draws it whole meanwhile. #}*/
             _drawCommitted(el, chosen.length > 1
                 ? _fill(words.selection_summary, {first: chosen[0], n: chosen.length})
                 : chosen.length ? chosen[0] : el.getAttribute('data-dbt-unset-label'));
+            _drawPills(el, chosen, words);
+            if (field) chips(chosen);
             updateVariable(name, chosen.length ? chosen : '');
-        });
+        }
+
+        function remove(value) {
+            commit(_committedList(el).filter(function(v) { return String(v) !== value; }), false);
+        }
+
+        /*{# The open field's pills, in the order they were picked, before the #}*/
+        /*{# search: the field wraps them and the menu grows down, never wider. #}*/
+        function chips(chosen) {
+            field.querySelectorAll('.dbt-select-chip').forEach(function(chip) { chip.remove(); });
+            chosen.forEach(function(v) {
+                var chip = document.createElement('span');
+                chip.className = 'dbt-select-chip';
+                chip.setAttribute('data-value', v);
+                var label = document.createElement('span');
+                label.className = 'dbt-select-chip-label';
+                label.textContent = v;
+                label.title = v;
+                var x = document.createElement('button');
+                x.type = 'button';
+                x.className = 'dbt-select-chip-x';
+                x.setAttribute('aria-label', _fill(words.remove_value, {value: v}));
+                chip.append(label, x);
+                field.insertBefore(chip, search);
+            });
+        }
+
+        if (multi) {
+            _drawPills(el, _committedList(el), words);
+            if (field) chips(_committedList(el));
+            /*{# Pills are measured in the board's font; one that arrives after #}*/
+            /*{# this measured the fallback, so they are packed again. #}*/
+            if (document.fonts) {
+                document.fonts.ready.then(function() {
+                    if (el.isConnected) _drawPills(el, _committedList(el), words);
+                });
+            }
+        }
         _registerPopover({trigger: el, popover: popover, isOpen: isOpen, open: open, close: close, view: view});
     }
 

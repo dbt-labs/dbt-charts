@@ -624,9 +624,9 @@ def _render_chart_item_inner(
     if not is_svg_family and cache_key in render_cache:
         chart_svg, _ = render_cache[cache_key]
         # The no-marks guard below needs the row count even on a cache hit.
-        # Re-fetching here is a memo hit, never a re-execution: the executor's
+        # Re-fetching here is a memo hit, never a re-execution: the ledger's
         # per-render memo is unconditional (`--no-cache` disables only the
-        # persistent store — see Executor.execute_query), so these are the
+        # persistent store — see plan.use_store), so these are the
         # same rows the chart was resolved against.
         v2_data = (
             build_chart_datasets(chart, results, variables)[chart.query_name]

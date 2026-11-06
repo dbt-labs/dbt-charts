@@ -17,14 +17,14 @@ import pytest
 
 from dbt_charts.core.diagnostics.codes_execute import ERR_WAREHOUSE_RESULT_WARNING
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters.base import (
-    WarehouseStatementError,
-    resolve_effective_row_limit,
-)
 from dbt_charts.core.execute.drivers._cdn import (
     CdnDriverConnection,
     _ConnectFailed,
     open_cdn_driver,
+)
+from dbt_charts.core.execute.query_result import (
+    WarehouseStatementError,
+    resolve_effective_row_limit,
 )
 
 _WARNINGS_OPTION = "adbc.dbt.last_warnings"

@@ -27,7 +27,7 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import BoardRenderResult, render_dashboard
 from dbt_charts.core.diagnostics.diagnostic import Diagnostic
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import InMemoryBoard
 
 # `segment` exists so a rows+columns test can build a real 2-D grid. Facing the
@@ -57,7 +57,7 @@ def _render(
     board_style: dict[str, Any] | None = None,
 ) -> BoardRenderResult:
     project = FilesystemProject(tmp_path)
-    registry = build_adapter_registry(project, read_only=False)
+    registry = build_exec_env(project, read_only=False)
     extra_yaml = "\n".join(f"    {k}: {json.dumps(v)}" for k, v in chart_extra.items())
     board_style_yaml = (
         f"style: {json.dumps(board_style)}\n" if board_style is not None else ""
@@ -81,7 +81,7 @@ rows:
     return render_dashboard(
         board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
         project=project,
-        adapter_registry=registry,
+        env=registry,
         result_cache=None,
         format="svg",
         width=600,

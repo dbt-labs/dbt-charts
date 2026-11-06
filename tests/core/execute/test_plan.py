@@ -1,6 +1,7 @@
 """Plan stage: the one place a query's variables, route and cache key are decided."""
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -9,16 +10,12 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
 from dbt_charts.core.execute.duckdb_cache import compute_cache_key
-from dbt_charts.core.execute.executor import Executor
-from dbt_charts.core.execute.plan import (
-    CacheRefComposition,
-    FileSource,
-    Warehouse,
-    plan,
-)
+from dbt_charts.core.execute.env import build_exec_env
+from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+from ..._run import Run
 
 _BOARD = """\
 title: T
@@ -54,7 +51,7 @@ def _executor(
     local_project: Callable[..., FilesystemProject],
     cache: TrivialDuckDBCache | None = None,
     use_cache: bool = True,
-) -> Executor:
+) -> Run:
     (tmp_path / "sales.csv").write_text("n\n1\n")
     (tmp_path / "dbt_charts.yml").write_text(
         "sources:\n"
@@ -63,29 +60,27 @@ def _executor(
     )
     compiled = compile_board(_BOARD)
     assert compiled.board is not None, compiled.errors
-    return Executor(
+    return Run(
         compiled.board,
-        adapter_registry=build_adapter_registry(local_project(tmp_path)),
+        env=build_exec_env(local_project(tmp_path)),
         query_registry=compiled.query_registry,
         result_cache=cache,
         use_cache=use_cache,
     )
 
 
-def test_each_route_is_decided_at_plan_time(
+def test_a_composing_query_carries_its_upstreams_plans(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
     executor = _executor(tmp_path, local_project, TrivialDuckDBCache())
 
-    routes = {
-        p.name: p.route for p in plan(executor.ctx, ["base", "composed", "from_file"])
+    upstreams = {
+        p.name: p.upstreams
+        for p in plan(executor.ctx, ["base", "composed", "from_file"])
     }
 
-    assert routes == {
-        "base": Warehouse(),
-        "composed": CacheRefComposition(),
-        "from_file": FileSource(),
-    }
+    assert upstreams["base"] == upstreams["from_file"] == {}
+    assert list(upstreams["composed"]) == ["base"]
 
 
 def test_plan_merges_board_defaults_and_strips_the_prefix(
@@ -146,11 +141,11 @@ def test_a_query_on_a_file_source_is_never_tailable_whatever_its_route(
     composed = query.model_copy(
         update={"sql": "SELECT * FROM {{ queries.base.cache }}"}
     )
-    executor.query_registry = {"from_file_cached": composed}
+    ctx = replace(executor.ctx, query_registry={"from_file_cached": composed})
 
-    [planned] = plan(executor.ctx, ["from_file_cached"])
+    [planned] = plan(ctx, ["from_file_cached"])
 
-    assert planned.route == CacheRefComposition()
+    assert planned.upstreams
     assert not planned.tailable
     assert plan(executor.ctx, ["base"])[0].tailable
 
@@ -163,9 +158,9 @@ def test_planned_cache_key_is_the_content_key_over_a_mocked_registry() -> None:
     )
     board = compiled.board
     assert board is not None, compiled.errors
-    executor = Executor(
+    executor = Run(
         board,
-        adapter_registry=MagicMock(),
+        env=MagicMock(),
         query_registry=compiled.query_registry,
     )
 

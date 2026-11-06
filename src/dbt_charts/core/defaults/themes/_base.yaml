@@ -229,10 +229,11 @@ style:
             padding: 5
             radius: 3
             stroke: null
-          # auto: top/center on a stripe spanning x, right/center on one spanning y
+          # edge auto: top on a stripe spanning x, right on one spanning y; the
+          # label is centered on the band and wraps to its width
           position:
             edge: auto
-            align: auto
+            align: center
             overlay: auto
           dx: 0
           dy: 0
@@ -571,6 +572,7 @@ style:
       pagination:
         enabled: true
         page_rows: 20
+      transpose: false
       text_baseline_offset: 4.0
       # No title_baseline_offset: the title baseline derives from the
       # resolved title font size (_TITLE_ASCENT_RATIO in
@@ -600,6 +602,9 @@ style:
           size: *size_label
           style: italic
       row_numbers:
+        visible: false
+        header: "#"
+        align: right
         font: secondary
       paginator:
         # Right-aligned chevrons + page numbers below the table. Colors come

@@ -250,7 +250,7 @@ def _rendered_svg(board_yaml: str) -> str:
     from pathlib import Path
 
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
     from dbt_charts.core.project import InMemoryBoard
 
     from ..conftest import InMemoryProject
@@ -260,7 +260,7 @@ def _rendered_svg(board_yaml: str) -> str:
         board=InMemoryBoard(board_yaml, path=None),
         variables=None,
         project=project,
-        adapter_registry=build_adapter_registry(project, read_only=False),
+        env=build_exec_env(project, read_only=False),
         result_cache=None,
         format="svg",
     )

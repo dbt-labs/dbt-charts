@@ -66,9 +66,8 @@ def _compile_data_aware_board(
     executor.execute_query_result.side_effect = lambda name, variables: rows_result(
         rows_by_query.get(name, [])
     )
-    executor.execute_chart.return_value = []
-    executor.execute_chart_result.return_value = rows_result([])
-    executor.execute_batch.return_value = {}
+    executor.execute_query.return_value = []
+    executor.execute_query_result.return_value = rows_result([])
 
     rf, _ = build_resolved_board(board, executor, {}, render_first=False)
     return rf

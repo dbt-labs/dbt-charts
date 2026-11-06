@@ -152,7 +152,7 @@ def test_calculate_data_aware_layout_uses_board_width_without_charts():
     resolved = resolve_style(get_theme_style())
     board = make_test_board(id="f1", resolved_style=resolved)
     executor = MagicMock()
-    executor.execute_chart.return_value = []
+    executor.execute_query.return_value = []
 
     with (
         patch.object(ls_module, "calculate_layout_height", return_value=500.0),

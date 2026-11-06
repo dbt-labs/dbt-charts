@@ -54,6 +54,7 @@
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}–{end_day} {month} {year}",
   "controls.reset": "Reimposta",
+  "controls.remove_value": "Rimuovi {value}",
   "controls.search": "Cerca",
   "controls.search_values": "Cerca valori",
   "controls.select_all": "Seleziona tutto",

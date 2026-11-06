@@ -14,10 +14,8 @@ import pytest
 
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
     migrate_yaml_text,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.parse.parser import load_yaml_mapping
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
@@ -26,6 +24,8 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     load_yaml_schema_catalog,
 )
 
+from ._engine_migrations import migrate_mapping
+
 
 @pytest.fixture
 def catalog() -> YamlSchemaCatalog:
@@ -33,21 +33,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: JsonObject, catalog: YamlSchemaCatalog) -> JsonObject:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
-
-
-def test_registry_covers_the_0_4_0_transition(catalog: YamlSchemaCatalog) -> None:
-    _, registry = _board_migration_context()
-
-    moves = registry.transition_from("0.4.0")
-
-    assert moves
-    assert all(move.target_schema == "0.5.0" for move in moves)
-    assert any(move.old_path == ("style", "board") for move in moves)
-    assert any(move.new_path == ("style", "frame") for move in moves)
+        return migrate_mapping(raw)
 
 
 def test_style_board_key_migrates_to_frame_in_memory(
@@ -82,7 +70,6 @@ def test_style_board_key_yaml_text_round_trip_preserves_comments(
     """The file-preserving writer used by `dct migrate` renames style.board:
     to style.frame: in place, leaving surrounding comments and formatting
     untouched (a real ``dct migrate`` invocation writes exactly this)."""
-    _, registry = _board_migration_context()
     yaml_text = (
         "title: Revenue\n"
         "style:\n"
@@ -99,7 +86,7 @@ def test_style_board_key_yaml_text_round_trip_preserves_comments(
         "    y: amount\n"
     )
 
-    migrated = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+    migrated = migrate_yaml_text(yaml_text)
 
     assert "# keep this comment" in migrated
     doc = load_yaml_mapping(migrated)

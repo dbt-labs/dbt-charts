@@ -5,14 +5,14 @@
 use serde_json::Value;
 
 use super::{Attachment, LegendConfig, Mode, Parts, Resolved};
-use crate::common::{category_color, category_ink, category_scale_for, row_str, CategoryColorScale};
+use crate::common::{category_color, category_ink, category_scale_for, CategoryColorScale};
+use ::bind::rows::{row_str};
 use diagnostic::Diagnostic;
 use crate::families::table::bind::is_date_text;
-use crate::families::legend::{
-    fold_symbol_limit, legend_title_text, resolve_legend_values, VEGA_LEGEND_SYMBOL_LIMIT,
-};
-use crate::label_template::{Scope, Template};
-use crate::number_locale::d3_format;
+use crate::families::legend::{legend_title_text, VEGA_LEGEND_SYMBOL_LIMIT};
+use ::bind::legend::{fold_symbol_limit, resolve_legend_values};
+use ::bind::label_template::{Scope, Template};
+use ::bind::formats::locale::d3_format;
 use crate::Payload;
 
 /// A bound pie: the resolved chart as deserialized, with what the rows derive from it.
@@ -58,7 +58,7 @@ pub(crate) struct SliceLabel {
 pub(crate) struct LegendPlan {
     /// `(label, fill)` per drawn entry, the folded overflow row included.
     pub(crate) entries: Vec<(String, String)>,
-    /// Per entry, the raw color value its slice links by; `None` for the "…N entries" fold row.
+    /// Per entry, the raw color value its slice links by; `None` for the "+N more" fold note.
     pub(crate) keys: Vec<Option<String>>,
     pub(crate) title: String,
     pub(crate) symbol_stroke: Option<String>,

@@ -159,3 +159,33 @@ class TestAuthoredFieldsRespected:
         resolved = resolve(chart, ALL_POSITIVE_DATA, chart_style_context=board_ctx)
         assert resolved.x == "category"
         assert resolved.y == "revenue"
+
+
+class TestZeroAutoVersusUnsetOnYStartBar:
+    """`auto` and unset are not interchangeable on a y_start bar: unset fits the
+    axis to bars that never reach zero, `auto` anchors at zero."""
+
+    def _zero_anchored(self, zero: bool | str | None) -> bool:
+        _, board_ctx = _default_board()
+        chart = TypeAdapter(Chart).validate_python(
+            {
+                "id": "t",
+                "type": "bar",
+                "x": "c",
+                "y": "v",
+                "y_start": "s",
+                "style": {"axis_y": {"scale": {"continuous": {"zero": zero}}}},
+            }
+        )
+        data = [
+            {"c": "A", "s": 100.0, "v": 150.0},
+            {"c": "B", "s": 120.0, "v": 170.0},
+        ]
+        resolved = resolve(chart, data, chart_style_context=board_ctx)
+        return resolved.style.axis_y.zero_anchored
+
+    def test_unset_fits_the_axis(self) -> None:
+        assert self._zero_anchored(None) is False
+
+    def test_auto_anchors_at_zero(self) -> None:
+        assert self._zero_anchored("auto") is True

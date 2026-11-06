@@ -1428,7 +1428,7 @@ class DuckDBSourceConfig(DatabaseSourceConfig):
     connections with read_only=True and forces enable_external_access=False.
     Callers that need external access (e.g. the playground for local dev) can
     pass allow_external_access_in_readonly=True on
-    build_adapter_registry together with duckdb_config={"enable_external_access":
+    build_exec_env together with duckdb_config={"enable_external_access":
     True} to explicitly opt back in.
 
     `attach`, `extensions`, and `secrets` need external access to set up

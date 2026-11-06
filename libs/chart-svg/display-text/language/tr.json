@@ -54,6 +54,7 @@
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}–{end_day} {month} {year}",
   "controls.reset": "Sıfırla",
+  "controls.remove_value": "{value} kaldır",
   "controls.search": "Ara",
   "controls.search_values": "Değerlerde ara",
   "controls.select_all": "Tümünü seç",

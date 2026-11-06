@@ -19,7 +19,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.testclient import TestClient
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+from dbt_charts.core.execute.backends.base import BackendRegistry
+from dbt_charts.core.execute.env import ExecEnv, make_exec_env
 from dbt_charts.core.serve import server as server_mod, shutdown as shutdown_mod
 
 _BOARD_YAML = """\
@@ -58,10 +59,10 @@ class _BlockingRender:
     def __init__(self) -> None:
         self.entered = threading.Event()
         self.release = threading.Event()
-        self.registries: list[AdapterRegistry] = []
+        self.registries: list[ExecEnv] = []
 
-    def __call__(self, *_a: Any, adapter_registry: AdapterRegistry, **_k: Any) -> Any:
-        self.registries.append(adapter_registry)
+    def __call__(self, *_a: Any, env: ExecEnv, **_k: Any) -> Any:
+        self.registries.append(env)
         if len(self.registries) == 1:
             self.entered.set()
             self.release.wait(10)
@@ -101,9 +102,9 @@ def test_config_reload_closes_the_old_registry_only_after_its_render(
     with TestClient(app) as client:
         board, _ = _in_thread(lambda: client.get("/x"))
         assert blocking_render.entered.wait(5)
-        old = app.state.adapter_registry
-        close = MagicMock(wraps=old.close)
-        monkeypatch.setattr(old, "close", close)
+        old = app.state.env
+        close = MagicMock(wraps=old.backends.close)
+        monkeypatch.setattr(old.backends, "close", close)
 
         config = project / "dbt_charts.yml"
         st = config.stat()
@@ -115,7 +116,7 @@ def test_config_reload_closes_the_old_registry_only_after_its_render(
 
         blocking_render.release.set()
         board.join(10)
-        assert app.state.adapter_registry is not old
+        assert app.state.env is not old
 
     assert closed_while_rendering == 0
     close.assert_called_once()
@@ -135,19 +136,30 @@ def uvicorn_shutdown_calls(monkeypatch: pytest.MonkeyPatch) -> list[None]:
     return calls
 
 
+def _env_with_spy_backend(tmp_path: Path) -> tuple[ExecEnv, MagicMock]:
+    """An env whose only backend is a spy, to observe interrupt and close."""
+    backend = MagicMock()
+    env = make_exec_env(
+        project=FilesystemProject(tmp_path),
+        backends=BackendRegistry({"duckdb": backend}),
+    )
+    return env, backend
+
+
 def test_shutdown_interrupts_every_live_registry(
     tmp_path: Path, uvicorn_shutdown_calls: list[None]
 ) -> None:
     app = server_mod.create_server(FilesystemProject(_make_project(tmp_path)))
-    current, leased = MagicMock(), MagicMock()
-    app.state.adapter_registry = current
-    app.state.registry_leases.acquire(leased)
+    current, current_backend = _env_with_spy_backend(tmp_path)
+    leased, leased_backend = _env_with_spy_backend(tmp_path)
+    app.state.env = current
+    app.state.env_leases.acquire(leased)
     server = shutdown_mod.build_server(app, host="localhost", port=0)
 
     asyncio.run(server.shutdown())
 
-    current.interrupt.assert_called_once()
-    leased.interrupt.assert_called_once()
+    current_backend.interrupt.assert_called_once()
+    leased_backend.interrupt.assert_called_once()
     assert uvicorn_shutdown_calls == [None]
 
 
@@ -177,29 +189,30 @@ def test_static_paths_outside_the_font_mount_still_reach_the_board_route(
         assert client.get("/static/nope.css").status_code != 500
 
 
-def test_a_registry_leased_after_shutdown_began_is_interrupted() -> None:
-    leases = server_mod.RegistryLeases()
-    current, late = MagicMock(), MagicMock()
+def test_a_registry_leased_after_shutdown_began_is_interrupted(tmp_path: Path) -> None:
+    leases = server_mod.EnvLeases()
+    current, current_backend = _env_with_spy_backend(tmp_path)
+    late, late_backend = _env_with_spy_backend(tmp_path)
 
     leases.interrupt_all(current)
     leases.acquire(late)
     leases.acquire(current)
     leases.acquire(late)
 
-    current.interrupt.assert_called_once()
-    late.interrupt.assert_called_once()
+    current_backend.interrupt.assert_called_once()
+    late_backend.interrupt.assert_called_once()
 
 
-def test_close_retired_closes_registries_still_leased() -> None:
-    leases = server_mod.RegistryLeases()
-    old = MagicMock()
+def test_close_retired_closes_registries_still_leased(tmp_path: Path) -> None:
+    leases = server_mod.EnvLeases()
+    old, old_backend = _env_with_spy_backend(tmp_path)
     leases.acquire(old)
     leases.retire(old)
-    old.close.assert_not_called()
+    old_backend.close.assert_not_called()
 
     leases.close_retired()
 
-    old.close.assert_called_once()
+    old_backend.close.assert_called_once()
 
 
 def test_force_exit_after_ends_an_exit_stuck_on_a_pool_thread() -> None:

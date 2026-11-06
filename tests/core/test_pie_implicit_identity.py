@@ -26,7 +26,7 @@ from typing import Any
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import BoardRenderResult, render_dashboard
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import InMemoryBoard
 
 
@@ -39,7 +39,7 @@ def _render_pie(
     theta: str = "value",
 ) -> BoardRenderResult:
     project = FilesystemProject(tmp_path)
-    registry = build_adapter_registry(project, read_only=False)
+    registry = build_exec_env(project, read_only=False)
     values = json.dumps([list(row) for row in rows])
     columns_yaml = json.dumps(columns)
     yaml_content = f"""
@@ -59,7 +59,7 @@ rows:
     return render_dashboard(
         board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
         project=project,
-        adapter_registry=registry,
+        env=registry,
         result_cache=None,
         format="svg",
     )

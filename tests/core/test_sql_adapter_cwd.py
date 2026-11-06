@@ -92,8 +92,8 @@ def test_duckdb_file_search_path_set_in_read_only_authoring(tmp_path: Path) -> N
     Gating the SET on the effective external-access posture must not drop it for
     the read-only mode that DOES allow relative reads.
     """
-    from dbt_charts.core.execute.adapters.adapter_registry import (
-        LOCAL_AUTHORING_REGISTRY_KWARGS,
+    from dbt_charts.core.execute.env import (
+        LOCAL_AUTHORING_ENV_KWARGS,
     )
 
     scratch = tmp_path / "scratch"
@@ -103,7 +103,7 @@ def test_duckdb_file_search_path_set_in_read_only_authoring(tmp_path: Path) -> N
     adapter = DuckDBRunner(
         data_dir=CloudProject(tmp_path, scratch).data_path("."),
         source_config=DuckDBSourceConfig(type="duckdb"),
-        **LOCAL_AUTHORING_REGISTRY_KWARGS,
+        **LOCAL_AUTHORING_ENV_KWARGS,
     )
     query = SqlQuery(sql="SELECT x FROM read_csv('data/t.csv')", source="test_db")
 

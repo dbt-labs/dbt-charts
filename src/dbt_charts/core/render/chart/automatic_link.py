@@ -48,15 +48,17 @@ Entry points:
     the resulting ``loc=(source, schema, table)`` directly.
   - ``source_schema_table(query, require_row_grain)`` — extract (source, schema,
     table) from a query (CTE/plain only), or an empty tuple on bail. Internal
-    callers that hold an ``AdapterRegistry`` use the private
+    callers that hold a ``LinkSchemaReader`` use the private
     ``_loc_for_query`` instead, which additionally attempts FK-proven JOIN
     resolution.
   - ``resolve_fk_column_links(source, schema, table, fk_edges)`` — pure resolver
     for per-column FK drill links, callable from tests without the context.
-  - ``fetch_column_rows_for_link(adapter_registry, query, board)`` — fetch column
-    metadata rows for key selection from the schema adapter.
-  - ``fk_column_links_from_executor(query, adapter_registry)`` — fetch FK edges
-    and return per-column link templates.
+  - ``fetch_column_rows_for_link(schema, query)`` — the planned column metadata
+    rows for key selection.
+  - ``fk_column_links(query, schema)`` — the planned FK edges as per-column link
+    templates.
+  - ``with_link_schema(results, ctx, board, variables)`` — the results plus the
+    schema and foreign keys the resolve will read, run before render.
   - ``resolve_filter_cell_link(column, value, filter_variables)`` — pure helper
     that returns ``?col=percent-encoded-value`` or ``None``.
   - ``set_filter_variables_context(names)`` / ``get_filter_variables_context()``
@@ -65,12 +67,14 @@ Entry points:
 
 from __future__ import annotations
 
-from collections.abc import Set as AbstractSet
+from collections.abc import Iterator, Set as AbstractSet
 from contextvars import ContextVar
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
-from dbt_charts.core.compile.models.chart.normalized import _BaseChartFields
+from dbt_charts.core.compile.models.chart.normalized import TableChart, _BaseChartFields
+from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.render.chart.sql_grain import (
     build_col_output_alias_map,
     parse_sql,
@@ -79,11 +83,12 @@ from dbt_charts.core.render.chart.sql_grain import (
 )
 
 if TYPE_CHECKING:
-    from dbt_charts.core.compile.models.board.normalized import Board
+    from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
     from dbt_charts.core.compile.models.chart.normalized import Chart
     from dbt_charts.core.compile.models.query.normalized import AnyQuery
-    from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-    from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
+    from dbt_charts.core.execute.link_schema import LinkSchemaReader
+    from dbt_charts.core.execute.plan import ExecContext
+    from dbt_charts.core.execute.query_results import QueryResults
 
 # Per-render-pass set of declared variable names (from board.variable_registry).
 # Cells whose column is in this set emit ?col=value filter links.
@@ -149,7 +154,7 @@ def _extract_single_base_table(
     - CTE-wrapped queries are resolved via ``resolve_cte_spine`` (in
       ``sql_grain``) when the CTE body is a clean row-grain SELECT over a
       single schema-qualified table.
-    - JOIN queries always bail here; callers with an ``AdapterRegistry`` use
+    - JOIN queries always bail here; callers with a ``LinkSchemaReader`` use
       ``_loc_for_query`` for FK-proven JOIN resolution.
     - Plain aggregated queries (GROUP BY / DISTINCT / aggregate functions) bail
       because the rows are not row-grain and a per-row detail link would be wrong.
@@ -181,7 +186,7 @@ def _extract_single_base_table(
         return resolve_cte_spine(tree)
 
     if has_joins:
-        # FK-proven JOIN resolution requires AdapterRegistry; callers use _loc_for_query.
+        # FK-proven JOIN resolution needs the FK edges; callers use _loc_for_query.
         return _BAIL
 
     if list(tree.find_all(exp.Subquery)):
@@ -216,11 +221,11 @@ def _extract_single_base_table(
 
 def _loc_for_query(
     query: AnyQuery,
-    adapter_registry: AdapterRegistry,
+    schema: LinkSchemaReader,
 ) -> tuple[str, str, str] | tuple[()]:
     """Combined location resolver: CTE/plain then FK-proven JOIN.
 
-    Callers that hold an ``AdapterRegistry`` use this instead of calling
+    Callers that hold a ``LinkSchemaReader`` use this instead of calling
     ``source_schema_table`` directly — always the row-grain table path (the
     chart-mark path, ``require_row_grain=False``, calls ``source_schema_table``
     directly instead; JOINs stay bail-closed there and this combined resolver
@@ -231,7 +236,7 @@ def _loc_for_query(
 
     Args:
         query: The compiled query to inspect.
-        adapter_registry: Executor adapter registry for FK JOIN resolution.
+        schema: The planned schema, for the FK edges JOIN resolution proves with.
     """
     loc = source_schema_table(query, require_row_grain=True)
     if loc:
@@ -245,11 +250,11 @@ def _loc_for_query(
     tree = parse_sql(query.sql)
     if tree is None:
         return _BAIL
-    result = resolve_join_spine(tree, adapter_registry)
+    result = resolve_join_spine(tree, schema.fk_edges_of)
     if not result:
         return _BAIL
-    schema, table = result
-    return query.source, schema, table
+    schema_name, table = result
+    return query.source, schema_name, table
 
 
 def source_schema_table(
@@ -260,7 +265,7 @@ def source_schema_table(
 
     Handles schema queries and SQL queries over a single base table or a
     single-CTE wrapper over a single base table.  JOIN queries always bail here;
-    callers with an ``AdapterRegistry`` use ``_loc_for_query`` to also attempt
+    callers with a ``LinkSchemaReader`` use ``_loc_for_query`` to also attempt
     FK-proven JOIN resolution.
 
     When ``require_row_grain=False``, aggregated SQL queries are allowed (chart
@@ -297,17 +302,16 @@ def source_schema_table(
 
 
 def fetch_column_rows_for_link(
-    adapter_registry: AdapterRegistry,
+    schema: LinkSchemaReader,
     query: AnyQuery,
-    board: Board,
 ) -> list[dict[str, str]]:
     """Return column metadata rows for auto-link key selection, or [] on bail.
 
-    Executes a schema-type query (source + schema + table) through the
-    schema adapter — the same stable metadata path used by the /data/
-    table-index template's ``queries.columns`` block. This is stable across
-    cache hits and misses because schema metadata comes from the adapter's
-    LayeredSchemaResolver, not from the ephemeral per-request query cursor.
+    Reads the planned schema query (source + schema + table) — the same stable
+    metadata path used by the /data/ table-index template's ``queries.columns``
+    block. This is stable across cache hits and misses because schema metadata
+    comes from the LayeredSchemaResolver, not from the ephemeral per-request
+    query cursor.
 
     Returns rows with ``name`` and ``actual_type`` keys (matching the format
     ``plan_link_keys`` expects), or an empty list when the query doesn't map
@@ -315,26 +319,16 @@ def fetch_column_rows_for_link(
     prefix, unresolvable CTEs/JOINs, or resolver errors).
 
     Args:
-        adapter_registry: The executor's adapter registry (owns SchemaAdapter).
+        schema: The planned schema, which answers the column lookup.
         query: The chart's resolved query. Only ``SchemaQuery`` and
             ``SqlQuery`` over a single base table are handled.
-        board: The compiled board passed to execute() for board-level source
-            resolution.
     """
-    loc = _loc_for_query(query, adapter_registry)
+    loc = _loc_for_query(query, schema)
     if not loc:
-        return []
-    src, schema, table = loc
-
-    from dbt_charts.core.compile.models.query.normalized import SchemaQuery
-
-    schema_query = SchemaQuery(source=src, schema=schema, table=table)
-    result = adapter_registry.execute(schema_query, variables=None, board=board)
-    if result.error or not result.data:
         return []
     return [
         {"name": row["name"], "actual_type": row["actual_type"]}
-        for row in result.data
+        for row in schema.columns_of(loc)
         if "name" in row and "actual_type" in row
     ]
 
@@ -403,7 +397,7 @@ def resolve_column_set_link(
     link for that identity set.
 
     The caller resolves the query location first (``source_schema_table`` or,
-    for callers holding an ``AdapterRegistry``, ``_loc_for_query``) — this
+    for callers holding a ``LinkSchemaReader``, ``_loc_for_query``) — this
     function is pure given those inputs (no SQL parsing here).
 
     **Precedence:**
@@ -506,7 +500,7 @@ def resolve_column_set_link(
     return f"/data/{source}/{schema}/{table}/?{params}"
 
 
-def _table_row_detail_link(chart_query: AnyQuery, results: ResolveDataProvider) -> str:
+def _table_row_detail_link(chart_query: AnyQuery, schema: LinkSchemaReader) -> str:
     """Synthesize a table's own-row detail link, or ``""`` if none can be
     safely resolved.
 
@@ -515,12 +509,10 @@ def _table_row_detail_link(chart_query: AnyQuery, results: ResolveDataProvider) 
     ``resolve_column_set_link``: per-column FK-drill links are injected
     separately so the table root link stays own-table only.
     """
-    _loc = _loc_for_query(chart_query, results.adapter_registry)
+    _loc = _loc_for_query(chart_query, schema)
     if not _loc:
         return ""
-    column_rows_for_link = fetch_column_rows_for_link(
-        results.adapter_registry, chart_query, board=results.board
-    )
+    column_rows_for_link = fetch_column_rows_for_link(schema, chart_query)
     from dbt_charts.core.compile.models.query.normalized import (  # noqa: PLC0415
         is_sql_query,
     )
@@ -572,7 +564,7 @@ def _table_row_detail_link(chart_query: AnyQuery, results: ResolveDataProvider) 
 
 def synthesize_automatic_link(
     chart: Chart,
-    results: ResolveDataProvider,
+    schema: LinkSchemaReader,
     exclude_x: bool = False,
 ) -> str:
     """Synthesize an auto-link template for a chart mark or table row.
@@ -594,10 +586,6 @@ def synthesize_automatic_link(
       When ``exclude_x=True`` (caller detected a measure on x), ``x`` is
       omitted from the channel set — linking by a continuous measure is wrong.
     """
-    from dbt_charts.core.execute.adapters.schema_adapter import (  # noqa: PLC0415
-        fetch_fk_edges,
-    )
-
     if not isinstance(chart, _BaseChartFields):
         return ""
     _chart_query = chart.query
@@ -605,7 +593,7 @@ def synthesize_automatic_link(
         return ""
 
     if chart.type == "table":
-        return _table_row_detail_link(_chart_query, results)
+        return _table_row_detail_link(_chart_query, schema)
 
     # Non-table chart: non-measure dimension channels are the mark's identity.
     # x and color are family-specific fields not present on all Chart members.
@@ -623,26 +611,13 @@ def synthesize_automatic_link(
     if not _loc:
         return ""
 
-    from dbt_charts.core.compile.models.query.normalized import (  # noqa: PLC0415
-        SchemaQuery,
-    )
-
-    _src, _schema, _table = _loc
-    _schema_qry = SchemaQuery(source=_src, schema=_schema, table=_table)
-    _schema_result = results.adapter_registry.execute(
-        _schema_qry, variables=None, board=results.board
-    )
-    _actual_cols: set[str] = (
-        {r["name"] for r in _schema_result.data if "name" in r}
-        if not _schema_result.error and _schema_result.data
-        else set()
-    )
+    _actual_cols = {r["name"] for r in schema.columns_of(_loc) if "name" in r}
 
     dim_cols = {ch: col for ch, col in dim_cols.items() if col in _actual_cols}
     if not dim_cols:
         return ""
 
-    _fk_edges = fetch_fk_edges(results.adapter_registry, _loc[2])
+    _fk_edges = schema.fk_edges_of(_loc[2])
 
     return resolve_column_set_link(
         channel_cols=dim_cols,
@@ -652,13 +627,13 @@ def synthesize_automatic_link(
     )
 
 
-def fk_column_links_from_executor(
+def fk_column_links(
     query: AnyQuery,
-    adapter_registry: AdapterRegistry,
+    schema: LinkSchemaReader,
 ) -> dict[str, str]:
-    """Fetch FK edges from the dbt manifest + super-schema and return per-column links.
+    """The planned FK edges (dbt manifest + super-schema) as per-column links.
 
-    Delegates to ``fetch_fk_edges`` (execute layer) and ``resolve_fk_column_links``
+    Reads ``LinkSchemaReader.fk_edges_of`` and ``resolve_fk_column_links``
     after extracting the table location from ``query``.  Both declared dbt
     relationship edges and super-schema recommended heuristic edges are included.
 
@@ -676,12 +651,10 @@ def fk_column_links_from_executor(
     - The query type is not SchemaQuery or SqlQuery.
     - The SQL has joins, a CTE, or no schema prefix.
     - The project has no dbt manifest or no declared/heuristic FK edges.
-    - The adapter registry has no project root (in-memory / test executor).
 
     Args:
         query: The chart's resolved query.
-        adapter_registry: The executor's AdapterRegistry (provides project root
-                          for manifest and cache loading).
+        schema: The planned schema, which answers the FK-edge lookup.
 
     Returns:
         A dict mapping FK column name → FK drill link template string.
@@ -705,11 +678,64 @@ def fk_column_links_from_executor(
     loc = source_schema_table(query)
     if not loc:
         return {}
-    src, schema, table = loc
+    src, schema_name, table = loc
+    return resolve_fk_column_links(src, schema_name, table, schema.fk_edges_of(table))
 
-    from dbt_charts.core.execute.adapters.schema_adapter import (  # noqa: PLC0415
-        fetch_fk_edges,
+
+def _drawn_charts(board: Board, variables: VariableValues) -> Iterator[Chart]:
+    """The charts resolve draws: no hidden item, one tab per tabs layout."""
+    from dbt_charts.core.render.sizing import active_layout_items  # noqa: PLC0415
+
+    for item in active_layout_items(board.layout, variables):
+        if item.chart is not None:
+            yield item.chart
+        if item.board is not None:
+            yield from _drawn_charts(item.board, variables)
+
+
+def with_link_schema(
+    results: QueryResults,
+    ctx: ExecContext,
+    board: Board,
+    variables: VariableValues,
+) -> QueryResults:
+    """*results* plus the schema and foreign keys ``board``'s resolve will read for
+    automatic links, run now so render never asks the warehouse.
+
+    Mirrors ``layout_sizing``'s resolve gates, data included: a chart whose rows
+    cannot be read fails there before it reaches the link pass, so it needs
+    nothing planned. A lookup that raises ``DbtChartsError`` is recorded on the
+    schema and skips only that chart; resolve raises it for the chart that reads it.
+    """
+    from dbt_charts.core.compile.resolve import (  # noqa: PLC0415
+        automatic_link_excludes_x,
+        should_fetch_table_fk_links,
+        should_synthesize_automatic_link,
     )
+    from dbt_charts.core.execute.link_schema import LinkProbe  # noqa: PLC0415
 
-    fk_edges = fetch_fk_edges(adapter_registry, table)
-    return resolve_fk_column_links(src, schema, table, fk_edges)
+    links_auto = board.links.auto
+    if not links_auto:
+        return results
+    probe = LinkProbe(ctx)
+    drawn_variables = {**board.variable_defaults, **variables}
+    for chart in _drawn_charts(board, drawn_variables):
+        qn = chart.query_name
+        try:
+            data = results.execute_query(qn, variables) if qn else []
+        except Exception:  # noqa: BLE001 — a backend may raise anything; resolve reports that chart's failure
+            continue
+        try:
+            if should_synthesize_automatic_link(chart, data, links_auto):
+                synthesize_automatic_link(
+                    chart, probe, exclude_x=automatic_link_excludes_x(chart, data)
+                )
+            if should_fetch_table_fk_links(chart, links_auto):
+                assert isinstance(chart, TableChart)
+                query = chart.query
+                assert query is not None
+                if fk_column_links(query, probe):
+                    fetch_column_rows_for_link(probe, query)
+        except DbtChartsError:
+            continue
+    return replace(results, planned_links=probe.freeze())

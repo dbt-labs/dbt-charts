@@ -3,6 +3,7 @@
 import json
 import shutil
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -411,7 +412,7 @@ class TestDispatchToolCall:
         import re
 
         from dbt_charts.core.attribution import attribute
-        from dbt_charts.core.execute.adapters.query_header import QueryHeader
+        from dbt_charts.core.execute.backends.query_header import QueryHeader
 
         built: dict[str, str] = {}
 
@@ -1039,7 +1040,7 @@ class TestDefaultSourceFallback:
             variables=None,
             source=None,
             limit,
-            adapter_registry,
+            env,
             lenient_variables,
         ):
             captured["source"] = source
@@ -1082,7 +1083,7 @@ class TestDefaultSourceFallback:
             variables=None,
             source=None,
             limit,
-            adapter_registry,
+            env,
             lenient_variables,
         ):
             captured["sql"] = limit
@@ -1095,7 +1096,7 @@ class TestDefaultSourceFallback:
                 truncated=False,
             )
 
-        def fake_query_board(*, name, path, project, vars, limit, adapter_registry):
+        def fake_query_board(*, name, path, project, vars, limit, env):
             captured["board"] = limit
             return QueryBoardResult(success=True, name=name, path=path)
 
@@ -1172,7 +1173,7 @@ class TestDefaultSourceFallback:
             variables=None,
             source=None,
             limit,
-            adapter_registry,
+            env,
             lenient_variables,
         ):
             captured["source"] = source
@@ -1212,7 +1213,7 @@ class TestDefaultSourceFallback:
             variables=None,
             source=None,
             limit,
-            adapter_registry,
+            env,
             lenient_variables,
         ):
             captured["source"] = source
@@ -1259,7 +1260,7 @@ class TestVariableBindingsWireShape:
             variables=None,
             source=None,
             limit,
-            adapter_registry,
+            env,
             lenient_variables,
         ):
             captured["variables"] = variables
@@ -1399,17 +1400,20 @@ class TestToolResultSuccessContract:
 
 
 class TestWriteFileNeverClobbersUnreadContent:
-    """An overwrite of an existing file requires having read it first.
+    """An overwrite of an existing file must present the hash of what it read.
 
     The failure this closes: asked to edit one chart, the agent wrote a
     single-chart baseline it had built for an ephemeral comparison over the
     whole saved board, and every other chart in the dashboard was gone. It
     never read the file it replaced. Prompt rules already said not to
     (CLOUD_TOOL_GUIDANCE's preview-is-the-user's-click), and did not hold —
-    so the tool refuses instead.
+    so the tool refuses instead. The proof of reading is `content_sha256`, not
+    per-context memory: the Cloud connector builds a fresh context per tool
+    call, so remembered reads never licensed anything there, and a hash also
+    refuses a write over a board that changed after the agent read it.
     """
 
-    def test_creating_a_new_file_needs_no_read(
+    def test_creating_a_new_file_needs_no_hash(
         self, context: DbtChartsAIContext, tmp_path: Path
     ) -> None:
         result = dispatch_tool_call(
@@ -1418,7 +1422,7 @@ class TestWriteFileNeverClobbersUnreadContent:
         assert result["success"] is True
         assert (tmp_path / "new.yml").read_text() == "title: X\n"
 
-    def test_overwriting_an_unread_file_is_refused(
+    def test_overwriting_without_a_hash_is_refused(
         self, context: DbtChartsAIContext, tmp_path: Path
     ) -> None:
         (tmp_path / "board.yml").write_text("title: Real board\ncharts: {}\n")
@@ -1430,67 +1434,113 @@ class TestWriteFileNeverClobbersUnreadContent:
         )
 
         assert result["success"] is False
-        assert "read_file" in result["error"]
+        assert "has not been read" in result["error"]
+        assert "expected_sha256" in result["error"]
         # The whole point: the bytes on disk are untouched.
         assert (tmp_path / "board.yml").read_text() == "title: Real board\ncharts: {}\n"
 
-    def test_overwriting_is_allowed_after_reading(
+    def test_overwriting_with_the_hash_from_read_file_succeeds(
         self, context: DbtChartsAIContext, tmp_path: Path
     ) -> None:
         (tmp_path / "board.yml").write_text("title: Real board\n")
 
-        dispatch_tool_call("read_file", {"path": "board.yml"}, context=context)
+        read = dispatch_tool_call("read_file", {"path": "board.yml"}, context=context)
         result = dispatch_tool_call(
             "write_file",
-            {"path": "board.yml", "content": "title: Edited\n"},
+            {
+                "path": "board.yml",
+                "content": "title: Edited\n",
+                "expected_sha256": read["content_sha256"],
+            },
             context=context,
         )
 
         assert result["success"] is True
         assert (tmp_path / "board.yml").read_text() == "title: Edited\n"
 
-    def test_a_failed_read_does_not_count_as_having_read_it(
+    def test_the_hash_licenses_a_write_from_a_fresh_context(
         self, context: DbtChartsAIContext, tmp_path: Path
     ) -> None:
-        # Reading a directory fails; it must not license an overwrite of a
-        # file that happens to share the path string later.
-        (tmp_path / "board.yml").mkdir()
-        dispatch_tool_call("read_file", {"path": "board.yml"}, context=context)
-        (tmp_path / "board.yml").rmdir()
+        # The connector shape: every tool call gets its own context, so the
+        # hash must carry the proof of reading, not anything on the context.
         (tmp_path / "board.yml").write_text("title: Real board\n")
+        read = dispatch_tool_call("read_file", {"path": "board.yml"}, context=context)
 
         result = dispatch_tool_call(
             "write_file",
-            {"path": "board.yml", "content": "title: Baseline\n"},
+            {
+                "path": "board.yml",
+                "content": "title: Edited\n",
+                "expected_sha256": read["content_sha256"],
+            },
+            context=replace(context),
+        )
+
+        assert result["success"] is True
+        assert (tmp_path / "board.yml").read_text() == "title: Edited\n"
+
+    def test_a_file_changed_since_the_read_is_refused(
+        self, context: DbtChartsAIContext, tmp_path: Path
+    ) -> None:
+        (tmp_path / "board.yml").write_text("title: Real board\n")
+        read = dispatch_tool_call("read_file", {"path": "board.yml"}, context=context)
+        (tmp_path / "board.yml").write_text("title: Someone else's edit\n")
+
+        result = dispatch_tool_call(
+            "write_file",
+            {
+                "path": "board.yml",
+                "content": "title: Stale\n",
+                "expected_sha256": read["content_sha256"],
+            },
             context=context,
         )
 
         assert result["success"] is False
+        assert "has changed since you read it" in result["error"]
+        assert "read_file" in result["error"]
+        assert (tmp_path / "board.yml").read_text() == "title: Someone else's edit\n"
 
-    def test_writing_a_file_licenses_rewriting_it(
+    def test_a_failed_read_returns_no_hash(
+        self, context: DbtChartsAIContext, tmp_path: Path
+    ) -> None:
+        (tmp_path / "board.yml").mkdir()
+
+        read = dispatch_tool_call("read_file", {"path": "board.yml"}, context=context)
+
+        assert read["success"] is False
+        assert "content_sha256" not in read
+
+    def test_a_write_result_hash_licenses_rewriting_it(
         self, context: DbtChartsAIContext, tmp_path: Path
     ) -> None:
         # build → render → fix → re-save is the primary loop: refusing the agent
         # its own file one step later would be a gate on nobody's mistake.
-        dispatch_tool_call(
+        first = dispatch_tool_call(
             "write_file", {"path": "new.yml", "content": "title: v1\n"}, context=context
         )
         result = dispatch_tool_call(
-            "write_file", {"path": "new.yml", "content": "title: v2\n"}, context=context
+            "write_file",
+            {
+                "path": "new.yml",
+                "content": "title: v2\n",
+                "expected_sha256": first["content_sha256"],
+            },
+            context=context,
         )
 
         assert result["success"] is True
         assert (tmp_path / "new.yml").read_text() == "title: v2\n"
 
-    def test_editing_a_file_does_not_license_rewriting_it(
+    def test_editing_a_file_returns_no_hash(
         self, context: DbtChartsAIContext, tmp_path: Path
     ) -> None:
-        # apply_patch reads internally but returns no content, so the agent has
-        # been shown nothing. A search hit carries enough chart text to build a
-        # unique old_string for a board never opened — licensing a whole-file
-        # write off that would widen the gate to the case it exists to stop.
+        # apply_patch returns no content, so the agent has been shown nothing.
+        # A search hit carries enough chart text to build a unique old_string
+        # for a board never opened — a hash off that would widen the gate to
+        # the case it exists to stop.
         (tmp_path / "board.yml").write_text("title: Real board\ncharts: {}\n")
-        dispatch_tool_call(
+        patched = dispatch_tool_call(
             "apply_patch",
             {
                 "type": "update_file",
@@ -1500,6 +1550,7 @@ class TestWriteFileNeverClobbersUnreadContent:
             context=context,
         )
 
+        assert "content_sha256" not in patched
         result = dispatch_tool_call(
             "write_file",
             {"path": "board.yml", "content": "title: Rewritten\n"},
@@ -1547,3 +1598,21 @@ class TestWriteFileNeverClobbersUnreadContent:
         assert result["success"] is False
         assert result["path"] == "../escape.yml"
         assert "error" in result
+
+    def test_an_undecodable_existing_file_is_refused_as_a_typed_write_result(
+        self, context: DbtChartsAIContext, tmp_path: Path
+    ) -> None:
+        # Checking the hash reads the file; a binary target must not escape as
+        # the dispatch layer's untyped catch-all, and must not be overwritten.
+        (tmp_path / "logo.yml").write_bytes(b"\xff\xfe\x00binary")
+
+        result = dispatch_tool_call(
+            "write_file",
+            {"path": "logo.yml", "content": "x\n", "expected_sha256": "0" * 64},
+            context=context,
+        )
+
+        assert result["success"] is False
+        assert result["path"] == "logo.yml"
+        assert "cannot be read" in result["error"]
+        assert (tmp_path / "logo.yml").read_bytes() == b"\xff\xfe\x00binary"

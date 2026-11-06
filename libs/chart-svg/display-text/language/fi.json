@@ -54,6 +54,7 @@
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}.–{end_day}. {month} {year}",
   "controls.reset": "Palauta",
+  "controls.remove_value": "Poista {value}",
   "controls.search": "Hae",
   "controls.search_values": "Hae arvoja",
   "controls.select_all": "Valitse kaikki",

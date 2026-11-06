@@ -232,12 +232,12 @@ fn render_jinja_nodes(nodes: &[JinjaNode], variables: &serde_json::Map<String, V
             JinjaNode::Text(s) => out.push_str(s),
             JinjaNode::Raw(s) => out.push_str(s),
             JinjaNode::Var(JinjaExpr::Ident(name)) => {
-                out.push_str(&jinja_value_str(variables.get(*name))?);
+                out.push_str(&jinja_value_str(name, variables.get(*name))?);
             }
             JinjaNode::Var(JinjaExpr::OrLiteral(name, literal)) => {
                 let value = variables.get(*name);
                 if jinja_truthy(value)? {
-                    out.push_str(&jinja_value_str(value)?);
+                    out.push_str(&jinja_value_str(name, value)?);
                 } else {
                     out.push_str(literal);
                 }
@@ -254,12 +254,55 @@ fn render_jinja_nodes(nodes: &[JinjaNode], variables: &serde_json::Map<String, V
     Ok(out)
 }
 
+/// The declared input of each variable in the board tree (`multiselect`, `daterange`, ...), which
+/// decides how a list prints in text: Python's `normalize_render_values` types the value, JSON cannot.
+thread_local! {
+    static INPUT_KINDS: std::cell::RefCell<std::collections::HashMap<String, String>> = Default::default();
+}
+
+/// Run `render` with `kinds` (variable name to declared input) in scope for [`resolve_jinja`].
+pub fn with_input_kinds<T>(kinds: std::collections::HashMap<String, String>, render: impl FnOnce() -> T) -> T {
+    let previous = INPUT_KINDS.with(|k| k.replace(kinds));
+    let out = render();
+    INPUT_KINDS.with(|k| k.replace(previous));
+    out
+}
+
 /// Python's bare `str(value)` on a Jinja-substituted value: a string is
 /// itself, a bool prints `True`/`False`, a whole number prints bare, an
-/// undefined variable is the empty string. Anything else (a list, a mapping)
-/// is not a shape any board title ladder rung authors and refuses by name
-/// rather than guessing at `str()`'s output.
-fn jinja_value_str(v: Option<&Value>) -> Result<String, String> {
+/// undefined variable is the empty string. A `multiselect` list prints as a
+/// natural list ("A and B", "A, B, and C") like the Python display-text
+/// environment; a `daterange`, a mapping, a nested list or any other list has
+/// no single reading and refuses by name.
+fn jinja_value_str(name: &str, v: Option<&Value>) -> Result<String, String> {
+    let kind = INPUT_KINDS.with(|k| k.borrow().get(name).cloned());
+    match (kind.as_deref(), v) {
+        (Some("daterange"), Some(value)) if !matches!(value, Value::Null) && value != "" => {
+            Err(format!("board title jinja prints {name:?}, a date range, which has no single reading; print its ends"))
+        }
+        (Some("multiselect"), Some(Value::Array(items))) => {
+            let names = items
+                .iter()
+                .map(|item| match item {
+                    Value::Array(_) | Value::Object(_) => {
+                        Err(format!("board title jinja prints {name:?}, a nested list, which has no single reading"))
+                    }
+                    scalar => scalar_str(Some(scalar)),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(match names.as_slice() {
+                [] => String::new(),
+                [only] => only.clone(),
+                [first, second] => format!("{first} and {second}"),
+                [init @ .., last] => format!("{}, and {last}", init.join(", ")),
+            })
+        }
+        (_, Some(Value::Object(_))) => Err(format!("board title jinja prints {name:?}, a mapping, which has no single reading")),
+        (_, value) => scalar_str(value),
+    }
+}
+
+fn scalar_str(v: Option<&Value>) -> Result<String, String> {
     match v {
         None | Some(Value::Null) => Ok(String::new()),
         Some(Value::String(s)) => Ok(s.clone()),
@@ -689,6 +732,32 @@ mod tests {
     // Expected runs are production's: `map_span_runs(parse_markdown("# " + title),
     // _case_words)` (`markdown_style.py::title_blocks`) drawn by `title_renderer`
     // at width 2000; the list, quote and table texts are the same call's spans.
+
+    fn kinds(name: &str, kind: &str) -> std::collections::HashMap<String, String> {
+        [(name.to_string(), kind.to_string())].into()
+    }
+
+    #[test]
+    fn a_multiselect_prints_as_a_natural_list() {
+        let print = |items: &[&str]| {
+            with_input_kinds(kinds("v", "multiselect"), || resolve_jinja("{{ v }}", &vars(&[("v", Value::from(items.to_vec()))])))
+        };
+        assert_eq!(print(&[]).unwrap(), "");
+        assert_eq!(print(&["A"]).unwrap(), "A");
+        assert_eq!(print(&["A", "B"]).unwrap(), "A and B");
+        assert_eq!(print(&["A", "B", "C"]).unwrap(), "A, B, and C");
+    }
+
+    #[test]
+    fn a_nested_multiselect_a_daterange_a_mapping_and_an_untyped_list_refuse() {
+        let run = |kind: &str, value: Value| with_input_kinds(kinds("v", kind), || resolve_jinja("{{ v }}", &vars(&[("v", value)])));
+        assert!(run("multiselect", serde_json::json!([["a"], ["b"]])).unwrap_err().contains("nested list"));
+        assert!(run("daterange", serde_json::json!(["2026-01-01", "2026-03-31"])).unwrap_err().contains("date range"));
+        assert!(run("daterange", serde_json::json!("year_to_date")).unwrap_err().contains("date range"));
+        assert_eq!(run("daterange", serde_json::json!("")).unwrap(), "");
+        assert!(run("text", serde_json::json!({"a": 1})).unwrap_err().contains("mapping"));
+        assert!(run("text", serde_json::json!(["a"])).is_err());
+    }
 
     #[test]
     fn title_case_leaves_code_and_images_literal_and_cases_the_rest_as_one_run() {

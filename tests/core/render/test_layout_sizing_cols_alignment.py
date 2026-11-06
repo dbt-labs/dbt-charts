@@ -15,9 +15,10 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.board.normalized import Board, LayoutItem
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
+
+from ..._run import Run
 
 _QUERIES = """
 queries:
@@ -69,9 +70,9 @@ def _size(
     )
     result = compile(yaml_content)
     assert result.success, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
     )
     board, _ = calculate_data_aware_layout(result.board, executor, {}, pre_resolved={})

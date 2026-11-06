@@ -13,7 +13,7 @@ import pytest
 from dbt_charts.core.compile.models.board.normalized import Board, Layout, LayoutItem
 from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.render.board_to_dict import (
     CHART_FIELDS,
     _render_chart_item,
@@ -27,7 +27,7 @@ from .._board_utils import _default_chart_style_context, _default_resolved_style
 
 
 def _make_executor(data: list[dict[str, Any]]) -> MagicMock:
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
     executor.execute_query_result.return_value = rows_result(data)
     executor.render_with_range_filters.return_value = None
@@ -158,7 +158,7 @@ def test_render_chart_item_error_diagnostic_carries_authored_path(
     chart-identity path as the SVG surface (`chart.source_path`), not a
     separately invented convention."""
     chart = make_chart("bar", x="month", y="revenue")
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
     executor.execute_query_result.side_effect = ExecutionError("timeout")
     collector: list[Any] = []

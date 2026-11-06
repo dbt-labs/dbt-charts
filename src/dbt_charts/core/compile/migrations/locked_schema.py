@@ -18,9 +18,9 @@ from dbt_charts.core.compile.merge import fragment_files
 from dbt_charts.core.compile.migrations.migrations import (
     MigrationError,
     UnsupportedSchemaError,
-    _board_migration_context,
     collect_migration_notices,
     migrate_yaml_text,
+    package_schemas,
 )
 from dbt_charts.core.compile.parse.parser import load_yaml_mapping, load_yaml_text
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 def validate_locked_schema_version(value: str, *, source: str) -> str:
     """*value* when it names a released schema version; otherwise raise."""
-    catalog, _ = _board_migration_context()
+    catalog = package_schemas()
     released = [e.version for e in reversed(catalog.entries) if e.status == "RELEASED"]
     if value not in released:
         raise ValueError(
@@ -44,7 +44,7 @@ def warnings_newer_than_lock(lock: str | None) -> frozenset[str]:
     """Warning codes a project locked to *lock* must not see; none when unlocked."""
     if lock is None:
         return frozenset()
-    catalog, _ = _board_migration_context()
+    catalog = package_schemas()
     return catalog.warnings_newer_than(lock)
 
 
@@ -58,7 +58,7 @@ def locked_grammar_rejections(
     owns (meta.yml's ``lint:``); they are removed before migration so schema
     recognition never sees them.
     """
-    catalog, registry = _board_migration_context()
+    catalog = package_schemas()
     if ignored_keys:
         yaml_text = yaml.safe_dump(
             {
@@ -69,9 +69,7 @@ def locked_grammar_rejections(
             sort_keys=False,
         )
     with collect_migration_notices():
-        capped = migrate_yaml_text(
-            yaml_text, catalog=catalog, registry=registry, stop_target=lock
-        )
+        capped = migrate_yaml_text(yaml_text, stop_target=lock)
     mapping = {
         key: value
         for key, value in load_yaml_mapping(capped).items()

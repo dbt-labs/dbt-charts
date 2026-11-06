@@ -15,6 +15,7 @@ from dbt_charts.ai.events import (
     ToolResultEvent,
 )
 from dbt_charts.ai.messages import AgentMessage, UserMessage
+from dbt_charts.core.execute import run as run_stage
 
 
 def _make_ctx(tmp_path: Path) -> DbtChartsAIContext:
@@ -113,9 +114,9 @@ def test_build_agent_system_prompt_lists_sources_and_exploration_guidance(
 
     project_session = ProjectSession.open(tmp_path, read_only=False)
     monkeypatch.setattr(
-        project_session.adapter_registry,
+        agent,
         "list_sql_sources",
-        lambda: [
+        lambda sources: [
             {"name": "bq", "type": "bigquery"},
             {"name": "pg", "type": "postgres"},
         ],
@@ -124,9 +125,7 @@ def test_build_agent_system_prompt_lists_sources_and_exploration_guidance(
     def _no_warehouse_calls(*args: object, **kwargs: object) -> None:
         raise AssertionError("prompt assembly must not query the warehouse")
 
-    monkeypatch.setattr(
-        project_session.adapter_registry, "execute", _no_warehouse_calls
-    )
+    monkeypatch.setattr(run_stage, "run_route", _no_warehouse_calls)
     context = DbtChartsAIContext(project_session=project_session)
     prompt = agent.build_agent_system_prompt(context)
 
@@ -148,11 +147,11 @@ def test_build_sources_context_marks_sources_without_query_access(
     from dbt_charts.ai import agent
 
     project_session = ProjectSession.open(tmp_path, read_only=False)
-    registry = project_session.adapter_registry
+    registry = project_session.env
     monkeypatch.setattr(
-        registry,
+        agent,
         "list_sql_sources",
-        lambda: [
+        lambda sources: [
             {"name": "bq", "type": "bigquery"},
             {"name": "pg", "type": "postgres"},
         ],
@@ -176,7 +175,7 @@ def test_build_agent_system_prompt_omits_sources_block_when_unconfigured(
     monkeypatch.setattr(agent, "build_skills_index", lambda: "")
 
     project_session = ProjectSession.open(tmp_path, read_only=False)
-    monkeypatch.setattr(project_session.adapter_registry, "list_sql_sources", list)
+    monkeypatch.setattr(agent, "list_sql_sources", lambda sources: [])
     prompt = agent.build_agent_system_prompt(
         DbtChartsAIContext(project_session=project_session)
     )
@@ -290,7 +289,7 @@ def test_build_agent_system_prompt_is_a_no_op_without_project_files(
         for part in (
             "Write in American English.",
             agent.build_skills_index(),
-            agent.build_sources_context(project_session.adapter_registry),
+            agent.build_sources_context(project_session.env),
             agent._TOOL_GUIDANCE,
         )
         if part

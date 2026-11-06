@@ -54,6 +54,7 @@
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}–{end_day} {month} {year}",
   "controls.reset": "Herstellen",
+  "controls.remove_value": "{value} verwijderen",
   "controls.search": "Zoeken",
   "controls.search_values": "Waarden zoeken",
   "controls.select_all": "Alles selecteren",

@@ -12,9 +12,10 @@ from pathlib import Path
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.diagnostics.codes_render import ERR_PERCENT_RANGE
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
+
+from ...._run import Run
 
 _BOARD = """
 title: T
@@ -46,11 +47,13 @@ def test_affixed_percent_support_table_entry_rejects_0_100_shaped_value() -> Non
     compiled = compile_board(_BOARD)
     assert compiled.success, compiled.errors
     assert compiled.board is not None
-    executor = Executor(
+    executor = Run(
         compiled.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        env=build_exec_env(FilesystemProject(Path.cwd())),
         query_registry=compiled.query_registry,
     )
-    result = render(compiled.board, executor, format="svg", controls=False)
+    result = render(
+        compiled.board, executor.ctx, executor.ledger, format="svg", controls=False
+    )
     assert [e.code for e in result.chart_errors] == [ERR_PERCENT_RANGE.code]
     assert "5,500" not in (result.output or "")

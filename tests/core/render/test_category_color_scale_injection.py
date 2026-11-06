@@ -17,11 +17,11 @@ from typing import Any
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.board_resolve import build_resolved_board
 
 from ..._results import rows_result
+from ..._run import Run
 from .._engine_render import render_pie_svg
 from .._svg_render import render_board_to_svg
 
@@ -41,9 +41,9 @@ _ROWS_NO_ACCESSORIES = """
 def _resolve_board(yaml_content: str) -> tuple[Any, Any]:
     result = compile(yaml_content)
     assert result.success and result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        env=build_exec_env(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
     )
     resolved_board, _ = build_resolved_board(

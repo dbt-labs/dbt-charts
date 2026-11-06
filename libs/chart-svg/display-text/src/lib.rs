@@ -1,10 +1,12 @@
 //! Display text derived from a column name (`core/text/humanize.py::
 //! slug_to_text`, `core/text/case.py::field_title`, `_wide_fields.py::
-//! resolve_wide_measure_labels`), the language catalogs, and the letter-case
-//! transform (`case`) both engines apply to a slot's `font.case`.
+//! resolve_wide_measure_labels`), the language catalogs, d3's number and time
+//! locales (`locale`), and the letter-case transform (`case`) both engines
+//! apply to a slot's `font.case`.
 
 pub mod case;
 pub mod language;
+pub mod locale;
 pub mod titlecase_first_char;
 
 use std::collections::HashMap;
@@ -153,38 +155,52 @@ pub fn field_title(
     }
 }
 
-/// `_wide_fields.py::resolve_wide_measure_labels`'s label half: each
-/// measure's `field_title`, with colliding derived labels falling back to the
-/// raw measure name, iterated to a fixed point. An authored label never falls
-/// back (resolve rejects an authored collision before any reader runs).
-pub fn wide_measure_labels_for(
+/// Each wide measure's label and the labels its measures shared on the way there.
+#[derive(Debug, PartialEq)]
+pub struct WideLabels {
+    pub labels: HashMap<String, String>,
+    /// Every label two or more measures shared in some round, with those measures, in
+    /// measure order. An authored collision stays in the final `labels`.
+    pub collisions: Vec<(String, Vec<String>)>,
+}
+
+/// Each measure's `field_title`, with colliding derived labels falling back to the raw
+/// measure name, iterated to a fixed point: a raw name can itself equal another measure's
+/// derived label. An authored label never falls back.
+pub fn wide_measure_labels(
     measures: &[String],
     field_labels: &HashMap<String, String>,
-) -> Result<HashMap<String, String>, String> {
+) -> Result<WideLabels, String> {
     let mut labels = HashMap::new();
     for m in measures {
         labels.insert(m.clone(), field_title(m, field_labels)?);
     }
+    let mut collisions: Vec<(String, Vec<String>)> = Vec::new();
     loop {
-        let mut by_label: HashMap<&str, Vec<&String>> = HashMap::new();
+        let mut by_label: Vec<(String, Vec<String>)> = Vec::new();
         for m in measures {
-            let bucket = by_label.entry(labels[m].as_str()).or_default();
-            if !bucket.contains(&m) {
-                bucket.push(m);
+            let label = &labels[m];
+            match by_label.iter_mut().find(|(l, _)| l == label) {
+                Some((_, group)) if !group.contains(m) => group.push(m.clone()),
+                Some(_) => {}
+                None => by_label.push((label.clone(), vec![m.clone()])),
             }
         }
-        let fallback: Vec<String> = by_label
-            .values()
-            .filter(|group| group.len() > 1)
-            .flat_map(|group| group.iter())
-            .filter(|m| !field_labels.contains_key(m.as_str()) && labels[**m] != ***m)
-            .map(|m| (*m).clone())
-            .collect();
-        if fallback.is_empty() {
-            return Ok(labels);
+        let mut progressed = false;
+        for (label, group) in by_label.into_iter().filter(|(_, group)| group.len() > 1) {
+            for m in &group {
+                if !field_labels.contains_key(m) && labels[m] != *m {
+                    labels.insert(m.clone(), m.clone());
+                    progressed = true;
+                }
+            }
+            match collisions.iter_mut().find(|(l, _)| *l == label) {
+                Some(seen) => seen.1 = group,
+                None => collisions.push((label, group)),
+            }
         }
-        for m in fallback {
-            labels.insert(m.clone(), m);
+        if !progressed {
+            return Ok(WideLabels { labels, collisions });
         }
     }
 }
@@ -268,7 +284,7 @@ mod tests {
     #[test]
     fn wide_labels_terminate_on_a_duplicate_measure() {
         let measures = vec!["revenue".to_string(), "revenue".to_string()];
-        let out = wide_measure_labels_for(&measures, &HashMap::new()).unwrap();
+        let out = wide_measure_labels(&measures, &HashMap::new()).unwrap().labels;
         assert_eq!(out.len(), 1);
         assert_eq!(out["revenue"], "Revenue");
     }
@@ -276,12 +292,14 @@ mod tests {
     #[test]
     fn wide_labels_fall_back_only_for_derived_collisions() {
         let measures = vec!["all".to_string(), "fix-linked".to_string()];
-        let out = wide_measure_labels_for(&measures, &labels(&[("all", "Fix linked")])).unwrap();
+        let out = wide_measure_labels(&measures, &labels(&[("all", "Fix linked")])).unwrap();
+        assert_eq!(out.collisions, vec![("Fix linked".to_string(), measures.clone())]);
+        let out = out.labels;
         assert_eq!(out["all"], "Fix linked");
         assert_eq!(out["fix-linked"], "fix-linked");
 
         let derived = vec!["orders_cnt".to_string(), "orders (Count)".to_string()];
-        let out = wide_measure_labels_for(&derived, &HashMap::new()).unwrap();
+        let out = wide_measure_labels(&derived, &HashMap::new()).unwrap().labels;
         assert_eq!(out["orders_cnt"], "orders_cnt");
         assert_eq!(out["orders (Count)"], "orders (Count)");
     }

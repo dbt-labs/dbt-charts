@@ -66,60 +66,60 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("core/compile/config.py", 654): (
         "resolve_cache_boot(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/execute/adapters/adapter_registry.py", 243): (
+    ("core/execute/env.py", 157): (
         "isinstance(project, FilesystemProject)-guarded data_dir computation"
     ),
-    ("core/execute/adapters/adapter_registry.py", 150): (
+    ("core/execute/env.py", 71): (
         "isinstance(project, FilesystemProject)-guarded linked_dbt_path computation "
         "(project.dbt_root, linked-dbt-project sibling/external rule)"
     ),
-    ("core/execute/adapters/adapter_registry.py", 152): (
+    ("core/execute/env.py", 73): (
         "isinstance(project, FilesystemProject)-guarded linked_dbt_path computation "
         "(project.dbt_project.exists, same narrow as the line above)"
     ),
-    ("core/execute/adapters/adapter_registry.py", 1086): (
-        "isinstance(project, FilesystemProject)-guarded database_file_version: "
+    ("core/execute/plan.py", 661): (
+        "isinstance(project, FilesystemProject)-guarded database_file_stat_version: "
         "roots a relative DuckDB/SQLite path where the adapters root it"
     ),
     # dct serve is filesystem-only: create_server(project: FilesystemProject)
     # and app.state.project are FilesystemProject throughout server.py — no
     # runtime isinstance narrow needed, only the FilesystemProject import
     # (under TYPE_CHECKING) and explicit local annotations below.
-    ("core/serve/server.py", 230): (
+    ("core/serve/server.py", 233): (
         "_all_board_roots_mtime(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1056): (
+    ("core/serve/server.py", 1061): (
         "create_server: core_project inferred FilesystemProject from the parameter"
     ),
-    ("core/serve/server.py", 1095): (
+    ("core/serve/server.py", 1102): (
         "create_server: core_project inferred FilesystemProject from the parameter; "
         "the live-reload watch is opened over the project root"
     ),
-    ("core/serve/server.py", 1129): (
+    ("core/serve/server.py", 1136): (
         "_reload_on_change: project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1243): (
+    ("core/serve/server.py", 1250): (
         "profile_table: inspect_project explicitly typed FilesystemProject"
     ),
     (
         "agent_api/pack.py",
-        172,
+        173,
     ): "propose_pack(project: FilesystemProject) — already FS-typed",
     (
         "agent_api/pack.py",
-        341,
+        342,
     ): "_charts_target(project: FilesystemProject) — already FS-typed",
     (
         "agent_api/pack.py",
-        344,
+        345,
     ): "_charts_target(project: FilesystemProject) — already FS-typed",
-    (
-        "agent_api/pack.py",
-        464,
-    ): "apply_proposal(project: FilesystemProject) — already FS-typed",
     (
         "agent_api/pack.py",
         465,
+    ): "apply_proposal(project: FilesystemProject) — already FS-typed",
+    (
+        "agent_api/pack.py",
+        466,
     ): "apply_proposal(project: FilesystemProject) — already FS-typed",
     ("agent_api/_paths.py", 429): (
         "_relpath_for_fs_location: isinstance(project, FilesystemProject)-guarded"
@@ -127,13 +127,13 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("agent_api/_paths.py", 631): (
         "compile_editor_buffer: project = FilesystemProject(root) constructed above"
     ),
-    ("agent_api/project_session.py", 315): (
+    ("agent_api/project_session.py", 317): (
         'ProjectSession.charts_dir: cast("FilesystemProject", self.project)-narrowed'
     ),
     ("agent_api/serve.py", 86): (
         "prepare_serve(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1177): (
+    ("core/serve/server.py", 1184): (
         "health: create_server's FilesystemProject parameter, closed over"
     ),
     ("agent_api/serve.py", 477): (

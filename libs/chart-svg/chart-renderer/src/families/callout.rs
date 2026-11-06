@@ -785,7 +785,7 @@ mod tests {
         json["board_style"] = serde_json::json!({
             "font": "Inter", "text_mark_font": {"family": "Inter", "size": 11.0}, "secondary_color": null, "tones": null,
             "title_case": null, "continuous_height": null,
-            "format_locale": crate::number_locale::en_us_wire(), "language": "de", "time_locale": crate::time_locale::en_us_wire()
+            "format_locale": ::bind::formats::locale::en_us_wire(), "language": "de", "time_locale": ::bind::time_locale::en_us_wire()
         });
         let payload: Payload = serde_json::from_value(json).unwrap();
         let svg = display_text::language::with_language(display_text::language::Language::new("de").unwrap(), || {

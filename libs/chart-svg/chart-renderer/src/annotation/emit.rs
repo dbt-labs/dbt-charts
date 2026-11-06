@@ -139,7 +139,13 @@ fn warn_strayed(ctx: &AnnotationCtx, p: &Placed) {
 pub(crate) fn nodes(ctx: &AnnotationCtx, items: &[Placed], plane: Plane) -> Result<Vec<Node>, Diagnostic> {
     let mut out = Vec::new();
     if plane == Plane::Background && !items.is_empty() {
-        let clip = Node::rect(Role::Chrome, (0.0, 0.0, ctx.plot.w, ctx.plot.h), Attrs::new());
+        // The plot clip would halve a rule drawn on the plot edge.
+        let half = items
+            .iter()
+            .filter(|p| matches!(p.mark, Some(Mark::Segment { .. })))
+            .map(|p| p.style.rule().stroke.width / 2.0)
+            .fold(0.0, f64::max);
+        let clip = Node::rect(Role::Chrome, (-half, -half, ctx.plot.w + 2.0 * half, ctx.plot.h + 2.0 * half), Attrs::new());
         out.push(Node::new(Role::Chrome, Attrs::new().set("id", ctx.clip_id.as_str()), Shape::ClipPath(vec![clip])));
     }
     let mine: Vec<&Placed> = items.iter().filter(|p| p.plane == plane).collect();

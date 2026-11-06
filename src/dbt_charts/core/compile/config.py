@@ -768,6 +768,26 @@ _ROLE_FAMILY = {
 }
 
 
+def _require_theme_role_addresses(role_rebinds: Mapping[str, str]) -> None:
+    """Refuse a role bound to ``single_series[N]``: that slot is a chart-level
+    ink, still unresolved while the theme loads its roles."""
+    from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.diagnostics.codes_compile import ERR_COLOR_TOKEN
+
+    for name, address in role_rebinds.items():
+        if address.startswith("single_series["):
+            raise CompilationError.from_code(
+                ERR_COLOR_TOKEN,
+                scope=f"style.roles.{name} ({address})",
+                reason=(
+                    f"{address!r} is a chart-level token and cannot be bound in "
+                    "a theme role; bind a palette address such as category[N], "
+                    "chrome[N], diverge[N], info[N], negative[N], positive[N], "
+                    "sequence[N] or warning[N]"
+                ),
+            )
+
+
 def _require_role_families(palette_rebinds: Mapping[str, str]) -> None:
     """Refuse a rebind that binds a role to a palette of the wrong family.
 
@@ -852,6 +872,7 @@ def get_theme_style(
         _compiled_theme_cache[name] = compiled
         return compiled
     _require_role_families(palette_rebinds)
+    _require_theme_role_addresses(role_rebinds)
     return _resolve_theme_tokens(_with_rebinds(compiled, palette_rebinds, role_rebinds))
 
 

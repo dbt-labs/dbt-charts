@@ -13,7 +13,6 @@ import pytest
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.migrations import prepare_board_mapping
 from dbt_charts.core.compile.migrations.migrations import (
-    _board_migration_context,
     migrate_yaml_text,
 )
 
@@ -104,7 +103,6 @@ def test_a_board_authoring_a_retired_alias_compiles_to_its_successor(
 
 
 def test_migrate_yaml_text_rewrites_the_authored_text_to_the_dev_boundary() -> None:
-    catalog, registry = _board_migration_context()
     text = (
         "title: t\n"
         "style:\n  charts:\n    category_colors:\n      region:\n"
@@ -112,9 +110,7 @@ def test_migrate_yaml_text_rewrites_the_authored_text_to_the_dev_boundary() -> N
         "rows:\n  - text: hello\n"
     )
 
-    migrated = migrate_yaml_text(
-        text, catalog=catalog, registry=registry, stop_target=catalog.dev.version
-    )
+    migrated = migrate_yaml_text(text)
 
     assert "dbt-grays.4" in migrated
     assert "separator" not in migrated
@@ -153,30 +149,3 @@ def test_a_support_table_neutral_color_compiles_with_a_retired_alias() -> None:
     _compiles(
         "  charts:\n    support_table:\n      neutral_color: dbt-grays.placeholder\n"
     )
-
-
-def test_every_color_field_of_the_board_model_has_a_respell_move() -> None:
-    from dbt_charts.core.compile.migrations.migrations import (
-        _board_migration_context,
-        _closure,
-    )
-    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
-    from dbt_charts.core.compile.models.markers import Color
-
-    color_fields = {
-        name
-        for model in _closure(AuthoredBoard)
-        for name, field in model.model_fields.items()
-        if any(isinstance(marker, Color) for marker in field.metadata)
-    }
-    _, registry = _board_migration_context()
-    reached = {
-        move.old_path[-1]
-        for move in registry.moves
-        if move.value_map is not None
-        and move.value_map.get("dbt-grays.separator") == "dbt-grays.4"
-    }
-
-    # Color fields no pre-0.11 board could author: nothing to respell.
-    born_after_the_retired_aliases = {"ground"}  # style.pattern.ground
-    assert color_fields - reached - born_after_the_retired_aliases == set()

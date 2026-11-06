@@ -7,7 +7,8 @@
 
 use crate::common::FormatSlot;
 use crate::families::legend::LegendConfig;
-use crate::families::temporal::{AuthoredTimeFormat, TimeUnit};
+use crate::families::temporal::{AuthoredTimeFormat};
+use ::bind::temporal::{TimeUnit};
 
 use std::collections::HashMap;
 
@@ -86,7 +87,7 @@ pub(super) struct NativeTitles {
 pub(super) fn bar_datum_aria(
     tooltip_labels: bool,
     cat: &str,
-    time: Option<&crate::time_axis::TimeAxis>,
+    time: Option<&::bind::time_axis::TimeAxis>,
     detected_tu: Option<TimeUnit>,
     is_standard_date: bool,
     grain_format: Option<AuthoredTimeFormat>,
@@ -135,7 +136,7 @@ pub(super) fn bar_datum_aria(
 pub(super) fn imputed_datum_aria(
     tooltip_labels: bool,
     cat: &str,
-    time: Option<&crate::time_axis::TimeAxis>,
+    time: Option<&::bind::time_axis::TimeAxis>,
     detected_tu: Option<TimeUnit>,
     is_standard_date: bool,
     grain_format: Option<AuthoredTimeFormat>,

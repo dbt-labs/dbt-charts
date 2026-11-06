@@ -21,15 +21,16 @@ from ._svg_render import PINNED_RENDER_TIME
 def _compile_and_build_executor(yaml_content, local_project):
     from pathlib import Path
 
-    from dbt_charts.core.execute import Executor
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
+
+    from .._run import Run
 
     result = compile(yaml_content)
     assert result.success, f"Compile failed: {result.errors}"
     board = result.board
-    executor = Executor(
+    executor = Run(
         board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
     )
     return board, executor
@@ -852,7 +853,7 @@ class TestUnknownTabValue:
         from dbt_charts.core.render.renderer import render
 
         board, executor = _compile_and_build_executor(_TWO_TAB_BOARD, local_project)
-        result = render(board, executor, variables={"tab": "nope"})
+        result = render(board, executor.ctx, executor.ledger, variables={"tab": "nope"})
 
         assert result.output is None
         assert result.board_error is not None
@@ -867,7 +868,9 @@ class TestUnknownTabValue:
         from dbt_charts.core.render.renderer import render
 
         board, executor = _compile_and_build_executor(_TWO_TAB_BOARD, local_project)
-        svg = render(board, executor, variables={"tab": "second_tab"}).output
+        svg = render(
+            board, executor.ctx, executor.ledger, variables={"tab": "second_tab"}
+        ).output
         assert "Second content" in svg
         assert "First content" not in svg
 
@@ -911,7 +914,9 @@ class TestToggleLinkCarriesVariables:
             _DATERANGE_TAB_BOARD, local_project
         )
         span = ["2026-10-20", "2026-10-26"]
-        svg = render(board, executor, variables={"span": span}).output
+        svg = render(
+            board, executor.ctx, executor.ledger, variables={"span": span}
+        ).output
         assert _tab_link_values(svg)["span"] == span
 
     def test_daterange_preset_keeps_its_id(self, local_project):
@@ -920,7 +925,9 @@ class TestToggleLinkCarriesVariables:
         board, executor = _compile_and_build_executor(
             _DATERANGE_TAB_BOARD, local_project
         )
-        svg = render(board, executor, variables={"span": "last_7_days"}).output
+        svg = render(
+            board, executor.ctx, executor.ledger, variables={"span": "last_7_days"}
+        ).output
         assert _tab_link_values(svg)["span"] == "last_7_days"
 
     def test_multiselect_round_trips(self, local_project):
@@ -930,7 +937,9 @@ class TestToggleLinkCarriesVariables:
             _DATERANGE_TAB_BOARD, local_project
         )
         regions = ["East", "West"]
-        svg = render(board, executor, variables={"regions": regions}).output
+        svg = render(
+            board, executor.ctx, executor.ledger, variables={"regions": regions}
+        ).output
         assert _tab_link_values(svg)["regions"] == regions
 
 
@@ -1078,9 +1087,10 @@ class TestExpandedDetailsSectionBorder:
         render_details_summary's own summary-bar border)."""
         from pathlib import Path
 
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render.renderer import render
+
+        from .._run import Run
 
         yaml_content = """
 title: Test
@@ -1112,13 +1122,13 @@ rows:
         result = compile(yaml_content)
         assert result.success, f"Compile failed: {result.errors}"
         board = result.board
-        executor = Executor(
+        executor = Run(
             board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
-        svg = render(board, executor, format="svg").output
+        svg = render(board, executor.ctx, executor.ledger, format="svg").output
         assert isinstance(svg, str)
         assert 'stroke-dasharray="4,4"' in svg
         assert 'stroke-linecap="round"' in svg
@@ -1264,7 +1274,9 @@ tabs:
         from dbt_charts.core.render.renderer import render
         from dbt_charts.core.render.svg_utils import extract_svg_dimensions
 
-        result = render(board, executor, format="svg", variables=variables)
+        result = render(
+            board, executor.ctx, executor.ledger, format="svg", variables=variables
+        )
         assert not result.warnings, f"Unexpected warnings: {result.warnings}"
         svg = result.output
         assert isinstance(svg, str)
@@ -1507,7 +1519,9 @@ tabs:
 """
         board, executor = self._build(yaml_content, local_project)
         resolved, _ = build_resolved_board(board, executor, {})
-        recording = record_board(resolved, executor, {})
+        recording = record_board(
+            resolved, executor.results(list(resolved.queries), {}), {}
+        )
 
         # Must not raise ERR-RESOLVED-PIE-DATA-MISMATCH: before the fix, the
         # inactive tab's pie was resolved against [] while record_board
@@ -1621,7 +1635,7 @@ tabs:
       rows: [{{cols: [wide_chart, active_chart]}}]
 """
         board, executor = self._build(yaml_content, local_project)
-        result = render(board, executor, format="json")
+        result = render(board, executor.ctx, executor.ledger, format="json")
         warning_keys = {(w.chart, w.code) for w in result.warnings}
 
         assert ("active_chart", WARN_QUERY_RETURNED_ZERO_ROWS.code) in warning_keys, (
@@ -1794,7 +1808,7 @@ rows:
       - collapsed_chart
 """
         board, executor = self._build(yaml_content, local_project)
-        result = render(board, executor, format="json")
+        result = render(board, executor.ctx, executor.ledger, format="json")
         warning_keys = {(w.chart, w.code) for w in result.warnings}
 
         assert (
@@ -1854,7 +1868,7 @@ tabs:
       rows: [{cols: [hidden_chart]}]
 """
         board, executor = self._build(yaml_content, local_project)
-        result = render(board, executor, format="json")
+        result = render(board, executor.ctx, executor.ledger, format="json")
         warning_keys = {(w.chart, w.code) for w in result.warnings}
 
         assert (
@@ -1921,7 +1935,7 @@ tabs:
       rows: [shared]
 """
         board, executor = self._build(yaml_content, local_project)
-        result = render(board, executor, format="json")
+        result = render(board, executor.ctx, executor.ledger, format="json")
         warning_keys = {(w.chart, w.code) for w in result.warnings}
 
         assert (
@@ -1991,7 +2005,7 @@ tabs:
       rows: [{{cols: [shared_pie, spacer]}}]
 """
         board, executor = self._build(yaml_content, local_project)
-        result = render(board, executor, format="json")
+        result = render(board, executor.ctx, executor.ledger, format="json")
 
         warning_keys = {(w.chart, w.code) for w in result.warnings}
         assert (

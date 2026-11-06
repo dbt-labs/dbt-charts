@@ -32,11 +32,11 @@ from dbt_charts.core.compile.models.source import (
 )
 from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_COLUMN_TYPE
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters.base import QueryResult, RowFetchLimit
-from dbt_charts.core.execute.adapters.values_adapter import ValuesAdapter
 from dbt_charts.core.execute.duckdb_types import duckdb_column_type
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
+from dbt_charts.core.execute.query_result import QueryResult, RowFetchLimit
 from dbt_charts.core.execute.result import arrow_to_query_result
+from dbt_charts.core.execute.run import run_values
 
 from ..._backend_runner import DuckDBRunner, SqliteRunner
 
@@ -96,13 +96,13 @@ def test_driver_dictionary_column_declares_its_value_type() -> None:
 
 def test_values_list_literal_is_list_float() -> None:
     query = ValuesQuery(rows=[{"xs": [1, 2.5]}, {"xs": [3.0]}])
-    result = ValuesAdapter().execute(query)
+    result = run_values(query)
     assert result.schema == {"xs": LIST_FLOAT}
 
 
 def test_values_column_mixing_kinds_is_rejected() -> None:
     with pytest.raises(ExecutionError) as excinfo:
-        ValuesAdapter().execute(ValuesQuery(rows=[{"v": 1}, {"v": "a"}]))
+        run_values(ValuesQuery(rows=[{"v": 1}, {"v": "a"}]))
     assert excinfo.value.code is ERR_RESULT_COLUMN_TYPE
     assert "'v'" in str(excinfo.value)
 
@@ -159,7 +159,7 @@ def test_duckdb_interval_raises_with_a_cast_hint() -> None:
 
 def test_values_column_with_only_nulls_is_rejected() -> None:
     with pytest.raises(ExecutionError) as excinfo:
-        ValuesAdapter().execute(ValuesQuery(rows=[{"v": None}, {"v": None}]))
+        run_values(ValuesQuery(rows=[{"v": None}, {"v": None}]))
     assert excinfo.value.code is ERR_RESULT_COLUMN_TYPE
 
 
@@ -285,7 +285,7 @@ def test_literal_columns_are_the_union_of_every_rows_keys() -> None:
 
 
 def test_a_literal_column_of_integers_and_floats_holds_floats() -> None:
-    result = ValuesAdapter().execute(
+    result = run_values(
         ValuesQuery(rows=[{"x": 1, "xs": [1, 2.5]}, {"x": 2.5, "xs": [3]}])
     )
     assert result.schema["x"] == FLOAT
@@ -394,7 +394,7 @@ def test_literal_schema_tells_naive_from_aware_and_rejects_a_mix() -> None:
 
 def test_aware_literal_cells_are_normalized_to_utc() -> None:
     aware = datetime(2024, 1, 1, 12, tzinfo=timezone(timedelta(hours=2)))
-    result = ValuesAdapter().execute(ValuesQuery(rows=[{"t": aware}]))
+    result = run_values(ValuesQuery(rows=[{"t": aware}]))
     assert result.data[0]["t"] == datetime(2024, 1, 1, 10, tzinfo=UTC)
     assert result.data[0]["t"].utcoffset() == timedelta(0)
 

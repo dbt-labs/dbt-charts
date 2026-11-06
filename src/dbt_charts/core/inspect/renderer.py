@@ -26,8 +26,10 @@ from dbt_charts.core.compile import (
     CompileResult,
     compile,
 )
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+from dbt_charts.core.execute.env import ExecEnv
+from dbt_charts.core.execute.lookup import Ledger
+from dbt_charts.core.execute.plan import make_context
+from dbt_charts.core.execute.plan_sources import list_sql_sources
 from dbt_charts.core.inspect.cache_factory import make_cache_source_for_project
 from dbt_charts.core.inspect.resolver import LayeredSchemaResolver
 from dbt_charts.core.render import render
@@ -153,7 +155,7 @@ def _resolve_table_schema(
 
     Args:
         resolver: LayeredSchemaResolver that owns both the cache and the adapter.
-        source_name: Named source registered with the adapter registry.
+        source_name: Named source registered with the exec env.
         model_name: Bare table/model name to look up.
 
     Returns:
@@ -206,9 +208,9 @@ def _resolve_table_schema(
     return ""
 
 
-def resolve_source_name(adapter_registry: AdapterRegistry) -> str:
+def resolve_source_name(env: ExecEnv) -> str:
     """Pick the source the inspect templates query for schema-shaped data."""
-    sources = adapter_registry.list_sql_sources()
+    sources = list_sql_sources(env.sources)
     if not sources:
         return ""
     for entry in sources:
@@ -222,7 +224,7 @@ def render_inspect_dashboard(
     variables: dict[str, Any],
     *,
     project: FilesystemProject,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     standalone: bool = False,
     source_name: str | None = None,
 ) -> str:
@@ -236,7 +238,7 @@ def render_inspect_dashboard(
     parameter injection.
 
     A pure function of a *configured* registry — the caller builds the
-    ``AdapterRegistry`` from the project's ``dbt_charts.yml`` sources before
+    ``ExecEnv`` from the project's ``dbt_charts.yml`` sources before
     calling this function. This function only resolves the source name (via
     ``resolve_source_name``) and renders; a project with no configured
     sources renders with an empty ``source_name``, and the schema/SQL
@@ -250,7 +252,7 @@ def render_inspect_dashboard(
         template_yaml: YAML template content with string {{ }} placeholders
         variables: Variables to substitute in the template
         project: Project for resolving sources and relative paths
-        adapter_registry: Pre-configured registry to resolve/execute against
+        env: Pre-configured registry to resolve/execute against
         source_name: The source to query, when the caller names one. None
             picks the registry's default via ``resolve_source_name``.
         standalone: Output will be opened with no host, so carry font bytes
@@ -267,9 +269,7 @@ def render_inspect_dashboard(
     """
     safe_vars = validate_inspect_variables(variables)
     safe_vars["source_name"] = (
-        source_name
-        if source_name is not None
-        else resolve_source_name(adapter_registry)
+        source_name if source_name is not None else resolve_source_name(env)
     )
 
     # Use warm cache when dbt-charts-super-schema is installed; fall back to
@@ -279,7 +279,7 @@ def render_inspect_dashboard(
     cache = make_cache_source_for_project(project)
     resolver = LayeredSchemaResolver(
         cache=cache,
-        adapter_registry=adapter_registry,
+        env=env,
         project=project,
     )
     model_name = safe_vars.get("model", "")
@@ -295,21 +295,18 @@ def render_inspect_dashboard(
 
     result = compile(
         substituted_yaml,
-        project_sources=adapter_registry.project_sources,
+        project_sources=env.sources.runtime_config(),
         project_cache=project.cache,
     )
     if result.errors or not result.board:
         raise InspectProfileCompileError(result=result)
 
-    executor = Executor(
-        result.board,
-        adapter_registry=adapter_registry,
-        query_registry=result.query_registry,
-    )
+    ctx = make_context(result.board, env, query_registry=result.query_registry)
 
     html_output = render(
         result.board,
-        executor,
+        ctx,
+        Ledger(),
         format="html",
         variables=safe_vars,
         standalone=standalone,

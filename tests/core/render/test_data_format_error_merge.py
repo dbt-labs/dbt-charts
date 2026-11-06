@@ -11,14 +11,13 @@ failed query's collected error. The merge keeps one diagnostic per chart.
 from unittest.mock import MagicMock, patch
 
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.render import (
     board_resolve as _board_resolve_mod,
-    render,
 )
 from dbt_charts.core.render.board_resolve import build_resolved_board_static
 
-from ..._lookup import collect_via_execute_query
+from ..._lookup import render_via
 from ..._results import rows_result
 from .._svg_render import PINNED_RENDER_TIME
 from .test_partial_success import _compile_two_chart_board
@@ -30,7 +29,6 @@ def _render(mock):
     board = _compile_two_chart_board()
     mock.cache_hit_ats = []
     mock.rendered_at = PINNED_RENDER_TIME
-    collect_via_execute_query(mock)
     with (
         patch.object(
             _board_resolve_mod,
@@ -38,12 +36,12 @@ def _render(mock):
             return_value=(build_resolved_board_static(board), {}),
         ),
     ):
-        return render(board, executor=mock, format="json")
+        return render_via(mock, board, format="json")
 
 
 def test_failure_in_both_passes_is_reported_once():
     """The same broken chart fails in draw and walk alike — one diagnostic."""
-    mock = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    mock = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
 
     def _query(query_name, variables=None):
         if query_name == "q_good":

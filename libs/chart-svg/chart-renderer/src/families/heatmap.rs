@@ -18,9 +18,8 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::common::{
-    ScaleTarget, row_num, row_str, AxisStyle, ChartSort, Font, FormatSlot, StyleChannel, TitleStyle,
-};
+use crate::common::{ScaleTarget, AxisStyle, Font, FormatSlot, StyleChannel, TitleStyle};
+use ::bind::rows::{row_num, row_str, ChartSort};
 use crate::families::cartesian::BandScale;
 use crate::families::color_scale::{continuous_gradient_def, ContinuousColor};
 use scene::{Attrs, Chars, Escape, Node, Role, Run, Shape, Transform};
@@ -30,7 +29,7 @@ use crate::families::legend::{
     gradient_labeled_values, gradient_length, gradient_tick_count, unit_position, LegendConfig, LegendEntry,
     LegendSymbol, GRADIENT_STOP_TICKS,
 };
-use crate::families::temporal::{infer_vega_type, VegaType};
+use ::bind::temporal::{infer_vega_type, VegaType};
 use measure::{FontBook, Measure};
 use crate::vega_fit;
 use crate::Payload;
@@ -60,6 +59,9 @@ pub(crate) struct HeatmapResolved {
     /// Effective chart background — see `BarResolved::background` and
     /// `docs/laws-shared.md#background`.
     pub(crate) background: String,
+    /// The chart's opaque composited canvas: halo and knockout ink, where `background` may be `transparent`.
+    #[serde(deserialize_with = "crate::common::de_canvas")]
+    pub(crate) canvas: String,
     pub(crate) x: String,
     pub(crate) y: String,
     #[serde(default, deserialize_with = "null_as_empty")]
@@ -86,13 +88,13 @@ pub(crate) struct HeatmapResolved {
     pub(crate) field_labels: crate::common::FieldLabels,
     /// Authored `chart.sort` — reaches BOTH dimensions identically
     /// (`emitters/heatmap.py::_write_dimension_sort`), reordered by
-    /// `common::dimension_sort_domain`.
+    /// `bind::rows::dimension_sort_domain`.
     #[serde(default)]
     pub(crate) sort: Option<ChartSort>,
-    pub(crate) multiples: Option<crate::families::multiples::MultiplesConfig>,
+    pub(crate) multiples: Option<::bind::multiples::MultiplesConfig>,
     /// Baked small-multiples partition dimensions (`resolved.panel_axes`).
     #[serde(default)]
-    pub(crate) panel_axes: Vec<crate::families::multiples::PartitionAxis>,
+    pub(crate) panel_axes: Vec<::bind::multiples::PartitionAxis>,
     #[serde(default)]
     pub(crate) resolved_channels: HashMap<String, StyleChannel>,
     pub(crate) legend: LegendConfig,
@@ -393,7 +395,7 @@ pub(crate) fn category_legend_entries<'a>(scale: &'a CategoryScale, authored: Op
         Some([]) => Vec::new(),
         Some(authored) => {
             let names: Vec<&str> = scale.domain.iter().map(String::as_str).collect();
-            crate::families::legend::resolve_legend_values(authored, &names, None)
+            ::bind::legend::resolve_legend_values(authored, &names, None)
         }
         None => (0..scale.domain.len()).collect(),
     };
@@ -422,8 +424,8 @@ pub(crate) enum CellFill<'a> {
 /// How a dimension's value heads the cell's tooltip: a date column prints its
 /// bucket (`header_tooltip_field`), anything else its raw text.
 pub(crate) struct HeaderFmt<'a> {
-    time: crate::time_axis::TimeAxis,
-    tu: Option<crate::families::temporal::TimeUnit>,
+    time: ::bind::time_axis::TimeAxis,
+    tu: Option<::bind::temporal::TimeUnit>,
     standard_date: bool,
     format: Option<crate::families::temporal::AuthoredTimeFormat<'a>>,
 }
@@ -432,12 +434,12 @@ impl<'a> HeaderFmt<'a> {
     pub(crate) fn of(types: &column_types::ColumnTypes, rows: &[serde_json::Map<String, Value>], field: &str, axis: &'a AxisStyle) -> Result<Self, String> {
         let domain = first_appearance(rows, field);
         let strs: Vec<&str> = domain.iter().map(String::as_str).collect();
-        let time = crate::time_axis::TimeAxis::over(&domain);
-        let tu = crate::families::temporal::detect_time_unit(&time.dates(&domain));
+        let time = ::bind::time_axis::TimeAxis::over(&domain);
+        let tu = ::bind::temporal::detect_time_unit(&time.dates(&domain));
         Ok(Self {
             time,
             tu,
-            standard_date: crate::families::temporal::x_is_standard_date(types, field, &strs)?,
+            standard_date: ::bind::temporal::x_is_standard_date(types, field, &strs)?,
             format: crate::families::temporal::AuthoredTimeFormat::parse(
                 "heatmap",
                 crate::families::temporal::grain_format(&axis.grain_formats, tu),
@@ -610,7 +612,7 @@ pub(crate) fn bind_cells(
                 Some(crate::contract::heatmap_aria_label(&tt)?)
             }
             None if c.native_aria => {
-                let measure = row_str(row, crate::common::WIDE_KEY_FIELD);
+                let measure = row_str(row, ::bind::wide::WIDE_KEY_FIELD);
                 Some(crate::contract::native_label(&[(c.x_field, xv.clone()), (measure.as_str(), yv.clone())]))
             }
             None => None,
@@ -840,7 +842,7 @@ const MS_PER_DAY: f64 = 86_400_000.0;
 /// grid: null, or an invalid date. A number is epoch milliseconds, as `new Date(n)` reads it.
 pub(crate) fn date_cell_day(cell: &Value) -> Option<f64> {
     match cell {
-        Value::String(text) => crate::js_date::parse_days(text),
+        Value::String(text) => ::bind::js_date::parse_days(text),
         Value::Number(ms) => ms.as_f64().filter(|ms| ms.abs() <= 8.64e15).map(|ms| ms / MS_PER_DAY),
         _ => None,
     }
@@ -858,13 +860,13 @@ pub(crate) fn date_color_extent(types: &column_types::ColumnTypes, rows: &[serde
 }
 
 /// Whether a date column holds instants: a declared `datetime_tz` does, a declared `date` or `datetime` never.
-/// A column of any other type is [`all_aware`](crate::time_zone::all_aware) over its text cells.
+/// A column of any other type is [`all_aware`](::bind::time_zone::all_aware) over its text cells.
 pub(crate) fn date_column_aware(types: &column_types::ColumnTypes, rows: &[serde_json::Map<String, Value>], field: &str) -> Result<bool, String> {
     let texts = || rows.iter().filter_map(|r| r.get(field)?.as_str());
     Ok(match types.get(field)? {
         column_types::ColumnType::DatetimeTz => texts().next().is_some(),
         column_types::ColumnType::Date | column_types::ColumnType::Datetime => false,
-        _ => crate::time_zone::all_aware(texts()),
+        _ => ::bind::time_zone::all_aware(texts()),
     })
 }
 
@@ -902,7 +904,7 @@ pub(crate) fn date_legend_values(min: f64, max: f64, plot_h: f64, authored: Opti
 /// A date legend's labeled days for `count` target ticks.
 pub(crate) fn date_legend_ticks(min: f64, max: f64, count: usize, authored: Option<&[String]>, aware: bool) -> Result<Vec<f64>, String> {
     match authored {
-        Some(values) => Ok(values.iter().map(|v| crate::js_date::parse_days(v).unwrap_or(f64::NAN)).collect()),
+        Some(values) => Ok(values.iter().map(|v| ::bind::js_date::parse_days(v).unwrap_or(f64::NAN)).collect()),
         None if min == max => Ok(vec![min]),
         None => Ok(gradient_labeled_values(date_ticks(min, max, count, aware)?, min, max)),
     }
@@ -911,12 +913,13 @@ pub(crate) fn date_legend_ticks(min: f64, max: f64, count: usize, authored: Opti
 /// Vega's date legend label, `%b %d, %Y`: the date on the board zone's wall
 /// clock for an `aware` scale; a `NaN` date prints as d3 formats an invalid one.
 pub(crate) fn legend_date_label(day: f64, aware: bool) -> Result<String, String> {
-    use crate::families::temporal::{vl_default_format, TimeUnit};
+    use crate::families::temporal::{vl_default_format};
+    use ::bind::temporal::{TimeUnit};
     use d3rs::calendar::civil_from_days;
     if day.is_nan() {
         return Ok("NaN, 0NaN".to_string());
     }
-    let day = if aware { crate::time_zone::wall_day(day)? } else { day };
+    let day = if aware { ::bind::time_zone::wall_day(day)? } else { day };
     let (y, m, d) = civil_from_days(day.floor() as i64);
     vl_default_format(y, m, d, TimeUnit::YearMonthDate)
 }
@@ -947,7 +950,7 @@ pub(crate) fn legend_labels(ticks: &[f64], spec: Option<&str>, scale: Option<&Co
         .map(|&v| match scale {
             Some(scale) if scale.pivot == Some(v) && !d3rs::ticks::d3_ticks(scale.lo, scale.hi, GRADIENT_NICE_TICK_COUNT).contains(&v) => {
                 let step = d3rs::ticks::d3_tick_step(scale.lo, scale.hi, GRADIENT_NICE_TICK_COUNT);
-                crate::number_locale::d3_format(&crate::number_locale::vega_tick_spec(step), v)
+                ::bind::formats::locale::d3_format(&::bind::formats::locale::vega_tick_spec(step), v)
             }
             _ => format_legend_value(v, spec),
         })
@@ -957,9 +960,9 @@ pub(crate) fn legend_labels(ticks: &[f64], spec: Option<&str>, scale: Option<&Co
 /// Format a legend value using the payload's d3 spec, or fall back to comma-integer.
 pub(crate) fn format_legend_value(v: f64, spec: Option<&str>) -> Result<String, String> {
     match spec {
-        Some(s) => crate::number_locale::d3_format(s, v)
+        Some(s) => ::bind::formats::locale::d3_format(s, v)
             .map_err(|e| format!("heatmap legend format {s:?}: {e}")),
-        None => crate::number_locale::d3_format(",d", v)
+        None => ::bind::formats::locale::d3_format(",d", v)
             .map_err(|e| format!("heatmap legend format ',d': {e}")),
     }
 }
@@ -969,7 +972,7 @@ pub(crate) fn format_legend_value(v: f64, spec: Option<&str>) -> Result<String, 
 mod tests {
     use super::{render, row_str, RectMark};
     use crate::families::legend::unit_position;
-    use crate::families::temporal::TimeUnit;
+    use ::bind::temporal::TimeUnit;
 
     #[test]
     fn the_declared_kind_decides_whether_a_date_column_holds_instants() {
@@ -1134,7 +1137,7 @@ mod tests {
                     "subtitle": {"font": {"family": TEST_FONT, "size": 11.0, "weight": "400",
                                           "color": "#8A8C8F"}}
                 },
-                "background": "#ffffff",
+                "background": "#ffffff", "canvas": "#ffffff",
                 "field_labels": {}, "x": "region", "y": "category", "color": "revenue",
                 "multiples": null, "resolved_channels": {}, "layers": [],
                 "legend": {
@@ -1278,7 +1281,7 @@ mod tests {
 
     /// A sort column of numbers and text makes Python's sort raise, which
     /// `x_domain_order` answers with row order — see
-    /// `common::dimension_sort_domain`'s doc comment.
+    /// `bind::rows::dimension_sort_domain`'s doc comment.
     #[test]
     fn heatmap_authored_sort_over_numbers_and_text_keeps_row_order() {
         let mut json = sort_heatmap_payload(json!({"by": "seq", "order": "asc"}));
@@ -1797,7 +1800,7 @@ mod tests {
     /// A date x heads the cell's tooltip with its bucket, as every other cartesian family does.
     #[test]
     fn a_date_like_x_heads_the_tooltip_with_its_bucket() {
-        let _en = crate::time_locale::en_us_scope();
+        let _en = ::bind::time_locale::en_us_scope();
         let j = heatmap_payload(|j| {
             j["rows"] = json!([
                 {"region": "2024-01-01", "category": "Accessories", "revenue": 100},
@@ -1986,8 +1989,8 @@ mod tests {
 
     #[test]
     fn an_aware_date_legend_ticks_and_names_the_board_zones_days() {
-        let _locale = crate::time_locale::en_us_scope();
-        let _tokyo = crate::time_zone::zone_scope("Asia/Tokyo");
+        let _locale = ::bind::time_locale::en_us_scope();
+        let _tokyo = ::bind::time_zone::zone_scope("Asia/Tokyo");
         let (lo, hi) = (19_723.0, 19_783.0);
         let ticks = super::date_ticks(lo, hi, 4, true).unwrap();
         assert_eq!(ticks.len(), 2, "{ticks:?}");

@@ -100,7 +100,7 @@ def test_date_column_renders_human_readable_in_sample_data(
 ) -> None:
     """DATE values in inspect sample-data must appear as '19 May 2024', not as
     machine-readable ISO strings or Python repr."""
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
     from dbt_charts.core.inspect.renderer import render_inspect_dashboard
 
     project_root = _make_project_with_dates(tmp_path)
@@ -109,12 +109,12 @@ def test_date_column_renders_human_readable_in_sample_data(
         f"sources:\n  warehouse:\n    type: duckdb\n    path: '{db_path}'\n"
     )
     project = local_project(project_root)
-    adapter_registry = build_adapter_registry(project)
+    env = build_exec_env(project)
     html = render_inspect_dashboard(
         _template("model"),
         {"model": "events"},
         project=project,
-        adapter_registry=adapter_registry,
+        env=env,
     )
 
     # The formatted date must appear in the output.

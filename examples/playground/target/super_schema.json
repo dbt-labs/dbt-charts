@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-10-14T22:58:59.903328+00:00",
+  "generated_at": "2026-11-05T19:22:59.302158+00:00",
   "tables": {
     "dundersign.documents": {
       "contract_version": "1.2",
@@ -8,7 +8,7 @@
       "schema_name": "dundersign",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:58.705936+00:00",
+      "profiled_at": "2026-11-05T19:22:58.157910+00:00",
       "inspector_version": "2.0.0",
       "row_count": 5000,
       "column_count": 17,
@@ -156,11 +156,11 @@
               "frequency": 56
             },
             {
-              "value": "team_2",
+              "value": "team_22",
               "frequency": 53
             },
             {
-              "value": "team_22",
+              "value": "team_2",
               "frequency": 53
             },
             {
@@ -172,15 +172,15 @@
               "frequency": 48
             },
             {
-              "value": "team_71",
-              "frequency": 47
-            },
-            {
               "value": "team_87",
               "frequency": 47
             },
             {
               "value": "team_11",
+              "frequency": 47
+            },
+            {
+              "value": "team_71",
               "frequency": 47
             },
             {
@@ -922,7 +922,7 @@
       "schema_name": "dundersign",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:58.717016+00:00",
+      "profiled_at": "2026-11-05T19:22:58.222110+00:00",
       "inspector_version": "2.0.0",
       "row_count": 5000,
       "column_count": 14,
@@ -1534,11 +1534,11 @@
           "is_geo": false,
           "is_pii": false,
           "null_percentage": 0.0,
-          "distinct_count": 3920,
-          "uniqueness_ratio": 0.784,
+          "distinct_count": 4757,
+          "uniqueness_ratio": 0.9514,
           "declared_unique": false,
-          "min_value": "2026-10-13 17:44:34.047577",
-          "max_value": "2026-10-13 17:44:53.187039",
+          "min_value": "2026-11-05 11:20:33.416637",
+          "max_value": "2026-11-05 11:20:52.521864",
           "mean_value": null,
           "median_value": null,
           "stddev_value": null,
@@ -1606,7 +1606,7 @@
       "schema_name": "dundersign",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:58.734925+00:00",
+      "profiled_at": "2026-11-05T19:22:58.234395+00:00",
       "inspector_version": "2.0.0",
       "row_count": 750,
       "column_count": 18,
@@ -1752,11 +1752,11 @@
               "frequency": 50
             },
             {
-              "value": "account_10",
+              "value": "account_5",
               "frequency": 49
             },
             {
-              "value": "account_5",
+              "value": "account_10",
               "frequency": 49
             },
             {
@@ -1764,11 +1764,11 @@
               "frequency": 48
             },
             {
-              "value": "account_2",
+              "value": "account_16",
               "frequency": 47
             },
             {
-              "value": "account_16",
+              "value": "account_2",
               "frequency": 47
             },
             {
@@ -1784,11 +1784,11 @@
             "account_12",
             "account_4",
             "account_14",
-            "account_10",
             "account_5",
+            "account_10",
             "account_9",
-            "account_2",
             "account_16",
+            "account_2",
             "account_8",
             "account_1"
           ],
@@ -2104,11 +2104,11 @@
               "frequency": 50
             },
             {
-              "value": "Aperture - New Business",
+              "value": "Waynetech - New Business",
               "frequency": 49
             },
             {
-              "value": "Waynetech - New Business",
+              "value": "Aperture - New Business",
               "frequency": 49
             },
             {
@@ -2116,11 +2116,11 @@
               "frequency": 48
             },
             {
-              "value": "Raviga - New Business",
+              "value": "Hooli - New Business",
               "frequency": 47
             },
             {
-              "value": "Hooli - New Business",
+              "value": "Raviga - New Business",
               "frequency": 47
             },
             {
@@ -2128,7 +2128,7 @@
               "frequency": 45
             },
             {
-              "value": "Initech - New Business",
+              "value": "Endframe - New Business",
               "frequency": 42
             }
           ],
@@ -2136,13 +2136,13 @@
             "Globex - New Business",
             "Techcorp - New Business",
             "Nucleus - New Business",
-            "Aperture - New Business",
             "Waynetech - New Business",
+            "Aperture - New Business",
             "Piedpiper - New Business",
-            "Raviga - New Business",
             "Hooli - New Business",
+            "Raviga - New Business",
             "Cyberdyne - New Business",
-            "Initech - New Business"
+            "Endframe - New Business"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -2363,11 +2363,11 @@
               "frequency": 116
             },
             {
-              "value": "Outbound",
+              "value": "Download",
               "frequency": 113
             },
             {
-              "value": "Download",
+              "value": "Outbound",
               "frequency": 113
             },
             {
@@ -2389,8 +2389,8 @@
           ],
           "enum_values": [
             "Website",
-            "Outbound",
             "Download",
+            "Outbound",
             "Referral",
             "Trade Show",
             "Paid Search",
@@ -2783,7 +2783,7 @@
       "schema_name": "dundersign",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:58.748436+00:00",
+      "profiled_at": "2026-11-05T19:22:58.243946+00:00",
       "inspector_version": "2.0.0",
       "row_count": 5000,
       "column_count": 14,
@@ -3409,7 +3409,7 @@
           "semantic_type": "datetime",
           "semantic_type_confidence": 0.7,
           "role": "time",
-          "distribution": "unique",
+          "distribution": "continuous",
           "completeness": "complete",
           "key_role": "none",
           "is_non_negative": false,
@@ -3426,11 +3426,11 @@
           "is_geo": false,
           "is_pii": false,
           "null_percentage": 0.0,
-          "distinct_count": 5000,
-          "uniqueness_ratio": 1.0,
+          "distinct_count": 3580,
+          "uniqueness_ratio": 0.716,
           "declared_unique": false,
-          "min_value": "2026-10-13 17:44:34.019153",
-          "max_value": "2026-10-13 17:44:52.992581",
+          "min_value": "2026-11-05 11:20:33.386311",
+          "max_value": "2026-11-05 11:20:52.328081",
           "mean_value": null,
           "median_value": null,
           "stddev_value": null,
@@ -3498,7 +3498,7 @@
       "schema_name": "dundersign",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:58.761373+00:00",
+      "profiled_at": "2026-11-05T19:22:58.252664+00:00",
       "inspector_version": "2.0.0",
       "row_count": 5000,
       "column_count": 12,
@@ -4013,8 +4013,8 @@
           "distinct_count": 5000,
           "uniqueness_ratio": 1.0,
           "declared_unique": false,
-          "min_value": "2026-10-13 17:44:34.028200",
-          "max_value": "2026-10-13 17:44:53.030464",
+          "min_value": "2026-11-05 11:20:33.396049",
+          "max_value": "2026-11-05 11:20:52.365571",
           "mean_value": null,
           "median_value": null,
           "stddev_value": null,
@@ -4118,7 +4118,7 @@
       "schema_name": "dundersign",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:58.777650+00:00",
+      "profiled_at": "2026-11-05T19:22:58.263731+00:00",
       "inspector_version": "2.0.0",
       "row_count": 374,
       "column_count": 18,
@@ -4340,43 +4340,43 @@
           "avg_length": 9.470588235294118,
           "top_values": [
             {
-              "value": "stripe_7",
+              "value": "stripe_68",
               "frequency": 1
             },
             {
-              "value": "stripe_40",
+              "value": "stripe_71",
               "frequency": 1
             },
             {
-              "value": "stripe_45",
+              "value": "stripe_88",
               "frequency": 1
             },
             {
-              "value": "stripe_52",
+              "value": "stripe_93",
               "frequency": 1
             },
             {
-              "value": "stripe_57",
+              "value": "stripe_99",
               "frequency": 1
             },
             {
-              "value": "stripe_122",
+              "value": "stripe_130",
               "frequency": 1
             },
             {
-              "value": "stripe_129",
+              "value": "stripe_131",
               "frequency": 1
             },
             {
-              "value": "stripe_162",
+              "value": "stripe_132",
               "frequency": 1
             },
             {
-              "value": "stripe_159",
+              "value": "stripe_133",
               "frequency": 1
             },
             {
-              "value": "stripe_164",
+              "value": "stripe_140",
               "frequency": 1
             }
           ],
@@ -5086,7 +5086,7 @@
       "schema_name": "dundersign",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:58.790240+00:00",
+      "profiled_at": "2026-11-05T19:22:58.272848+00:00",
       "inspector_version": "2.0.0",
       "row_count": 3445,
       "column_count": 12,
@@ -5177,11 +5177,11 @@
           "avg_length": 6.459506531204644,
           "top_values": [
             {
-              "value": "id_74",
+              "value": "id_123",
               "frequency": 74
             },
             {
-              "value": "id_123",
+              "value": "id_74",
               "frequency": 74
             },
             {
@@ -5259,11 +5259,11 @@
           "avg_length": 7.463280116110305,
           "top_values": [
             {
-              "value": "team_3",
+              "value": "team_16",
               "frequency": 74
             },
             {
-              "value": "team_16",
+              "value": "team_3",
               "frequency": 74
             },
             {
@@ -5287,11 +5287,11 @@
               "frequency": 55
             },
             {
-              "value": "team_48",
+              "value": "team_66",
               "frequency": 54
             },
             {
-              "value": "team_66",
+              "value": "team_48",
               "frequency": 54
             },
             {
@@ -5787,7 +5787,7 @@
       "schema_name": "dundersign",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:58.810587+00:00",
+      "profiled_at": "2026-11-05T19:22:58.286188+00:00",
       "inspector_version": "2.0.0",
       "row_count": 232,
       "column_count": 17,
@@ -5926,6 +5926,14 @@
               "frequency": 3
             },
             {
+              "value": "11",
+              "frequency": 2
+            },
+            {
+              "value": "199",
+              "frequency": 2
+            },
+            {
               "value": "9",
               "frequency": 2
             },
@@ -5934,31 +5942,23 @@
               "frequency": 2
             },
             {
-              "value": "61",
-              "frequency": 2
-            },
-            {
-              "value": "199",
-              "frequency": 2
-            },
-            {
               "value": "2",
               "frequency": 2
             },
             {
-              "value": "11",
+              "value": "61",
               "frequency": 2
+            },
+            {
+              "value": "107",
+              "frequency": 1
             },
             {
               "value": "71",
               "frequency": 1
             },
             {
-              "value": "175",
-              "frequency": 1
-            },
-            {
-              "value": "93",
+              "value": "126",
               "frequency": 1
             }
           ],
@@ -6008,6 +6008,22 @@
               "frequency": 3
             },
             {
+              "value": "61",
+              "frequency": 2
+            },
+            {
+              "value": "2",
+              "frequency": 2
+            },
+            {
+              "value": "180",
+              "frequency": 2
+            },
+            {
+              "value": "199",
+              "frequency": 2
+            },
+            {
               "value": "11",
               "frequency": 2
             },
@@ -6016,31 +6032,15 @@
               "frequency": 2
             },
             {
-              "value": "180",
-              "frequency": 2
-            },
-            {
-              "value": "2",
-              "frequency": 2
-            },
-            {
-              "value": "199",
-              "frequency": 2
-            },
-            {
-              "value": "61",
-              "frequency": 2
-            },
-            {
-              "value": "27",
+              "value": "10",
               "frequency": 1
             },
             {
-              "value": "34",
+              "value": "87",
               "frequency": 1
             },
             {
-              "value": "67",
+              "value": "71",
               "frequency": 1
             }
           ],
@@ -6295,12 +6295,16 @@
               "frequency": 23
             },
             {
+              "value": "Template not working",
+              "frequency": 19
+            },
+            {
               "value": "Mobile app issue",
               "frequency": 19
             },
             {
-              "value": "Template not working",
-              "frequency": 19
+              "value": "Document expired before signing",
+              "frequency": 17
             },
             {
               "value": "Email notification not received",
@@ -6308,10 +6312,6 @@
             },
             {
               "value": "Can't sign document",
-              "frequency": 17
-            },
-            {
-              "value": "Document expired before signing",
               "frequency": 17
             },
             {
@@ -6327,21 +6327,21 @@
               "frequency": 15
             },
             {
-              "value": "Can't access my account",
+              "value": "Billing question",
               "frequency": 14
             }
           ],
           "enum_values": [
             "Team member can't access document",
-            "Mobile app issue",
             "Template not working",
+            "Mobile app issue",
+            "Document expired before signing",
             "Email notification not received",
             "Can't sign document",
-            "Document expired before signing",
             "How do I add another signer?",
             "Need audit log",
             "Webhook not firing",
-            "Can't access my account"
+            "Billing question"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -6928,7 +6928,7 @@
       "schema_name": "dundersign",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:58.827977+00:00",
+      "profiled_at": "2026-11-05T19:22:58.299241+00:00",
       "inspector_version": "2.0.0",
       "row_count": 3278,
       "column_count": 19,
@@ -7071,11 +7071,11 @@
               "frequency": 82
             },
             {
-              "value": "Taylor",
+              "value": "Dakota",
               "frequency": 80
             },
             {
-              "value": "Dakota",
+              "value": "Taylor",
               "frequency": 80
             },
             {
@@ -7091,15 +7091,15 @@
               "frequency": 76
             },
             {
-              "value": "Peyton",
-              "frequency": 75
-            },
-            {
               "value": "Charlotte",
               "frequency": 75
             },
             {
-              "value": "Riley",
+              "value": "Peyton",
+              "frequency": 75
+            },
+            {
+              "value": "Phoenix",
               "frequency": 73
             }
           ],
@@ -7181,7 +7181,7 @@
               "frequency": 91
             },
             {
-              "value": "Williams",
+              "value": "Walker",
               "frequency": 90
             }
           ],
@@ -7259,11 +7259,11 @@
               "frequency": 158
             },
             {
-              "value": "Starkindustries",
+              "value": "Oscorp",
               "frequency": 157
             },
             {
-              "value": "Oscorp",
+              "value": "Starkindustries",
               "frequency": 157
             }
           ],
@@ -7276,8 +7276,8 @@
             "Initech",
             "Aperture",
             "Massive",
-            "Starkindustries",
-            "Oscorp"
+            "Oscorp",
+            "Starkindustries"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -7705,43 +7705,43 @@
           "avg_length": 7.660377358490566,
           "top_values": [
             {
-              "value": "team_97",
+              "value": "team_17",
               "frequency": 1
             },
             {
-              "value": "team_22",
+              "value": "team_13",
               "frequency": 1
             },
             {
-              "value": "team_25",
+              "value": "team_16",
               "frequency": 1
             },
             {
-              "value": "team_46",
+              "value": "team_34",
               "frequency": 1
             },
             {
-              "value": "team_32",
+              "value": "team_30",
               "frequency": 1
             },
             {
-              "value": "team_132",
+              "value": "team_10",
               "frequency": 1
             },
             {
-              "value": "team_81",
+              "value": "team_74",
               "frequency": 1
             },
             {
-              "value": "team_105",
+              "value": "team_93",
               "frequency": 1
             },
             {
-              "value": "team_106",
+              "value": "team_31",
               "frequency": 1
             },
             {
-              "value": "team_135",
+              "value": "team_82",
               "frequency": 1
             }
           ],
@@ -8013,7 +8013,7 @@
       "schema_name": "dundersign_serving",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:58.840234+00:00",
+      "profiled_at": "2026-11-05T19:22:58.307897+00:00",
       "inspector_version": "2.0.0",
       "row_count": 12,
       "column_count": 9,
@@ -8320,19 +8320,27 @@
           "avg_length": null,
           "top_values": [
             {
-              "value": "5956",
+              "value": "287",
               "frequency": 1
             },
             {
-              "value": "5236",
-              "frequency": 1
-            },
-            {
-              "value": "5511",
+              "value": "7505",
               "frequency": 1
             },
             {
               "value": "1140",
+              "frequency": 1
+            },
+            {
+              "value": "5956",
+              "frequency": 1
+            },
+            {
+              "value": "7044",
+              "frequency": 1
+            },
+            {
+              "value": "2527",
               "frequency": 1
             },
             {
@@ -8348,15 +8356,7 @@
               "frequency": 1
             },
             {
-              "value": "7044",
-              "frequency": 1
-            },
-            {
-              "value": "7245",
-              "frequency": 1
-            },
-            {
-              "value": "2527",
+              "value": "5236",
               "frequency": 1
             }
           ],
@@ -8666,7 +8666,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.548360+00:00",
+      "profiled_at": "2026-11-05T19:22:58.960077+00:00",
       "inspector_version": "2.0.0",
       "row_count": 8,
       "column_count": 7,
@@ -8716,15 +8716,11 @@
           "avg_length": 14.375,
           "top_values": [
             {
-              "value": "Horizon Labs",
-              "frequency": 1
-            },
-            {
               "value": "Granite Data",
               "frequency": 1
             },
             {
-              "value": "Echo Networks",
+              "value": "Bright Solutions",
               "frequency": 1
             },
             {
@@ -8736,27 +8732,31 @@
               "frequency": 1
             },
             {
-              "value": "Delta Analytics",
-              "frequency": 1
-            },
-            {
               "value": "Cascade Systems",
               "frequency": 1
             },
             {
-              "value": "Bright Solutions",
+              "value": "Echo Networks",
+              "frequency": 1
+            },
+            {
+              "value": "Delta Analytics",
+              "frequency": 1
+            },
+            {
+              "value": "Horizon Labs",
               "frequency": 1
             }
           ],
           "enum_values": [
-            "Horizon Labs",
             "Granite Data",
-            "Echo Networks",
+            "Bright Solutions",
             "Apex Technologies",
             "Focal Point Inc",
-            "Delta Analytics",
             "Cascade Systems",
-            "Bright Solutions"
+            "Echo Networks",
+            "Delta Analytics",
+            "Horizon Labs"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -9008,18 +9008,18 @@
               "frequency": 4
             },
             {
-              "value": "APAC",
+              "value": "EMEA",
               "frequency": 2
             },
             {
-              "value": "EMEA",
+              "value": "APAC",
               "frequency": 2
             }
           ],
           "enum_values": [
             "Americas",
-            "APAC",
-            "EMEA"
+            "EMEA",
+            "APAC"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -9033,7 +9033,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.561148+00:00",
+      "profiled_at": "2026-11-05T19:22:58.971936+00:00",
       "inspector_version": "2.0.0",
       "row_count": 9,
       "column_count": 6,
@@ -9083,11 +9083,19 @@
           "avg_length": 13.333333333333334,
           "top_values": [
             {
+              "value": "Horizon Labs",
+              "frequency": 1
+            },
+            {
               "value": "Echo Networks",
               "frequency": 1
             },
             {
-              "value": "Horizon Labs",
+              "value": "Delta Analytics",
+              "frequency": 1
+            },
+            {
+              "value": "Granite Data",
               "frequency": 1
             },
             {
@@ -9107,28 +9115,20 @@
               "frequency": 1
             },
             {
-              "value": "Granite Data",
-              "frequency": 1
-            },
-            {
               "value": "Cascade Systems",
-              "frequency": 1
-            },
-            {
-              "value": "Delta Analytics",
               "frequency": 1
             }
           ],
           "enum_values": [
-            "Echo Networks",
             "Horizon Labs",
+            "Echo Networks",
+            "Delta Analytics",
+            "Granite Data",
             "Apex Technologies",
             "Focal Point Inc",
             "Bright Solutions",
             "Total",
-            "Granite Data",
-            "Cascade Systems",
-            "Delta Analytics"
+            "Cascade Systems"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -9359,7 +9359,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.573739+00:00",
+      "profiled_at": "2026-11-05T19:22:58.983501+00:00",
       "inspector_version": "2.0.0",
       "row_count": 9,
       "column_count": 5,
@@ -9409,19 +9409,7 @@
           "avg_length": 13.555555555555555,
           "top_values": [
             {
-              "value": "Bright Solutions",
-              "frequency": 1
-            },
-            {
-              "value": "Granite Data",
-              "frequency": 1
-            },
-            {
               "value": "Delta Analytics",
-              "frequency": 1
-            },
-            {
-              "value": "Horizon Labs",
               "frequency": 1
             },
             {
@@ -9437,11 +9425,23 @@
               "frequency": 1
             },
             {
+              "value": "Cascade Systems",
+              "frequency": 1
+            },
+            {
+              "value": "Bright Solutions",
+              "frequency": 1
+            },
+            {
               "value": "Echo Networks",
               "frequency": 1
             },
             {
-              "value": "Cascade Systems",
+              "value": "Horizon Labs",
+              "frequency": 1
+            },
+            {
+              "value": "Granite Data",
               "frequency": 1
             }
           ],
@@ -9634,7 +9634,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.586344+00:00",
+      "profiled_at": "2026-11-05T19:22:58.995606+00:00",
       "inspector_version": "2.0.0",
       "row_count": 9,
       "column_count": 5,
@@ -9684,15 +9684,15 @@
           "avg_length": 13.333333333333334,
           "top_values": [
             {
+              "value": "Apex Technologies",
+              "frequency": 1
+            },
+            {
+              "value": "Focal Point Inc",
+              "frequency": 1
+            },
+            {
               "value": "Horizon Labs",
-              "frequency": 1
-            },
-            {
-              "value": "Granite Data",
-              "frequency": 1
-            },
-            {
-              "value": "Echo Networks",
               "frequency": 1
             },
             {
@@ -9704,32 +9704,32 @@
               "frequency": 1
             },
             {
-              "value": "Delta Analytics",
+              "value": "Granite Data",
               "frequency": 1
             },
             {
-              "value": "Apex Technologies",
-              "frequency": 1
-            },
-            {
-              "value": "Focal Point Inc",
+              "value": "Echo Networks",
               "frequency": 1
             },
             {
               "value": "Cascade Systems",
               "frequency": 1
+            },
+            {
+              "value": "Delta Analytics",
+              "frequency": 1
             }
           ],
           "enum_values": [
-            "Horizon Labs",
-            "Granite Data",
-            "Echo Networks",
-            "Bright Solutions",
-            "Total",
-            "Delta Analytics",
             "Apex Technologies",
             "Focal Point Inc",
-            "Cascade Systems"
+            "Horizon Labs",
+            "Bright Solutions",
+            "Total",
+            "Granite Data",
+            "Echo Networks",
+            "Cascade Systems",
+            "Delta Analytics"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -9919,7 +9919,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.598205+00:00",
+      "profiled_at": "2026-11-05T19:22:59.006530+00:00",
       "inspector_version": "2.0.0",
       "row_count": 8,
       "column_count": 5,
@@ -9969,26 +9969,6 @@
           "avg_length": 7.375,
           "top_values": [
             {
-              "value": "country",
-              "frequency": 1
-            },
-            {
-              "value": "China",
-              "frequency": 1
-            },
-            {
-              "value": "Brazil",
-              "frequency": 1
-            },
-            {
-              "value": "United States",
-              "frequency": 1
-            },
-            {
-              "value": "Indonesia",
-              "frequency": 1
-            },
-            {
               "value": "India",
               "frequency": 1
             },
@@ -9997,19 +9977,39 @@
               "frequency": 1
             },
             {
+              "value": "Brazil",
+              "frequency": 1
+            },
+            {
               "value": "Mexico",
+              "frequency": 1
+            },
+            {
+              "value": "Indonesia",
+              "frequency": 1
+            },
+            {
+              "value": "United States",
+              "frequency": 1
+            },
+            {
+              "value": "country",
+              "frequency": 1
+            },
+            {
+              "value": "China",
               "frequency": 1
             }
           ],
           "enum_values": [
-            "country",
-            "China",
-            "Brazil",
-            "United States",
-            "Indonesia",
             "India",
             "Pakistan",
-            "Mexico"
+            "Brazil",
+            "Mexico",
+            "Indonesia",
+            "United States",
+            "country",
+            "China"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -10187,7 +10187,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.610080+00:00",
+      "profiled_at": "2026-11-05T19:22:59.017882+00:00",
       "inspector_version": "2.0.0",
       "row_count": 7,
       "column_count": 6,
@@ -10245,11 +10245,11 @@
               "frequency": 1
             },
             {
-              "value": "Brazil",
+              "value": "China",
               "frequency": 1
             },
             {
-              "value": "Indonesia",
+              "value": "Brazil",
               "frequency": 1
             },
             {
@@ -10257,22 +10257,22 @@
               "frequency": 1
             },
             {
-              "value": "United States",
+              "value": "Indonesia",
               "frequency": 1
             },
             {
-              "value": "China",
+              "value": "United States",
               "frequency": 1
             }
           ],
           "enum_values": [
             "India",
             "Pakistan",
+            "China",
             "Brazil",
-            "Indonesia",
             "Mexico",
-            "United States",
-            "China"
+            "Indonesia",
+            "United States"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -10491,7 +10491,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.624213+00:00",
+      "profiled_at": "2026-11-05T19:22:59.031121+00:00",
       "inspector_version": "2.0.0",
       "row_count": 6270,
       "column_count": 6,
@@ -10839,7 +10839,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.638019+00:00",
+      "profiled_at": "2026-11-05T19:22:59.044135+00:00",
       "inspector_version": "2.0.0",
       "row_count": 10,
       "column_count": 6,
@@ -10930,23 +10930,15 @@
           "avg_length": 11.2,
           "top_values": [
             {
+              "value": "Frank Miller",
+              "frequency": 1
+            },
+            {
               "value": "Eve Davis",
               "frequency": 1
             },
             {
               "value": "Iris Taylor",
-              "frequency": 1
-            },
-            {
-              "value": "Grace Wilson",
-              "frequency": 1
-            },
-            {
-              "value": "Frank Miller",
-              "frequency": 1
-            },
-            {
-              "value": "Jack Anderson",
               "frequency": 1
             },
             {
@@ -10968,19 +10960,27 @@
             {
               "value": "David Brown",
               "frequency": 1
+            },
+            {
+              "value": "Jack Anderson",
+              "frequency": 1
+            },
+            {
+              "value": "Grace Wilson",
+              "frequency": 1
             }
           ],
           "enum_values": [
+            "Frank Miller",
             "Eve Davis",
             "Iris Taylor",
-            "Grace Wilson",
-            "Frank Miller",
-            "Jack Anderson",
             "Alice Johnson",
             "Carol White",
             "Henry Moore",
             "Bob Smith",
-            "David Brown"
+            "David Brown",
+            "Jack Anderson",
+            "Grace Wilson"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -11023,15 +11023,11 @@
           "avg_length": 16.4,
           "top_values": [
             {
+              "value": "iris@example.com",
+              "frequency": 1
+            },
+            {
               "value": "carol@example.com",
-              "frequency": 1
-            },
-            {
-              "value": "bob@example.com",
-              "frequency": 1
-            },
-            {
-              "value": "david@example.com",
               "frequency": 1
             },
             {
@@ -11039,7 +11035,15 @@
               "frequency": 1
             },
             {
-              "value": "eve@example.com",
+              "value": "bob@example.com",
+              "frequency": 1
+            },
+            {
+              "value": "frank@example.com",
+              "frequency": 1
+            },
+            {
+              "value": "alice@example.com",
               "frequency": 1
             },
             {
@@ -11051,15 +11055,11 @@
               "frequency": 1
             },
             {
-              "value": "frank@example.com",
+              "value": "eve@example.com",
               "frequency": 1
             },
             {
-              "value": "iris@example.com",
-              "frequency": 1
-            },
-            {
-              "value": "alice@example.com",
+              "value": "david@example.com",
               "frequency": 1
             }
           ],
@@ -11276,7 +11276,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.653721+00:00",
+      "profiled_at": "2026-11-05T19:22:59.058390+00:00",
       "inspector_version": "2.0.0",
       "row_count": 8,
       "column_count": 8,
@@ -11326,7 +11326,19 @@
           "avg_length": 12.375,
           "top_values": [
             {
+              "value": "Annual Review",
+              "frequency": 1
+            },
+            {
+              "value": "IPO Filing",
+              "frequency": 1
+            },
+            {
               "value": "Acquisition",
+              "frequency": 1
+            },
+            {
+              "value": "Series B Close",
               "frequency": 1
             },
             {
@@ -11338,19 +11350,7 @@
               "frequency": 1
             },
             {
-              "value": "Annual Review",
-              "frequency": 1
-            },
-            {
-              "value": "IPO Filing",
-              "frequency": 1
-            },
-            {
               "value": "Q1 Earnings",
-              "frequency": 1
-            },
-            {
-              "value": "Series B Close",
               "frequency": 1
             },
             {
@@ -11359,13 +11359,13 @@
             }
           ],
           "enum_values": [
-            "Acquisition",
-            "Product Launch",
-            "Board Meeting",
             "Annual Review",
             "IPO Filing",
-            "Q1 Earnings",
+            "Acquisition",
             "Series B Close",
+            "Product Launch",
+            "Board Meeting",
+            "Q1 Earnings",
             "Restructuring"
           ],
           "histogram_bins": [],
@@ -11450,19 +11450,23 @@
           "avg_length": 10.0,
           "top_values": [
             {
-              "value": "03/15/2024",
-              "frequency": 1
-            },
-            {
-              "value": "01/28/2025",
-              "frequency": 1
-            },
-            {
               "value": "06/01/2024",
               "frequency": 1
             },
             {
               "value": "03/05/2025",
+              "frequency": 1
+            },
+            {
+              "value": "12/10/2024",
+              "frequency": 1
+            },
+            {
+              "value": "03/15/2024",
+              "frequency": 1
+            },
+            {
+              "value": "01/28/2025",
               "frequency": 1
             },
             {
@@ -11475,10 +11479,6 @@
             },
             {
               "value": "07/31/2025",
-              "frequency": 1
-            },
-            {
-              "value": "12/10/2024",
               "frequency": 1
             }
           ],
@@ -11528,10 +11528,6 @@
               "frequency": 1
             },
             {
-              "value": "Jun 1",
-              "frequency": 1
-            },
-            {
               "value": "Mar 15",
               "frequency": 1
             },
@@ -11553,6 +11549,10 @@
             },
             {
               "value": "Mar 5",
+              "frequency": 1
+            },
+            {
+              "value": "Jun 1",
               "frequency": 1
             }
           ],
@@ -11598,14 +11598,6 @@
           "avg_length": 7.0,
           "top_values": [
             {
-              "value": "2025-01",
-              "frequency": 1
-            },
-            {
-              "value": "2024-03",
-              "frequency": 1
-            },
-            {
               "value": "2024-12",
               "frequency": 1
             },
@@ -11622,23 +11614,31 @@
               "frequency": 1
             },
             {
-              "value": "2025-07",
+              "value": "2025-01",
+              "frequency": 1
+            },
+            {
+              "value": "2024-03",
               "frequency": 1
             },
             {
               "value": "2025-04",
               "frequency": 1
+            },
+            {
+              "value": "2025-07",
+              "frequency": 1
             }
           ],
           "enum_values": [
-            "2025-01",
-            "2024-03",
             "2024-12",
             "2024-09",
             "2025-03",
             "2024-06",
-            "2025-07",
-            "2025-04"
+            "2025-01",
+            "2024-03",
+            "2025-04",
+            "2025-07"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -11685,19 +11685,7 @@
               "frequency": 2
             },
             {
-              "value": "Q2 2024",
-              "frequency": 1
-            },
-            {
-              "value": "Q3 2024",
-              "frequency": 1
-            },
-            {
               "value": "Q3 2025",
-              "frequency": 1
-            },
-            {
-              "value": "Q2 2025",
               "frequency": 1
             },
             {
@@ -11705,18 +11693,30 @@
               "frequency": 1
             },
             {
+              "value": "Q2 2024",
+              "frequency": 1
+            },
+            {
               "value": "Q4 2024",
+              "frequency": 1
+            },
+            {
+              "value": "Q3 2024",
+              "frequency": 1
+            },
+            {
+              "value": "Q2 2025",
               "frequency": 1
             }
           ],
           "enum_values": [
             "Q1 2025",
-            "Q2 2024",
-            "Q3 2024",
             "Q3 2025",
-            "Q2 2025",
             "Q1 2024",
-            "Q4 2024"
+            "Q2 2024",
+            "Q4 2024",
+            "Q3 2024",
+            "Q2 2025"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -11812,7 +11812,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.670354+00:00",
+      "profiled_at": "2026-11-05T19:22:59.074661+00:00",
       "inspector_version": "2.0.0",
       "row_count": 8,
       "column_count": 9,
@@ -11874,6 +11874,10 @@
               "frequency": 1
             },
             {
+              "value": "Series B Close",
+              "frequency": 1
+            },
+            {
               "value": "Product Launch",
               "frequency": 1
             },
@@ -11886,10 +11890,6 @@
               "frequency": 1
             },
             {
-              "value": "Series B Close",
-              "frequency": 1
-            },
-            {
               "value": "Q1 Earnings",
               "frequency": 1
             }
@@ -11898,10 +11898,10 @@
             "Annual Review",
             "IPO Filing",
             "Acquisition",
+            "Series B Close",
             "Product Launch",
             "Board Meeting",
             "Restructuring",
-            "Series B Close",
             "Q1 Earnings"
           ],
           "histogram_bins": [],
@@ -11986,23 +11986,11 @@
           "avg_length": 10.0,
           "top_values": [
             {
-              "value": "12/10/2024",
+              "value": "01/28/2025",
               "frequency": 1
             },
             {
               "value": "03/15/2024",
-              "frequency": 1
-            },
-            {
-              "value": "06/01/2024",
-              "frequency": 1
-            },
-            {
-              "value": "03/05/2025",
-              "frequency": 1
-            },
-            {
-              "value": "01/28/2025",
               "frequency": 1
             },
             {
@@ -12015,6 +12003,18 @@
             },
             {
               "value": "07/31/2025",
+              "frequency": 1
+            },
+            {
+              "value": "12/10/2024",
+              "frequency": 1
+            },
+            {
+              "value": "06/01/2024",
+              "frequency": 1
+            },
+            {
+              "value": "03/05/2025",
               "frequency": 1
             }
           ],
@@ -12060,6 +12060,14 @@
           "avg_length": 5.75,
           "top_values": [
             {
+              "value": "Apr 18",
+              "frequency": 1
+            },
+            {
+              "value": "Jun 1",
+              "frequency": 1
+            },
+            {
               "value": "Mar 15",
               "frequency": 1
             },
@@ -12072,10 +12080,6 @@
               "frequency": 1
             },
             {
-              "value": "Jun 1",
-              "frequency": 1
-            },
-            {
               "value": "Sep 22",
               "frequency": 1
             },
@@ -12085,10 +12089,6 @@
             },
             {
               "value": "Mar 5",
-              "frequency": 1
-            },
-            {
-              "value": "Apr 18",
               "frequency": 1
             }
           ],
@@ -12138,10 +12138,6 @@
               "frequency": 1
             },
             {
-              "value": "Jan 28, 2025",
-              "frequency": 1
-            },
-            {
               "value": "Sep 22, 2024",
               "frequency": 1
             },
@@ -12150,7 +12146,15 @@
               "frequency": 1
             },
             {
-              "value": "Mar 15, 2024",
+              "value": "Jun 1, 2024",
+              "frequency": 1
+            },
+            {
+              "value": "Jan 28, 2025",
+              "frequency": 1
+            },
+            {
+              "value": "Mar 5, 2025",
               "frequency": 1
             },
             {
@@ -12158,11 +12162,7 @@
               "frequency": 1
             },
             {
-              "value": "Jun 1, 2024",
-              "frequency": 1
-            },
-            {
-              "value": "Mar 5, 2025",
+              "value": "Mar 15, 2024",
               "frequency": 1
             }
           ],
@@ -12208,10 +12208,6 @@
           "avg_length": 10.75,
           "top_values": [
             {
-              "value": "1 Jun 2024",
-              "frequency": 1
-            },
-            {
               "value": "15 Mar 2024",
               "frequency": 1
             },
@@ -12220,7 +12216,19 @@
               "frequency": 1
             },
             {
+              "value": "18 Apr 2025",
+              "frequency": 1
+            },
+            {
               "value": "31 Jul 2025",
+              "frequency": 1
+            },
+            {
+              "value": "1 Jun 2024",
+              "frequency": 1
+            },
+            {
+              "value": "10 Dec 2024",
               "frequency": 1
             },
             {
@@ -12229,14 +12237,6 @@
             },
             {
               "value": "28 Jan 2025",
-              "frequency": 1
-            },
-            {
-              "value": "10 Dec 2024",
-              "frequency": 1
-            },
-            {
-              "value": "18 Apr 2025",
               "frequency": 1
             }
           ],
@@ -12282,11 +12282,7 @@
           "avg_length": 7.0,
           "top_values": [
             {
-              "value": "2024-06",
-              "frequency": 1
-            },
-            {
-              "value": "2025-01",
+              "value": "2024-12",
               "frequency": 1
             },
             {
@@ -12294,7 +12290,11 @@
               "frequency": 1
             },
             {
-              "value": "2024-12",
+              "value": "2025-07",
+              "frequency": 1
+            },
+            {
+              "value": "2024-06",
               "frequency": 1
             },
             {
@@ -12306,7 +12306,7 @@
               "frequency": 1
             },
             {
-              "value": "2025-07",
+              "value": "2025-01",
               "frequency": 1
             },
             {
@@ -12315,13 +12315,13 @@
             }
           ],
           "enum_values": [
-            "2024-06",
-            "2025-01",
-            "2025-04",
             "2024-12",
+            "2025-04",
+            "2025-07",
+            "2024-06",
             "2024-09",
             "2025-03",
-            "2025-07",
+            "2025-01",
             "2024-03"
           ],
           "histogram_bins": [],
@@ -12369,15 +12369,7 @@
               "frequency": 2
             },
             {
-              "value": "Q1 2024",
-              "frequency": 1
-            },
-            {
-              "value": "Q4 2024",
-              "frequency": 1
-            },
-            {
-              "value": "Q3 2025",
+              "value": "Q2 2024",
               "frequency": 1
             },
             {
@@ -12385,22 +12377,30 @@
               "frequency": 1
             },
             {
+              "value": "Q3 2025",
+              "frequency": 1
+            },
+            {
               "value": "Q2 2025",
               "frequency": 1
             },
             {
-              "value": "Q2 2024",
+              "value": "Q1 2024",
+              "frequency": 1
+            },
+            {
+              "value": "Q4 2024",
               "frequency": 1
             }
           ],
           "enum_values": [
             "Q1 2025",
-            "Q1 2024",
-            "Q4 2024",
-            "Q3 2025",
+            "Q2 2024",
             "Q3 2024",
+            "Q3 2025",
             "Q2 2025",
-            "Q2 2024"
+            "Q1 2024",
+            "Q4 2024"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -12455,7 +12455,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.681882+00:00",
+      "profiled_at": "2026-11-05T19:22:59.086493+00:00",
       "inspector_version": "2.0.0",
       "row_count": 8,
       "column_count": 4,
@@ -12513,6 +12513,14 @@
               "frequency": 1
             },
             {
+              "value": "Indonesia",
+              "frequency": 1
+            },
+            {
+              "value": "Brazil",
+              "frequency": 1
+            },
+            {
               "value": "country",
               "frequency": 1
             },
@@ -12521,15 +12529,7 @@
               "frequency": 1
             },
             {
-              "value": "Indonesia",
-              "frequency": 1
-            },
-            {
               "value": "United States",
-              "frequency": 1
-            },
-            {
-              "value": "Brazil",
               "frequency": 1
             },
             {
@@ -12540,11 +12540,11 @@
           "enum_values": [
             "India",
             "Pakistan",
+            "Indonesia",
+            "Brazil",
             "country",
             "China",
-            "Indonesia",
             "United States",
-            "Brazil",
             "Mexico"
           ],
           "histogram_bins": [],
@@ -12682,7 +12682,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.693128+00:00",
+      "profiled_at": "2026-11-05T19:22:59.097835+00:00",
       "inspector_version": "2.0.0",
       "row_count": 8,
       "column_count": 4,
@@ -12736,14 +12736,6 @@
               "frequency": 1
             },
             {
-              "value": "Indonesia",
-              "frequency": 1
-            },
-            {
-              "value": "United States",
-              "frequency": 1
-            },
-            {
               "value": "country",
               "frequency": 1
             },
@@ -12762,17 +12754,25 @@
             {
               "value": "Brazil",
               "frequency": 1
+            },
+            {
+              "value": "Indonesia",
+              "frequency": 1
+            },
+            {
+              "value": "United States",
+              "frequency": 1
             }
           ],
           "enum_values": [
             "Mexico",
-            "Indonesia",
-            "United States",
             "country",
             "China",
             "India",
             "Pakistan",
-            "Brazil"
+            "Brazil",
+            "Indonesia",
+            "United States"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -12909,7 +12909,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.706308+00:00",
+      "profiled_at": "2026-11-05T19:22:59.110359+00:00",
       "inspector_version": "2.0.0",
       "row_count": 8,
       "column_count": 6,
@@ -13083,11 +13083,11 @@
           "avg_length": 9.5,
           "top_values": [
             {
-              "value": "Accessories",
+              "value": "Electronics",
               "frequency": 3
             },
             {
-              "value": "Electronics",
+              "value": "Accessories",
               "frequency": 3
             },
             {
@@ -13096,8 +13096,8 @@
             }
           ],
           "enum_values": [
-            "Accessories",
             "Electronics",
+            "Accessories",
             "Tools"
           ],
           "histogram_bins": [],
@@ -13252,7 +13252,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.717233+00:00",
+      "profiled_at": "2026-11-05T19:22:59.121649+00:00",
       "inspector_version": "2.0.0",
       "row_count": 40,
       "column_count": 3,
@@ -13408,7 +13408,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.727886+00:00",
+      "profiled_at": "2026-11-05T19:22:59.132342+00:00",
       "inspector_version": "2.0.0",
       "row_count": 8,
       "column_count": 2,
@@ -13458,27 +13458,7 @@
           "avg_length": 16.75,
           "top_values": [
             {
-              "value": "Partner-Led",
-              "frequency": 1
-            },
-            {
-              "value": "Enterprise",
-              "frequency": 1
-            },
-            {
-              "value": "Mid-Market",
-              "frequency": 1
-            },
-            {
               "value": "International Expansion",
-              "frequency": 1
-            },
-            {
-              "value": "Self-Serve",
-              "frequency": 1
-            },
-            {
-              "value": "Strategic Accounts",
               "frequency": 1
             },
             {
@@ -13486,7 +13466,27 @@
               "frequency": 1
             },
             {
+              "value": "Enterprise",
+              "frequency": 1
+            },
+            {
+              "value": "Self-Serve",
+              "frequency": 1
+            },
+            {
+              "value": "Mid-Market",
+              "frequency": 1
+            },
+            {
               "value": "Emerging Product and Innovation Bets",
+              "frequency": 1
+            },
+            {
+              "value": "Partner-Led",
+              "frequency": 1
+            },
+            {
+              "value": "Strategic Accounts",
               "frequency": 1
             }
           ],
@@ -13544,7 +13544,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.740221+00:00",
+      "profiled_at": "2026-11-05T19:22:59.143470+00:00",
       "inspector_version": "2.0.0",
       "row_count": 9,
       "column_count": 5,
@@ -13782,7 +13782,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.751402+00:00",
+      "profiled_at": "2026-11-05T19:22:59.154137+00:00",
       "inspector_version": "2.0.0",
       "row_count": 48,
       "column_count": 3,
@@ -13948,7 +13948,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.762559+00:00",
+      "profiled_at": "2026-11-05T19:22:59.165006+00:00",
       "inspector_version": "2.0.0",
       "row_count": 2,
       "column_count": 3,
@@ -13998,17 +13998,17 @@
           "avg_length": 10.0,
           "top_values": [
             {
-              "value": "Self-Serve",
+              "value": "Enterprise",
               "frequency": 1
             },
             {
-              "value": "Enterprise",
+              "value": "Self-Serve",
               "frequency": 1
             }
           ],
           "enum_values": [
-            "Self-Serve",
-            "Enterprise"
+            "Enterprise",
+            "Self-Serve"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -14104,7 +14104,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.773364+00:00",
+      "profiled_at": "2026-11-05T19:22:59.175615+00:00",
       "inspector_version": "2.0.0",
       "row_count": 6,
       "column_count": 3,
@@ -14154,14 +14154,6 @@
           "avg_length": 11.333333333333334,
           "top_values": [
             {
-              "value": "Mid-Market",
-              "frequency": 1
-            },
-            {
-              "value": "Enterprise",
-              "frequency": 1
-            },
-            {
               "value": "Partner",
               "frequency": 1
             },
@@ -14170,11 +14162,19 @@
               "frequency": 1
             },
             {
-              "value": "International",
+              "value": "Mid-Market",
+              "frequency": 1
+            },
+            {
+              "value": "Enterprise",
               "frequency": 1
             },
             {
               "value": "Strategic Accounts",
+              "frequency": 1
+            },
+            {
+              "value": "International",
               "frequency": 1
             }
           ],
@@ -14273,7 +14273,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.784347+00:00",
+      "profiled_at": "2026-11-05T19:22:59.186526+00:00",
       "inspector_version": "2.0.0",
       "row_count": 156,
       "column_count": 3,
@@ -14364,17 +14364,17 @@
           "avg_length": 5.0,
           "top_values": [
             {
-              "value": "Growth",
+              "value": "Core",
               "frequency": 78
             },
             {
-              "value": "Core",
+              "value": "Growth",
               "frequency": 78
             }
           ],
           "enum_values": [
-            "Growth",
-            "Core"
+            "Core",
+            "Growth"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -14429,7 +14429,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.795182+00:00",
+      "profiled_at": "2026-11-05T19:22:59.197211+00:00",
       "inspector_version": "2.0.0",
       "row_count": 468,
       "column_count": 3,
@@ -14524,11 +14524,11 @@
               "frequency": 78
             },
             {
-              "value": "Partner",
+              "value": "Growth",
               "frequency": 78
             },
             {
-              "value": "Self-Serve",
+              "value": "International",
               "frequency": 78
             },
             {
@@ -14536,21 +14536,21 @@
               "frequency": 78
             },
             {
-              "value": "Growth",
+              "value": "Partner",
               "frequency": 78
             },
             {
-              "value": "International",
+              "value": "Self-Serve",
               "frequency": 78
             }
           ],
           "enum_values": [
             "Enterprise",
-            "Partner",
-            "Self-Serve",
-            "Core",
             "Growth",
-            "International"
+            "International",
+            "Core",
+            "Partner",
+            "Self-Serve"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -14605,7 +14605,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.804515+00:00",
+      "profiled_at": "2026-11-05T19:22:59.206945+00:00",
       "inspector_version": "2.0.0",
       "row_count": 9,
       "column_count": 2,
@@ -14708,7 +14708,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.816531+00:00",
+      "profiled_at": "2026-11-05T19:22:59.218046+00:00",
       "inspector_version": "2.0.0",
       "row_count": 10,
       "column_count": 4,
@@ -14807,7 +14807,7 @@
               "frequency": 1
             },
             {
-              "value": "Vatican Museums",
+              "value": "National Gallery",
               "frequency": 1
             },
             {
@@ -14819,14 +14819,6 @@
               "frequency": 1
             },
             {
-              "value": "National Palace Museum",
-              "frequency": 1
-            },
-            {
-              "value": "Hermitage Museum",
-              "frequency": 1
-            },
-            {
               "value": "Metropolitan Museum of Art",
               "frequency": 1
             },
@@ -14835,7 +14827,15 @@
               "frequency": 1
             },
             {
-              "value": "National Gallery",
+              "value": "Vatican Museums",
+              "frequency": 1
+            },
+            {
+              "value": "National Palace Museum",
+              "frequency": 1
+            },
+            {
+              "value": "Hermitage Museum",
               "frequency": 1
             }
           ],
@@ -14889,7 +14889,15 @@
               "frequency": 2
             },
             {
+              "value": "New York",
+              "frequency": 1
+            },
+            {
               "value": "Beijing",
+              "frequency": 1
+            },
+            {
+              "value": "Vatican City",
               "frequency": 1
             },
             {
@@ -14897,26 +14905,18 @@
               "frequency": 1
             },
             {
-              "value": "New York",
-              "frequency": 1
-            },
-            {
               "value": "St Petersburg",
-              "frequency": 1
-            },
-            {
-              "value": "Vatican City",
               "frequency": 1
             }
           ],
           "enum_values": [
             "London",
             "Paris",
-            "Beijing",
-            "Taipei",
             "New York",
-            "St Petersburg",
-            "Vatican City"
+            "Beijing",
+            "Vatican City",
+            "Taipei",
+            "St Petersburg"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -14971,7 +14971,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.830748+00:00",
+      "profiled_at": "2026-11-05T19:22:59.230583+00:00",
       "inspector_version": "2.0.0",
       "row_count": 1,
       "column_count": 13,
@@ -15539,7 +15539,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.844158+00:00",
+      "profiled_at": "2026-11-05T19:22:59.243272+00:00",
       "inspector_version": "2.0.0",
       "row_count": 10,
       "column_count": 6,
@@ -15589,27 +15589,19 @@
           "avg_length": 15.9,
           "top_values": [
             {
-              "value": "Expansion Deal",
-              "frequency": 1
-            },
-            {
-              "value": "New Business",
-              "frequency": 1
-            },
-            {
-              "value": "Enterprise Suite",
-              "frequency": 1
-            },
-            {
-              "value": "Integration Add-on",
-              "frequency": 1
-            },
-            {
               "value": "Enterprise License",
               "frequency": 1
             },
             {
               "value": "Support Tier Upgrade",
+              "frequency": 1
+            },
+            {
+              "value": "Custom Integration",
+              "frequency": 1
+            },
+            {
+              "value": "Annual Renewal",
               "frequency": 1
             },
             {
@@ -15621,11 +15613,19 @@
               "frequency": 1
             },
             {
-              "value": "Annual Renewal",
+              "value": "Integration Add-on",
               "frequency": 1
             },
             {
-              "value": "Custom Integration",
+              "value": "Expansion Deal",
+              "frequency": 1
+            },
+            {
+              "value": "New Business",
+              "frequency": 1
+            },
+            {
+              "value": "Enterprise Suite",
               "frequency": 1
             }
           ],
@@ -15671,10 +15671,6 @@
           "avg_length": 10.0,
           "top_values": [
             {
-              "value": "TechStart Inc",
-              "frequency": 1
-            },
-            {
               "value": "DataFlow LLC",
               "frequency": 1
             },
@@ -15683,19 +15679,15 @@
               "frequency": 1
             },
             {
+              "value": "GlobalFin",
+              "frequency": 1
+            },
+            {
               "value": "CloudFirst",
               "frequency": 1
             },
             {
-              "value": "Acme Corp",
-              "frequency": 1
-            },
-            {
-              "value": "MegaCorp",
-              "frequency": 1
-            },
-            {
-              "value": "GlobalFin",
+              "value": "TechStart Inc",
               "frequency": 1
             },
             {
@@ -15708,6 +15700,14 @@
             },
             {
               "value": "HealthTech",
+              "frequency": 1
+            },
+            {
+              "value": "Acme Corp",
+              "frequency": 1
+            },
+            {
+              "value": "MegaCorp",
               "frequency": 1
             }
           ],
@@ -15761,24 +15761,24 @@
               "frequency": 2
             },
             {
-              "value": "Discovery",
-              "frequency": 2
-            },
-            {
               "value": "Negotiation",
               "frequency": 2
             },
             {
               "value": "Proposal",
               "frequency": 2
+            },
+            {
+              "value": "Discovery",
+              "frequency": 2
             }
           ],
           "enum_values": [
             "Qualification",
             "Closed Won",
-            "Discovery",
             "Negotiation",
-            "Proposal"
+            "Proposal",
+            "Discovery"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -15915,7 +15915,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.855561+00:00",
+      "profiled_at": "2026-11-05T19:22:59.255014+00:00",
       "inspector_version": "2.0.0",
       "row_count": 30,
       "column_count": 5,
@@ -15965,35 +15965,27 @@
           "avg_length": 8.533333333333333,
           "top_values": [
             {
-              "value": "New York",
+              "value": "Florida",
               "frequency": 1
             },
             {
-              "value": "Wisconsin",
+              "value": "Michigan",
               "frequency": 1
             },
             {
-              "value": "Georgia",
+              "value": "New Jersey",
               "frequency": 1
             },
             {
-              "value": "Kentucky",
+              "value": "Indiana",
               "frequency": 1
             },
             {
-              "value": "Illinois",
+              "value": "Missouri",
               "frequency": 1
             },
             {
-              "value": "Minnesota",
-              "frequency": 1
-            },
-            {
-              "value": "Alabama",
-              "frequency": 1
-            },
-            {
-              "value": "Oklahoma",
+              "value": "Texas",
               "frequency": 1
             },
             {
@@ -16002,6 +15994,14 @@
             },
             {
               "value": "Colorado",
+              "frequency": 1
+            },
+            {
+              "value": "Oregon",
+              "frequency": 1
+            },
+            {
+              "value": "Utah",
               "frequency": 1
             }
           ],
@@ -16182,7 +16182,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.866145+00:00",
+      "profiled_at": "2026-11-05T19:22:59.265776+00:00",
       "inspector_version": "2.0.0",
       "row_count": 60,
       "column_count": 3,
@@ -16273,7 +16273,7 @@
           "avg_length": 6.666666666666667,
           "top_values": [
             {
-              "value": "Core",
+              "value": "Growth",
               "frequency": 20
             },
             {
@@ -16281,14 +16281,14 @@
               "frequency": 20
             },
             {
-              "value": "Growth",
+              "value": "Core",
               "frequency": 20
             }
           ],
           "enum_values": [
-            "Core",
+            "Growth",
             "Enterprise",
-            "Growth"
+            "Core"
           ],
           "histogram_bins": [],
           "date_distribution": [],
@@ -16343,7 +16343,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.878842+00:00",
+      "profiled_at": "2026-11-05T19:22:59.277343+00:00",
       "inspector_version": "2.0.0",
       "row_count": 50,
       "column_count": 5,
@@ -16438,39 +16438,39 @@
               "frequency": 1
             },
             {
-              "value": "VA",
+              "value": "CA",
               "frequency": 1
             },
             {
-              "value": "CT",
+              "value": "KY",
               "frequency": 1
             },
             {
-              "value": "GA",
+              "value": "ME",
               "frequency": 1
             },
             {
-              "value": "MA",
+              "value": "NV",
               "frequency": 1
             },
             {
-              "value": "RI",
+              "value": "NH",
               "frequency": 1
             },
             {
-              "value": "WA",
+              "value": "SD",
               "frequency": 1
             },
             {
-              "value": "AK",
+              "value": "UT",
               "frequency": 1
             },
             {
-              "value": "TX",
+              "value": "AR",
               "frequency": 1
             },
             {
-              "value": "VT",
+              "value": "FL",
               "frequency": 1
             }
           ],
@@ -16516,31 +16516,27 @@
           "avg_length": 8.44,
           "top_values": [
             {
-              "value": "Delaware",
+              "value": "Colorado",
               "frequency": 1
             },
             {
-              "value": "Texas",
+              "value": "Maine",
               "frequency": 1
             },
             {
-              "value": "Wyoming",
+              "value": "Montana",
               "frequency": 1
             },
             {
-              "value": "North Dakota",
+              "value": "Oregon",
               "frequency": 1
             },
             {
-              "value": "Kansas",
+              "value": "Tennessee",
               "frequency": 1
             },
             {
-              "value": "New York",
-              "frequency": 1
-            },
-            {
-              "value": "Wisconsin",
+              "value": "Utah",
               "frequency": 1
             },
             {
@@ -16548,11 +16544,15 @@
               "frequency": 1
             },
             {
-              "value": "Iowa",
+              "value": "Alaska",
               "frequency": 1
             },
             {
-              "value": "New Mexico",
+              "value": "California",
+              "frequency": 1
+            },
+            {
+              "value": "Maryland",
               "frequency": 1
             }
           ],
@@ -16660,7 +16660,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.890332+00:00",
+      "profiled_at": "2026-11-05T19:22:59.288769+00:00",
       "inspector_version": "2.0.0",
       "row_count": 8,
       "column_count": 5,
@@ -16710,11 +16710,11 @@
           "avg_length": 7.625,
           "top_values": [
             {
-              "value": "New York",
+              "value": "Illinois",
               "frequency": 1
             },
             {
-              "value": "Texas",
+              "value": "New York",
               "frequency": 1
             },
             {
@@ -16722,15 +16722,11 @@
               "frequency": 1
             },
             {
+              "value": "Georgia",
+              "frequency": 1
+            },
+            {
               "value": "Florida",
-              "frequency": 1
-            },
-            {
-              "value": "Pennsylvania",
-              "frequency": 1
-            },
-            {
-              "value": "Illinois",
               "frequency": 1
             },
             {
@@ -16738,7 +16734,11 @@
               "frequency": 1
             },
             {
-              "value": "Georgia",
+              "value": "Texas",
+              "frequency": 1
+            },
+            {
+              "value": "Pennsylvania",
               "frequency": 1
             }
           ],
@@ -16919,7 +16919,7 @@
       "schema_name": "main",
       "database_name": null,
       "kind": "table",
-      "profiled_at": "2026-10-14T22:58:59.901632+00:00",
+      "profiled_at": "2026-11-05T19:22:59.300483+00:00",
       "inspector_version": "2.0.0",
       "row_count": 54,
       "column_count": 4,
@@ -17010,23 +17010,31 @@
           "avg_length": 7.648148148148148,
           "top_values": [
             {
-              "value": "Denmark",
+              "value": "Albania",
               "frequency": 1
             },
             {
-              "value": "France",
+              "value": "India",
               "frequency": 1
             },
             {
-              "value": "Philippines",
+              "value": "Italy",
               "frequency": 1
             },
             {
-              "value": "Poland",
+              "value": "South Korea",
               "frequency": 1
             },
             {
-              "value": "Russia",
+              "value": "Netherlands",
+              "frequency": 1
+            },
+            {
+              "value": "Pakistan",
+              "frequency": 1
+            },
+            {
+              "value": "Thailand",
               "frequency": 1
             },
             {
@@ -17039,14 +17047,6 @@
             },
             {
               "value": "Finland",
-              "frequency": 1
-            },
-            {
-              "value": "Japan",
-              "frequency": 1
-            },
-            {
-              "value": "Mexico",
               "frequency": 1
             }
           ],

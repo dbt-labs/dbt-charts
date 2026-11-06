@@ -7,7 +7,7 @@ with no field name beside it for a pattern to find.
 
 from __future__ import annotations
 
-from dbt_charts.core.execute.adapters.base import redact_values
+from dbt_charts.core.execute.query_result import redact_values
 
 _TOKEN = "fake-warehouse-token-value"
 

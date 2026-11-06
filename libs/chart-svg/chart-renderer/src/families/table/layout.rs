@@ -157,12 +157,12 @@ fn pool_runtime_words() -> Result<String, String> {
 /// The month and day names and first weekday a date column's calendar prints,
 /// in the shape the date controls' calendar reads.
 fn calendar_time_locale() -> Result<String, String> {
-    let locale = crate::time_locale::active_time_locale()?;
+    let locale = ::bind::time_locale::active_time_locale()?;
     Ok(serde_json::json!({
         "months": locale.months,
         "days": locale.days,
         "shortDays": locale.short_days,
-        "weekStart": crate::time_locale::active_week_start(),
+        "weekStart": ::bind::time_locale::active_week_start(),
     })
     .to_string())
 }

@@ -23,16 +23,16 @@ import pytest
 
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
     migrate_yaml_text,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.parse.parser import load_yaml_mapping
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._engine_migrations import migrate_mapping
 
 
 @pytest.fixture
@@ -41,10 +41,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: dict[str, Any], catalog: YamlSchemaCatalog) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 def test_theme_level_bar_tooltip_stripped(catalog: YamlSchemaCatalog) -> None:
@@ -219,7 +218,6 @@ def test_yaml_text_strips_kpi_theme_legend_block(catalog: YamlSchemaCatalog) -> 
     to confirm that only the legend block (key line + nested children) is removed
     and not adjacent content.
     """
-    _, registry = _board_migration_context()
     yaml_text = (
         "charts:\n"
         "  k:\n"
@@ -235,7 +233,7 @@ def test_yaml_text_strips_kpi_theme_legend_block(catalog: YamlSchemaCatalog) -> 
         "rows: [k]\n"
     )
 
-    migrated = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+    migrated = migrate_yaml_text(yaml_text)
 
     assert "legend" not in migrated
     assert "preferred_width: 300" in migrated
@@ -250,7 +248,6 @@ def test_yaml_text_strips_bar_tooltip_block(catalog: YamlSchemaCatalog) -> None:
 
     preferred_width is a sibling key; it must survive.
     """
-    _, registry = _board_migration_context()
     yaml_text = (
         "charts:\n"
         "  b:\n"
@@ -267,7 +264,7 @@ def test_yaml_text_strips_bar_tooltip_block(catalog: YamlSchemaCatalog) -> None:
         "rows: [b]\n"
     )
 
-    migrated = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+    migrated = migrate_yaml_text(yaml_text)
 
     assert "tooltip" not in migrated
     assert "preferred_width: 200" in migrated
@@ -284,7 +281,6 @@ def test_yaml_text_strips_chart_level_style_tooltip_block(
 
     preferred_width is a sibling key inside the chart's style block; it must survive.
     """
-    _, registry = _board_migration_context()
     yaml_text = (
         "charts:\n"
         "  b:\n"
@@ -299,7 +295,7 @@ def test_yaml_text_strips_chart_level_style_tooltip_block(
         "rows: [b]\n"
     )
 
-    migrated = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+    migrated = migrate_yaml_text(yaml_text)
 
     assert "tooltip" not in migrated
     assert "preferred_width: 400" in migrated

@@ -25,7 +25,7 @@ Dependencies:
     - .errors (CompilationError, etc.)
 
 See also:
-    - execute/executor.py for the next stage
+    - execute/plan.py for the next stage
 """
 
 from __future__ import annotations
@@ -89,8 +89,7 @@ from dbt_charts.core.compile.models.variable.authored import (
 from dbt_charts.core.compile.normalize.chart_styles import attach_chart_styles_tree
 from dbt_charts.core.compile.normalize.charts import (
     RegisteredChart,
-    display_text_at,
-    display_text_fields,
+    display_texts,
 )
 from dbt_charts.core.compile.normalize.dispatch import (
     board_style_cache,
@@ -1337,7 +1336,7 @@ def _extract_nested_boards(board: AuthoredBoard) -> list[tuple[str, AuthoredBoar
     return nested_boards
 
 
-def _build_registry(
+def _build_env(
     board: AuthoredBoard,
     registry_type: str,
     registry: dict[str, Any] | None = None,
@@ -1409,7 +1408,7 @@ def _build_registry(
     # Recursively process nested boards
     nested_boards = _extract_nested_boards(board)
     for nested_path, nested_board in nested_boards:
-        _build_registry(
+        _build_env(
             nested_board,
             registry_type,
             registry,
@@ -1573,7 +1572,7 @@ def build_query_registry(
         default_source: Default source to apply to queries without explicit source
         sources: Named source config dicts (project + board level).
         board_cache: The cache layer this board inherits from the boards it is
-            nested in; its own `cache:` folds over it inside `_build_registry`.
+            nested in; its own `cache:` folds over it inside `_build_env`.
 
     Returns:
         Complete query registry
@@ -1581,7 +1580,7 @@ def build_query_registry(
     Raises:
         CompilationError: If duplicate query names found
     """
-    return _build_registry(
+    return _build_env(
         board,
         "queries",
         registry=registry,
@@ -1618,7 +1617,7 @@ def build_chart_registry(
         sources: Named source config dicts — a cross-board chart import normalizes
             queries here too, so it needs the source-scope `cache:` layer.
         board_cache: The cache layer this board inherits; its own `cache:` folds
-            over it inside `_build_registry`.
+            over it inside `_build_env`.
 
     Returns:
         Complete chart registry (raw chart definitions, not normalized)
@@ -1626,7 +1625,7 @@ def build_chart_registry(
     Raises:
         CompilationError: If duplicate chart names found
     """
-    return _build_registry(
+    return _build_env(
         board,
         "charts",
         registry=registry,
@@ -2123,8 +2122,9 @@ def _load_chart_ref_with_lexical_queries(
         ]
 
     text_refs: set[str] = set()
-    for text_field in display_text_fields(str(chart_raw.get("type"))):
-        text = display_text_at(chart_raw, text_field)
+    for text_field, text in display_texts(
+        chart_raw, str(chart_raw.get("type"))
+    ).items():
         if text is None:
             continue
         for ref in sorted(text_query_references([text])):

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A horizontal bar no longer grows taller when you raise axis_x.labels.padding.
+time: 2026-11-05T01:22:53.691501-08:00

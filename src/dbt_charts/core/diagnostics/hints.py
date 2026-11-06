@@ -141,7 +141,7 @@ CHART_RENDERING_SUCCESSORS: dict[str, str | None] = {
 # -> the literal `Variant` word (core/colors.py) that replaced them: `dark`
 # and `light` keep their name, `ghost` becomes `pale`, `ink` becomes `deep`.
 # Shared by palette.py's live "was retired" hint and
-# migrations/versions/v0_9_0.py's migration value-map, so the two can't
+# migrate/src/v0_9_0.rs's migration value-map, so the two can't
 # drift out of step with each other -- each import this rather than keep
 # its own copy.
 RETIRED_VARIANT_SUFFIX_SUCCESSORS: dict[str, str] = {

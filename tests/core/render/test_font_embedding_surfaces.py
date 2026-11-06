@@ -65,14 +65,15 @@ _UNSERVED_FAMILIES = tuple(
 @pytest.fixture
 def board_and_executor(tmp_path: Path, local_project: Callable[..., Project]):
     from dbt_charts.core.compile import compile
-    from dbt_charts.core.execute import Executor
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
+
+    from ..._run import Run
 
     result = compile(_BOARD_YAML)
     assert result.board is not None
-    return result.board, Executor(
+    return result.board, Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(tmp_path)),
+        env=build_exec_env(local_project(tmp_path)),
     )
 
 
@@ -80,7 +81,7 @@ def _render(board_and_executor, **options: object) -> str:
     from dbt_charts.core.render import render
 
     board, executor = board_and_executor
-    output = render(board, executor, **options).output
+    output = render(board, executor.ctx, executor.ledger, **options).output
     assert isinstance(output, str)
     return output
 
@@ -180,17 +181,20 @@ class TestItalicFollowsTheText:
 
     def _export(self, yaml_source: str, tmp_path, local_project) -> str:
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ..._run import Run
 
         result = compile(yaml_source)
         assert result.board is not None
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        output = render(result.board, executor, format="html", standalone=True).output
+        output = render(
+            result.board, executor.ctx, executor.ledger, format="html", standalone=True
+        ).output
         assert isinstance(output, str)
         return output
 
@@ -332,17 +336,20 @@ class TestItalicOutsideMarkdownEmphasis:
 
     def _export(self, yaml_source: str, tmp_path, local_project) -> str:
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ..._run import Run
 
         result = compile(yaml_source)
         assert result.board is not None, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        output = render(result.board, executor, format="html", standalone=True).output
+        output = render(
+            result.board, executor.ctx, executor.ledger, format="html", standalone=True
+        ).output
         assert isinstance(output, str)
         return output
 
@@ -420,9 +427,10 @@ class TestItalicIsAlwaysAttributable:
         self, tmp_path, local_project
     ) -> None:
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ..._run import Run
 
         unattributed: list[str] = []
         for yaml_source in (
@@ -434,11 +442,13 @@ class TestItalicIsAlwaysAttributable:
         ):
             result = compile(yaml_source)
             assert result.board is not None, result.errors
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=build_adapter_registry(local_project(tmp_path)),
+                env=build_exec_env(local_project(tmp_path)),
             )
-            svg = render(result.board, executor, format="svg").output
+            svg = render(
+                result.board, executor.ctx, executor.ledger, format="svg"
+            ).output
             assert isinstance(svg, str)
             body = svg.split("</style>")[-1]
             for tag in re.findall(r"<[^<>]*>", body):
@@ -487,17 +497,20 @@ rows: [t]
 
     def _blocks(self, yaml_source: str, tmp_path, local_project) -> str:
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ..._run import Run
 
         result = compile(yaml_source)
         assert result.board is not None, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        output = render(result.board, executor, format="html", standalone=True).output
+        output = render(
+            result.board, executor.ctx, executor.ledger, format="html", standalone=True
+        ).output
         assert isinstance(output, str)
         return "".join(re.findall(r"@font-face \{[^}]*\}", output))
 
@@ -528,9 +541,10 @@ class TestSelectionCostIsBounded:
         self, tmp_path, local_project
     ) -> None:
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ..._run import Run
 
         rows = "\n".join(
             f"      - {{label: row {i}, value: {i}.{i:02d}}}" for i in range(200)
@@ -541,10 +555,12 @@ class TestSelectionCostIsBounded:
         )
         result = compile(yaml_source)
         assert result.board is not None, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        output = render(result.board, executor, format="html", standalone=True).output
+        output = render(
+            result.board, executor.ctx, executor.ledger, format="html", standalone=True
+        ).output
         assert isinstance(output, str)
         assert _DATA_URI in output

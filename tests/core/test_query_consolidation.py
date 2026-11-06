@@ -12,12 +12,14 @@ from unittest.mock import Mock
 
 from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.execute.collect import (
     collect_all_query_names,
     collect_layout_chart_query_names,
 )
+from dbt_charts.core.execute.query_result import QueryResult
+
+from .._run import Run
+from .._scripted_env import ScriptedBackend, backend_of, scripted_env
 
 # ─────────────────────────────────────────────────────────────────────────────
 # YAML fixtures
@@ -190,7 +192,7 @@ class TestPreExecutionCacheHits:
         result = _compile(FILTERED_DASHBOARD_YAML)
         executor, registry = _mock_executor(result)
 
-        registry.execute.return_value = QueryResult(
+        backend_of(registry).rows = QueryResult(
             data=[{"city": "Paris"}], schema=literal_schema([{"city": "Paris"}])
         )
 
@@ -198,14 +200,14 @@ class TestPreExecutionCacheHits:
         all_names = collect_all_query_names(result.board)
         executor.run_misses(executor.lookup(all_names), 8)
 
-        calls_after_pre_exec = registry.execute.call_count
+        calls_after_pre_exec = backend_of(registry).execute.call_count
         assert calls_after_pre_exec >= 1  # at least one query was pre-executed
 
         # Render walk: option query calls are cache hits — no new adapter calls
         resolve_query_options("city", "city_opts", executor, variables={})
         resolve_query_options("country", "country_opts", executor, variables={})
 
-        assert registry.execute.call_count == calls_after_pre_exec
+        assert backend_of(registry).execute.call_count == calls_after_pre_exec
 
     def test_column_option_queries_are_cache_hits_after_pre_execution(self) -> None:
         """Promoted column-option queries are cache hits on second pre-execution."""
@@ -213,29 +215,28 @@ class TestPreExecutionCacheHits:
         result = _compile(COLUMN_BOUND_YAML)
         executor, registry = _mock_executor(result)
 
-        registry.execute.return_value = QueryResult(
+        backend_of(registry).rows = QueryResult(
             data=[{"name": "East"}], schema=literal_schema([{"name": "East"}])
         )
 
         all_names = collect_all_query_names(result.board)
         executor.run_misses(executor.lookup(all_names), 8)
 
-        calls_after_first = registry.execute.call_count
+        calls_after_first = backend_of(registry).execute.call_count
 
         # Second pre-execution: column-option queries must be cache hits
         executor.run_misses(executor.lookup(all_names), 8)
 
-        assert registry.execute.call_count == calls_after_first
+        assert backend_of(registry).execute.call_count == calls_after_first
 
 
 def _mock_executor(board_result: Any) -> tuple[Any, Mock]:
     """Return (executor, mock_registry) with mock adapter that returns a single-row result."""
-    registry = Mock()
-    registry.project_file_sources.return_value = {}
-    registry.execute.return_value = QueryResult(
-        data=[{"v": 1}], schema=literal_schema([{"v": 1}])
+    registry_backend = ScriptedBackend(
+        QueryResult(data=[{"v": 1}], schema=literal_schema([{"v": 1}]))
     )
-    executor = Executor(board=board_result.board, adapter_registry=registry)
+    registry = scripted_env(registry_backend)
+    executor = Run(board=board_result.board, env=registry)
     return executor, registry
 
 

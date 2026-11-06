@@ -2,7 +2,7 @@
 //! returned as nodes, with the WARNs the layout raises. Every pixel decision is made by the panel
 //! the chart's orientation and x scale pick.
 
-use crate::common::{distinct_values, row_num};
+use ::bind::rows::{distinct_values, row_num};
 use diagnostic::Diagnostic;
 use crate::layout::{IntrinsicWidth, Layout, Rect};
 use crate::{Padding, Payload};
@@ -122,9 +122,9 @@ pub(super) enum XScale {
 
 impl XScale {
     /// The scale the one x-type law resolved for the chart.
-    pub(super) fn of(law: &crate::families::x_type::XResolution) -> Self {
-        use crate::families::temporal::VegaType;
-        use crate::families::x_type::Grain;
+    pub(super) fn of(law: &::bind::x_type::XResolution) -> Self {
+        use ::bind::temporal::VegaType;
+        use ::bind::x_type::Grain;
         match law.vl_type {
             VegaType::Quantitative => Self::Numeric,
             VegaType::Temporal => match law.grain {

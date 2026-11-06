@@ -19,7 +19,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import Project
 
 # Regex that matches translate(x, y) and captures the two coordinate strings.
@@ -83,18 +83,19 @@ rows:
         self, local_project: Callable[..., Project]
     ) -> None:
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
         from dbt_charts.core.render import render
+
+        from ..._run import Run
 
         result = compile(self._YAML)
         assert result.success and result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
-        svg = render(result.board, executor, format="svg").output
+        svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
         assert isinstance(svg, str)
 
         translates = _all_translates(svg)
@@ -212,18 +213,19 @@ rows:
 
     def test_row_rule_y_is_integer(self, local_project: Callable[..., Project]) -> None:
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
         from dbt_charts.core.render import render
+
+        from ..._run import Run
 
         result = compile(self._YAML)
         assert result.success and result.board is not None, result.errors
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
-        svg = render(result.board, executor, format="svg").output
+        svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
         assert isinstance(svg, str)
 
         ys = self._rule_y_values(svg)

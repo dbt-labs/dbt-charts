@@ -19,9 +19,10 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import render_dashboard
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import InMemoryBoard
+
+from ..._run import Run
 
 _BOARD_YAML = """
 title: Missing File Source Board
@@ -94,9 +95,9 @@ class TestMissingCsvSourceFile:
         assert result.success, result.errors
         board = result.board
         assert board is not None
-        executor = Executor(
+        executor = Run(
             board,
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
             query_registry=dict(board.queries),
         )
 
@@ -115,7 +116,7 @@ class TestMissingCsvSourceFile:
 
         result = render_dashboard(
             board=InMemoryBoard(_BOARD_YAML, path=project.path("charts/_t.yml")),
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
             format="svg",
             project=project,
             result_cache=None,
@@ -137,7 +138,7 @@ class TestMissingCsvSourceFile:
 
         result = render_dashboard(
             board=InMemoryBoard(board_yaml, path=project.path("charts/_t.yml")),
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
             format="svg",
             project=project,
             result_cache=None,
@@ -159,7 +160,7 @@ class TestMissingCsvSourceFile:
 
         result = render_dashboard(
             board=InMemoryBoard(_BOARD_YAML, path=project.path("charts/_t.yml")),
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
             format="svg",
             project=project,
             result_cache=None,

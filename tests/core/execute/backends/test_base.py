@@ -22,16 +22,17 @@ from dbt_charts.core.diagnostics.codes_execute import (
 )
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.dialects import SQLDialect
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-from dbt_charts.core.execute.adapters.base import (
+from dbt_charts.core.execute.backends.base import Backend, BackendRegistry
+from dbt_charts.core.execute.backends.driver import DriverBackend
+from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.env import ExecEnv, close_env, make_exec_env
+from dbt_charts.core.execute.query_result import (
     QueryResult,
     RowFetchLimit,
     WarehouseStatementError,
     resolve_effective_row_limit,
 )
-from dbt_charts.core.execute.backends.base import Backend, BackendRegistry
-from dbt_charts.core.execute.backends.driver import DriverBackend
-from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.run import execute_resolved, run_query
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
 from ...._fake_driver import FakeDriverConnection, fake_lakecompute_driver
@@ -134,7 +135,7 @@ def _observed_run(
     connection: FakeDriverConnection,
 ) -> tuple[QueryResult, list[tuple[str, str]]]:
     seen: list[tuple[str, str]] = []
-    registry = AdapterRegistry(
+    registry = make_exec_env(
         project=local_project(tmp_path),
         backends=BackendRegistry({"lakecompute": DriverBackend(max_workers=1)}),
         observers=[lambda kind, status, _seconds: seen.append((kind, status))],
@@ -142,11 +143,11 @@ def _observed_run(
     query = SqlQuery(sql="SELECT n FROM t", source="lake")
     try:
         with patch(_OPEN, return_value=connection):
-            result = registry.execute_resolved(
-                _resolved("SELECT n FROM t"), query, source_config=_LAKE
+            result = execute_resolved(
+                registry, _resolved("SELECT n FROM t"), query, source_config=_LAKE
             )
     finally:
-        registry.close()
+        close_env(registry)
     return result, seen
 
 
@@ -171,7 +172,7 @@ def test_a_failed_driver_statement_is_a_classified_error_the_observers_see(
 @pytest.fixture
 def _dbt_path_is_forbidden() -> Generator[None]:
     with patch(
-        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+        "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
         side_effect=AssertionError("a driver source must never build a dbt adapter"),
     ):
         yield
@@ -181,8 +182,8 @@ def _executing_registry(
     tmp_path: Path,
     local_project: Callable[..., FilesystemProject],
     seen: list[str],
-) -> AdapterRegistry:
-    return AdapterRegistry(
+) -> ExecEnv:
+    return make_exec_env(
         project=local_project(tmp_path),
         backends=BackendRegistry({"lakecompute": DriverBackend(max_workers=1)}),
         observers=[lambda _kind, status, _seconds: seen.append(status)],
@@ -197,12 +198,13 @@ def test_execute_runs_a_driver_query_on_its_backend(
     registry = _executing_registry(tmp_path, local_project, seen)
     try:
         with patch(_OPEN, return_value=FakeDriverConnection(_TABLE)):
-            result = registry.execute(
+            result = run_query(
+                registry,
                 SqlQuery(sql="SELECT n FROM t", source="lake"),
                 source_config=_LAKE,
             )
     finally:
-        registry.close()
+        close_env(registry)
     assert result.error is None
     assert result.data == [{"n": 1}, {"n": 2}]
     assert seen == ["success"]
@@ -214,11 +216,11 @@ def test_a_composition_refusal_on_a_driver_source_reaches_the_observers(
     seen: list[str] = []
     registry = _executing_registry(tmp_path, local_project, seen)
     try:
-        result = registry.execute(
-            SqlQuery(sql="DROP TABLE t", source="lake"), source_config=_LAKE
+        result = run_query(
+            registry, SqlQuery(sql="DROP TABLE t", source="lake"), source_config=_LAKE
         )
     finally:
-        registry.close()
+        close_env(registry)
     assert result.error is not None
     assert seen == ["error"]
 
@@ -227,13 +229,13 @@ def test_an_unrouted_source_kind_is_unavailable_and_reaches_the_observers(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
     seen: list[str] = []
-    registry = AdapterRegistry(
+    registry = make_exec_env(
         project=local_project(tmp_path),
         backends=BackendRegistry({}),
         observers=[lambda _kind, status, _seconds: seen.append(status)],
     )
-    result = registry.execute(
-        SqlQuery(sql="SELECT 1", source="lake"), source_config=_LAKE
+    result = run_query(
+        registry, SqlQuery(sql="SELECT 1", source="lake"), source_config=_LAKE
     )
     assert result.error is not None
     assert result.error.code is ERR_ADAPTER_UNAVAILABLE
@@ -244,11 +246,11 @@ def test_an_unrouted_source_kind_is_unavailable_and_reaches_the_observers(
 def test_a_driver_source_with_no_route_is_refused_by_name(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    registry = AdapterRegistry(
+    registry = make_exec_env(
         project=local_project(tmp_path), backends=BackendRegistry({})
     )
     query = SqlQuery(sql="SELECT 1", source="lake")
-    result = registry.execute_resolved(_resolved(), query, source_config=_LAKE)
+    result = execute_resolved(registry, _resolved(), query, source_config=_LAKE)
     assert result.error is not None
     assert result.error.code is ERR_ADAPTER_UNAVAILABLE
     assert "no backend for source kind 'lakecompute'" in str(result.error)

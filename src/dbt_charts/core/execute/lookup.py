@@ -7,18 +7,19 @@ Purpose: Read the per-render memo, the error memo and the persistent result cach
     caller applies the hits and runs the misses.
 
     A render's mutable state is one ``Ledger``: the memo, the error memo, the
-    data ages and the truncations. ``lookup_and_record`` and ``run.settle`` are
-    its only writers.
+    data ages and the truncations. ``lookup_and_record``, ``run.settle`` and
+    ``run_misses`` write it; resolve adds column-format errors.
 
 Entry Points:
     - lookup(planned, ...) -> Lookup
     - lookup_and_record(ctx, ledger, planned, ...) -> Lookup
+    - lookup_names(ctx, ledger, names, variables, ...) -> Lookup
     - limit_rows(result, query_name, seed_reason) -> (ResultRows, TruncationInfo | None)
 """
 
 import json
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -35,7 +36,6 @@ from dbt_charts.core.diagnostics.codes_execute import (
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
 from dbt_charts.core.diagnostics.registry import REGISTRY, ErrorCode
-from dbt_charts.core.execute.adapters.base import ResolvedRelation
 from dbt_charts.core.execute.cache_backend import (
     BrowsableResultCache,
     CachedQueryFailure,
@@ -50,8 +50,10 @@ from dbt_charts.core.execute.plan import (
     CacheKey,
     ExecContext,
     PlannedQuery,
+    plan,
     source_version,
 )
+from dbt_charts.core.execute.query_result import ResolvedRelation
 
 _logger = logging.getLogger(__name__)
 
@@ -80,6 +82,9 @@ class Ledger:
     # snapshot expires_at; the cache-hit ones drive the "data as of" stamp.
     ages: list[DataAge] = field(default_factory=list)
     warehouse_hit_ats: list[datetime] = field(default_factory=list)
+    # Query name -> why its dbt column formats could not be derived; raised
+    # where a chart reading that query resolves (column_formats.py).
+    column_format_errors: dict[str, DbtChartsError] = field(default_factory=dict)
 
 
 def cache_hit_ats(ledger: Ledger) -> list[datetime]:
@@ -425,6 +430,17 @@ def lookup_and_record(
     replayed store failure records its age too. An incremental miss's prior
     rows were served from the store as well, so they record theirs.
     """
+    if force_refresh:
+        # Every policy slot for this content, not just the asker's: the store
+        # entry is shared by all of them, so clearing one slot would leave a
+        # different-policy sibling serving pre-refresh rows against a store
+        # that no longer has them.
+        for query_plan in planned:
+            for key in [k for k in ledger.memo if k[:3] == query_plan.cache_key]:
+                del ledger.memo[key]
+            ledger.errors.pop(query_plan.name, None)
+            if ctx.result_cache:
+                ctx.result_cache.clear(*query_plan.cache_key)
     found = lookup(
         planned,
         memo=ledger.memo,
@@ -454,6 +470,74 @@ def lookup_and_record(
     return found
 
 
+def lookup_names(
+    ctx: ExecContext,
+    ledger: Ledger,
+    names: Iterable[str],
+    variables: VariableValues | None,
+    *,
+    resume_incremental: bool,
+    use_cache: bool | None = None,
+    force_refresh: bool = False,
+) -> Lookup:
+    """Which of *names* are answered without executing, applying hits.
+
+    Plans each name and runs ``lookup_and_record``; the cache-ref upstreams of
+    a query that missed are planned and looked up too, so one run orders them. An ``ExecutionError`` raised while planning a name
+    (a missing file source, an unknown query) is that name's failure, never
+    raised here: reading it from the collected results raises it as a per-chart
+    diagnostic. A cached error is a failure, not a hit.
+
+    Args:
+        names: Names of the queries (may include the "queries." prefix).
+        variables: Caller values, merged with the board's defaults per query.
+        resume_incremental: See ``lookup``. True when the caller is about to run
+            the misses and wants a stored incremental query refreshed.
+        use_cache: Overrides the context's store participation for this call.
+        force_refresh: Read nothing; clear the memo, error memo and store entry
+            of every planned query first.
+    """
+    planned: dict[str, PlannedQuery] = {}
+    key_failures: dict[str, Failure] = {}
+    for raw_name in names:
+        try:
+            for query_plan in plan(ctx, [raw_name], variables, use_cache):
+                planned.setdefault(query_plan.name, query_plan)
+        except ExecutionError as exc:
+            key_failures[raw_name.removeprefix("queries.")] = Failure(exc)
+
+    def look_up(batch: list[PlannedQuery]) -> Lookup:
+        return lookup_and_record(
+            ctx,
+            ledger,
+            batch,
+            resume_incremental=resume_incremental,
+            force_refresh=force_refresh,
+        )
+
+    found = look_up(list(planned.values()))
+    hits, misses, failures = dict(found.hits), list(found.misses), dict(found.failures)
+    # A composing query that must run reads its upstreams, so only a miss pulls
+    # them in: a consumer served from the store runs nothing it does not need.
+    pending = misses
+    while pending:
+        upstreams = {
+            name: upstream
+            for miss in pending
+            for name, upstream in miss.planned.upstreams.items()
+            if name not in planned
+        }
+        planned.update(upstreams)
+        if not upstreams:
+            break
+        more = look_up(list(upstreams.values()))
+        hits.update(more.hits)
+        failures.update(more.failures)
+        misses.extend(more.misses)
+        pending = list(more.misses)
+    return Lookup(hits, tuple(misses), {**failures, **key_failures})
+
+
 def _record_store_hit(
     ctx: ExecContext, ledger: Ledger, planned: PlannedQuery, written_at: datetime
 ) -> None:
@@ -462,7 +546,7 @@ def _record_store_hit(
             *planned.cache_key, cache_board_slug(ctx), planned.name
         )
     ledger.ages.append((planned.name, written_at, planned.query.cache, True))
-    if not source_version(ctx, planned.query):
+    if not source_version(ctx, planned.query, planned.source):
         ledger.warehouse_hit_ats.append(written_at)
 
 

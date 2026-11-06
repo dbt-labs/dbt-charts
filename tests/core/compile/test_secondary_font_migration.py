@@ -11,26 +11,20 @@ from pydantic import ValidationError
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
     migrate_yaml_text,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
-from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
-    load_yaml_schema_catalog,
-)
+
+from ._engine_migrations import migrate_mapping
 
 _CHART = {"type": "bar", "query": "q1", "x": "a", "y": "b"}
 _QUERIES = {"q1": {"sql": "select 1 as a, 2 as b", "source": "test"}}
 
 
 def _migrate(raw: dict[str, Any]) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(
-            raw, catalog=load_yaml_schema_catalog(), registry=registry
-        )
+        return migrate_mapping(raw)
 
 
 def test_root_muted_moves_to_the_secondary_font() -> None:
@@ -210,11 +204,8 @@ rows:
 
 
 def test_muted_yaml_text_migrates() -> None:
-    _, registry = _board_migration_context()
     text = "title: T\nstyle:\n  muted: '#777777'\nrows: []\n"
-    migrated = migrate_yaml_text(
-        text, catalog=load_yaml_schema_catalog(), registry=registry
-    )
+    migrated = migrate_yaml_text(text)
     assert "muted" not in str(migrated)
     assert "secondary" in str(migrated)
 

@@ -20,7 +20,7 @@ from dbt.adapters.databricks import connections as dbx_connections
 from dbt.adapters.databricks.global_state import GlobalState
 from dbt.adapters.databricks.handle import DatabricksHandle, SqlUtils
 
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+from dbt_charts.core.execute.backends.dbt_adapter_factory import (
     build_adapter,
     open_connection,
 )

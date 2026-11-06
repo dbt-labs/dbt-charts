@@ -129,6 +129,32 @@ def display_text_fields(chart_type: str) -> tuple[str, ...]:
     return ("title", "subtitle")
 
 
+def display_texts(
+    chart: BaseModel | Mapping[str, YamlValue], chart_type: str
+) -> dict[str, str | None]:
+    """Every display-text field of a chart, by path, including its layers' labels."""
+    texts = {
+        field: display_text_at(chart, field)
+        for field in display_text_fields(chart_type)
+    }
+    if chart_type in {"area", "bar", "line", "scatter"}:
+        layers = (
+            chart.get("layers")
+            if isinstance(chart, Mapping)
+            else getattr(
+                chart, "layers", None
+            )  # type-state: silent_fallback — only cartesian families carry layers
+        )
+        if isinstance(layers, list):
+            for index, layer in enumerate(layers):
+                texts[f"layers[{index}].label"] = (
+                    display_text_at(layer, "label")
+                    if isinstance(layer, (BaseModel, Mapping))
+                    else None
+                )
+    return texts
+
+
 def display_text_at(
     chart: BaseModel | Mapping[str, YamlValue], field: str
 ) -> str | None:
@@ -207,16 +233,14 @@ def normalize_chart(
         chart_type = "pie"
 
     # --- Display text: the variables and queries it reads ---
-    display_texts = [
-        display_text_at(authored, name) for name in display_text_fields(chart_type)
-    ]
+    display_text_list = list(display_texts(authored, chart_type).values())
     text_deps: set[str] = set()
-    for display_text in display_texts:
+    for display_text in display_text_list:
         if display_text:
             text_deps |= extract_variable_dependencies(display_text)
     text_queries = {
         name: name if text_query_keys is None else text_query_keys[name]
-        for name in sorted(text_query_references(display_texts))
+        for name in sorted(text_query_references(display_text_list))
     }
 
     # --- callout: query-less, chrome-less family ---

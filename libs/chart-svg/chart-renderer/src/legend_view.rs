@@ -122,7 +122,7 @@ impl LegendView {
         let (param, source) = match declared {
             Some((name, declared)) => {
                 let present = present_series(&payload.rows, color);
-                let mut domain: Vec<String> = declared.options.iter().map(|option| crate::common::cell_str(Some(option))).collect();
+                let mut domain: Vec<String> = declared.options.iter().map(|option| ::bind::rows::cell_str(Some(option))).collect();
                 let strays: Vec<String> = present.iter().filter(|series| !domain.contains(series)).cloned().collect();
                 domain.extend(strays);
                 let held = names(name, payload.variables.get(name))?;
@@ -174,7 +174,7 @@ impl LegendView {
     /// view hides no row. `color` names each row's series.
     pub(crate) fn narrowed(&self, payload: &Payload, color: &str) -> Option<Narrowed> {
         let Source::Param { shown: Some(_), .. } = &self.source else { return None };
-        let shown: Vec<_> = payload.rows.iter().filter(|row| self.shows(&crate::common::row_str(row, color))).cloned().collect();
+        let shown: Vec<_> = payload.rows.iter().filter(|row| self.shows(&::bind::rows::row_str(row, color))).cloned().collect();
         (shown.len() < payload.rows.len()).then(|| Narrowed { payload: payload.with_inputs(payload.resolved.clone(), shown), whole: payload.rows.clone() })
     }
 
@@ -261,14 +261,14 @@ impl LegendView {
 fn seats_every_option(payload: &Payload, color: &str, options: &[Value]) -> bool {
     let scales = payload.resolved.get("category_colors").and_then(Value::as_array);
     let scale = scales.and_then(|scales| scales.iter().find(|scale| scale["field"] == color));
-    scale.is_none_or(|scale| options.iter().all(|option| scale["slots"].get(crate::common::cell_str(Some(option))).is_some()))
+    scale.is_none_or(|scale| options.iter().all(|option| scale["slots"].get(::bind::rows::cell_str(Some(option))).is_some()))
 }
 
 /// The distinct series the rows hold, in row order; a null cell is no series.
 fn present_series(rows: &[serde_json::Map<String, Value>], color: &str) -> Vec<String> {
     let mut present: Vec<String> = Vec::new();
     for row in rows.iter().filter(|row| row.get(color).is_some_and(|cell| !cell.is_null())) {
-        let series = crate::common::row_str(row, color);
+        let series = ::bind::rows::row_str(row, color);
         if !present.contains(&series) {
             present.push(series);
         }

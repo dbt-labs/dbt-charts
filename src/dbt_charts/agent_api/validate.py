@@ -17,6 +17,9 @@ from dbt_charts.agent_api._paths import (
 from dbt_charts.core.board import partition_compile_warnings
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import missing_format_columns
+from dbt_charts.core.compile.validate.chart_color_tokens import (
+    chart_color_token_errors,
+)
 from dbt_charts.core.diagnostics import (
     ERR_FILE_NOT_FOUND,
     ERR_INTERNAL,
@@ -42,7 +45,7 @@ from dbt_charts.core.project import (
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.compiler import CompileResult
-    from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
 
 
 class ValidateResult(BaseModel):
@@ -73,7 +76,7 @@ def validate_paths(
     paths: list[Path] | None,
     *,
     project: Project,
-    adapter_registry: AdapterRegistry | None = None,
+    env: ExecEnv | None = None,
 ) -> list[ValidateResult]:
     """Validate N board files / directories, or default ``charts/`` when empty.
 
@@ -82,22 +85,22 @@ def validate_paths(
     ejected inspect-template directories). Empty / ``None`` defaults to
     ``<project_root>/charts``. Results are concatenated in argv order.
 
-    ``adapter_registry`` opts into the warehouse tier (``--warehouse``). It is
+    ``env`` opts into the warehouse tier (``--warehouse``). It is
     additive by construction: the same schema and cross-reference validation
     runs first, and warehouse findings are appended to its result.
     """
     if not paths:
-        return _validate_one_path(None, project, adapter_registry)
+        return _validate_one_path(None, project, env)
     out: list[ValidateResult] = []
     for p in paths:
-        out.extend(_validate_one_path(p, project, adapter_registry))
+        out.extend(_validate_one_path(p, project, env))
     return out
 
 
 def _validate_one_path(
     path: Path | None,
     project: Project,
-    adapter_registry: AdapterRegistry | None = None,
+    env: ExecEnv | None = None,
 ) -> list[ValidateResult]:
     """Per-argv expansion: ``None`` → charts/, file → [one], dir → walk."""
     from dbt_charts.agent_api._paths import iter_expanded_board_files
@@ -124,7 +127,7 @@ def _validate_one_path(
         ]
 
     if resolved.is_yaml or resolved.is_markdown:
-        return [_validate_resolved(resolved, project, adapter_registry, True)]
+        return [_validate_resolved(resolved, project, env, True)]
 
     # No explicit path -> validate every board root (host + installed
     # packages), not just the host charts/ dir `resolved` degenerated to.
@@ -142,7 +145,7 @@ def _validate_one_path(
                 ],
             )
         ]
-    return [_validate_resolved(pf, project, adapter_registry, False) for pf in boards]
+    return [_validate_resolved(pf, project, env, False) for pf in boards]
 
 
 def validate(path: Path, *, project: Project) -> ValidateResult:
@@ -166,7 +169,7 @@ def validate(path: Path, *, project: Project) -> ValidateResult:
 def _validate_resolved(
     resolved: ProjectPath,
     project: Project,
-    adapter_registry: AdapterRegistry | None,
+    env: ExecEnv | None,
     named: bool,
 ) -> ValidateResult:
     """Validate an already-resolved board path — no re-resolution.
@@ -227,9 +230,7 @@ def _validate_resolved(
         lock_errors = []  # compile_file below reports the unreadable file
 
     try:
-        result = compile_file(
-            resolved.read_board(named), declared_sources=adapter_registry is None
-        )
+        result = compile_file(resolved.read_board(named), declared_sources=env is None)
     except OSError as exc:
         return ValidateResult(
             success=False,
@@ -253,14 +254,17 @@ def _validate_resolved(
     check_link_targets(result, project, resolved.relpath)
 
     errors = [*lock_errors, *result.errors]
+    if result.board is not None:
+        errors += [
+            e.to_diagnostic(file=resolved.relpath)
+            for e in chart_color_token_errors(result.board)
+        ]
     warnings = list(result.warnings)
 
     # The warehouse tier runs last and only on a board that already compiled —
     # it appends to the stateless findings rather than standing in for them.
-    if adapter_registry is not None and not errors:
-        wh_errors, wh_warnings = _warehouse_findings(
-            result, resolved.relpath, adapter_registry
-        )
+    if env is not None and not errors:
+        wh_errors, wh_warnings = _warehouse_findings(result, resolved.relpath, env)
         errors += wh_errors
         warnings += wh_warnings
 
@@ -350,7 +354,7 @@ def annotate_with_data_lint(
 def _warehouse_findings(
     compile_result: CompileResult,
     relpath: str,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
 ) -> tuple[list[Diagnostic], list[Diagnostic]]:
     """Check every SQL query of a compiled board against its warehouse.
 
@@ -398,7 +402,7 @@ def _warehouse_findings(
             check = warehouse_check(
                 query,
                 board=board,
-                adapter_registry=adapter_registry,
+                env=env,
                 query_name=query_name,
                 query_registry=compile_result.query_registry,
             )

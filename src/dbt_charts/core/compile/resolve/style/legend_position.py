@@ -153,7 +153,11 @@ def placed_overlay(leaf: bool | Literal["auto"] | None) -> bool | None:
 
 
 def decide_legend_position(
-    authored: LegendPositionStyle, *, top_strip: bool, radial: bool = False
+    authored: LegendPositionStyle,
+    *,
+    top_strip: bool,
+    radial: bool = False,
+    plot_filled: bool = False,
 ) -> ResolvedLegendPosition:
     """Bake concrete placement from the authored leaves.
 
@@ -162,19 +166,26 @@ def decide_legend_position(
 
     ``radial`` families (pie, donut) never overlay (``PiePositionStyle``): an
     authored ``overlay`` is ignored.
+
+    ``plot_filled`` charts (a horizontal bar, whose marks run edge to edge) have no
+    empty plot space to float a legend in, so it never overlays: an authored
+    ``overlay`` is ignored and the legend takes its own strip.
     """
     authored_overlay = placed_overlay(authored.overlay)
     authored_align = placed_align(authored.align)
     authored_edge = placed_edge(authored.edge)
-    overlay = False if radial or authored_overlay is None else authored_overlay
+    overlay = (
+        False if radial or plot_filled or authored_overlay is None else authored_overlay
+    )
     align = "start" if authored_align is None else authored_align
     edge: LegendEdge
     if top_strip:
         edge = "top"
     elif authored_edge is not None:
         edge = authored_edge
-    elif overlay:
-        # A floating legend needs a top or bottom edge to anchor a corner to.
+    elif overlay or (plot_filled and authored_overlay):
+        # A floating legend needs a top or bottom edge to anchor a corner to; a plot-filled
+        # chart keeps the edge the author's overlay asked for and drops only the float.
         edge = "top"
     else:
         edge = "right"

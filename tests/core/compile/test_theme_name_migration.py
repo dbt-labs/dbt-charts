@@ -17,14 +17,6 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import compile, compile_file
 from dbt_charts.core.compile.migrations import prepare_board_mapping
-from dbt_charts.core.compile.migrations.migrations import (
-    Move,
-    _apply_move,
-)
-from dbt_charts.core.compile.migrations.versions.v0_6_0 import THEME_VALUE_MAP
-from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
-    load_yaml_schema_catalog,
-)
 
 _BODY = textwrap.dedent(
     """\
@@ -128,15 +120,11 @@ class TestRetiredThemeNamesMigrateViaUncappedTextRewrite:
         self, retired_name: str, expected_theme: str
     ) -> None:
         from dbt_charts.core.compile.migrations import migrate_yaml_text
-        from dbt_charts.core.compile.migrations.migrations import (
-            _board_migration_context,
-        )
         from dbt_charts.core.compile.parse.parser import load_yaml_mapping, parse_yaml
 
         yaml_text = _board(f"title: t\ntheme: {retired_name}")
-        catalog, registry = _board_migration_context()
 
-        migrated = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+        migrated = migrate_yaml_text(yaml_text)
 
         doc = load_yaml_mapping(migrated)
         assert doc["theme"] == expected_theme
@@ -153,17 +141,10 @@ class TestRetiredThemeNamesMigrateViaUncappedTextRewrite:
         """A board already on a current theme name is returned byte-identical
         -- the writer must not touch a file with nothing to migrate."""
         from dbt_charts.core.compile.migrations import migrate_yaml_text
-        from dbt_charts.core.compile.migrations.migrations import (
-            _board_migration_context,
-        )
 
         yaml_text = _board("title: t\ntheme: vivid")
-        catalog, registry = _board_migration_context()
 
-        assert (
-            migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
-            == yaml_text
-        )
+        assert migrate_yaml_text(yaml_text) == yaml_text
 
 
 def test_surviving_theme_name_is_untouched() -> None:
@@ -190,31 +171,6 @@ def test_stark_theme_name_is_not_retired() -> None:
     assert [
         d.message for d in result.warnings if d.code == "WARN-SCHEMA-MIGRATED"
     ] == []
-
-
-def test_unmapped_theme_value_is_left_untouched_by_the_move() -> None:
-    """An identity-path Move's source path (``("theme",)``) never disappears
-    from any grammar -- unlike a structural rename, its mere presence in a
-    document is not evidence the document is old (see
-    ``move_source_locations``' value gate). A garbage value absent from
-    THEME_VALUE_MAP was never legal `theme:` syntax at any schema version, so
-    the gate leaves it alone rather than forcing it through the map: it
-    surfaces later as the ordinary ERR-UNKNOWN-THEME (see
-    test_unknown_theme_errors.py) instead of an internal migration error.
-    """
-    schema_catalog = load_yaml_schema_catalog()
-    move = Move(
-        source_schema="0.5.0",
-        target_schema=schema_catalog.dev.version,
-        old_path=("theme",),
-        new_path=("theme",),
-        value_map=THEME_VALUE_MAP,
-    )
-    mapping: dict[str, Any] = {"theme": "totally-fake-theme"}
-
-    _apply_move(mapping, move, schema_catalog)
-
-    assert mapping == {"theme": "totally-fake-theme"}
 
 
 def test_current_theme_name_does_not_misreport_an_unrelated_error() -> None:

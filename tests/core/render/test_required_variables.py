@@ -9,10 +9,11 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import Project
 from dbt_charts.core.render import MissingRequiredVariablesError, render
+
+from ..._run import Run
 
 _BOARD_REQUIRED = """
 variables:
@@ -37,9 +38,9 @@ rows:
 
 
 def _make_executor(board, query_registry, local_project: Callable[..., Project]):
-    return Executor(
+    return Run(
         board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=query_registry,
     )
 
@@ -51,7 +52,7 @@ def test_required_variable_missing_raises(local_project: Callable[..., Project])
     executor = _make_executor(result.board, result.query_registry, local_project)
 
     with pytest.raises(MissingRequiredVariablesError) as exc_info:
-        render(result.board, executor, format="text")
+        render(result.board, executor.ctx, executor.ledger, format="text")
 
     err = exc_info.value
     assert len(err.missing) == 1
@@ -74,7 +75,13 @@ def test_required_variable_provided_renders(local_project: Callable[..., Project
     executor = _make_executor(result.board, result.query_registry, local_project)
 
     # Should not raise
-    render(result.board, executor, format="text", variables={"account_id": "acct_123"})
+    render(
+        result.board,
+        executor.ctx,
+        executor.ledger,
+        format="text",
+        variables={"account_id": "acct_123"},
+    )
 
 
 def test_required_variable_with_default_renders(local_project: Callable[..., Project]):
@@ -104,7 +111,7 @@ rows:
     executor = _make_executor(result.board, result.query_registry, local_project)
 
     # Default value satisfies required — must not raise
-    render(result.board, executor, format="text")
+    render(result.board, executor.ctx, executor.ledger, format="text")
 
 
 def test_optional_variable_missing_no_error(local_project: Callable[..., Project]):
@@ -133,7 +140,7 @@ rows:
     executor = _make_executor(result.board, result.query_registry, local_project)
 
     # Optional missing → no raise
-    render(result.board, executor, format="text")
+    render(result.board, executor.ctx, executor.ledger, format="text")
 
 
 def test_multiple_required_variables_missing_all_listed(
@@ -166,7 +173,7 @@ rows:
     executor = _make_executor(result.board, result.query_registry, local_project)
 
     with pytest.raises(MissingRequiredVariablesError) as exc_info:
-        render(result.board, executor, format="text")
+        render(result.board, executor.ctx, executor.ledger, format="text")
 
     err = exc_info.value
     assert len(err.missing) == 2
@@ -180,7 +187,7 @@ def test_required_variable_fires_before_any_query_executes(
 ):
     """Required variable check fires before any query is dispatched.
 
-    Spies on ``Executor.run_misses`` and asserts it is not called when a
+    Spies on ``run_misses`` and asserts it is not called when a
     required variable is unset — pinning the "validate then execute" ordering
     as a real invariant rather than coincidence.
     """
@@ -193,10 +200,10 @@ def test_required_variable_fires_before_any_query_executes(
     def _boom_parallel(*args, **kwargs):
         calls.append("parallel")
 
-    monkeypatch.setattr(Executor, "run_misses", _boom_parallel)
+    monkeypatch.setattr("dbt_charts.core.render.renderer.run_misses", _boom_parallel)
 
     with pytest.raises(MissingRequiredVariablesError):
-        render(result.board, executor, format="text")
+        render(result.board, executor.ctx, executor.ledger, format="text")
 
     assert calls == [], f"Queries dispatched before validation: {calls}"
 
@@ -211,7 +218,7 @@ def test_required_variable_check_fires_for_all_formats(
     for fmt in ("text", "json", "yaml"):
         executor = _make_executor(result.board, result.query_registry, local_project)
         with pytest.raises(MissingRequiredVariablesError, match="account_id"):
-            render(result.board, executor, format=fmt)
+            render(result.board, executor.ctx, executor.ledger, format=fmt)
 
 
 def test_error_message_includes_key(local_project: Callable[..., Project]):
@@ -221,7 +228,7 @@ def test_error_message_includes_key(local_project: Callable[..., Project]):
     executor = _make_executor(result.board, result.query_registry, local_project)
 
     with pytest.raises(MissingRequiredVariablesError) as exc_info:
-        render(result.board, executor, format="text")
+        render(result.board, executor.ctx, executor.ledger, format="text")
 
     assert "account_id" in str(exc_info.value)
 
@@ -233,7 +240,13 @@ def test_required_variable_empty_string_raises(local_project: Callable[..., Proj
     executor = _make_executor(result.board, result.query_registry, local_project)
 
     with pytest.raises(MissingRequiredVariablesError):
-        render(result.board, executor, format="text", variables={"account_id": ""})
+        render(
+            result.board,
+            executor.ctx,
+            executor.ledger,
+            format="text",
+            variables={"account_id": ""},
+        )
 
 
 def test_required_variable_empty_list_raises(local_project: Callable[..., Project]):
@@ -262,4 +275,10 @@ rows:
     executor = _make_executor(result.board, result.query_registry, local_project)
 
     with pytest.raises(MissingRequiredVariablesError):
-        render(result.board, executor, format="text", variables={"tags": []})
+        render(
+            result.board,
+            executor.ctx,
+            executor.ledger,
+            format="text",
+            variables={"tags": []},
+        )

@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.serve.server import create_server
 
 
@@ -20,23 +20,23 @@ def project_dir(tmp_path: Path) -> Path:
 
 
 def test_lifespan_builds_concrete_project_and_registry(project_dir: Path) -> None:
-    """Lifespan stores a concrete FilesystemProject + AdapterRegistry on app.state —
+    """Lifespan stores a concrete FilesystemProject + ExecEnv on app.state —
     no ProjectSession, no cast needed to reach the filesystem-only adapter builder."""
     app = create_server(FilesystemProject(project_dir))
     with TestClient(app):
         assert isinstance(app.state.project, FilesystemProject)
         assert app.state.project.root == project_dir.resolve()
-        assert isinstance(app.state.adapter_registry, AdapterRegistry)
+        assert isinstance(app.state.env, ExecEnv)
 
 
 def test_registry_closed_on_shutdown(project_dir: Path) -> None:
-    """Teardown closes the live adapter registry (releasing its warm pool)."""
+    """Teardown closes the live exec env (releasing its warm pool)."""
     app = create_server(FilesystemProject(project_dir))
     with TestClient(app) as client:
         client.get("/")
-        registry = app.state.adapter_registry
-        registry.close = MagicMock(wraps=registry.close)  # type: ignore[method-assign]
-    registry.close.assert_called_once()
+        registry = app.state.env
+        registry.backends.close = MagicMock(wraps=registry.backends.close)  # type: ignore[method-assign]
+    registry.backends.close.assert_called_once()
 
 
 def test_independent_create_server_calls_get_independent_state(
@@ -48,4 +48,4 @@ def test_independent_create_server_calls_get_independent_state(
     app_b = create_server(FilesystemProject(project_dir))
     with TestClient(app_a), TestClient(app_b):
         assert app_a.state.project is not app_b.state.project
-        assert app_a.state.adapter_registry is not app_b.state.adapter_registry
+        assert app_a.state.env is not app_b.state.env

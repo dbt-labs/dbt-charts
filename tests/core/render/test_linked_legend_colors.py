@@ -15,9 +15,10 @@ from pathlib import Path
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import RenderResult, render
+
+from ..._run import Run
 
 _SOURCES_DIR = Path(tempfile.mkdtemp(prefix="dct-linked-legend-"))
 (_SOURCES_DIR / "dbt_charts.yml").write_text(
@@ -93,14 +94,15 @@ def _render(
     project = FilesystemProject(_SOURCES_DIR)
     result = compile(yaml_content, project_sources=project.sources)
     assert result.success and result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
     return render(
         result.board,
-        executor,
+        executor.ctx,
+        executor.ledger,
         variables={"metric": metric},
         strict_variables=strict_variables,
     )
@@ -205,9 +207,9 @@ def _planned_slots(yaml_content: str, variables: dict[str, str]) -> dict[str, in
 
     result = compile(yaml_content)
     assert result.success and result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(_SOURCES_DIR)),
+        env=build_exec_env(FilesystemProject(_SOURCES_DIR)),
         query_registry=result.query_registry,
     )
     resolved_board, _ = build_resolved_board(

@@ -32,7 +32,7 @@ use crate::Payload;
 use crate::TitleShift;
 use crate::TonesStyle;
 use diagnostic::codes;
-use crate::common::CellRow;
+use ::bind::rows::CellRow;
 use crate::common::Divider;
 use crate::common::Font;
 use crate::common::FormatSlot;
@@ -1932,7 +1932,7 @@ pub(crate) mod tests {
     /// business: no cell becomes a start-anchored lane run.
     #[test]
     fn a_date_column_authored_align_left_is_painted_as_before() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let rows = vec![
             json!({"event": "Launch", "date": "2024-03-15"}),
             json!({"event": "Close", "date": "2024-06-01"}),
@@ -3144,7 +3144,7 @@ pub(crate) mod tests {
 
     #[test]
     fn pool_mode_a_column_of_iso_days_is_a_date_column_whose_cells_carry_their_day() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut payload = pool_payload("t1", 4, 20, true, false);
         for (i, row) in payload.rows.iter_mut().enumerate() {
             row["note"] = json!(format!("2025-09-1{i}"));
@@ -3179,7 +3179,7 @@ pub(crate) mod tests {
 
     #[test]
     fn pool_mode_a_month_or_mixed_column_sorts_as_text() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut payload = pool_payload("t1", 4, 20, true, false);
         for row in payload.rows.iter_mut() {
             row["note"] = json!("2025-09");
@@ -4278,7 +4278,7 @@ pub(crate) mod tests {
     // A null in a right-aligned DATE column is centered like every other null.
     #[test]
     fn null_date_cell_is_centered() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let rows = vec![
             json!({"company": "Acme", "when": "2024-03-15"}),
             json!({"company": "Globex", "when": null}),
@@ -6821,7 +6821,7 @@ pub(crate) mod tests {
             "background": "#ffffff",
             "fonts_dir": null,
             "padding": null,
-            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0}, "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()},
+            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0}, "format_locale": ::bind::formats::locale::en_us_wire(), "time_locale": ::bind::time_locale::en_us_wire()},
         });
         let payload: Payload = crate::test_payload(payload_json);
         let fonts = test_fonts();
@@ -6878,7 +6878,7 @@ pub(crate) mod tests {
 
     #[test]
     fn right_aligned_iso_date_column_formats_with_the_engine_default() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let rows = vec![
             json!({"event": "Launch", "date": "2024-03-15"}),
             json!({"event": "Close", "date": "2024-06-01"}),
@@ -6900,7 +6900,7 @@ pub(crate) mod tests {
     /// anchors the lane's right edge at the cell's content edge.
     #[test]
     fn a_date_lane_wider_than_its_pinned_column_clamps_to_the_content_area() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let rows = vec![json!({"event": "Launch", "date": "2024-03-15"})];
         let columns = json!({
             "event": {"label": "Event"},
@@ -6924,7 +6924,7 @@ pub(crate) mod tests {
 
     #[test]
     fn left_aligned_date_like_text_column_is_not_promoted_to_the_date_lane() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         // Invariant #11: the date lane is gated on the resolved `align`
         // verdict, not re-derived from content alone — a column the
         // resolver didn't right-align stays a plain text column even when
@@ -7926,7 +7926,7 @@ mod conditional_formatting_tests {
             "background": "#eeeeee",
             "fonts_dir": null,
             "padding": null,
-            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire(), "tones": {
+            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"format_locale": ::bind::formats::locale::en_us_wire(), "time_locale": ::bind::time_locale::en_us_wire(), "tones": {
                 "positive": "#00884d", "negative": "#94001e",
                 "warning": "#e69812", "info": "#008cdd"
             }},
@@ -8598,7 +8598,7 @@ mod conditional_formatting_tests {
                 "background": "#eeeeee",
                 "fonts_dir": null,
                 "padding": null,
-                "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire(), "tones": {
+                "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"format_locale": ::bind::formats::locale::en_us_wire(), "time_locale": ::bind::time_locale::en_us_wire(), "tones": {
                     "positive": "#00884d", "negative": "#94001e",
                     "warning": "#e69812", "info": "#008cdd"
                 }},
@@ -8656,7 +8656,7 @@ mod conditional_formatting_tests {
             "background": "#eeeeee",
             "fonts_dir": null,
             "padding": null,
-            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire(), "tones": {
+            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"format_locale": ::bind::formats::locale::en_us_wire(), "time_locale": ::bind::time_locale::en_us_wire(), "tones": {
                 "positive": "#00884d", "negative": "#94001e",
                 "warning": "#e69812", "info": "#008cdd"
             }},
@@ -9024,9 +9024,9 @@ mod floor_source_tests {
                 schema: crate::payload_schema::test_schema_of(&maps),
                 fonts_dir: None,
                 numeral_family: "Inter".into(),
-                format_locale: crate::number_locale::NumberLocale::en_us(),
-                time_locale: crate::time_locale::en_us(),
-                time_zone: crate::time_zone::utc(),
+                format_locale: ::bind::formats::locale::NumberLocale::en_us(),
+                time_locale: ::bind::time_locale::en_us(),
+                time_zone: ::bind::time_zone::utc(),
                 language: Default::default(),
                 formats: None,
                 sub_unit_specs: Some(super::tests::en_us_siblings()),
@@ -9155,7 +9155,7 @@ mod cascade_and_lane_tests {
     /// Production measures the fit cascade against the string the cell
     /// DISPLAYS (`_has_overflow` → `format_table_cell_value`, table.py:1360),
     /// in which a magnitude word carries its own gap
-    /// (`text/magnitude_words.py:40`): en's analytic `K` is glued to its
+    /// (`display-text/locale/magnitude_words.json`): en's analytic `K` is glued to its
     /// number, so a column with room for "2.62K" but not "2.62 K" does not
     /// overflow.
     #[test]
@@ -9171,8 +9171,8 @@ mod cascade_and_lane_tests {
             "name": {"label": "Name"},
             "value": {"label": "V", "width": pin},
         });
-        let locale = crate::number_locale::en_us_with_words(["K", "M", "B", "T"], ["k", "m", "bn", "trn"]);
-        let svg = crate::number_locale::with_number_locale(&locale, || {
+        let locale = ::bind::formats::locale::en_us_with_words(["K", "M", "B", "T"], ["k", "m", "bn", "trn"]);
+        let svg = ::bind::formats::locale::with_number_locale(&locale, || {
             render(&payload_for(columns, rows, 500.0), &fonts).unwrap()
         });
         assert!(
@@ -9196,8 +9196,8 @@ mod cascade_and_lane_tests {
             "name": {"label": "Name"},
             "value": {"label": "V", "width": pin},
         });
-        let locale = crate::number_locale::en_us_with_words(["\u{a0}k", "\u{a0}M", "\u{a0}Mrd", "\u{a0}Bio"], ["k", "m", "bn", "trn"]);
-        let svg = crate::number_locale::with_number_locale(&locale, || {
+        let locale = ::bind::formats::locale::en_us_with_words(["\u{a0}k", "\u{a0}M", "\u{a0}Mrd", "\u{a0}Bio"], ["k", "m", "bn", "trn"]);
+        let svg = ::bind::formats::locale::with_number_locale(&locale, || {
             render(&payload_for(columns, rows, 500.0), &fonts).unwrap()
         });
         assert!(
@@ -9334,7 +9334,6 @@ mod date_like_tests {
     use super::tests::{resolved_title_font, resolved_title_style};
     use super::tests::base_table_theme;
     use super::*;
-    use super::bind::is_date_like_str;
 
     fn test_fonts() -> FontBook {
         let manifest = env!("CARGO_MANIFEST_DIR");
@@ -9352,13 +9351,13 @@ mod date_like_tests {
             "2024-03", "2024-03-15", "03/15/2024", "Q1 2024", "Mar 15",
             "Mar 15, 2024", "Mar 15 2024", "15 Mar 2024", "2024", "99/99/2024",
         ] {
-            assert!(is_date_like_str(s), "{s} is date-like");
+            assert!(column_types::is_date_like(s), "{s} is date-like");
         }
         for s in [
             "2024-3", "Q5 2024", "March 15", "15 March 2024", "24", "20244",
             "abc", "", "2024-03-15T10:00", "1,234",
         ] {
-            assert!(!is_date_like_str(s), "{s} is not date-like");
+            assert!(!column_types::is_date_like(s), "{s} is not date-like");
         }
     }
 
@@ -9454,7 +9453,7 @@ mod date_like_tests {
 
     #[test]
     fn a_declared_date_column_formats_as_a_date_and_a_number_column_as_a_number() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let rows = vec![json!({"event": "Launch", "day": "2024-03-15", "amount": 50.82})];
         let mut theme = base_table_theme();
         let payload: Payload = crate::test_payload(json!({
@@ -11209,7 +11208,7 @@ mod pivot_shape_tests {
             json!({"r": "x", "c": {"non_finite": "nan", "text": "NaN"}, "v": 1}),
             json!({"r": "x", "c": {"decimal": "1"}, "v": 1}),
         ]);
-        let cell_text = crate::common::decode_cells(&mut raw).unwrap();
+        let cell_text = ::bind::rows::decode_cells(&mut raw).unwrap();
         let dims = strings(&["c"]);
         let pivot = pivot_table_data(&raw, &crate::payload_schema::test_schema_of(&raw), &cell_text, &strings(&["r"]), &dims, &strings(&["v"]), None).unwrap();
         assert_eq!(leaves(&pivot), ["2", "NaN", "1"]);
@@ -11224,7 +11223,7 @@ mod pivot_shape_tests {
             json!({"r": "x", "c": {"decimal": "2023"}, "v": 2}),
             json!({"r": "y", "c": {"decimal": "2.50"}, "v": 3}),
         ]);
-        let cell_text = crate::common::decode_cells(&mut raw).unwrap();
+        let cell_text = ::bind::rows::decode_cells(&mut raw).unwrap();
         let dims = strings(&["c"]);
         let pivot = pivot_table_data(&raw, &crate::payload_schema::test_schema_of(&raw), &cell_text, &strings(&["r"]), &dims, &strings(&["v"]), None).unwrap();
         assert_eq!(leaves(&pivot), ["2.50", "2023", "2024"]);
@@ -11464,11 +11463,11 @@ mod magnitude_suffix_tests {
     }
 
     // Oracle: `format_value(2540, "number")` under en-US is '2.54K' (the
-    // analytic words are glued, `text/magnitude_words.py:40`); the lane is 'K'.
+    // analytic words are glued, `display-text/locale/magnitude_words.json`); the lane is 'K'.
     #[test]
     fn en_us_analytic_word_is_printed_glued() {
-        let en = crate::number_locale::en_us_with_words(["K", "M", "B", "T"], ["k", "m", "bn", "trn"]);
-        crate::number_locale::with_number_locale(&en, || {
+        let en = ::bind::formats::locale::en_us_with_words(["K", "M", "B", "T"], ["k", "m", "bn", "trn"]);
+        ::bind::formats::locale::with_number_locale(&en, || {
             let lanes = format_numeric_auto(2540.0).unwrap();
             assert_eq!((lanes.number.as_str(), lanes.suffix.as_str(), lanes.measured_suffix.as_str()), ("2.54", "K", "K"));
         });
@@ -11490,8 +11489,8 @@ mod magnitude_suffix_tests {
     // their own gap; the table lane trims it and the 3px gap follows the word.
     #[test]
     fn the_active_locales_words_gate_the_gap() {
-        let de = crate::number_locale::en_us_with_words(["\u{a0}k", "\u{a0}M", "\u{a0}Mrd", "\u{a0}Bio"], ["\u{a0}Tsd.", "\u{a0}Mio.", "\u{a0}Mrd.", "\u{a0}Bio."]);
-        crate::number_locale::with_number_locale(&de, || {
+        let de = ::bind::formats::locale::en_us_with_words(["\u{a0}k", "\u{a0}M", "\u{a0}Mrd", "\u{a0}Bio"], ["\u{a0}Tsd.", "\u{a0}Mio.", "\u{a0}Mrd.", "\u{a0}Bio."]);
+        ::bind::formats::locale::with_number_locale(&de, || {
             for word in ["Mrd", "\u{a0}Mrd", "Tsd.", "Bio", "Mio."] {
                 assert!(is_magnitude_suffix(word), "{word:?}");
             }
@@ -11499,8 +11498,8 @@ mod magnitude_suffix_tests {
             let lanes = format_numeric_auto(1.5e9).unwrap();
             assert_eq!((lanes.number.as_str(), lanes.suffix.as_str(), lanes.measured_suffix.as_str()), ("1.5", "Mrd", "\u{a0}Mrd"));
         });
-        let ja = crate::number_locale::en_us_with_words(["千", "百万", "十億", "兆"], ["千", "百万", "十億", "兆"]);
-        crate::number_locale::with_number_locale(&ja, || {
+        let ja = ::bind::formats::locale::en_us_with_words(["千", "百万", "十億", "兆"], ["千", "百万", "十億", "兆"]);
+        ::bind::formats::locale::with_number_locale(&ja, || {
             assert!(is_magnitude_suffix("百万"));
             let lanes = format_numeric_auto(2.5e6).unwrap();
             assert_eq!((lanes.number.as_str(), lanes.suffix.as_str(), lanes.measured_suffix.as_str()), ("2.5", "百万", "百万"));
@@ -11592,8 +11591,8 @@ mod shared_scale_register_tests {
         assert_eq!(suffix_of("anchor", 12, 2.5e12).unwrap().as_deref(), Some("T"));
     }
 
-    fn locale_with(edit: impl FnOnce(&mut Value)) -> crate::number_locale::NumberLocale {
-        let mut wire = crate::number_locale::en_us_wire();
+    fn locale_with(edit: impl FnOnce(&mut Value)) -> ::bind::formats::locale::NumberLocale {
+        let mut wire = ::bind::formats::locale::en_us_wire();
         edit(&mut wire);
         serde_json::from_value(wire).expect("locale parses")
     }
@@ -11607,7 +11606,7 @@ mod shared_scale_register_tests {
             w["analytic"] = json!(["千", "百万", "十億", "兆"]);
             w["narrative"] = json!(["千", "百万", "十億", "兆"]);
         });
-        crate::number_locale::with_number_locale(&ja, || {
+        ::bind::formats::locale::with_number_locale(&ja, || {
             assert_eq!(suffix_of("anchor", 6, 24_730_000.0).unwrap().as_deref(), Some("百万"));
             assert_eq!(suffix_of("repeat", 9, 3.2e9).unwrap().as_deref(), Some("十億"));
         });
@@ -11650,8 +11649,8 @@ mod shared_scale_register_tests {
     // '\xa0€'). The suffix keeps the locale's gap; the anchors lane leads.
     #[test]
     fn a_dollar_column_takes_the_locales_currency_after_the_digits() {
-        let de = crate::number_locale::de_de();
-        crate::number_locale::with_number_locale(&de, || {
+        let de = ::bind::formats::locale::de_de();
+        ::bind::formats::locale::with_number_locale(&de, || {
             assert_eq!(
                 lanes_of(json!("currency_whole"), "all", &[1234.0, -1234.0]),
                 [lane(None, "1.234", Some("\u{a0}€")), lane(None, "\u{2212}1.234", Some("\u{a0}€"))]
@@ -11668,10 +11667,10 @@ mod shared_scale_register_tests {
     // '%'): the percent sign is the locale's, gap included, in the suffix lane.
     #[test]
     fn a_percent_column_takes_the_locales_percent_sign() {
-        crate::number_locale::with_number_locale(&crate::number_locale::fr_fr(), || {
+        ::bind::formats::locale::with_number_locale(&::bind::formats::locale::fr_fr(), || {
             assert_eq!(lanes_of(json!("percent_whole"), "all", &[0.5]), [lane(None, "50", Some("\u{202f}%"))]);
         });
-        crate::number_locale::with_number_locale(&crate::number_locale::de_de(), || {
+        ::bind::formats::locale::with_number_locale(&::bind::formats::locale::de_de(), || {
             assert_eq!(lanes_of(json!("percent"), "all", &[0.4231]), [lane(None, "42,3", Some("%"))]);
         });
     }
@@ -11684,7 +11683,7 @@ mod shared_scale_register_tests {
     // integer cell `27`, a float `27.5`.
     #[test]
     fn a_percent_column_refuses_a_value_shaped_0_to_100() {
-        crate::number_locale::with_number_locale(&crate::number_locale::fr_fr(), || {
+        ::bind::formats::locale::with_number_locale(&::bind::formats::locale::fr_fr(), || {
             let refusal = |format: &str, value: Value| {
                 let cfg: ColConfig = crate::families::table::tests::col_config(json!({"format": format}))
                     .expect("column config parses");
@@ -11719,7 +11718,7 @@ mod shared_scale_register_tests {
     // ends the digits, ahead of a currency the locale places after them.
     #[test]
     fn a_magnitude_word_precedes_the_suffix_currency() {
-        crate::number_locale::with_number_locale(&crate::number_locale::de_de(), || {
+        ::bind::formats::locale::with_number_locale(&::bind::formats::locale::de_de(), || {
             assert_eq!(
                 lanes_of(json!("currency"), "all", &[4_820_000.0]),
                 [lane(None, "4,82", Some("M\u{a0}€"))]
@@ -11754,7 +11753,7 @@ mod shared_scale_register_tests {
             when_rules: Vec::new(),
         };
         let rows = vec![json!({"amount": 24_730_000.0}).as_object().unwrap().clone()];
-        let cell = crate::number_locale::with_number_locale(&crate::number_locale::de_de(), || {
+        let cell = ::bind::formats::locale::with_number_locale(&::bind::formats::locale::de_de(), || {
             format_numeric_col(&rows, &col, "anchors", &[RowRole::Value])
         })
         .expect("formats")
@@ -11864,7 +11863,7 @@ mod shared_scale_register_tests {
             when_rules: Vec::new(),
         };
         let rows = vec![json!({"amount": 4_820_000.0}).as_object().unwrap().clone()];
-        let cell = crate::number_locale::with_number_locale(&crate::number_locale::de_de(), || {
+        let cell = ::bind::formats::locale::with_number_locale(&::bind::formats::locale::de_de(), || {
             format_numeric_col(&rows, &col, "all", &[RowRole::Value])
         })
         .expect("formats")
@@ -11880,7 +11879,7 @@ mod shared_scale_register_tests {
     #[test]
     fn the_decimal_pad_counts_the_digits_after_the_locales_decimal_mark() {
         let table: Vec<String> = ["P0", "P1", "P2", "P3"].map(String::from).to_vec();
-        crate::number_locale::with_number_locale(&crate::number_locale::de_de(), || {
+        ::bind::formats::locale::with_number_locale(&::bind::formats::locale::de_de(), || {
             assert_eq!(decimal_pad_for(&table, "93,3").unwrap(), "P1");
             assert_eq!(decimal_pad_for(&table, "197").unwrap(), "P3");
             assert_eq!(decimal_pad_for(&table, "93,30").unwrap(), "P0");
@@ -11954,7 +11953,7 @@ mod notation_and_shared_scale_lane_tests {
     }
 
     fn de(column: Value, value: f64, symbol_mode: &str) -> Lanes {
-        crate::number_locale::with_number_locale(&crate::number_locale::de_de(), || {
+        ::bind::formats::locale::with_number_locale(&::bind::formats::locale::de_de(), || {
             lanes_of(column, value, symbol_mode)
         })
     }

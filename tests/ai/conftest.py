@@ -8,20 +8,20 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters import AdapterRegistry, build_adapter_registry
+from dbt_charts.core.execute.env import ExecEnv, build_exec_env
 
 
 @pytest.fixture
 def registry(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
-) -> AdapterRegistry:
-    """A writable AdapterRegistry rooted at tmp_path.
+) -> ExecEnv:
+    """A writable ExecEnv rooted at tmp_path.
 
     Most contract / handler tests just need a registry that resolves the
     project root and supports source lookup. They don't care which adapters
     are registered — only that one exists when the handler asks for it.
     """
-    return build_adapter_registry(local_project(tmp_path), read_only=False)
+    return build_exec_env(local_project(tmp_path), read_only=False)
 
 
 # ---------------------------------------------------------------------------

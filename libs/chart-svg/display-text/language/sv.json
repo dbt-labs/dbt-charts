@@ -54,6 +54,7 @@
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}–{end_day} {month} {year}",
   "controls.reset": "Återställ",
+  "controls.remove_value": "Ta bort {value}",
   "controls.search": "Sök",
   "controls.search_values": "Sök värden",
   "controls.select_all": "Markera alla",

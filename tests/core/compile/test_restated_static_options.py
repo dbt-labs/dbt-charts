@@ -98,13 +98,10 @@ def test_a_failing_probe_skips_the_advice_and_keeps_the_render(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from dbt_charts.core.diagnostics.execution import ExecutionError
-    from dbt_charts.core.execute.executor import Executor
-    from dbt_charts.core.execute.run import Failed, Outcome
+    from dbt_charts.core.execute.run import Failed, Outcome, run_misses as original
 
-    original = Executor.run_misses
-
-    def failing(self: Executor, *args: Any, **kwargs: Any) -> dict[str, Outcome]:
-        outcomes = original(self, *args, **kwargs)
+    def failing(*args: Any, **kwargs: Any) -> dict[str, Outcome]:
+        outcomes = original(*args, **kwargs)
         return {
             name: Failed(ExecutionError("probe failed"), None)
             if name.startswith("_restated_distinct_")
@@ -112,7 +109,7 @@ def test_a_failing_probe_skips_the_advice_and_keeps_the_render(
             for name, outcome in outcomes.items()
         }
 
-    monkeypatch.setattr(Executor, "run_misses", failing)
+    monkeypatch.setattr("dbt_charts.core.render.renderer.run_misses", failing)
 
     assert _warnings(tmp_path, "[1970, 1971, 1972]") == []
 

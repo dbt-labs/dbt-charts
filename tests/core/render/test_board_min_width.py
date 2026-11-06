@@ -21,16 +21,16 @@ from dbt_charts.core.compile.resolve.style.markdown_style import (
     title_min_content_width,
 )
 from dbt_charts.core.compile.sizing import board_container_width, footer_text_width
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.project import Project
-from dbt_charts.core.render import render
 from dbt_charts.core.render.board_resolve import (
     build_resolved_board,
     build_resolved_board_static,
 )
 from dbt_charts.core.render.sizing import get_title_height
+
+from ..._run import Run, render_run
 
 _QUERY = """
 queries:
@@ -47,10 +47,10 @@ _QUIET = "style:\n  footer:\n    visible: false\n  timestamp:\n    visible: fals
 _TITLE_TEXT = "A rather long board title that outgrows its tiny table"
 
 
-def _executor(board: Board, project: Project) -> Executor:
-    return Executor(
+def _executor(board: Board, project: Project) -> Run:
+    return Run(
         board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=None,
     )
 
@@ -71,7 +71,7 @@ def _resolved(yaml: str, local_project: Callable[..., Project]) -> ResolvedBoard
 
 def _svg(yaml: str, local_project: Callable[..., Project]) -> str:
     board = _compiled(yaml)
-    out = render(board, _executor(board, local_project(Path.cwd())), format="svg")
+    out = render_run(board, _executor(board, local_project(Path.cwd())), format="svg")
     assert out.board_error is None, out.board_error
     return out.output
 

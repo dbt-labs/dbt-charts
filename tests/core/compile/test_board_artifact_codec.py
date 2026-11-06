@@ -37,12 +37,13 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_UNKNOWN_QUERY,
     WARN_HTML_POLICY_CAPPED,
 )
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.board_resolve import (
     build_resolved_board,
     build_resolved_board_static,
 )
+
+from ..._run import Run
 
 _ADAPTER: TypeAdapter[ResolvedBoard] = TypeAdapter(ResolvedBoard)
 
@@ -297,9 +298,9 @@ cols:
         assert result.success, result.errors
         assert result.board is not None
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
             query_registry=result.query_registry,
         )
         failures: dict[str, ChartResolveFailure] = {}

@@ -30,11 +30,11 @@ import yaml
 from pydantic import BaseModel, Tag
 
 from dbt_charts._docs_site import yaml_reference_url
+from dbt_charts.core.compile.migrations.migrations import RetiredKey
 from dbt_charts.core.compile.parse.source_map import build_source_index
 from dbt_charts.core.utils import YAML_LOADER
 
 if TYPE_CHECKING:
-    from dbt_charts.core.compile.migrations.migrations import RetiredKey
     from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import JsonObject
     from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 
@@ -744,7 +744,7 @@ def _format_allowed_keys(keys: list[str], limit: int = 40) -> str:
     return ", ".join(displayed) + suffix
 
 
-def _retired_key_story(retired: "RetiredKey") -> tuple[tuple[str, ...], str, str]:
+def _retired_key_story(retired: RetiredKey) -> tuple[tuple[str, ...], str, str]:
     """``(old, history, action)`` for a retired key: the old spelling relative to
     where it sits, what became of it, and what the author should do."""
     version = retired.retired_in
@@ -781,18 +781,14 @@ def _retired_key_story(retired: "RetiredKey") -> tuple[tuple[str, ...], str, str
     )
 
 
-def _retired_keys_in(yaml_content: str | None) -> "dict[tuple[str, ...], RetiredKey]":
+def _retired_keys_in(yaml_content: str | None) -> dict[tuple[str, ...], RetiredKey]:
     """Keys the migration declarations would fire on in *yaml_content*, by document path."""
-    from dbt_charts.core.compile.migrations.migrations import (
-        _board_migration_context,
-        retired_keys,
-    )
+    from dbt_charts.core.compile.migrations.migrations import retired_keys
 
     data = _raw_mapping(yaml_content)
     if data is None:
         return {}
-    catalog, registry = _board_migration_context()
-    return retired_keys(data, catalog, registry)
+    return retired_keys(data)
 
 
 _ABSENT = object()
@@ -891,7 +887,7 @@ def _bar_label_position_fix(
 def _extra_field_diagnostic(
     field_path: list[str],
     yaml_content: str | None,
-    retired: "Mapping[tuple[str, ...], RetiredKey]",
+    retired: Mapping[tuple[str, ...], RetiredKey],
 ) -> _ExtraFieldDiagnostic | None:
     if not field_path:
         return None
@@ -1272,15 +1268,12 @@ def _newer_schema_version_hint(yaml_content: str | None) -> str | None:
     if declared_parts is None:
         return None
 
-    # _board_migration_context (not the public load_yaml_schema_catalog) on
-    # purpose: it's @cache'd and already warm here -- every call site of this
-    # formatter is reached only after prepare_board_mapping already ran (and
-    # would itself have raised on a broken migration declaration, well before
-    # any diagnostic gets formatted), so this never pays the first-call cost
-    # of re-reading and sha256-verifying every frozen schema from disk.
-    from dbt_charts.core.compile.migrations.migrations import _board_migration_context
+    # package_schemas (not the public load_yaml_schema_catalog) on
+    # purpose: it's @cache'd, so only the first diagnostic formatted in a
+    # process pays for re-reading and sha256-verifying every frozen schema.
+    from dbt_charts.core.compile.migrations.migrations import package_schemas
 
-    catalog, _ = _board_migration_context()
+    catalog = package_schemas()
     latest_parts = parse_dotted_version(catalog.latest_released.version)
     if latest_parts is None or declared_parts <= latest_parts:
         return None

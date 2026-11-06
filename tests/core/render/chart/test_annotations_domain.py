@@ -1,5 +1,6 @@
 """An annotation anchor outside the data widens the axis domain: ticks follow it
-and the annotation draws, on every family and axis kind that can widen."""
+and the annotation draws, on every family and axis kind that can widen. A range
+on a line or area x never widens it: the band is clipped at the plot edge."""
 
 from __future__ import annotations
 
@@ -70,7 +71,7 @@ def test_a_date_past_the_data_gets_ticks_across_the_widened_domain(
     assert "2030" not in labels
 
 
-@pytest.mark.parametrize("family", ["line", "area", "bar", "scatter"])
+@pytest.mark.parametrize("family", ["bar", "scatter"])
 def test_a_band_before_the_data_gets_ticks_across_the_widened_domain(
     family: str,
 ) -> None:
@@ -83,6 +84,44 @@ def test_a_band_before_the_data_gets_ticks_across_the_widened_domain(
     )
     for year in ("2020", "2022", "2024"):
         assert year in labels, f"{year} missing: {labels}"
+
+
+@pytest.mark.parametrize("family", ["line", "area"])
+def test_a_band_before_the_data_is_clipped_not_widened_on_a_line(
+    family: str,
+) -> None:
+    labels, _ = _labels(
+        family,
+        _MONTHS,
+        "month",
+        {"x": {"from": "2020-01-01", "to": "2021-01-01"}},
+        kind="band",
+    )
+    assert "2020" not in labels, labels
+    assert "2024" in labels, labels
+
+
+def test_a_one_day_band_on_the_last_day_of_a_daily_line_shows_its_left_half() -> None:
+    days = [{"month": f"2024-06-{d:02d}", "revenue": 10.0 + d} for d in range(1, 11)]
+    _, svg = _labels(
+        "line",
+        days,
+        "month",
+        {"x": {"from": "2024-06-10", "to": "2024-06-11"}},
+        kind="band",
+    )
+    line = re.search(r'<path d="(M[^"]*)"[^>]*stroke-width="4"', svg)
+    assert line is not None
+    xs = [x for x, _ in path_vertices(line.group(1))]
+    step = xs[1] - xs[0]
+    band = re.search(
+        r'<rect x="([\d.]+)" y="0" width="([\d.]+)" height="[\d.]+" fill="[^"]*" opacity',
+        svg,
+    )
+    assert band is not None
+    x, width = float(band.group(1)), float(band.group(2))
+    assert x == pytest.approx(xs[-1] - step / 2, abs=0.05)
+    assert width == pytest.approx(step / 2, abs=0.05)
 
 
 @pytest.mark.parametrize("family", ["line", "area", "bar"])

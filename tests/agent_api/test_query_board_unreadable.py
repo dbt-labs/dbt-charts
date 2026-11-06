@@ -10,7 +10,7 @@ import pytest
 
 from dbt_charts.agent_api.query import lookup_board_query_sql, query_board
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 
 BOARD = """
 source: db
@@ -54,10 +54,10 @@ def run(
     request: pytest.FixtureRequest, project: FilesystemProject
 ) -> Callable[[str, str], Any]:
     if request.param == "query_board":
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
 
         def via_query_board(path: str, name: str) -> Any:
-            return query_board(name, Path(path), project, adapter_registry=registry)
+            return query_board(name, Path(path), project, env=registry)
 
         return via_query_board
 

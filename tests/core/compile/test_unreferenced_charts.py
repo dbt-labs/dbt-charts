@@ -13,7 +13,7 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.errors import RenderError
 
 
@@ -53,16 +53,17 @@ charts:
     x: x
     y: y
 """
-    from dbt_charts.core.execute import Executor
     from dbt_charts.core.render.renderer import render
+
+    from ..._run import Run
 
     result = compile(yaml_content)
     assert result.success
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
     )
-    rendered = render(result.board, executor)
+    rendered = render(result.board, executor.ctx, executor.ledger)
     assert rendered.output
     assert rendered.board_error is None
 
@@ -109,18 +110,19 @@ charts:
     y: y
 rows: []
 """
-    from dbt_charts.core.execute import Executor
     from dbt_charts.core.render.renderer import render
+
+    from ..._run import Run
 
     result = compile(yaml_content)
     assert result.success
     assert [w.chart for w in result.warnings] == ["c1"]
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
     )
     with pytest.raises(RenderError, match="defines charts.*no layout"):
-        render(result.board, executor)
+        render(result.board, executor.ctx, executor.ledger)
 
 
 def test_orphan_chart_in_layout_warns():

@@ -1,0 +1,3 @@
+kind: Fixes
+body: Annotations on a chart edge keep their full width, x anchors and max() reach layer rows and numeric-x marks, a percent axis from 0 draws its 0% line, and floating legends no longer have gridlines cutting their text.
+time: 2026-11-05T00:47:58.419871-08:00

@@ -20,6 +20,7 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.cache import CachePolicy
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.template._helpers import _QueryNamespace
+from dbt_charts.core.execute import run as run_stage
 from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
@@ -147,11 +148,12 @@ def _executor_with_cache(
     cache: TrivialDuckDBCache,
     local_project: Callable[..., FilesystemProject],
 ) -> Any:
-    from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
-    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.execute.env import build_exec_env
 
-    registry = build_adapter_registry(_project_with_db_source(local_project))
-    return Executor(board, registry, use_cache=True, result_cache=cache)
+    from ..._run import Run
+
+    registry = build_exec_env(_project_with_db_source(local_project))
+    return Run(board, registry, use_cache=True, result_cache=cache)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -292,7 +294,9 @@ class TestCacheRefComposition:
         assert rows == [{"n": 99}]
 
     def test_wave_run_reads_upstream_from_the_ledger_without_rerunning(
-        self, local_project: Callable[..., FilesystemProject]
+        self,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Both queries miss in one run: the upstream settles first and the
         consumer reads it from the ledger instead of executing it again."""
@@ -306,13 +310,13 @@ class TestCacheRefComposition:
         )
         executor = _executor_with_cache(board, cache, local_project)
         executed: list[str] = []
-        real_execute = executor.adapter_registry.execute
+        real_route = run_stage.run_route
 
-        def counting_execute(query: Any, *args: Any, **kwargs: Any) -> Any:
-            executed.append(kwargs["query_name"])
-            return real_execute(query, *args, **kwargs)
+        def counting_route(registry: Any, route: Any, query: Any, *args: Any) -> Any:
+            executed.append(args[-2])
+            return real_route(registry, route, query, *args)
 
-        executor.adapter_registry.execute = counting_execute
+        monkeypatch.setattr(run_stage, "run_route", counting_route)
 
         outcomes = executor.run_misses(executor.lookup(["reader", "upstream"]), 2)
 
@@ -458,10 +462,11 @@ class TestCacheRefErrors:
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """{{ queries.X.cache }} without a cache backend raises a clear error."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
-        from dbt_charts.core.execute.executor import Executor
+
+        from ..._run import Run
 
         board = _build_board(
             {
@@ -471,9 +476,9 @@ class TestCacheRefErrors:
             chart_query="upstream",
         )
 
-        registry = build_adapter_registry(_project_with_db_source(local_project))
+        registry = build_exec_env(_project_with_db_source(local_project))
         # No result_cache attached
-        executor = Executor(board, registry, use_cache=False, result_cache=None)
+        executor = Run(board, registry, use_cache=False, result_cache=None)
 
         with pytest.raises(Exception, match="cache"):
             executor.execute_query("consumer")
@@ -620,10 +625,11 @@ class TestCacheRefCycleDetection:
         """
         from dbt_charts.core.compile.errors import JinjaError
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
-        from dbt_charts.core.execute.executor import Executor
+
+        from ..._run import Run
 
         # looper (in the board) → partner.cache; partner lives only in the
         # cross-board registry and points back to looper.cache — a cycle compile
@@ -637,8 +643,8 @@ class TestCacheRefCycleDetection:
             source="db",
             cache=CachePolicy(enabled=True),
         )
-        registry = build_adapter_registry(_project_with_db_source(local_project))
-        executor = Executor(
+        registry = build_exec_env(_project_with_db_source(local_project))
+        executor = Run(
             board,
             registry,
             use_cache=True,
@@ -798,3 +804,98 @@ class TestCacheRefMaxRowsEnforcement:
         assert list(schema) == ["n"]
         assert fetchmany_args == [4]
         assert not fetchall_called
+
+
+class TestCacheRefUpstreamScope:
+    def test_a_stored_consumer_does_not_pull_in_an_expired_upstream(
+        self,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        cache = TrivialDuckDBCache()
+        board = _build_board(
+            {
+                "upstream": "SELECT 99 AS n",
+                "reader": "SELECT n FROM {{ queries.upstream.cache }}",
+            },
+            chart_query="reader",
+        )
+        first = _executor_with_cache(board, cache, local_project)
+        assert first.execute_query("reader") == [{"n": 99}]
+        cache.clear(*plan(first.ctx, ["upstream"])[0].cache_key)
+
+        second = _executor_with_cache(board, cache, local_project)
+        executed: list[str] = []
+        real_route = run_stage.run_route
+
+        def counting_route(registry: Any, route: Any, query: Any, *args: Any) -> Any:
+            executed.append(args[-2])
+            return real_route(registry, route, query, *args)
+
+        monkeypatch.setattr(run_stage, "run_route", counting_route)
+
+        found = second.lookup(["reader"])
+        assert set(found.hits) == {"reader"}
+        assert not found.misses
+        assert second.execute_query("reader") == [{"n": 99}]
+        assert executed == []
+        assert [name for name, *_ in second.ledger.ages] == ["reader"]
+        assert len(second.cache_hit_ats) == 1
+
+    def test_a_stored_middle_of_a_chain_does_not_pull_in_an_expired_root(
+        self,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        cache = TrivialDuckDBCache()
+        board = _build_board(
+            {
+                "w": "SELECT 99 AS n",
+                "x": "SELECT n FROM {{ queries.w.cache }}",
+                "y": "SELECT n FROM {{ queries.x.cache }}",
+            },
+            chart_query="y",
+        )
+        first = _executor_with_cache(board, cache, local_project)
+        first.execute_query("y")
+        cache.clear(*plan(first.ctx, ["w"])[0].cache_key)
+        cache.clear(*plan(first.ctx, ["y"])[0].cache_key)
+
+        second = _executor_with_cache(board, cache, local_project)
+        executed: list[str] = []
+        real_route = run_stage.run_route
+
+        def counting_route(registry: Any, route: Any, query: Any, *args: Any) -> Any:
+            executed.append(args[-2])
+            return real_route(registry, route, query, *args)
+
+        monkeypatch.setattr(run_stage, "run_route", counting_route)
+
+        assert second.execute_query("y") == [{"n": 99}]
+        assert executed == []
+
+    def test_an_upstream_failure_reaches_the_consumers_chart_error(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from ..._run import render_run
+
+        board = _build_board(
+            {
+                "upstream": "SELECT * FROM table_that_does_not_exist",
+                "reader": "SELECT * FROM {{ queries.upstream.cache }}",
+            },
+            chart_query="reader",
+        )
+        direct = _executor_with_cache(board, TrivialDuckDBCache(), local_project)
+        with pytest.raises(Exception, match="table_that_does_not_exist") as upstream:
+            direct.execute_query("upstream")
+
+        rendered = render_run(
+            board,
+            _executor_with_cache(board, TrivialDuckDBCache(), local_project),
+            format="json",
+        )
+
+        [chart_error] = rendered.chart_errors
+        assert chart_error.code == upstream.value.code.code
+        assert "table_that_does_not_exist" in chart_error.message

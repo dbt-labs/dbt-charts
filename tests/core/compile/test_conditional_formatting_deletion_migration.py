@@ -33,20 +33,12 @@ from __future__ import annotations
 
 import warnings
 
-import pytest
-
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
     migrate_yaml_text,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
-from dbt_charts.core.compile.migrations.versions.v0_7_0 import (
-    CONDITIONAL_FORMATTING_RETIRED_CHART_TYPES,
-)
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
-    JsonObject,
     load_yaml_schema_catalog,
 )
 
@@ -69,76 +61,6 @@ _EXTRA_FIELDS_BY_CHART_TYPE: dict[str, dict[str, str]] = {
     "point_map": {"latitude": "a", "longitude": "b"},
     "bubble_map": {"latitude": "a", "longitude": "b", "color": "a", "size": "b"},
 }
-
-
-@pytest.mark.parametrize("chart_type", CONDITIONAL_FORMATTING_RETIRED_CHART_TYPES)
-def test_conditional_formatting_migrates_via_mapping_for_every_retired_chart_type(
-    chart_type: str,
-) -> None:
-    """mapping-level: migrate_mapping strips conditional_formatting for each of
-    the 11 retired chart types -- not just bar. A typo in
-    CONDITIONAL_FORMATTING_RETIRED_CHART_TYPES fails here; a *dropped*
-    literal does not, since parametrizing over the constant under test drops
-    the Deletion and its test case together -- see
-    test_retired_chart_types_exactly_match_the_frozen_minus_live_schema_diff
-    below for that half.
-    """
-    catalog = load_yaml_schema_catalog()
-    _, registry = _board_migration_context()
-    raw = {
-        "title": "T",
-        "queries": {"q1": {"sql": "select 1 as a, 2 as b", "source": "test"}},
-        "charts": {
-            "c1": {
-                "type": chart_type,
-                "query": "q1",
-                **_EXTRA_FIELDS_BY_CHART_TYPE[chart_type],
-                "conditional_formatting": {
-                    "b": {"when": [{"gt": 1, "background": "#ff0000"}]}
-                },
-            }
-        },
-        "rows": ["c1"],
-    }
-
-    with pytest.warns(SchemaMigrationWarning, match="conditional_formatting"):
-        result = migrate_mapping(raw, catalog=catalog, registry=registry)
-
-    assert "conditional_formatting" not in result["charts"]["c1"]
-
-
-def test_retired_chart_types_exactly_match_the_frozen_minus_live_schema_diff() -> None:
-    """CONDITIONAL_FORMATTING_RETIRED_CHART_TYPES must equal
-    {frozen 0.6.0 declares conditional_formatting} - {live schema declares it}.
-
-    The parametrized test above derives its cases from the constant under
-    test, so a *dropped* literal (not a typo) removes the Deletion and its
-    test case together and the suite stays green. This derives the expected
-    set independently, straight from each concrete *Chart schema's own
-    `type:` enum and whether it carries `conditional_formatting`, so a
-    dropped literal shows up as a set mismatch even though nothing
-    parametrizes over it.
-    """
-    catalog = load_yaml_schema_catalog()
-
-    def chart_types_declaring_cf(schema: JsonObject) -> set[str]:
-        declaring: set[str] = set()
-        for name, node in schema["$defs"].items():
-            if not name.endswith("Chart") or name == "AuthoredChart":
-                continue
-            props = node.get("properties", {})
-            type_schema = props.get("type", {})
-            literals = type_schema.get("enum") or (
-                [type_schema["const"]] if "const" in type_schema else []
-            )
-            if "conditional_formatting" in props:
-                declaring.update(literals)
-        return declaring
-
-    frozen_cf = chart_types_declaring_cf(catalog.schema_for("0.6.0"))
-    live_cf = chart_types_declaring_cf(catalog.current_schema)
-
-    assert frozen_cf - live_cf == set(CONDITIONAL_FORMATTING_RETIRED_CHART_TYPES)
 
 
 def test_bar_conditional_formatting_compiles_clean_end_to_end() -> None:
@@ -206,11 +128,10 @@ def test_mixed_table_and_bar_conditional_formatting_round_trip_inline_rows_shape
         '          - gt: 1\n            background: "#ff0000"\n'
     )
 
-    catalog = load_yaml_schema_catalog()
-    _, registry = _board_migration_context()
+    load_yaml_schema_catalog()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        result = migrate_yaml_text(text, catalog=catalog, registry=registry)
+        result = migrate_yaml_text(text)
 
     lines = result.split("\n")
     bar_start = next(i for i, line in enumerate(lines) if line.strip() == "- type: bar")
@@ -257,11 +178,10 @@ def test_mixed_table_and_bar_conditional_formatting_round_trip_charts_mapping_sh
         "rows: [b, t]\n"
     )
 
-    catalog = load_yaml_schema_catalog()
-    _, registry = _board_migration_context()
+    load_yaml_schema_catalog()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        result = migrate_yaml_text(text, catalog=catalog, registry=registry)
+        result = migrate_yaml_text(text)
 
     lines = result.split("\n")
     bar_start = next(i for i, line in enumerate(lines) if line.strip() == "b:")

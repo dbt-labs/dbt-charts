@@ -33,11 +33,11 @@ from dbt_charts.core.diagnostics import (
 )
 from dbt_charts.core.diagnostics.registry import REGISTRY
 from dbt_charts.core.diagnostics.suppression import partition
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 from dbt_charts.core.render.warnings import registry as _registry
 
-from ..._results import rows_schema
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 # ---------------------------------------------------------------------------
 # partition() unit tests
@@ -311,20 +311,8 @@ rows:
 
 
 def _make_executor(board, query_registry):
-    from unittest.mock import Mock
-
-    ok = Mock()
-    ok.is_success = True
-    ok.data = [{"category": "a", "value": 1}]
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.return_value = ok
-    return Executor(
-        board, adapter_registry=mock_registry, query_registry=query_registry
-    )
+    backend = ScriptedBackend([{"category": "a", "value": 1}])
+    return Run(board, env=scripted_env(backend), query_registry=query_registry)
 
 
 def _fake_detector(code: str, chart_id: str | None = "c") -> ModuleType:
@@ -358,7 +346,8 @@ def test_render_ignore_codes_suppresses_matching_warning(
 
     render_result = render(
         result.board,
-        executor,
+        executor.ctx,
+        executor.ledger,
         format="json",
         ignore_codes={WARN_REDUNDANT_ENCODING.code},
     )
@@ -382,7 +371,8 @@ def test_render_ignore_codes_does_not_suppress_unmatched(
 
     render_result = render(
         result.board,
-        executor,
+        executor.ctx,
+        executor.ledger,
         format="json",
         ignore_codes={WARN_REDUNDANT_ENCODING.code},
     )
@@ -404,7 +394,7 @@ def test_render_suppressed_warnings_empty_by_default(
         _registry, "DETECTORS", [_fake_detector(WARN_REDUNDANT_ENCODING.code)]
     )
 
-    render_result = render(result.board, executor, format="json")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="json")
     assert len(render_result.warnings) == 1
     assert render_result.suppressed_warnings == []
 
@@ -445,7 +435,8 @@ def test_project_warnings_ignore_suppresses_code(
 
     render_result = render(
         result.board,
-        executor,
+        executor.ctx,
+        executor.ledger,
         format="json",
         warnings_ignore=frozenset({WARN_REDUNDANT_ENCODING.code}),
     )
@@ -469,7 +460,8 @@ def test_project_warnings_ignore_does_not_suppress_other_codes(
 
     render_result = render(
         result.board,
-        executor,
+        executor.ctx,
+        executor.ledger,
         format="json",
         warnings_ignore=frozenset({WARN_REAGGREGATION.code}),
     )
@@ -598,7 +590,7 @@ def test_per_chart_warnings_ignore_suppresses_own_chart_warning(
         [_fake_detector("WARN-REDUNDANT-ENCODING", chart_id="c")],
     )
 
-    render_result = render(result.board, executor, format="json")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="json")
     assert render_result.warnings == []
     assert len(render_result.suppressed_warnings) == 1
     assert render_result.suppressed_warnings[0].code == "WARN-REDUNDANT-ENCODING"
@@ -621,7 +613,7 @@ def test_per_chart_warnings_ignore_does_not_suppress_different_chart(
         [_fake_detector("WARN-REDUNDANT-ENCODING", chart_id="c")],
     )
 
-    render_result = render(result.board, executor, format="json")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="json")
     assert len(render_result.warnings) == 1
     assert render_result.warnings[0].code == "WARN-REDUNDANT-ENCODING"
     assert render_result.suppressed_warnings == []
@@ -644,7 +636,7 @@ def test_per_chart_warnings_ignore_does_not_suppress_board_level_warning(
         [_fake_detector("WARN-REDUNDANT-ENCODING", chart_id=None)],
     )
 
-    render_result = render(result.board, executor, format="json")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="json")
     assert len(render_result.warnings) == 1
     assert render_result.warnings[0].chart is None
     assert render_result.suppressed_warnings == []
@@ -716,7 +708,7 @@ def test_render_dashboard_threads_suppressed_warnings(
 ) -> None:
     """render_dashboard() with ignore_codes propagates suppressed_warnings."""
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
     from dbt_charts.core.project import InMemoryBoard
 
     monkeypatch.setattr(
@@ -726,11 +718,11 @@ def test_render_dashboard_threads_suppressed_warnings(
     )
 
     project = local_project(tmp_path)
-    adapter_registry = build_adapter_registry(project, read_only=False)
+    env = build_exec_env(project, read_only=False)
 
     result = render_dashboard(
         board=InMemoryBoard(_INLINE_KPI_YAML, path=project.path("charts/_t.yml")),
-        adapter_registry=adapter_registry,
+        env=env,
         format="json",
         ignore_codes={WARN_REDUNDANT_ENCODING.code},
         project=project,
@@ -750,7 +742,7 @@ def test_render_dashboard_honors_project_warnings_ignore(
     """project.warnings_ignore (dbt_charts.yml) is the sole source of project-level
     suppression — render_dashboard applies it with no override argument."""
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
     from dbt_charts.core.project import InMemoryBoard
 
     (tmp_path / "dbt_charts.yml").write_text(
@@ -761,11 +753,11 @@ def test_render_dashboard_honors_project_warnings_ignore(
     )
 
     project = local_project(tmp_path)
-    adapter_registry = build_adapter_registry(project, read_only=False)
+    env = build_exec_env(project, read_only=False)
 
     result = render_dashboard(
         board=InMemoryBoard(_INLINE_KPI_YAML, path=project.path("charts/_t.yml")),
-        adapter_registry=adapter_registry,
+        env=env,
         format="json",
         project=project,
         result_cache=None,

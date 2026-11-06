@@ -10,10 +10,10 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
 
+from ..._run import Run
 from ..._svg_normalize import normalize_same_run_svg
 from .._svg_render import pinned_clock
 
@@ -50,13 +50,13 @@ def svg_of(
     def _svg(extra: str = "", board: str = _BOARD) -> str:
         result = compile_board(board + extra)
         assert result.success and result.board is not None, result.errors
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
             clock=pinned_clock,
         )
-        out = render(result.board, executor, format="svg")
+        out = render(result.board, executor.ctx, executor.ledger, format="svg")
         assert out.board_error is None, out.board_error
         assert isinstance(out.output, str)
         return normalize_same_run_svg(out.output)

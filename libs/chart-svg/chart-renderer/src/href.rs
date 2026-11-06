@@ -117,13 +117,11 @@ pub(crate) fn js_string(value: Option<&Value>) -> Result<String, String> {
 pub(crate) const UNDEFINED_HREF: &str = "https://vega.github.io/vega-datasets/undefined";
 
 /// How a link channel prints its column: `'' + datum[field]`, or
-/// `timeFormat(datum[field], '%Y-%m-%d')` for a date field; [`LinkText::InvalidDate`]
-/// is a string Vega keeps ordinal, which line and scatter print as an invalid date.
+/// `timeFormat(datum[field], '%Y-%m-%d')` for a date field.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum LinkText {
     Raw,
     Date,
-    InvalidDate,
     /// A date the renderer already holds as a day number.
     Days,
 }
@@ -164,7 +162,7 @@ pub(crate) fn first_datum_links(
     let mut links = std::collections::HashMap::new();
     let Some(link) = link else { return Ok(links) };
     for row in rows {
-        if let std::collections::hash_map::Entry::Vacant(slot) = links.entry((crate::common::row_str(row, x_field), String::new())) {
+        if let std::collections::hash_map::Entry::Vacant(slot) = links.entry((::bind::rows::row_str(row, x_field), String::new())) {
             slot.insert(link.href(row)?);
         }
     }
@@ -188,10 +186,9 @@ impl DatumLink<'_> {
             }
             .ok_or_else(|| format!("link template references channel '{{{{ {channel} }}}}' but chart has no '{channel}' encoding assigned"))?;
             // A date x floored to its time bucket still links the date it carried.
-            let cell = if channel == "x" { row.get(crate::common::RAW_X).or_else(|| row.get(field.name)) } else { row.get(field.name) };
+            let cell = if channel == "x" { row.get(::bind::wide::RAW_X).or_else(|| row.get(field.name)) } else { row.get(field.name) };
             match field.text {
                 LinkText::Raw => js_string(cell),
-                LinkText::InvalidDate => Ok("0NaN-NaN-NaN".to_string()),
                 LinkText::Days => {
                     let day = cell.and_then(Value::as_f64).ok_or_else(|| format!("link value {cell:?}: not a day number"))?;
                     let (year, month, day) = d3rs::calendar::civil_from_days(day as i64);
@@ -203,7 +200,7 @@ impl DatumLink<'_> {
                         Ok(format!("{year:04}-{month:02}-{day:02}"))
                     }
                     // A labeled bucket (`2024-Q1`) reads as its start date.
-                    None => match cell.and_then(Value::as_str).and_then(crate::families::temporal::parse_bucket_string) {
+                    None => match cell.and_then(Value::as_str).and_then(::bind::temporal::parse_bucket_string) {
                         Some((year, month, day)) => Ok(format!("{year:04}-{month:02}-{day:02}")),
                         // `timeFormat` of an invalid date prints NaN for every field.
                         None => Ok("0NaN-NaN-NaN".to_string()),

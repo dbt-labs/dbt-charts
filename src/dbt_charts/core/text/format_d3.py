@@ -36,9 +36,6 @@ from decimal import Decimal
 from typing import Any, Literal, TypedDict, cast, get_args
 from zoneinfo import ZoneInfo
 
-import vl_convert
-from importlib_resources import files
-
 from d3_format import (
     EN_US,
     FormatLocale,
@@ -48,7 +45,6 @@ from d3_format import (
 )
 from d3_format.errors import D3FormatError
 from dbt_charts import _engine
-from dbt_charts.core.text.magnitude_words import MagnitudeWords, magnitude_words
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_NATIVE,
     PREDEFINED_NUMBER_NAMES,
@@ -71,7 +67,7 @@ def default_sign_placement(prefix: str | None) -> SignPlacement:
     return "after_prefix" if spaced else "before_prefix"
 
 
-# The d3-format locales Vega bundles.
+# The d3-format locales the engine vendors (`_engine.number_locales()`).
 NumberLocaleName = Literal[
     "ar-AE",
     "ar-BH",
@@ -135,14 +131,29 @@ NumberLocaleName = Literal[
 
 
 def number_locale_definition(name: NumberLocaleName) -> LocaleDefinition:
-    """d3's locale definition for ``name``, as Vega's bundled d3-format ships it."""
+    """d3's locale definition for ``name``, as the engine vendors d3-format's."""
     return cast(
-        "LocaleDefinition",
-        vl_convert.get_format_locale(name),
-    )  # type-state: cast — vl_convert's stub types d3's locale JSON as dict[str, Any]
+        "LocaleDefinition", json.loads(_engine.number_locale(name))
+    )  # type-state: cast — d3-format's locale JSON
 
 
-# The d3-time-format locales Vega bundles.
+MagnitudeWords = tuple[str, str, str, str]
+"""Thousand, million, billion, trillion; a word carries its own gap."""
+
+
+def magnitude_words(name: NumberLocaleName) -> tuple[MagnitudeWords, MagnitudeWords]:
+    """``name``'s analytic and narrative magnitude words, as the engine's locale
+    folder names them."""
+    analytic, narrative = _engine.magnitude_words(name)
+    return _four(analytic), _four(narrative)
+
+
+def _four(words: list[str]) -> MagnitudeWords:
+    thousand, million, billion, trillion = words
+    return thousand, million, billion, trillion
+
+
+# The d3-time-format locales the engine vendors (`_engine.time_locales()`).
 TimeLocaleName = Literal[
     "ar-EG",
     "ar-SY",
@@ -200,25 +211,13 @@ WeekdayName = Literal[
 ]
 WEEKDAYS: tuple[WeekdayName, ...] = get_args(WeekdayName)
 
-CLDR_FIRST_DAY: dict[str, str] = json.loads(
-    files("dbt_charts.core.text")
-    .joinpath("data", "cldr_first_day.json")
-    .read_text(encoding="utf-8")
-)["firstDay"]
-
 
 def time_locale_definition(name: TimeLocaleName) -> TimeLocaleDefinition:
-    """d3's time locale definition for ``name``, as Vega's bundled d3-time-format
-    ships it."""
+    """d3's time locale definition for ``name``, as the engine vendors
+    d3-time-format's."""
     return cast(
-        "TimeLocaleDefinition",
-        vl_convert.get_time_format_locale(name),
-    )  # type-state: cast — vl_convert's stub types d3's locale JSON as dict[str, Any]
-
-
-def time_locale_week_start(name: TimeLocaleName) -> int:
-    """The index (0 Sunday) of the first weekday CLDR gives ``name``'s region."""
-    return [day[:3] for day in WEEKDAYS].index(CLDR_FIRST_DAY[name[3:]])
+        "TimeLocaleDefinition", json.loads(_engine.time_locale(name))
+    )  # type-state: cast — d3-time-format's locale JSON
 
 
 # d3's SI letters for thousand through trillion; past trillions both registers

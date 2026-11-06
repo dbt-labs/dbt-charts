@@ -1,0 +1,256 @@
+"""ExecEnv composition for queries that set `dialect:`.
+
+A query without `dialect:` must reach the adapter exactly as it always has; one
+with it is translated to the source's dialect, with its variables inlined as
+literals and its dbt relations spelled for the warehouse that runs it.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from pathlib import Path
+
+import duckdb
+import nanoarrow as na
+import pyarrow as pa
+
+from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.compile.config import ProjectSourcesConfig
+from dbt_charts.core.compile.models.query.authored import QueryDialect
+from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.dialects import SQLDialect
+from dbt_charts.core.execute.backends.base import BackendRegistry
+from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.env import ExecEnv, make_exec_env
+from dbt_charts.core.execute.query_result import QueryResult
+from dbt_charts.core.execute.run import run_query
+from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
+
+_SNOWFLAKE = {"type": "snowflake", "account": "xy12345", "database": "analytics"}
+
+
+class _RecordingBackend:
+    """Takes snowflake SQL, flattens params like the dbt backend, records what it got."""
+
+    param_style: SQLDialect = INLINE_PLACEHOLDERS
+
+    def __init__(self) -> None:
+        self.seen: list[tuple[str, list[object]]] = []
+
+    def execute(self, source: object, query: ResolvedQuery) -> na.Array:
+        self.seen.append((query.sql, list(query.params)))
+        return na.Array(pa.table({"n": pa.array([], pa.int64())}))
+
+    def interrupt(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def _snowflake_registry(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> tuple[ExecEnv, _RecordingBackend]:
+    backend = _RecordingBackend()
+    registry = make_exec_env(
+        project=local_project(tmp_path),
+        project_sources=ProjectSourcesConfig(sources={"wh": _SNOWFLAKE}),
+        backends=BackendRegistry({"snowflake": backend}),
+    )
+    return registry, backend
+
+
+def _run(
+    registry: ExecEnv,
+    sql: str,
+    dialect: QueryDialect | None,
+    **variables: object,
+) -> QueryResult:
+    from dbt_charts.core.compile.compiler import compile
+
+    board = compile(
+        "queries:\n  q:\n    sql: select 1\n    source: wh\n"
+        "charts:\n  c:\n    type: table\n    query: q\nrows:\n  - c\n",
+        project_sources=ProjectSourcesConfig(sources={"wh": _SNOWFLAKE}),
+    ).board
+    assert board is not None
+    query = SqlQuery(sql=sql, source="wh", dialect=dialect)
+    return run_query(registry, query, variables or None, board=board)
+
+
+def test_query_without_dialect_reaches_the_adapter_unchanged(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    registry, adapter = _snowflake_registry(tmp_path, local_project)
+
+    result = _run(registry, "select a from t where b = {{ b }}", None, b="x")
+
+    assert result.error is None
+    assert adapter.seen == [("select a from t where b = \x00dct_param_1\x00", ["x"])]
+
+
+def test_dialect_equal_to_the_source_is_not_translated(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    registry, adapter = _snowflake_registry(tmp_path, local_project)
+
+    _run(registry, "select a from t where b = {{ b }}", "snowflake", b="x")
+
+    assert adapter.seen == [("select a from t where b = \x00dct_param_1\x00", ["x"])]
+
+
+def test_dialect_query_is_translated_and_params_stay_params(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    registry, adapter = _snowflake_registry(tmp_path, local_project)
+
+    result = _run(
+        registry,
+        "select date_trunc('month', d) as m from t where who = {{ who }}",
+        "duckdb",
+        who="O'Brien",
+    )
+
+    assert result.error is None
+    assert adapter.seen == [
+        (
+            "SELECT DATE_TRUNC('MONTH', d) AS m FROM t WHERE who = \x00dct_param_1\x00",
+            ["O'Brien"],
+        )
+    ]
+
+
+def test_untranslatable_sql_returns_a_named_error_and_never_runs(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    registry, adapter = _snowflake_registry(tmp_path, local_project)
+
+    result = _run(registry, "select some_made_up_fn(a) from t", "duckdb")
+
+    assert result.error is not None
+    assert result.error.code.code == "ERR-SQL-DIALECT-UNSUPPORTED"
+    assert adapter.seen == []
+
+
+def _duckdb_project_with_orders(tmp_path: Path) -> None:
+    db_path = tmp_path / "warehouse.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("CREATE TABLE orders (id INTEGER, placed DATE)")
+    conn.execute("INSERT INTO orders VALUES (1, '2024-05-17'), (2, '2024-06-02')")
+    conn.close()
+    (tmp_path / "dbt_charts.yml").write_text(
+        f"sources:\n  wh:\n    type: duckdb\n    path: {db_path}\n"
+    )
+    manifest = tmp_path / "target" / "manifest.json"
+    manifest.parent.mkdir()
+    manifest.write_text(
+        json.dumps(
+            {
+                "nodes": {
+                    "model.p.orders": {
+                        "resource_type": "model",
+                        "name": "orders",
+                        "schema": "main",
+                        "alias": "orders",
+                    }
+                },
+                "sources": {},
+            }
+        )
+    )
+
+
+def test_ref_and_variables_run_end_to_end_on_a_different_warehouse(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """BigQuery-written SQL with a ref() and a quote-bearing variable runs on DuckDB."""
+    from dbt_charts.core.compile.compiler import compile
+    from dbt_charts.core.execute.env import build_exec_env
+
+    _duckdb_project_with_orders(tmp_path)
+    board = compile(
+        "variables:\n  cutoff:\n    input: text\n    default: x\n"
+        "queries:\n  q:\n    dialect: bigquery\n    source: wh\n    sql: |\n"
+        "      select date_trunc(placed, month) as m, {{ cutoff }} as note\n"
+        "      from {{ ref('orders') }}\n      order by id\n"
+        "charts:\n  c:\n    type: table\n    query: q\nrows:\n  - c\n"
+    ).board
+    assert board is not None
+    registry = build_exec_env(local_project(tmp_path), read_only=True)
+
+    result = run_query(
+        registry, board.queries["q"], {"cutoff": "it's"}, board=board, query_name="q"
+    )
+
+    assert result.error is None, result.error
+    assert [row["note"] for row in result.data] == ["it's", "it's"]
+    assert [str(row["m"])[:10] for row in result.data] == ["2024-05-01", "2024-06-01"]
+
+
+def test_variable_value_that_looks_like_a_ref_arrives_verbatim(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    from dbt_charts.core.compile.compiler import compile
+    from dbt_charts.core.execute.env import build_exec_env
+
+    _duckdb_project_with_orders(tmp_path)
+    board = compile(
+        "variables:\n  v:\n    input: text\n    default: x\n"
+        "queries:\n  q:\n    dialect: bigquery\n    source: wh\n"
+        "    sql: select {{ v }} as v\n"
+        "charts:\n  c:\n    type: table\n    query: q\nrows:\n  - c\n"
+    ).board
+    assert board is not None
+    registry = build_exec_env(local_project(tmp_path), read_only=True)
+
+    result = run_query(
+        registry,
+        board.queries["q"],
+        {"v": "{{ ref('orders') }}"},
+        board=board,
+        query_name="q",
+    )
+
+    assert result.error is None, result.error
+    assert result.data == [{"v": "{{ ref('orders') }}"}]
+
+
+def test_interval_variable_cannot_inject_through_a_string_literal(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    registry, adapter = _snowflake_registry(tmp_path, local_project)
+
+    result = _run(
+        registry,
+        "select d + interval {{ n }} day from t",
+        "duckdb",
+        n="1' || (select secret from creds) || '",
+    )
+
+    assert result.error is not None
+    assert result.error.code.code == "ERR-SQL-DIALECT-UNSUPPORTED"
+    assert adapter.seen == []
+
+
+def test_file_source_runs_a_duckdb_dialect_query(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    from dbt_charts.agent_api import ProjectSession
+
+    (tmp_path / "data.csv").write_text("a\n1\n2\n")
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n  files:\n    type: csv\n    files:\n      data: data.csv\n"
+    )
+    board_path = tmp_path / "board.yml"
+    board_path.write_text(
+        "title: probe\n"
+        "text: probe board\n"
+        "queries:\n  q:\n    dialect: duckdb\n    source: files\n"
+        "    sql: select sum(a) as total from data\n"
+    )
+    with ProjectSession.from_project(local_project(tmp_path)) as session:
+        result = session.query_board("q", board_path)
+
+    assert result.success is True, result.errors
+    assert result.data == [{"total": 3}]

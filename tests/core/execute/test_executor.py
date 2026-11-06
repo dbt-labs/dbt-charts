@@ -15,11 +15,12 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.diagnostics.codes_execute import ERR_DBT_MANIFEST_MISSING
 from dbt_charts.core.diagnostics.execution import QueryError
-from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.plan import manifest_version
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+from ..._run import Run
 
 
 def _write_manifest(root: Path, table: str) -> None:
@@ -67,9 +68,9 @@ def _run(
     cache: TrivialDuckDBCache,
     registry: Any = None,
 ) -> int:
-    executor = Executor(
+    executor = Run(
         board,
-        adapter_registry=registry or build_adapter_registry(project),
+        env=registry or build_exec_env(project),
         query_registry={"q": board.queries["q"]},
         result_cache=cache,
     )
@@ -93,9 +94,9 @@ def test_query_without_dbt_jinja_ignores_the_manifest(tmp_path: Path) -> None:
     project = _project(tmp_path, manifest_table="t_a")
     board = _board("SELECT v FROM t_a")
     cache = TrivialDuckDBCache()
-    executor = Executor(
+    executor = Run(
         board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry={"q": board.queries["q"]},
         result_cache=cache,
     )
@@ -106,9 +107,9 @@ def test_query_without_dbt_jinja_ignores_the_manifest(tmp_path: Path) -> None:
 
     before = manifest_version(executor.ctx, query, never_resolved)
     _write_manifest(tmp_path, "t_b")
-    executor_after = Executor(
+    executor_after = Run(
         board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry={"q": board.queries["q"]},
         result_cache=cache,
     )
@@ -131,7 +132,7 @@ def test_one_long_lived_registry_follows_a_rewritten_manifest(tmp_path: Path) ->
     project = _project(tmp_path, manifest_table="t_a")
     board = _board("SELECT v FROM {{ ref('orders') }}")
     cache = TrivialDuckDBCache()
-    registry = build_adapter_registry(project)
+    registry = build_exec_env(project)
 
     assert _run(project, board, cache, registry) == 1
 
@@ -148,7 +149,7 @@ def test_deleting_the_manifest_under_a_live_registry_stops_resolution(
     project = _project(tmp_path, manifest_table="t_a")
     board = _board("SELECT v FROM {{ ref('orders') }}")
     cache = TrivialDuckDBCache()
-    registry = build_adapter_registry(project)
+    registry = build_exec_env(project)
     assert _run(project, board, cache, registry) == 1
 
     (tmp_path / "target" / "manifest.json").unlink()

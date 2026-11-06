@@ -8,6 +8,7 @@ use super::model::{payload_error, Anchor, Scalar};
 use diagnostic::codes;
 use diagnostic::{self, Diagnostic};
 use crate::families::cartesian::band_edge;
+use ::bind::temporal::{bucket_days, floor_day, TimeUnit};
 use d3rs::scale::{Band, Continuous, Transform};
 
 /// The annotation a lookup is for: the `chart_id` and `index` params.
@@ -51,7 +52,9 @@ pub enum AxisMap {
     Point { domain: Vec<String>, positions: Vec<f64>, days: Option<Vec<f64>>, range: (f64, f64) },
     /// Temporal line x: days-since-epoch extent to a pixel range, the
     /// `frac_of` law. `range` already includes the family's x padding.
-    Time { extent: (f64, f64), range: (f64, f64) },
+    /// `grain` is the bucket a bucketed x sits on: a range then runs half a
+    /// bucket earlier, so a month's (or day's) band is centered on its mark.
+    Time { extent: (f64, f64), range: (f64, f64), grain: Option<TimeUnit> },
 }
 
 impl AxisMap {
@@ -170,6 +173,21 @@ impl AxisMap {
         }
     }
 
+    /// A band's pixel span: [`Self::span`], except on a bucketed time axis,
+    /// where each bound runs half a bucket earlier so a month's band is centered
+    /// on its mark.
+    pub fn band_span(&self, a: &Anchor, site: &Site) -> Result<Option<(f64, f64)>, Diagnostic> {
+        let (AxisMap::Time { grain: Some(tu), range, .. }, Anchor::Range { from, to }) = (self, a) else { return self.span(a, site) };
+        let bound = |v: &Option<Scalar>, edge: f64| -> Result<f64, Diagnostic> {
+            let Some(v) = v else { return Ok(edge) };
+            let d = date_days(v, site)?;
+            // Only a bound on a bucket start moves; a band on other dates stays on them.
+            let on_start = floor_day(d.floor() as i64, *tu) as f64 == d;
+            self.time_px(if on_start { d - bucket_days(d, *tu) / 2.0 } else { d })
+        };
+        Ok(Some(sorted(bound(from, range.0)?, bound(to, range.1)?)))
+    }
+
     fn check(&self) -> Result<(), Diagnostic> {
         match self {
             AxisMap::Band { domain, days, .. } => check_discrete(domain.len(), domain.len(), days),
@@ -193,20 +211,21 @@ impl AxisMap {
             (AxisMap::Bent { transform, domain, range }, Scalar::Number(n)) => {
                 Ok(Continuous::new(*transform, [domain.0, domain.1], [range.0, range.1]).scale(*n))
             }
-            (AxisMap::Time { extent, range }, Scalar::Date(_)) => {
-                let d = date_days(v, site)?;
-                let span = extent.1 - extent.0;
-                if span <= 0.0 {
-                    return Err(Diagnostic::refused(format!(
-                        "annotation axis: a time extent {extent:?} has no width"
-                    )));
-                }
-                Ok(range.0 + (d - extent.0) / span * (range.1 - range.0))
-            }
+            (AxisMap::Time { .. }, Scalar::Date(_)) => self.time_px(date_days(v, site)?),
             (AxisMap::Time { .. }, Scalar::Number(_)) => Err(site.payload("a number on a time axis")),
             (_, Scalar::Date(_)) => Err(site.payload("a date on a numeric axis")),
             (AxisMap::Band { .. } | AxisMap::Point { .. }, _) => unreachable!("discrete maps never reach here"),
         }
+    }
+
+    /// A `Time` map's pixel for a day, inside the extent or not.
+    fn time_px(&self, d: f64) -> Result<f64, Diagnostic> {
+        let AxisMap::Time { extent, range, .. } = self else { unreachable!("only a time map reads days") };
+        let span = extent.1 - extent.0;
+        if span <= 0.0 {
+            return Err(Diagnostic::refused(format!("annotation axis: a time extent {extent:?} has no width")));
+        }
+        Ok(range.0 + (d - extent.0) / span * (range.1 - range.0))
     }
 
     fn clamp(&self, p: f64) -> f64 {
@@ -330,7 +349,7 @@ fn band_date_span(
 mod tests {
     use super::*;
     use ::diagnostic::collect;
-    use crate::time_axis::testing::day;
+    use ::bind::time_axis::testing::day;
 
     const SITE: Site = Site { chart_id: "c", index: 3 };
 
@@ -371,7 +390,7 @@ mod tests {
         AxisMap::Linear { domain: (0.0, 100.0), range: (200.0, 0.0) }
     }
     fn time() -> AxisMap {
-        AxisMap::Time { extent: (day("2024-01-01"), day("2024-01-11")), range: (10.0, 110.0) }
+        AxisMap::Time { extent: (day("2024-01-01"), day("2024-01-11")), range: (10.0, 110.0), grain: None }
     }
     /// Three slots over 0..300 with no padding: [0,100) [100,200) [200,300).
     fn band(days: Option<Vec<f64>>) -> AxisMap {
@@ -519,7 +538,7 @@ mod tests {
 
     #[test]
     fn a_zero_width_time_extent_or_mismatched_vectors_are_refused() {
-        let flat = AxisMap::Time { extent: (day("2024-01-01"), day("2024-01-01")), range: (0.0, 100.0) };
+        let flat = AxisMap::Time { extent: (day("2024-01-01"), day("2024-01-01")), range: (0.0, 100.0), grain: None };
         assert_eq!(flat.position(&date("2024-01-01"), &SITE).unwrap_err().code, "ERR-ENGINE-REFUSED");
         let ragged = AxisMap::Point { domain: vec!["a".into(), "b".into()], positions: vec![1.0], days: None, range: (0.0, 1.0) };
         assert_eq!(ragged.span(&cat("a"), &SITE).unwrap_err().code, "ERR-ENGINE-REFUSED");
@@ -547,6 +566,29 @@ mod tests {
             range: (0.0, 300.0),
         };
         close(b.span(&value(date("2024-01-20")), &SITE).unwrap().unwrap(), (100.0, 200.0));
+    }
+
+    #[test]
+    fn a_range_on_a_monthly_time_axis_runs_from_mid_bucket_to_mid_bucket() {
+        let monthly = AxisMap::Time { extent: (day("2024-01-01"), day("2024-08-01")), range: (0.0, 212.0), grain: Some(TimeUnit::YearMonth) };
+        let px = |iso: &str| monthly.position(&date(iso), &SITE).unwrap().unwrap();
+        let june = range(Some(date("2024-06-01")), Some(date("2024-07-01")));
+        assert_eq!(monthly.span(&june, &SITE).unwrap().unwrap(), (px("2024-06-01"), px("2024-07-01")), "only a band shifts");
+        let (lo, hi) = monthly.band_span(&june, &SITE).unwrap().unwrap();
+        assert!((lo - (px("2024-05-01") + px("2024-06-01")) / 2.0).abs() < 1.0, "{lo}");
+        assert!((hi - (px("2024-06-01") + px("2024-07-01")) / 2.0).abs() < 1.0, "{hi}");
+        let (lo, hi) = monthly.band_span(&range(Some(date("2024-08-01")), Some(date("2024-09-01"))), &SITE).unwrap().unwrap();
+        assert!(lo < px("2024-08-01") && hi > px("2024-08-01"), "the last month's band reaches back from its mark: {lo}..{hi}");
+        let (lo, hi) = monthly.band_span(&range(Some(date("2024-06-10")), Some(date("2024-06-20"))), &SITE).unwrap().unwrap();
+        assert_eq!((lo, hi), (px("2024-06-10"), px("2024-06-20")), "a band off the bucket starts stays on its dates");
+        assert_eq!(monthly.position(&date("2024-06-01"), &SITE).unwrap().unwrap(), px("2024-06-01"), "a point stays on its mark");
+    }
+
+    #[test]
+    fn a_range_on_a_daily_time_axis_runs_from_mid_day_to_mid_day() {
+        let daily = AxisMap::Time { extent: (day("2024-06-01"), day("2024-06-10")), range: (0.0, 90.0), grain: Some(TimeUnit::YearMonthDate) };
+        let (lo, hi) = daily.band_span(&range(Some(date("2024-06-10")), Some(date("2024-06-11"))), &SITE).unwrap().unwrap();
+        assert!((lo - 85.0).abs() < 1e-6 && (hi - 95.0).abs() < 1e-6, "{lo}..{hi}");
     }
 
     #[test]

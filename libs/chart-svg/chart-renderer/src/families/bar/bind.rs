@@ -3,7 +3,8 @@
 //! a calendar-bucketed x keys each row by the bucket holding it; the layers, the stack mode and
 //! the support_table strip are validated. Nothing here measures text.
 
-use crate::common::{MarkLabels, row_num, row_str};
+use crate::common::{MarkLabels};
+use ::bind::rows::{row_num, row_str};
 use diagnostic::Diagnostic;
 use crate::families::layers::{OverlayBarLayer, OverlayLayer, OverlayLineLayer, OverlayScatterLayer, resolve_layer_rows};
 use d3rs::scale::Continuous;
@@ -58,26 +59,26 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     // The resolver already bakes `y` as `WIDE_VALUE_FIELD`; the only substitution left is the rows
     // and the synthetic color field, so layout (already generic over `color_field`/`payload.rows`)
     // runs unchanged past this point. `wide_series` is the sorted, authored-measure-COMPLETE color
-    // domain (`common::wide_series_names`), computed off the pre-fold rows/dimension before either
+    // domain (`bind::wide::wide_series_names`), computed off the pre-fold rows/dimension before either
     // is overwritten below.
     let mut wide_series: Vec<String> = Vec::new();
     if !r.wide_measures.is_empty() {
-        wide_series = crate::common::wide_series_names(&r.wide_measures, r.color.as_deref(), &prepared.rows);
+        wide_series = ::bind::wide::wide_series_names(&r.wide_measures, r.color.as_deref(), &prepared.rows);
         let folded = prepared
-            .with_inputs(prepared.resolved.clone(), crate::common::unfold_wide_rows(&prepared.rows, &r.wide_measures, r.color.as_deref()))
-            .with_row_types(crate::common::unfold_wide_types(&prepared.schema.rows, &r.wide_measures)?);
+            .with_inputs(prepared.resolved.clone(), ::bind::wide::unfold_wide_rows(&prepared.rows, &r.wide_measures, r.color.as_deref()))
+            .with_row_types(::bind::wide::unfold_wide_types(&prepared.schema.rows, &r.wide_measures)?);
         r.series_from_measures = r.color.is_none();
         r.prefold_rows = prepared.rows.clone();
-        r.link_color = Some(r.color.clone().unwrap_or_else(|| crate::common::WIDE_KEY_FIELD.to_string()));
+        r.link_color = Some(r.color.clone().unwrap_or_else(|| ::bind::wide::WIDE_KEY_FIELD.to_string()));
         r.link_y = r.wide_measures[0].clone();
-        r.color = Some(crate::common::WIDE_LABEL_FIELD.to_string());
+        r.color = Some(::bind::wide::WIDE_LABEL_FIELD.to_string());
         prepared = Cow::Owned(folded);
     }
     // A colorless bar is selected by its category, which a link prints verbatim only off a date axis.
     let x_text: Vec<String> = prepared.rows.iter().map(|row| row_str(row, &r.x)).collect();
     let x_text: Vec<&str> = x_text.iter().map(String::as_str).collect();
-    let dated_x = crate::families::temporal::x_is_standard_date(&r.column_types, &r.x, &x_text)?
-        || crate::families::temporal::has_labeled_bucket(&prepared.rows, &r.x);
+    let dated_x = ::bind::temporal::x_is_standard_date(&r.column_types, &r.x, &x_text)?
+        || ::bind::temporal::has_labeled_bucket(&prepared.rows, &r.x);
     let selection_key = match (r.link_color.as_deref(), dated_x) {
         (Some(color), _) => Some(("color", color)),
         (None, false) => Some(("x", r.x.as_str())),
@@ -128,7 +129,7 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
             r.stacked_domain_max = top;
         } else if narrowed.refits_axes() && !stacked {
             let ends = std::iter::once(r.y.as_str()).chain(r.y_start.as_deref());
-            let shown: Vec<f64> = ends.flat_map(|field| narrowed.payload.rows.iter().filter_map(move |row| crate::common::row_num(row, field))).collect();
+            let shown: Vec<f64> = ends.flat_map(|field| narrowed.payload.rows.iter().filter_map(move |row| ::bind::rows::row_num(row, field))).collect();
             crate::legend_view::refit(&mut r.style.axis_y, &shown, r.orientation != "horizontal");
         }
         r.unviewed = r.legend_view.as_ref().map(|view| view.unviewed(payload));
@@ -301,12 +302,12 @@ pub(super) fn rekey_to_enclosing_buckets(
         return Ok(None);
     }
     let filled = x_resolution(r, &payload.rows)?;
-    let (Some(tu), crate::families::x_type::Grain::Calendar(_)) = (filled.filled, filled.resolution.grain) else {
+    let (Some(tu), ::bind::x_type::Grain::Calendar(_)) = (filled.filled, filled.resolution.grain) else {
         return Ok(None);
     };
     let fiscal = r.style.axis_x.fiscal_year_start_month;
     let rekey = |rows: &[serde_json::Map<String, Value>]| {
-        let axis = crate::time_axis::TimeAxis::over(rows.iter().filter_map(|row| row.get(&r.x).and_then(Value::as_str)));
+        let axis = ::bind::time_axis::TimeAxis::over(rows.iter().filter_map(|row| row.get(&r.x).and_then(Value::as_str)));
         let mut changed = false;
         let rekeyed: Vec<_> = rows
             .iter()
@@ -316,10 +317,10 @@ pub(super) fn rekey_to_enclosing_buckets(
                     .get(&r.x)
                     .and_then(Value::as_str)
                     .and_then(|text| axis.date(text))
-                    .and_then(|date| crate::families::temporal::off_anchor_bucket_start(date, tu, fiscal));
+                    .and_then(|date| ::bind::temporal::off_anchor_bucket_start(date, tu, fiscal));
                 if let Some(start) = start {
                     if let Some(raw) = row.insert(r.x.clone(), Value::String(start)) {
-                        row.insert(crate::common::RAW_X.to_string(), raw);
+                        row.insert(::bind::wide::RAW_X.to_string(), raw);
                     }
                     changed = true;
                 }

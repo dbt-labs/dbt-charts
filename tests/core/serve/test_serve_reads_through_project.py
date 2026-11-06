@@ -110,8 +110,8 @@ class TestRenderBoardFileExistenceCheckViaProject:
         """
         from fastapi import HTTPException
 
-        from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-        from dbt_charts.core.execute.executor import utc_now
+        from dbt_charts.core.execute.env import make_exec_env
+        from dbt_charts.core.execute.plan import utc_now
         from dbt_charts.core.serve.server import _render_board_file
 
         # Write a real board file on disk so Path.exists() returns True.
@@ -128,7 +128,7 @@ class TestRenderBoardFileExistenceCheckViaProject:
                 file_path=project.path("charts/test.yml"),
                 variables={},
                 project=project,
-                adapter_registry=AdapterRegistry(project=project),
+                env=make_exec_env(project=project),
                 clock=utc_now,
             )
 

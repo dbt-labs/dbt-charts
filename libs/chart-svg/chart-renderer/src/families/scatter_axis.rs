@@ -25,13 +25,11 @@ use crate::families::cartesian::band_edge;
 use d3rs::scale::{Band, Continuous};
 use crate::families::line::{bare_label_anchor, bare_label_layout, flush_anchor_px, tilted_temporal_label};
 use crate::families::subday::{SubdayPlan, SubdaySource};
-use crate::families::temporal::{
-    authored_tick_count, authored_tick_interval, bare_temporal_ticks, generic_layout, none_tick_labels, part_band_texts, time_part_ticks, AuthoredTickCadence, build_all_temporal_labels, complete_buckets, interval_axis, interval_labels_allowed, labels_unpinned, IntervalAxis, interval_tick_days, interval_tick_labels, native_tick_interval,
-    build_temporal_labels, parse_authored_time_unit, ResolvedVegaLabels, resolve_vega_x_labels, tooltip_header_date, TemporalLabel,
-    time_unit_specifier, with_edge_point_labels, BareTick, TimePart, TimeUnit,
-};
-use crate::time_axis::{date_text_day, Grain as AxisGrain, TimeAxis};
-use crate::families::x_type::{Grain, XResolution};
+use crate::families::temporal::{authored_tick_count, authored_tick_interval, bare_temporal_ticks, generic_layout, none_tick_labels, part_band_texts, time_part_ticks, AuthoredTickCadence, build_all_temporal_labels, interval_axis, interval_labels_allowed, labels_unpinned, IntervalAxis, interval_tick_days, interval_tick_labels, native_tick_interval, build_temporal_labels, ResolvedVegaLabels, resolve_vega_x_labels, tooltip_header_date, TemporalLabel, time_unit_specifier, with_edge_point_labels, BareTick};
+use ::bind::temporal::{complete_buckets, parse_authored_time_unit};
+use ::bind::temporal::{TimePart, TimeUnit};
+use ::bind::time_axis::{date_text_day, Grain as AxisGrain, TimeAxis};
+use ::bind::x_type::{Grain, XResolution};
 use scene::{Attrs, Chars, Escape, Node, Role, Run, Shape, Transform};
 use measure::FontBook;
 use crate::vega_fit::{self, Bounds};
@@ -142,7 +140,7 @@ enum Ticks {
     /// Vega's calendar interval ticks of a bucketed scale, labeled where their
     /// date opens a label period; a padded scale moves the domain they span.
     Native {
-        ladder: crate::time_axis::Dates,
+        ladder: ::bind::time_axis::Dates,
         tu: TimeUnit,
         format_tu: TimeUnit,
         visibility_tu: TimeUnit,
@@ -205,6 +203,8 @@ pub(crate) struct TemporalXAxis {
     /// The label font's `style`; `None` writes no `font-style`.
     style: Option<String>,
     label_pad: f64,
+    /// `labels.visible: false`: ticks and grid stay, no label text paints or takes room.
+    labels_hidden: bool,
     label_limit: f64,
     separation: f64,
     tick_len: f64,
@@ -371,7 +371,8 @@ impl TemporalXAxis {
             color: labels_cfg.font.color.as_deref().unwrap_or("#626366").to_string(),
             weight: labels_cfg.font.weight_str(),
             style: labels_cfg.font.style.clone(),
-            label_pad: labels_cfg.padding.unwrap_or(6.0),
+            label_pad: if labels_cfg.visible == Some(false) { 0.0 } else { labels_cfg.padding.unwrap_or(6.0) },
+            labels_hidden: labels_cfg.visible == Some(false),
             label_limit: labels_cfg.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT),
             separation: labels_cfg.min_gap.unwrap_or(0.0),
             tick_len: ticks_cfg.length.unwrap_or(6.0),
@@ -402,9 +403,9 @@ impl TemporalXAxis {
         };
         axis.grain = grain;
         axis.part = part;
-        let unreadable = |e: crate::time_axis::Unreadable| match e {
-            crate::time_axis::Unreadable::NotADate(value) => format!("scatter: x value {value:?} is not an ISO date"),
-            outside @ crate::time_axis::Unreadable::OutsideYears(_) => outside.diagnostic("", "", "scatter").to_string(),
+        let unreadable = |e: ::bind::time_axis::Unreadable| match e {
+            ::bind::time_axis::Unreadable::NotADate(value) => format!("scatter: x value {value:?} is not an ISO date"),
+            outside @ ::bind::time_axis::Unreadable::OutsideYears(_) => outside.diagnostic("", "", "scatter").to_string(),
         };
         axis.time = col.time.clone();
         for date in col.ladder.iter().chain(col.kept) {
@@ -413,7 +414,7 @@ impl TemporalXAxis {
         let col_ladder = axis.time.dates(col.ladder);
         axis.folded = col.folded;
         axis.tooltip_grain = match part {
-            Some(_) => crate::families::temporal::detect_time_unit(&col_ladder),
+            Some(_) => ::bind::temporal::detect_time_unit(&col_ladder),
             None => grain,
         };
         axis.aware = col.timed.aware();
@@ -438,7 +439,7 @@ impl TemporalXAxis {
         // An authored angle skips the overlap ladder altogether
         // (`resolve_axis_x_overlap`): the labels keep the vocabulary of the
         // authored label grain (else the data's own), none thinned or tilted.
-        let layout = |domain: &crate::time_axis::Dates,
+        let layout = |domain: &::bind::time_axis::Dates,
                       tu: TimeUnit,
                       unit: Option<&str>,
                       flushed: bool,
@@ -556,7 +557,7 @@ impl TemporalXAxis {
             return Ok(axis);
         }
 
-        if col.law.vl_type == crate::families::temporal::VegaType::Ordinal {
+        if col.law.vl_type == ::bind::temporal::VegaType::Ordinal {
             let tu = grain.expect("production routes a date column ordinal only over a calendar grain");
             let resolved = layout(&col_ladder, tu, labels_cfg.time_unit.as_deref(), false, false, &mut measure)?;
             let domain: Vec<String> = col.kept.to_vec();
@@ -625,7 +626,7 @@ impl TemporalXAxis {
                 Grain::Calendar(tu) => Some(tu),
                 // An authored `none` is no grain `_temporal_layout` takes, so it detects its own.
                 Grain::None if ax_x.time_unit.as_ref().and_then(serde_json::Value::as_str) == Some("none") => {
-                    crate::families::temporal::detect_time_unit(&col_ladder)
+                    ::bind::temporal::detect_time_unit(&col_ladder)
                 }
                 _ => None,
             };
@@ -846,10 +847,10 @@ impl TemporalXAxis {
                 // An unbucketed aware axis ticks the board zone's midnights: the expression reads the tick's own instant in
                 // that zone, and the default label names its wall-clock day.
                 let aware = self.instants_aware();
-                let (instant, wall) = if aware { (day, crate::time_zone::wall_day(day)?) } else { (day.floor(), day) };
+                let (instant, wall) = if aware { (day, ::bind::time_zone::wall_day(day)?) } else { (day.floor(), day) };
                 let value = crate::labels_expr::Val::Date(instant * 864e5);
                 let default = if expr.uses_label() { self.default_label(wall.floor() as i64)? } else { String::new() };
-                let text = crate::time_zone::with_expression_local(aware, || {
+                let text = ::bind::time_zone::with_expression_local(aware, || {
                     expr.eval(&crate::labels_expr::Tick::at(i, count, value, &default))
                 })
                 .map_err(|e| crate::labels_expr::describe(&e, "a validated tick"))?;
@@ -1077,7 +1078,7 @@ impl TemporalXAxis {
     }
 
     /// The instant of a date the axis read when it was resolved.
-    fn instant(&self, date: &str) -> &crate::time_axis::Instant {
+    fn instant(&self, date: &str) -> &::bind::time_axis::Instant {
         self.time.get(date).expect("a date of the scale was read at resolve")
     }
 
@@ -1265,7 +1266,7 @@ impl TemporalXAxis {
         let row_y = self.edge.at(ph, self.label_top());
         let labels = self.labels_at(pw, fonts)?;
         for ((frac, l), keep) in labels.iter().zip(self.kept(&labels, pw)) {
-            if keep {
+            if keep && !self.labels_hidden {
                 b.union(&self.ink(l, *frac, pw, row_y));
             }
         }
@@ -1354,7 +1355,7 @@ impl TemporalXAxis {
         let edge_half = ax_x.edge_rule_half_width(self.ticks_visible);
         let mut reach = 0.0_f64;
         for ((frac, l), keep) in labels.iter().zip(&kept) {
-            if !is_painted(*keep, &l.text) {
+            if self.labels_hidden || !is_painted(*keep, &l.text) {
                 continue;
             }
             let ink = self.ink(l, *frac, plot_w, 0.0);

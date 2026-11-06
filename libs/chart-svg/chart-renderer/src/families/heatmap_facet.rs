@@ -24,7 +24,8 @@ use std::collections::HashSet;
 
 use serde_json::{Map, Value};
 
-use crate::common::{dimension_sort_domain, row_str, AxisLabels, AxisStyle, ChartSort, SortAggregate};
+use crate::common::{AxisLabels, AxisStyle};
+use ::bind::rows::{dimension_sort_domain, row_str, ChartSort, SortAggregate};
 use crate::families::axis_caption::category_axis_caption;
 use crate::families::bar::CHROME_PX;
 use crate::families::cartesian::BandScale;
@@ -49,12 +50,12 @@ use crate::families::legend::{
     drawn_symbol_legend, horizontal_gradient_length, unit_position, vega_legend, LegendConfig, LegendEntry, LegendSymbol,
     VEGA_GRADIENT_THICKNESS,
 };
-use crate::families::multiples::{self, Panel};
-use crate::families::temporal::{
-    axis_time_format, infer_vega_type, normalize_labeled_temporal, ordinal_date_labels, AuthoredTimeFormat,
-    ExprBands, LabelUnit, TemporalLabel, TimeUnit, VegaType,
-};
-use crate::families::x_type::{parse_date, resolve_cartesian_x_type, Grain, XAxis};
+use ::bind::multiples::Panel;
+use crate::families::multiples;
+use crate::families::temporal::{axis_time_format, ordinal_date_labels, AuthoredTimeFormat, ExprBands, LabelUnit, TemporalLabel};
+use ::bind::temporal::{infer_vega_type, normalize_labeled_temporal, VegaType};
+use ::bind::temporal::{TimeUnit};
+use ::bind::x_type::{parse_date, resolve_cartesian_x_type, Grain};
 use measure::FontBook;
 use crate::vega_fit;
 use crate::Payload;
@@ -187,7 +188,7 @@ impl HeatmapXAxis {
             .transpose()?;
         // A heatmap collapses `values` to the ticks the ladder keeps.
         let resolved = ordinal_date_labels(
-            &crate::time_axis::Dates::read(&dated),
+            &::bind::time_axis::Dates::read(&dated),
             data_tu,
             unit,
             labels_cfg,
@@ -517,7 +518,7 @@ pub(crate) fn facet_extra_axis_px(labels: &AxisLabels, bands: &[String], fonts: 
 
 /// The values a field takes inside one panel. A partition field is not in a
 /// panel's rows (`regroup` strips it); its one value is the panel's key.
-fn panel_values(panel: &Panel, axes: &[multiples::PartitionAxis], field: &str) -> HashSet<String> {
+fn panel_values(panel: &Panel, axes: &[::bind::multiples::PartitionAxis], field: &str) -> HashSet<String> {
     match axes.iter().position(|a| a.field == field) {
         Some(pos) => HashSet::from([facet_compose::facet_value_label(&panel.key[pos])]),
         None => panel.rows.iter().map(|row| row_str(row, field)).filter(|v| !v.is_empty()).collect(),
@@ -527,7 +528,7 @@ fn panel_values(panel: &Panel, axes: &[multiples::PartitionAxis], field: &str) -
 /// `_panel_domain_is_proper_subset`: some panel holds fewer of the field's
 /// values than the whole chart does (a field with one value overall has no
 /// narrower state).
-pub(crate) fn panel_domain_is_proper_subset(panels: &[Panel], axes: &[multiples::PartitionAxis], field: &str) -> bool {
+pub(crate) fn panel_domain_is_proper_subset(panels: &[Panel], axes: &[::bind::multiples::PartitionAxis], field: &str) -> bool {
     let per_panel: Vec<HashSet<String>> = panels.iter().map(|p| panel_values(p, axes, field)).collect();
     let whole: HashSet<&String> = per_panel.iter().flatten().collect();
     whole.len() > 1 && per_panel.iter().any(|values| values.len() < whole.len())
@@ -548,7 +549,7 @@ fn narrowed_domain(rows: &[Map<String, Value>], field: &str, sort: Option<&Chart
     match sort {
         Some(sort) => {
             let refs: Vec<&Map<String, Value>> = rows.iter().collect();
-            crate::common::min_ranked_domain(domain, &refs, |row| row_str(row, field), sort).map_err(|e| format!("heatmap: {e}"))
+            ::bind::rows::min_ranked_domain(domain, &refs, |row| row_str(row, field), sort).map_err(|e| format!("heatmap: {e}"))
         }
         None => Ok(domain),
     }
@@ -569,7 +570,7 @@ pub(crate) fn date_dimension(
     axis: &AxisStyle,
     is_x: bool,
 ) -> Result<(Vec<Map<String, Value>>, Option<TimeUnit>), String> {
-    let law_axis = XAxis::of(axis);
+    let law_axis = axis.x_axis();
     let law = |rows: &[Map<String, Value>]| resolve_cartesian_x_type(types, rows, field, &law_axis, "heatmap", false, &[]);
     let normalized = if is_x { normalize_labeled_temporal(types, rows, field)? } else { Cow::Borrowed(rows) };
     let resolution = law(&normalized)?;
@@ -1157,12 +1158,12 @@ fn render_facet(
     let rows = if r.is_flat() { super::heatmap::with_flat_column(rows) } else { rows };
     // Vega-Lite decides which scales a panel narrows from the data as authored;
     // only the domains it then draws follow the rows with a valid color.
-    let authored_panels = multiples::regroup(axes, &rows).map_err(|e| format!("heatmap: {e}"))?;
+    let authored_panels = ::bind::multiples::regroup(axes, &rows).map_err(|e| format!("heatmap: {e}"))?;
     let rows = drop_invalid_color_rows(rows, &r.color, kind);
-    let panels = multiples::regroup(axes, &rows).map_err(|e| format!("heatmap: {e}"))?;
-    let panel_rows_n = multiples::panel_axis_cardinality(axes, mc.rows.as_deref());
-    let panel_cols_n = multiples::panel_axis_cardinality(axes, mc.columns.as_deref());
-    let missing = multiples::empty_leading_cells(panels.len(), panel_rows_n, panel_cols_n)?;
+    let panels = ::bind::multiples::regroup(axes, &rows).map_err(|e| format!("heatmap: {e}"))?;
+    let panel_rows_n = ::bind::multiples::panel_axis_cardinality(axes, mc.rows.as_deref());
+    let panel_cols_n = ::bind::multiples::panel_axis_cardinality(axes, mc.columns.as_deref());
+    let missing = ::bind::multiples::empty_leading_cells(panels.len(), panel_rows_n, panel_cols_n)?;
     let index_of = |field: &Option<String>| field.as_deref().and_then(|f| axes.iter().position(|a| a.field == f));
 
     // ── Which scales FacetFeature frees per panel ─────────────────────────
@@ -1464,7 +1465,7 @@ fn render_facet(
                 width: Box::new(|_, _| symbols.box_w),
                 height: Box::new(|_| symbols.box_h()),
                 paint: Box::new(|x, y, _, _| {
-                    drawn_symbol_legend(&symbol_entries, symbols, &r.legend, entry_symbol, x, y, false).into_iter().collect()
+                    drawn_symbol_legend(&symbol_entries, symbols, &r.legend, entry_symbol, x, y, false, r.canvas.as_str()).into_iter().collect()
                 }),
             }))
             .collect(),
@@ -1535,8 +1536,8 @@ mod tests {
             .collect();
         let sort = |order| ChartSort { by: "v".into(), order };
         assert_eq!(narrowed_domain(&rows, "x", None).unwrap(), ["a", "b", "c"]);
-        assert_eq!(narrowed_domain(&rows, "x", Some(&sort(crate::common::SortDir::Asc))).unwrap(), ["b", "a", "c"]);
-        assert_eq!(narrowed_domain(&rows, "x", Some(&sort(crate::common::SortDir::Desc))).unwrap(), ["c", "a", "b"]);
+        assert_eq!(narrowed_domain(&rows, "x", Some(&sort(::bind::rows::SortDir::Asc))).unwrap(), ["b", "a", "c"]);
+        assert_eq!(narrowed_domain(&rows, "x", Some(&sort(::bind::rows::SortDir::Desc))).unwrap(), ["c", "a", "b"]);
     }
 
     /// `facet_extra_axis_width_px` (`_cartesian.py:1151`) sizes the extra axis

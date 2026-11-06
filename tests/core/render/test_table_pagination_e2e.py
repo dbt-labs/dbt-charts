@@ -12,14 +12,13 @@ is invisible to a direct render_table_svg() call.
 from __future__ import annotations
 
 import re
-from unittest.mock import Mock
 
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 from dbt_charts.core.render.controls import controls_stylesheet
 
-from ..._results import rows_schema
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 from .._pooled_table import visible_svg
 
 _BOARD_YAML = """\
@@ -43,18 +42,8 @@ rows:
 
 
 def _make_executor(board: object, query_registry: object, rows: list[dict[str, str]]):
-    ok = Mock()
-    ok.is_success = True
-    ok.data = rows
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.return_value = ok
-    return Executor(
-        board, adapter_registry=mock_registry, query_registry=query_registry
-    )
+    mock_registry = scripted_env(ScriptedBackend(rows))
+    return Run(board, env=mock_registry, query_registry=query_registry)
 
 
 def _find_active_page_text(svg: str) -> str:
@@ -78,7 +67,12 @@ def test_variables_page_reaches_the_table_renderer() -> None:
     executor = _make_executor(result.board, result.query_registry, rows)
 
     render_result = render(
-        result.board, executor, format="svg", variables={"t_page": 2}, controls=True
+        result.board,
+        executor.ctx,
+        executor.ledger,
+        format="svg",
+        variables={"t_page": 2},
+        controls=True,
     )
     assert render_result.board_error is None, render_result.board_error
     assert isinstance(render_result.output, str)
@@ -105,7 +99,9 @@ def test_paginator_glyph_uses_a_class_not_a_presentation_attribute() -> None:
     rows = [{"name": f"row_{i}"} for i in range(1, 13)]
     executor = _make_executor(result.board, result.query_registry, rows)
 
-    render_result = render(result.board, executor, format="svg", controls=True)
+    render_result = render(
+        result.board, executor.ctx, executor.ledger, format="svg", controls=True
+    )
     assert render_result.board_error is None, render_result.board_error
     svg = render_result.output
     assert isinstance(svg, str)
@@ -141,8 +137,12 @@ def test_paginator_label_is_inert_to_selection() -> None:
     rows = [{"name": f"row_{i}"} for i in range(1, 106)]  # 21 pages: past the cap
     executor = _make_executor(result.board, result.query_registry, rows)
 
-    live = render(result.board, executor, format="svg", controls=True).output
-    static = render(result.board, executor, format="svg", controls=False).output
+    live = render(
+        result.board, executor.ctx, executor.ledger, format="svg", controls=True
+    ).output
+    static = render(
+        result.board, executor.ctx, executor.ledger, format="svg", controls=False
+    ).output
     assert isinstance(live, str) and isinstance(static, str)
 
     assert re.search(

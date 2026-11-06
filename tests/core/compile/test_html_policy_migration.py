@@ -11,15 +11,8 @@ from typing import Any
 import pytest
 
 from dbt_charts.core.compile.migrations import (
-    MigrationError,
     SchemaMigrationWarning,
-    migrate_mapping,
     migrate_yaml_text,
-)
-from dbt_charts.core.compile.migrations.migrations import (
-    Move,
-    _apply_move,
-    _board_migration_context,
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.parse.parser import load_yaml_mapping
@@ -29,6 +22,8 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     load_yaml_schema_catalog,
 )
 
+from ._engine_migrations import migrate_mapping
+
 
 @pytest.fixture
 def catalog() -> YamlSchemaCatalog:
@@ -36,10 +31,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: JsonObject, catalog: YamlSchemaCatalog) -> JsonObject:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 def _minimal_board(extra: dict[str, Any]) -> dict[str, Any]:
@@ -57,22 +51,6 @@ def _minimal_board(extra: dict[str, Any]) -> dict[str, Any]:
         },
         **extra,
     }
-
-
-def test_registry_covers_the_0_4_0_transition(
-    catalog: YamlSchemaCatalog,
-) -> None:
-    _, registry = _board_migration_context()
-
-    moves = registry.transition_from("0.4.0")
-
-    assert moves
-    assert any(
-        move.old_path == ("allow_html",)
-        and move.new_path == ("html_policy",)
-        and move.target_schema == "0.5.0"
-        for move in moves
-    )
 
 
 def test_allow_html_true_migrates_to_trusted_raw_in_memory(
@@ -111,7 +89,6 @@ def test_allow_html_yaml_text_round_trip_preserves_comments(
     intact (a scalar Move deletes the old key and inserts the new one as a
     top-level key -- the comment's line survives, but is not necessarily
     still adjacent to the moved value)."""
-    _, registry = _board_migration_context()
     yaml_text = (
         "title: Revenue\n"
         "# this comment must survive\n"
@@ -125,7 +102,7 @@ def test_allow_html_yaml_text_round_trip_preserves_comments(
         "    y: amount\n"
     )
 
-    migrated = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+    migrated = migrate_yaml_text(yaml_text)
 
     assert "# this comment must survive" in migrated
     assert "allow_html" not in migrated
@@ -147,53 +124,3 @@ def test_allow_html_rejected_on_a_current_board() -> None:
 
     with pytest.raises(ValidationError, match="allow_html"):
         AuthoredBoard.model_validate(raw)
-
-
-def test_unmapped_value_raises_migration_error() -> None:
-    """_apply_move raises MigrationError immediately when a Move's value_map
-    doesn't cover the popped value -- never passes an unmapped value through.
-
-    A non-bool `allow_html:` does now reach this Move through the real registry:
-    recognition asks which retired constructs are present, not whether the whole
-    document validates under a frozen grammar, so the key's presence is what
-    engages the transition and its value is not screened first. `_apply_move`
-    is the screen, and `prepare_board_mapping` routes what it raises to the
-    parser rather than out of the loader
-    (test_migration_recognition.py::test_a_migration_that_cannot_be_applied_reaches_the_parser_not_the_user).
-    Exercised directly here to cover the value_map safety net itself,
-    independent of any one field's schema. Sourced from 0.4.0 rather than
-    the DEV version because `_apply_move` is schema-gated: it rewrites a key
-    only where the source grammar declares it, and 0.4.0 is the newest schema
-    that still declares `allow_html`.
-    """
-    schema_catalog = load_yaml_schema_catalog()
-    move = Move(
-        source_schema="0.4.0",
-        target_schema=schema_catalog.dev.version,
-        old_path=("allow_html",),
-        new_path=("html_policy",),
-        value_map={True: "trusted-raw", False: "none"},
-    )
-    mapping: dict[str, Any] = {"allow_html": "maybe"}
-
-    with pytest.raises(MigrationError, match="allow_html"):
-        _apply_move(mapping, move, schema_catalog)
-
-
-def test_apply_move_rejects_non_scalar_source() -> None:
-    """_apply_move raises the same MigrationError for a non-scalar source
-    value as for an unmapped one -- a value_map is declared total over a
-    scalar domain, so anything else is a migration author's error to fix,
-    not a value to guess through."""
-    schema_catalog = load_yaml_schema_catalog()
-    move = Move(
-        source_schema="0.4.0",
-        target_schema=schema_catalog.dev.version,
-        old_path=("allow_html",),
-        new_path=("html_policy",),
-        value_map={True: "trusted-raw", False: "none"},
-    )
-    mapping: dict[str, Any] = {"allow_html": ["not", "scalar"]}
-
-    with pytest.raises(MigrationError, match="allow_html"):
-        _apply_move(mapping, move, schema_catalog)

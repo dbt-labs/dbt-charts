@@ -58,7 +58,7 @@ def test_build_server_takes_the_apps_own_watch(
 
     (tmp_path / "dbt_charts.yml").write_text("# project config\n")
     app = create_server(FilesystemProject(tmp_path))
-    app.state.adapter_registry = MagicMock()  # lifespan startup sets it
+    app.state.env = MagicMock()  # lifespan startup sets it
     server = build_server(app, host="localhost", port=0)
 
     asyncio.run(_shutdown_with_a_stream_open(server, app.state.watcher))

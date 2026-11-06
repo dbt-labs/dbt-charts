@@ -24,9 +24,10 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.errors import JinjaError
 from dbt_charts.core.compile.resolve.style.board import resolve_style
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.layouts import render_rows_layout
+
+from .._run import Run
 
 
 def _rs():
@@ -34,9 +35,9 @@ def _rs():
 
 
 def _executor(local_project: Callable[..., FilesystemProject], board, query_registry):
-    return Executor(
+    return Run(
         board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=query_registry,
     )
 

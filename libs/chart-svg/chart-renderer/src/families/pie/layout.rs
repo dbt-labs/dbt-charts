@@ -340,7 +340,8 @@ impl PieLegend {
     fn entries(&self) -> Vec<LegendEntry<'_>> {
         self.entries
             .iter()
-            .map(|(label, fill)| LegendEntry { label, fill, symbol: None, series_key: None, recede: None, action: None })
+            .zip(&self.keys)
+            .map(|((label, fill), key)| LegendEntry { label, fill, symbol: key.is_none().then_some(LegendSymbol::Overflow), series_key: None, recede: None, action: None })
             .collect()
     }
 
@@ -817,6 +818,7 @@ fn wheel(
             plot.x1 + legend_xy.0 + dx,
             plot.y1 + legend_xy.1 + dy,
             false,
+            r.canvas.as_str(),
         ));
     }
 

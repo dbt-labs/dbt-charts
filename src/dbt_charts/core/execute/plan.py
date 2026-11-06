@@ -2,11 +2,16 @@
 
 Stage: EXECUTE (plan)
 Purpose: Turn query names plus caller variables into ``PlannedQuery``s: the
-    merged variables, the lazily resolved source, the route the query takes and
-    the persistent-cache key. Lookup reads the store and run executes under the
+    merged variables, the lazily resolved source, the cached upstreams a query composes
+    over and the persistent-cache key. Lookup reads the store and run executes under the
     key a plan carries, so the two cannot disagree on it.
 
+    A ``{{ queries.X.cache }}`` query is planned together with its upstreams, so
+    one lookup and one run orders them; nothing reads an upstream by running it
+    mid-query.
+
 Entry Points:
+    - make_context(board, env, ...) -> ExecContext
     - plan(ctx, names, variables, use_cache) -> list[PlannedQuery]
     - cache_key(ctx, name, query, variables, resolve_source) -> CacheKey
 """
@@ -16,17 +21,28 @@ import json
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import cache, partial
+from pathlib import (
+    Path,  # noqa: TID251 — names the DuckDB/SQLite files on disk
+)
 from typing import TYPE_CHECKING, Any
 
 import yaml
 from pydantic import ValidationError
 
+from dbt_charts.cli.filesystem_project import (
+    FilesystemProject,  # tach-ignore(core->cli: host-type guard; needs a non-cli signal on Project — deferred)
+)
 from dbt_charts.core.board_listings import resolve_listings
 from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
-from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
+from dbt_charts.core.compile.models.query.normalized import (
+    AnyQuery,
+    SqlQuery,
+    is_sql_query,
+)
 from dbt_charts.core.compile.models.source import (
+    FILE_SOURCE_TYPES,
     CsvSourceConfig,
     DuckDBSourceConfig,
     JsonSourceConfig,
@@ -36,27 +52,47 @@ from dbt_charts.core.compile.models.source import (
     declared_metricflow,
     parse_source_config,
 )
+from dbt_charts.core.compile.sql_guard import sqlglot_dialect
 from dbt_charts.core.compile.template.daterange import BoardClock, board_clock
 from dbt_charts.core.compile.template.listings import ListingCall, TextListings
-from dbt_charts.core.compile.template.parameterized import DateRangeFilter
+from dbt_charts.core.compile.template.parameterized import (
+    DateRangeFilter,
+    render_parameterized_with_queries,
+)
 from dbt_charts.core.compile.template.variables import (
     coerce_variable_values,
     parse_variable_json_strings,
     resolve_daterange_presets,
 )
+from dbt_charts.core.dbt_ref_check import named_source_target_path
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.diagnostics.codes_execute import ERR_FILE_SOURCE_NOT_FOUND
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_ADAPTER_RELATIVE_PATH_NO_DATA_DIR,
+    ERR_ADAPTER_UNAVAILABLE,
+    ERR_FILE_SOURCE_NOT_FOUND,
+)
 from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
-from dbt_charts.core.execute.adapters.base import handle_adapter_error
-from dbt_charts.core.execute.adapters.dbt_utils import source_target_path
+from dbt_charts.core.dialects import DIALECTS
+from dbt_charts.core.execute.backends.base import BackendRegistry
 from dbt_charts.core.execute.dbt_jinja import has_dbt_jinja
+from dbt_charts.core.execute.dbt_utils import source_target_path
 from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 from dbt_charts.core.execute.metricflow import bundle_files, bundle_fingerprint
-from dbt_charts.core.project import is_glob
+from dbt_charts.core.execute.plan_sources import (
+    effective_source,
+    resolve_query_source,
+)
+from dbt_charts.core.execute.query_result import handle_adapter_error
+from dbt_charts.core.execute.sql_literals import (
+    INLINE_PLACEHOLDERS,
+    inline_params_for_dialect,
+)
+from dbt_charts.core.project import Project, is_glob
 
 if TYPE_CHECKING:
-    from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+    from dbt_charts.core.dbt_manifest import RawTableFormats
     from dbt_charts.core.execute.cache_backend import QueryResultCache
+    from dbt_charts.core.execute.env import ExecEnv
 
 CacheKey = tuple[str, str, str]
 
@@ -66,6 +102,8 @@ CacheKey = tuple[str, str, str]
 SourceThunk = Callable[[], ResolvedSourceConfig | None]
 
 FileSourceConfig = CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig
+KeyedSourceConfig = FileSourceConfig | DuckDBSourceConfig | SQLiteSourceConfig
+KEYED_SOURCE_TYPES = (*FILE_SOURCE_TYPES, "duckdb", "sqlite")
 
 # Matches {{ queries.NAME.cache }} in authored SQL. The \s* around the dot
 # tolerates whitespace variants like {{ queries.A . cache }} for consistency
@@ -91,19 +129,15 @@ class PlanMemo:
     range_filters: dict[
         tuple[str, str], tuple[str, str | None, list[DateRangeFilter]] | None
     ] = field(default_factory=dict)
-    # Parsed once, on first use: board sources, then the project's on the first
-    # name the board does not define.
-    board_file_sources: dict[str, FileSourceConfig] | None = None
-    project_file_sources: dict[str, FileSourceConfig] | None = None
 
 
 @dataclass(frozen=True)
 class ExecContext:
     """Everything a render's stages read. ``memo`` is the only mutable part, and
-    ``dataclasses.replace`` shares it, so swapping the registry keeps the memos."""
+    ``dataclasses.replace`` shares it, so swapping the env keeps the memos."""
 
     board: Board
-    adapter_registry: "AdapterRegistry"
+    env: "ExecEnv"
     query_registry: dict[str, AnyQuery]
     result_cache: "QueryResultCache | None"
     # Default *persistent-store* participation. False is no-store: nothing is
@@ -124,22 +158,51 @@ class ExecContext:
         return {**self.board.queries, **self.query_registry}
 
 
-@dataclass(frozen=True)
-class FileSource:
-    """A csv/json/parquet source, read through the file materializer."""
+def utc_now() -> datetime:
+    """The real clock, in UTC: ``make_context``'s default time source."""
+    return datetime.now(UTC)
 
 
-@dataclass(frozen=True)
-class CacheRefComposition:
-    """A ``{{ queries.X.cache }}`` query, composed over X's cached rows."""
+def make_context(
+    board: Board,
+    env: "ExecEnv",
+    query_registry: dict[str, AnyQuery] | None = None,
+    use_cache: bool = True,
+    result_cache: "QueryResultCache | None" = None,
+    clock: Callable[[], datetime] = utc_now,
+    board_slug: str | None = None,
+) -> ExecContext:
+    """The context one render's stages share.
 
-
-@dataclass(frozen=True)
-class Warehouse:
-    """Everything else: the source's own backend runs the SQL."""
-
-
-Route = FileSource | CacheRefComposition | Warehouse
+    Args:
+        board: Compiled board.
+        env: Build at the entry point with
+            ``build_exec_env(FilesystemProject(root), ...)``; nothing
+            invents one from cwd.
+        query_registry: Queries of other files the board references. None: the
+            board's own queries are the whole registry.
+        use_cache: Default *persistent-store* participation. False is no-store:
+            nothing is read from or written to ``result_cache``. The per-render
+            memo is unaffected: resolve and render must see identical rows.
+        result_cache: Persistent result cache (Suite context).
+        clock: This render's only time source. Read once here for
+            ``rendered_at`` and again as each query's rows come back; pin it and
+            the render's bytes stop depending on when it ran.
+        board_slug: The board's file-identity slug, recorded on every cache entry
+            this render writes. None for a board with no file, whose entries carry
+            the compiled id instead.
+    """
+    return ExecContext(
+        board=board,
+        env=env,
+        query_registry=query_registry
+        or {},  # type-state: silent_fallback — None: the board's own queries are the whole registry
+        result_cache=result_cache,
+        use_cache=use_cache,
+        clock=clock,
+        rendered_at=clock(),
+        board_slug=board_slug,
+    )
 
 
 @dataclass(frozen=True)
@@ -149,7 +212,9 @@ class PlannedQuery:
     # Board defaults merged under the caller's values.
     variables: dict[str, Any]  # type-state: explicit_any — variable values
     source: SourceThunk
-    route: Route
+    # The plan of each X of a ``{{ queries.X.cache }}`` query, by name: what run
+    # reads from the memo, so a wave has already run them. Empty for any other.
+    upstreams: dict[str, "PlannedQuery"]
     cache_key: CacheKey
     # False for a call-level no-store or a `cache: false` policy.
     use_store: bool
@@ -299,38 +364,55 @@ def plan(
     """Plan *names* (may carry the ``queries.`` prefix) under *variables*.
 
     ``use_cache`` overrides the context's store participation for this call; a
-    query whose own policy is disabled never uses the store either way.
+    query whose own policy is disabled never uses the store either way. A
+    ``{{ queries.X.cache }}`` query carries its upstreams' plans.
 
     Raises:
         ExecutionError: A query is not found, or a file source's version cannot
             be read.
     """
-    planned: list[PlannedQuery] = []
+    planned: dict[str, PlannedQuery] = {}
     with board_clock(ctx.board.clock(ctx.rendered_at)):
         for raw_name in names:
             name, query, merged = prepare(ctx, raw_name, variables)
             source = cache(partial(resolve_source, ctx, query, name))
-            reads_file = resolve_file_source(ctx, query) is not None
-            if is_sql_query(query) and CACHE_REF_JINJA_RE.search(query.sql):
-                route: Route = CacheRefComposition()
-            elif reads_file:
-                route = FileSource()
-            else:
-                route = Warehouse()
-            planned.append(
-                PlannedQuery(
-                    name,
-                    query,
-                    merged,
-                    source,
-                    route,
-                    cache_key(ctx, name, query, merged, source),
-                    (ctx.use_cache if use_cache is None else use_cache)
-                    and query.cache.enabled,
-                    not reads_file,
-                )
+            key = cache_key(ctx, name, query, merged, source)
+            refs = (
+                dict.fromkeys(CACHE_REF_JINJA_RE.findall(query.sql))
+                if is_sql_query(query)
+                else ()
             )
-    return planned
+            planned[name] = PlannedQuery(
+                name,
+                query,
+                merged,
+                source,
+                {up.name: up for up in plan(ctx, refs, variables, use_cache)},
+                key,
+                (ctx.use_cache if use_cache is None else use_cache)
+                and query.cache.enabled,
+                not isinstance(keyed_source(ctx, query, source), FileSourceConfig),
+            )
+    return list(planned.values())
+
+
+def require_cache_refs(ctx: ExecContext, query_name: str) -> None:
+    """Refuse a ``{{ queries.X.cache }}`` query the context cannot compose.
+
+    Raises:
+        ExecutionError: No result cache is attached, or it cannot serve refs.
+    """
+    if not ctx.result_cache:
+        raise ExecutionError(
+            f"Query '{query_name}' uses {{{{ queries.X.cache }}}} composition but "
+            "no cache backend is configured. Attach a result cache (TrivialDuckDBCache "
+            "or PostgresResultCache) to enable cross-source cache-ref queries."
+        )
+    if not ctx.result_cache.supports_cache_refs():
+        raise ExecutionError(
+            f"Query '{query_name}' uses {{{{ queries.X.cache }}}} composition but "
+            "the attached cache backend does not support cache-ref execution."
+        )
 
 
 def resolve_source(
@@ -345,10 +427,14 @@ def resolve_source(
         QueryError: The source cannot be resolved.
     """
     try:
-        return ctx.adapter_registry.resolve_query_source(
+        env = ctx.env
+        return resolve_query_source(
             resolve_query_references(
                 query, all_queries=ctx.all_queries, query_name=query_name
             ),
+            sources=env.sources,
+            resolver=env.resolver,
+            dbt_context=env.dbt_context,
             board=ctx.board,
             query_name=query_name,
         )
@@ -399,7 +485,7 @@ def cache_key(
         expanded,
         variables,
         ctx.board.sources,
-        source_version=source_version(ctx, query)
+        source_version=source_version(ctx, query, resolve_source_thunk)
         + manifest_version(ctx, expanded, resolve_source_thunk)
         + semantic_version(ctx, query)
         + "".join(f"|{ref_key}" for ref_key in upstream_keys),
@@ -429,33 +515,48 @@ def cache_ref_upstream(
     return upstream
 
 
-def resolve_file_source(ctx: ExecContext, query: AnyQuery) -> FileSourceConfig | None:
-    """Return the file SourceConfig if *query* targets a named file source, else None.
+def keyed_source(
+    ctx: ExecContext, query: AnyQuery, resolve_source_thunk: SourceThunk
+) -> KeyedSourceConfig | None:
+    """The file-backed source a query reads, or None for any other.
 
-    Board-level sources take priority over the project-level ``sources:``, whose
-    file version the cache key also folds in. Returns None for database sources,
-    unresolved sources, or non-SQL queries.
+    A name declared by both the board and the project is the resolver's call
+    (a default resolver takes the board's entry, an allowlisting one the
+    project's), so only then, and only if one is file-backed, is the source
+    resolved: the key then versions the file the query runs on. A name declared
+    once reads that declaration, never resolving, so a source the resolver
+    refuses is the query's failure at execution, not a cache probe's.
     """
     if not is_sql_query(query) or not query.source:
         return None
-    memo = ctx.memo
-    if memo.board_file_sources is None:
-        # Assigned once, whole: a pool thread must never see a partial dict.
-        memo.board_file_sources = {
-            name: cfg
-            for name, raw in ctx.board.sources.items()
-            if isinstance(cfg := parse_source_config(raw), FileSourceConfig)
-        }
-    if query.source in memo.board_file_sources:
-        return memo.board_file_sources[query.source]
-    if memo.project_file_sources is None:
-        memo.project_file_sources = dict(
-            ctx.adapter_registry.project_file_sources().items()
-        )
-    return memo.project_file_sources.get(query.source)
+    board_raw = ctx.board.sources.get(query.source)
+    project_raw = ctx.env.sources.get(query.source)
+    config: ResolvedSourceConfig | None
+    if board_raw and project_raw:
+        if not any(
+            raw.get("type") in KEYED_SOURCE_TYPES for raw in (board_raw, project_raw)
+        ):
+            return None
+        try:
+            config = resolve_source_thunk()
+        except Exception:  # noqa: BLE001 — a resolver may raise anything (SSRF guard, DNS)
+            return None
+    else:
+        raw = board_raw or project_raw
+        if raw is None or raw.get("type") not in KEYED_SOURCE_TYPES:
+            return None
+        try:
+            config = parse_source_config(raw)
+        except ValueError:
+            return None
+    if isinstance(config, KeyedSourceConfig):
+        return config
+    return None
 
 
-def source_version(ctx: ExecContext, query: AnyQuery) -> str:
+def source_version(
+    ctx: ExecContext, query: AnyQuery, resolve_source_thunk: SourceThunk
+) -> str:
     """Content version of the files a query's source reads.
 
     The single content-version home threaded into every ``compute_cache_key``
@@ -466,16 +567,17 @@ def source_version(ctx: ExecContext, query: AnyQuery) -> str:
     lifetime so a file edited mid-render cannot make a later read key differ
     from the earlier write key.
     """
-    file_source = resolve_file_source(ctx, query)
-    if file_source is None:
-        return database_file_version(ctx, query)
-    # resolve_file_source returns non-None only for a SqlQuery naming a source.
+    config = keyed_source(ctx, query, resolve_source_thunk)
+    if not isinstance(config, FileSourceConfig):
+        return database_file_version(ctx, query, config)
+    file_source = config
+    # keyed_source returns non-None only for a SqlQuery naming a source.
     assert is_sql_query(query) and query.source is not None
     source_name = query.source
     cached = ctx.memo.source_versions.get(source_name)
     if cached is not None:
         return cached
-    project = ctx.adapter_registry.project
+    project = ctx.env.project
     # Pre-hash each file's token to a fixed hex digest before joining, so the
     # combination is independent of any delimiter appearing inside a token
     # (the Project.file_version contract does not restrict the token alphabet).
@@ -514,15 +616,66 @@ def source_version(ctx: ExecContext, query: AnyQuery) -> str:
     return version
 
 
-def database_file_version(ctx: ExecContext, query: AnyQuery) -> str:
-    """``AdapterRegistry.database_file_version`` of a query on a DuckDB/SQLite
+def database_file_stat_version(
+    backends: BackendRegistry,
+    project: Project,
+    source_config: DuckDBSourceConfig | SQLiteSourceConfig,
+) -> str:
+    """Content-version token of a DuckDB/SQLite source's database file.
+
+    ``mtime_ns:size`` of the file the backend opens, plus that of its
+    write-ahead log when one exists: a write not yet checkpointed lands only
+    there. ``""`` (unversioned) for DuckDB ``:memory:``, for a DuckDB
+    connection that can read beyond its file, and when no backend here opens
+    the source: a host that cannot open the file never probes the disk for
+    it. Raises OSError when the file cannot be stat'ed.
+    """
+    from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend  # noqa: PLC0415 — duckdb_local imports the adapters package, which imports this module
+
+    if source_config.path == ":memory:":
+        return ""
+    if not backends.serves(source_config):
+        return ""
+    backend = backends.for_source(source_config)
+    if isinstance(source_config, DuckDBSourceConfig):
+        if not isinstance(backend, DuckDBBackend):
+            raise DbtChartsError.from_code(
+                ERR_ADAPTER_UNAVAILABLE,
+                reason=(
+                    f"the {source_config.type!r} route is a "
+                    f"{type(backend).__name__}, which cannot say whether the "
+                    "database file is its only input."
+                ),
+            )
+        if not backend.reads_only_its_file(source_config):
+            return ""
+    is_duckdb = source_config.type == "duckdb"
+    db_path = Path(source_config.path)
+    if not db_path.is_absolute():
+        if not isinstance(project, FilesystemProject):
+            raise DbtChartsError.from_code(
+                ERR_ADAPTER_RELATIVE_PATH_NO_DATA_DIR,
+                adapter="DuckDB" if is_duckdb else "SQLite",
+                path=source_config.path,
+            )
+        db_path = project.root / db_path
+    wal_path = db_path.with_name(db_path.name + (".wal" if is_duckdb else "-wal"))
+    paths = [db_path, wal_path] if wal_path.exists() else [db_path]
+    stats = [path.stat() for path in paths]
+    return "|".join(f"{st.st_mtime_ns}:{st.st_size}" for st in stats)
+
+
+def database_file_version(
+    ctx: ExecContext,
+    query: AnyQuery,
+    config: KeyedSourceConfig | None,
+) -> str:
+    """``database_file_stat_version`` of a query on a DuckDB/SQLite
     source, memoized per source name like file-source versions. ``""`` for
     any other source, and for one whose config does not parse: execution
-    raises that error itself, so nothing is cached under this key.
-
-    Reads the declared ``type`` rather than calling the source resolver: a
-    host's resolver may refuse a warehouse source (an SSRF guard) with its
-    own exception, and that refusal belongs to execution, not a cache probe.
+    raises that error itself, so nothing is cached under this key. *config*
+    comes from ``keyed_source``, which resolves only a name both board and
+    project declare.
     """
     # An incremental query finds its prior rows under an unchanged key and
     # fetches only the tail (append-only, as on a warehouse); a file version
@@ -537,20 +690,11 @@ def database_file_version(ctx: ExecContext, query: AnyQuery) -> str:
     cached = versions.get(query.source)
     if cached is not None:
         return cached
-    raw = ctx.board.sources.get(
-        query.source
-    ) or ctx.adapter_registry.project_sources.sources.get(query.source)
-    if raw is None or raw.get("type") not in ("duckdb", "sqlite"):
+    if not isinstance(config, DuckDBSourceConfig | SQLiteSourceConfig):
         versions[query.source] = ""
         return ""
     try:
-        source_config = parse_source_config(raw)
-    except ValueError:
-        versions[query.source] = ""
-        return ""
-    assert isinstance(source_config, (DuckDBSourceConfig, SQLiteSourceConfig))
-    try:
-        version = ctx.adapter_registry.database_file_version(source_config)
+        version = database_file_stat_version(ctx.env.backends, ctx.env.project, config)
     except OSError as exc:
         # A QueryError, so lookup reports a failure rather than raising.
         raise QueryError.from_code(
@@ -584,7 +728,7 @@ def semantic_version(ctx: ExecContext, query: AnyQuery) -> str:
         return cached
     raw = ctx.board.sources.get(
         query.source
-    ) or ctx.adapter_registry.project_sources.sources.get(query.source)
+    ) or ctx.env.sources.runtime_config().sources.get(query.source)
     try:
         bundle = declared_metricflow(raw) if raw is not None else None
     except ValidationError:
@@ -592,7 +736,7 @@ def semantic_version(ctx: ExecContext, query: AnyQuery) -> str:
     version = ""
     if bundle is not None:
         try:
-            files = bundle_files(ctx.adapter_registry.project, bundle.path)
+            files = bundle_files(ctx.env.project, bundle.path)
         except ValueError:
             files = None
         if files is not None:
@@ -620,9 +764,7 @@ def manifest_version(
     try:
         target_path = source_target_path(resolve_source_thunk())
         if target_path not in versions:
-            versions[target_path] = ctx.adapter_registry.dbt_manifest_version(
-                target_path
-            )
+            versions[target_path] = ctx.env.dbt_refs.manifest_version(target_path)
     except Exception:  # noqa: BLE001 — a resolver may raise anything (SSRF guard, DNS)
         # Execution re-raises the specific error as this query's failure; a
         # cache-key probe must not raise it.
@@ -656,12 +798,80 @@ def _render_with_range_filters(
     )
     if not is_sql_query(query) or "filter_date_range" not in query.sql:
         return None
+    env = ctx.env
     try:
-        return ctx.adapter_registry.render_with_range_filters(
-            query, merged, board=ctx.board
+        sql_type = query.dialect or _declared_warehouse_type(ctx, query)
+        if sql_type is None:
+            # An undeclared source: it defers to the dbt project, and
+            # ``resolve_query_source`` owns that rule.
+            resolved = resolve_query_source(
+                query,
+                sources=env.sources,
+                resolver=env.resolver,
+                dbt_context=env.dbt_context,
+                board=ctx.board,
+            )
+            assert resolved is not None  # SQL always resolves to a source
+            sql_type = resolved.type
+        if sql_type not in DIALECTS:
+            return None
+        warehouse = DIALECTS[sql_type]
+        resolved_sql, _ = env.dbt_refs.resolve(query.sql)
+        filters: list[DateRangeFilter] = []
+        rendered = render_parameterized_with_queries(
+            resolved_sql,
+            merged,
+            queries=ctx.board.queries,
+            dialect=INLINE_PLACEHOLDERS,
+            strict=not query.lenient_variables,
+            warehouse=warehouse,
+            range_filters=filters,
         )
+        sql = inline_params_for_dialect(
+            rendered.sql, rendered.params, INLINE_PLACEHOLDERS, escaping=warehouse
+        )
+        return sql, sqlglot_dialect(sql_type), filters
     except (DbtChartsError, OSError, ValueError, yaml.YAMLError):
         return None
+
+
+def _declared_warehouse_type(ctx: ExecContext, query: SqlQuery) -> str | None:
+    """The warehouse type the source a SQL query runs against declares.
+
+    A source-less query runs against the project's implicit dbt source. A
+    ``dbt_profile`` source names its warehouse only in profiles.yml, which is
+    read (never connected to); a file source has no dialect to name. None when
+    the source is not declared, so a range proof never resolves a declared
+    source (a remote host's DNS lookup, a policy guard).
+    """
+    env = ctx.env
+    project_sources = env.sources.runtime_config()
+    source = effective_source(env.sources, query.source)
+    if source is None:
+        return None
+    declared = ctx.board.sources.get(source) or project_sources.sources.get(source)
+    if declared is None:
+        return None
+    if declared.get("type") != "dbt_profile":
+        return declared.get("type")
+    expanded = env.resolver.resolve(
+        declared, ctx.board.sources, project_sources, env.dbt_context
+    )
+    return None if expanded is None else expanded.type
+
+
+def base_column_formats(ctx: ExecContext, source: str | None) -> "RawTableFormats":
+    """``meta.format`` of the dbt columns behind the query source *source* names,
+    from the manifest its ``dbt_profile`` source points at.
+
+    Raises:
+        DbtChartsError: The source's manifest cannot be read.
+    """
+    env = ctx.env
+    target_path = named_source_target_path(
+        source, ctx.board.sources, env.project.sources.sources
+    )
+    return env.dbt_refs.column_formats(target_path)
 
 
 def text_listings(
@@ -669,6 +879,6 @@ def text_listings(
 ) -> TextListings:
     key = (base_dir, calls)
     if key not in ctx.memo.text_listings:
-        directory = ctx.adapter_registry.project.directory(base_dir)
+        directory = ctx.env.project.directory(base_dir)
         ctx.memo.text_listings[key] = resolve_listings(calls, directory)
     return ctx.memo.text_listings[key]

@@ -24,7 +24,9 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use diagnostic::Diagnostic;
-use crate::common::{row_num, row_str, FormatSlot, MarkLabels};
+use crate::common::{FormatSlot, MarkLabels};
+use ::bind::layers::{layer_color_of, layer_color_promoted, layer_color_values, layer_rows_scope, layer_stack_order, LayerRows, UNSCALED_COLOR};
+use ::bind::rows::{row_num, row_str};
 use crate::families::axis_caption::{slot_format, AxisCaption, CaptionScale, NumericScale};
 use crate::families::color_scale::ContinuousColor;
 use crate::families::legend::{LegendConfig, LegendEntry, LegendSymbol};
@@ -341,6 +343,18 @@ impl OverlayLineLayer {
         }
     }
 
+    /// The pattern a plotted line layer strokes with, as its legend swatch repeats it: `None` for
+    /// an area layer, a solid line, or an empty list. A disconnected step layer's plotted pattern is
+    /// rescaled to each plateau, which a swatch has none of: the swatch keeps the authored lengths,
+    /// but the list is validated as the plotted line validates it.
+    pub(crate) fn legend_dash(&self) -> Result<Option<String>, String> {
+        let Some(raw) = self.line_mark.stroke.dasharray.as_deref().filter(|_| self.area_mark.is_none()) else {
+            return Ok(None);
+        };
+        let pattern = crate::step_band::dasharray(&crate::step_band::parse("layer", raw, self.curve_name() == Some("step") && self.is_disconnected())?, None);
+        Ok((!pattern.is_empty()).then_some(pattern))
+    }
+
     /// The slot the layer's value labels read: a line layer's `marks.point.labels`
     /// aliases `marks.line.labels`, the line slot winning when both are visible
     /// (`_overlay.py`'s `point_labels`); an area layer reads the line slot alone
@@ -414,98 +428,6 @@ pub(crate) fn merged_legend_title<'a>(
         return base_title;
     }
     fields.join(", ")
-}
-
-/// The title of an axis a layered chart's marks share. Vega-Lite joins the titles
-/// of the encodings the axis holds, each distinct one once, in layer order.
-pub(crate) fn merged_axis_title(titles: impl IntoIterator<Item = String>) -> String {
-    let mut distinct: Vec<String> = Vec::new();
-    for title in titles {
-        if !distinct.contains(&title) {
-            distinct.push(title);
-        }
-    }
-    distinct.join(", ")
-}
-
-/// A layer's color domain: the distinct non-null values of `field`, sorted
-/// (`distinct_series_values`, `_cartesian.py`). A null value is no domain entry:
-/// a row carrying one still draws, as a series the scale has no color for.
-pub(crate) fn layer_color_values(rows: &[serde_json::Map<String, Value>], field: &str) -> Vec<String> {
-    crate::common::color_domain_of(rows.iter().filter(|row| row.get(field).is_some_and(|v| !v.is_null())), field)
-}
-
-/// The "color" of a series with no entry on the shared scale: Vega paints it
-/// with no stroke or fill.
-pub(crate) const UNSCALED_COLOR: &str = "none";
-
-/// A color-grouped layer's series from the baseline up. No `order` encoding
-/// reaches a layer, so Vega-Lite's stack sorts its color field descending (the
-/// first value ends on top); rows with no color value sort lowest and so end on
-/// top of every series.
-pub(crate) fn layer_stack_order(domain: &[String], any_null: bool) -> Vec<Option<String>> {
-    domain.iter().rev().cloned().map(Some).chain(any_null.then_some(None)).collect()
-}
-
-/// A row's color value: `None` where it has none.
-pub(crate) fn layer_color_of(row: &serde_json::Map<String, Value>, field: &str) -> Option<String> {
-    row.get(field).filter(|v| !v.is_null()).map(|_| row_str(row, field))
-}
-
-/// What an aria label reads for a color value a row has none of.
-pub(crate) const NULL_COLOR_TEXT: &str = "null";
-
-/// The value an aria label reads for a row's color.
-pub(crate) fn layer_color_text(row: &serde_json::Map<String, Value>, field: &str) -> String {
-    layer_color_of(row, field).unwrap_or_else(|| NULL_COLOR_TEXT.to_string())
-}
-
-/// Whether a layer's color distinguishes its rows, which promotes the color value into
-/// each datum's description (`series_row_promoted`): more than one non-null value.
-pub(crate) fn layer_color_promoted(rows: &[serde_json::Map<String, Value>], field: &str) -> bool {
-    layer_color_values(rows, field).len() > 1
-}
-
-/// The series of a color-grouped line or area layer as Vega's facet meets them:
-/// in order of first appearance in `rows`, each with its own rows, a row with no
-/// color value being a series of its own (`None`).
-pub(crate) fn layer_color_groups(
-    rows: &[serde_json::Map<String, Value>],
-    field: &str,
-) -> Vec<(Option<String>, Vec<serde_json::Map<String, Value>>)> {
-    let mut series: Vec<(Option<String>, Vec<serde_json::Map<String, Value>>)> = Vec::new();
-    for row in rows {
-        let value = layer_color_of(row, field);
-        match series.iter_mut().find(|(seen, _)| *seen == value) {
-            Some((_, own)) => own.push(row.clone()),
-            None => series.push((value, vec![row.clone()])),
-        }
-    }
-    series
-}
-
-/// Which rows a layer draws in one cell. Vega-Lite facets only the base's data:
-/// a layer on the base query draws its panel's slice, except a band-step layer,
-/// whose doubled rows are inline data and draw whole in every cell; a layer
-/// reading another query draws that dataset (doubled, if band-step) whole.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LayerRows {
-    Panel,
-    Chart,
-    Dataset,
-}
-
-pub(crate) fn layer_rows_scope(
-    is_facet: bool,
-    band_step: bool,
-    layer_query_name: Option<&str>,
-    base_query_name: Option<&str>,
-) -> LayerRows {
-    match (is_facet && layer_query_name == base_query_name, band_step) {
-        (true, false) => LayerRows::Panel,
-        (true, true) => LayerRows::Chart,
-        (false, _) => LayerRows::Dataset,
-    }
 }
 
 /// `resolve_layer_rows` for one panel of a facet, by `layer_rows_scope`;
@@ -710,7 +632,7 @@ impl LayerStack {
         }
         let mut cells = HashMap::<_, Vec<(f64, f64)>>::new();
         let mut imputed = Vec::new();
-        for ((x, series, is_imputed), span) in owners.into_iter().zip(crate::common::zero_piles(items)) {
+        for ((x, series, is_imputed), span) in owners.into_iter().zip(::bind::stack::zero_piles(items)) {
             if is_imputed {
                 imputed.push(((x, series), span));
             } else {
@@ -899,6 +821,9 @@ pub(crate) struct LayerScale {
     domain: Vec<String>,
     range: Vec<String>,
     glyphs: HashMap<String, LegendSymbol<'static>>,
+    /// The `stroke-dasharray` a line layer's entry draws, keyed by label: the swatch repeats
+    /// the plotted line's pattern, so it is borrowed from here rather than held by a glyph.
+    dashes: HashMap<String, String>,
     /// The labels a bar layer drew (`square_datums`): a square stroked in its own fill.
     squares: HashSet<String>,
     /// Indices into `domain` of the claims whose layer declined its legend entry:
@@ -922,6 +847,7 @@ impl LayerScale {
             domain: base.iter().map(|(label, _)| label.clone()).collect(),
             range: base.iter().map(|(_, fill)| fill.clone()).collect(),
             glyphs: HashMap::new(),
+            dashes: HashMap::new(),
             squares: HashSet::new(),
             declined: HashSet::new(),
         }
@@ -993,6 +919,11 @@ impl LayerScale {
         }
     }
 
+    /// A dashed line layer's entry draws its pattern in the swatch.
+    pub(crate) fn set_dash(&mut self, label: &str, pattern: &str) {
+        self.dashes.insert(label.to_string(), pattern.to_string());
+    }
+
     /// A bar layer's entry draws a square under any stroke or circle glyph
     /// (`square_datums`, the chain's lowest rung above the base's own).
     pub(crate) fn set_square(&mut self, label: &str) {
@@ -1055,6 +986,7 @@ impl LayerScale {
                 label,
                 fill,
                 symbol: Some(match self.glyphs.get(label) {
+                    Some(LegendSymbol::Stroke(_)) if self.dashes.contains_key(label) => LegendSymbol::Dash(&self.dashes[label]),
                     Some(&glyph) => glyph,
                     None if self.squares.contains(label) => LegendSymbol::Square(fill),
                     None => base_glyph(fill),
@@ -1163,6 +1095,10 @@ fn claim_layer(
     field_labels: &crate::common::FieldLabels,
 ) -> Result<LayerClaim, Diagnostic> {
     let label = crate::common::axis_title_text(layer.y(), layer.label(), field_labels)?;
+    let dash = match layer {
+        OverlayLayer::Line(l) => l.legend_dash().map_err(Diagnostic::refused)?,
+        _ => None,
+    };
     let glyph = match layer {
         OverlayLayer::Bar(_) => None,
         OverlayLayer::Line(l) => Some(l.legend_glyph(area_opacity)),
@@ -1180,6 +1116,9 @@ fn claim_layer(
         if let Some(glyph) = glyph {
             scale.set_glyph(&label, glyph);
         }
+        if let Some(dash) = &dash {
+            scale.set_dash(&label, dash);
+        }
         if matches!(layer, OverlayLayer::Bar(_)) {
             scale.set_square(&label);
         }
@@ -1189,6 +1128,9 @@ fn claim_layer(
     scale.claim_values(&values, layer.series_inks())?;
     if let Some(glyph) = glyph {
         values.iter().for_each(|value| scale.set_glyph(value, glyph));
+    }
+    if let Some(dash) = &dash {
+        values.iter().for_each(|value| scale.set_dash(value, dash));
     }
     if matches!(layer, OverlayLayer::Bar(_)) {
         values.iter().for_each(|value| scale.set_square(value));
@@ -1263,7 +1205,7 @@ pub(crate) fn line_layer_marks(
     let piles: Vec<(f64, f64)> = if stacked.is_some() {
         Vec::new()
     } else {
-        crate::common::zero_piles(rows.iter().enumerate().filter_map(|(index, row)| Some((pile_key(index, x_of(row)?), row_num(row, &l.y)?))))
+        ::bind::stack::zero_piles(rows.iter().enumerate().filter_map(|(index, row)| Some((pile_key(index, x_of(row)?), row_num(row, &l.y)?))))
     };
     let mut piled = 0;
     let mut labels: Vec<Option<String>> = Vec::with_capacity(rows.len());
@@ -1348,7 +1290,7 @@ pub(crate) fn line_layer_marks(
         let mut order: Vec<usize> = (0..items.len()).collect();
         order.sort_by(|&a, &b| items[b].3.cmp(items[a].3));
         let mut ends: Vec<(f64, f64)> = vec![(0.0, 0.0); items.len()];
-        let stacked_in_order = crate::common::zero_piles(order.iter().map(|&item| (items[item].1.to_bits(), items[item].2)));
+        let stacked_in_order = ::bind::stack::zero_piles(order.iter().map(|&item| (items[item].1.to_bits(), items[item].2)));
         for (&item, span) in order.iter().zip(stacked_in_order) {
             ends[item] = span;
         }
@@ -2402,7 +2344,7 @@ pub(crate) fn row_order_stack<'a>(
         .filter_map(|row| Some((row_str(row, cat_field), row_num(row, y)?)))
         .collect();
     // Vega groups every NaN position into one pile.
-    let spans = crate::common::zero_piles(valued.iter().map(|(cat, v)| ((!nan(cat)).then(|| cat.clone()), *v)));
+    let spans = ::bind::stack::zero_piles(valued.iter().map(|(cat, v)| ((!nan(cat)).then(|| cat.clone()), *v)));
     valued.into_iter().zip(spans).map(|((cat, _), (start, end))| (cat, start, end)).collect()
 }
 
@@ -2779,7 +2721,7 @@ impl<'a> ScaledLayer<'a> {
             .iter()
             .enumerate()
             .map(|(i, &tv)| match layer_format {
-                Some(slot) if base_bare => crate::number_locale::d3_format(&slot.spec, tv)
+                Some(slot) if base_bare => ::bind::formats::locale::d3_format(&slot.spec, tv)
                     .map_err(|e| format!("{family}: layer axis format {:?}: {e}", slot.spec)),
                 _ => crate::common::format_y_label(
                     tv,
@@ -3041,7 +2983,7 @@ mod tests {
     /// query it reads; any other facet layer on the base query keeps its slice.
     #[test]
     fn facet_layer_rows_scope_is_the_one_law() {
-        use super::{layer_rows_scope as scope, LayerRows::*};
+        use ::bind::layers::{layer_rows_scope as scope, LayerRows::*};
         assert!(scope(true, false, Some("q"), Some("q")) == Panel);
         assert!(scope(true, true, Some("q"), Some("q")) == Chart);
         assert!(scope(true, true, Some("other"), Some("q")) == Dataset);
@@ -3049,6 +2991,7 @@ mod tests {
         assert!(scope(false, true, Some("q"), Some("q")) == Dataset);
     }
     use super::*;
+    use ::bind::layers::layer_color_groups;
 
     fn bar_layer(color: Option<&str>) -> OverlayBarLayer {
         OverlayBarLayer::parse(
@@ -3249,15 +3192,6 @@ mod tests {
         assert_eq!(layer_color_values(&data, "c"), ["a", "b"], "the domain drops the null and sorts");
     }
 
-    /// No `order` channel reaches a layer: color descending from the baseline, the
-    /// first value on top, and no-color rows sorting lowest so they end on top.
-    #[test]
-    fn a_layer_stacks_its_color_descending_from_the_baseline_with_no_color_last() {
-        let domain = ["a".to_string(), "b".to_string()];
-        assert_eq!(layer_stack_order(&domain, false), [Some("b".to_string()), Some("a".to_string())]);
-        assert_eq!(layer_stack_order(&domain, true), [Some("b".to_string()), Some("a".to_string()), None]);
-    }
-
     #[test]
     fn an_area_stack_piles_the_series_present_at_each_x() {
         let data = rows(&[
@@ -3423,12 +3357,5 @@ mod tests {
         let data = rows(&[("n", Some("a"), 40.0), ("n", Some("a"), 20.0), ("n", Some("b"), 5.0)]);
         let ends = LayerStack::descending(&data, "x", "c", "y").of_rows(&data);
         assert_eq!(ends, [Some((5.0, 45.0)), Some((45.0, 65.0)), Some((0.0, 5.0))]);
-    }
-
-    #[test]
-    fn merged_axis_title_joins_each_distinct_title_once_in_layer_order() {
-        let titles = ["y", "z", "y", "w"].map(String::from);
-        assert_eq!(merged_axis_title(titles), "y, z, w");
-        assert_eq!(merged_axis_title(["y".to_string()]), "y");
     }
 }

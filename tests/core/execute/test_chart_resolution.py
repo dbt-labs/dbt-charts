@@ -15,9 +15,10 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_inputs
+from dbt_charts.core.execute.env import build_exec_env
+
+from ..._run import Run
 
 _ORBIT_SQL = """
 SELECT * FROM (VALUES
@@ -62,7 +63,7 @@ rows:
 """
 
 
-def _executor(yaml_content: str, tmp_path: Path) -> tuple[Executor, dict]:
+def _executor(yaml_content: str, tmp_path: Path) -> tuple[Run, dict]:
     from dbt_charts.core.compile.config import ProjectSourcesConfig
 
     sources = ProjectSourcesConfig(
@@ -71,9 +72,9 @@ def _executor(yaml_content: str, tmp_path: Path) -> tuple[Executor, dict]:
     result = compile(yaml_content, project_sources=sources)
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(tmp_path)),
+        env=build_exec_env(FilesystemProject(tmp_path)),
         query_registry=result.query_registry,
     )
     return executor, result.board.charts

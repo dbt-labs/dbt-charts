@@ -3,15 +3,13 @@ layer whose authored y domain cuts off some of its own data."""
 
 from __future__ import annotations
 
-from unittest.mock import Mock
-
 import pytest
 
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
-from ..._results import rows_schema
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 _CODE = "WARN-LAYER-DATA-OUTSIDE-DOMAIN"
 
@@ -53,19 +51,9 @@ def _codes(domain: str, clip: str, position: str = "position: right") -> list:
 def _warnings(board_yaml: str) -> list:
     result = compile(board_yaml)
     assert result.success and result.board is not None, result.errors
-    ok = Mock()
-    ok.is_success = True
-    ok.data = _ROWS
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    registry = Mock()
-    registry.project_file_sources.return_value = {}
-    registry.execute.return_value = ok
-    executor = Executor(
-        result.board, adapter_registry=registry, query_registry=result.query_registry
-    )
-    rendered = render(result.board, executor, format="svg")
+    registry = scripted_env(ScriptedBackend(_ROWS))
+    executor = Run(result.board, env=registry, query_registry=result.query_registry)
+    rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert rendered.board_error is None and rendered.output
     return [w for w in rendered.warnings if w.code == _CODE]
 

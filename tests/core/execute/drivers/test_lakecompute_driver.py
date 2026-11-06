@@ -21,7 +21,7 @@ from dbt_charts.core.compile.models.source import (
     LakeComputeSourceBase,
     LakeComputeTokenSource,
 )
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+from dbt_charts.core.execute.backends.dbt_adapter_factory import (
     AdapterNotInstalledError,
 )
 from dbt_charts.core.execute.drivers.lakecompute import (

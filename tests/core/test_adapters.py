@@ -1,6 +1,6 @@
 """Tests for query adapters.
 
-Tests the dbt_charts.core.execute.adapters module for query execution.
+Tests the dbt_charts.core.execute.env module for query execution.
 
 Uses the unified query interface with type-specific query classes.
 """
@@ -23,17 +23,15 @@ from dbt_charts.core.compile.models.source import (
 )
 from dbt_charts.core.dbt_manifest import LoadedManifest, RefIndex, ref_index
 from dbt_charts.core.diagnostics.execution import QueryError
-from dbt_charts.core.execute.adapters import (
-    QueryResult,
-    ValuesAdapter,
-    build_adapter_registry,
-)
-from dbt_charts.core.execute.adapters.dbt_utils import (
+from dbt_charts.core.execute.dbt_jinja import has_dbt_jinja
+from dbt_charts.core.execute.dbt_utils import (
     DbtRefResolver,
     resolve_dbt_refs_with_provenance,
 )
-from dbt_charts.core.execute.dbt_jinja import has_dbt_jinja
 from dbt_charts.core.execute.duckdb_config import normalize_duckdb_config
+from dbt_charts.core.execute.env import build_exec_env
+from dbt_charts.core.execute.query_result import QueryResult
+from dbt_charts.core.execute.run import run_query, run_values
 
 from .._backend_runner import DuckDBRunner
 
@@ -171,17 +169,17 @@ class TestSqlExecution:
             assert resolved_sql == "SELECT * FROM analytics.fct_orders"
 
 
-class TestAdapterRegistry:
-    """Tests for adapter registry."""
+class TestExecEnv:
+    """Tests for exec env."""
 
     def test_execute_returns_query_result(
         self, local_project: Callable[..., FilesystemProject]
     ):
         """Test registry execute returns QueryResult."""
-        registry = build_adapter_registry(local_project(Path("/tmp")))
+        registry = build_exec_env(local_project(Path("/tmp")))
 
         sql_query = SqlQuery(sql="SELECT 1", source="test_profile")
-        result = registry.execute(sql_query)
+        result = run_query(registry, sql_query)
 
         assert isinstance(result, QueryResult)
 
@@ -315,19 +313,18 @@ class TestResolveDbtRefs:
         assert "staging." not in resolved
 
 
-class TestValuesAdapter:
-    """Tests for values adapter."""
+class TestValuesRoute:
+    """Tests for the values route handler."""
 
     def test_execute_returns_rows(self):
         """Test values adapter returns inline rows as data."""
-        adapter = ValuesAdapter()
         rows = [
             {"month": "Jan", "revenue": 100},
             {"month": "Feb", "revenue": 140},
             {"month": "Mar", "revenue": 180},
         ]
         query = ValuesQuery(rows=rows)
-        result = adapter.execute(query)
+        result = run_values(query)
 
         assert result.is_success
         assert result.data == rows
@@ -335,19 +332,17 @@ class TestValuesAdapter:
 
     def test_execute_empty_rows(self):
         """Test values adapter handles empty rows."""
-        adapter = ValuesAdapter()
         query = ValuesQuery(rows=[])
-        result = adapter.execute(query)
+        result = run_values(query)
 
         assert result.is_success
         assert result.data == []
 
     def test_execute_with_limit(self):
         """Test values adapter respects limit."""
-        adapter = ValuesAdapter()
         rows = [{"a": i} for i in range(10)]
         query = ValuesQuery(rows=rows, limit=3)
-        result = adapter.execute(query)
+        result = run_values(query)
 
         assert result.is_success
         assert len(result.data) == 3
@@ -356,57 +351,49 @@ class TestValuesAdapter:
     def test_registry_executes_values_query(
         self, local_project: Callable[..., FilesystemProject]
     ):
-        """Test adapter registry can execute values queries end-to-end."""
-        registry = build_adapter_registry(local_project(Path("/tmp")))
+        """Test exec env can execute values queries end-to-end."""
+        registry = build_exec_env(local_project(Path("/tmp")))
         rows = [{"x": 1, "y": 2}, {"x": 3, "y": 4}]
         query = ValuesQuery(rows=rows)
-        result = registry.execute(query)
+        result = run_query(registry, query)
 
         assert result.is_success
         assert result.data == rows
 
 
-class TestBuildAdapterRegistry:
-    """Tests for build_adapter_registry factory function."""
+class TestBuildExecEnv:
+    """Tests for build_exec_env factory function."""
 
     def test_read_only_propagates_to_duckdb_backend(
         self, local_project: Callable[..., FilesystemProject]
     ):
         """read_only=True should propagate to the DuckDB backend."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
-        registry = build_adapter_registry(
-            local_project(Path("/tmp/test")), read_only=True
-        )
-        backend = registry._backends.for_source(  # noqa: SLF001
-            DuckDBSourceConfig(type="duckdb")
-        )
+        registry = build_exec_env(local_project(Path("/tmp/test")), read_only=True)
+        backend = registry.backends.for_source(DuckDBSourceConfig(type="duckdb"))
         assert backend.read_only is True
 
     def test_read_only_false_propagates(
         self, local_project: Callable[..., FilesystemProject]
     ):
         """read_only=False should propagate to the DuckDB backend."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
-        registry = build_adapter_registry(
-            local_project(Path("/tmp/test")), read_only=False
-        )
-        backend = registry._backends.for_source(  # noqa: SLF001
-            DuckDBSourceConfig(type="duckdb")
-        )
+        registry = build_exec_env(local_project(Path("/tmp/test")), read_only=False)
+        backend = registry.backends.for_source(DuckDBSourceConfig(type="duckdb"))
         assert backend.read_only is False
 
     def test_dbt_project_linked_via_sibling_discovery(
         self, local_project: Callable[..., FilesystemProject]
     ):
         """The dbt project is linked when dbt_project.yml sits next to dbt_charts.yml."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -415,31 +402,31 @@ class TestBuildAdapterRegistry:
             (project_dir / "dbt_charts.yml").write_text("# marker\n")
             (project_dir / "dbt_project.yml").write_text("name: test\n")
 
-            registry = build_adapter_registry(local_project(project_dir))
+            registry = build_exec_env(local_project(project_dir))
             assert registry.dbt_context is not None
 
     def test_no_dbt_project_linked_without_path(
         self, local_project: Callable[..., FilesystemProject]
     ):
         """No dbt project is linked when no dbt_project.yml exists at the project root."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            registry = build_adapter_registry(local_project(Path(tmpdir)))
+            registry = build_exec_env(local_project(Path(tmpdir)))
             assert registry.dbt_context is None
 
     def test_project_set_on_registry(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """project should be set on the returned registry."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
         root = Path("/tmp/test").resolve()
-        registry = build_adapter_registry(local_project(root))
+        registry = build_exec_env(local_project(root))
         assert registry.project.root == root
 
 

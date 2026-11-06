@@ -507,16 +507,16 @@ class TestRenderDashboard:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """Test that render_dashboard returns rich errors for invalid YAML."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=InMemoryBoard(
                 "not: valid: yaml: {", path=project.path("charts/_t.yml")
             ),
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
         )
 
@@ -527,7 +527,7 @@ class TestRenderDashboard:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """Test render returns validation errors with tips for bad structure."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         yaml_content = """
 title: Bad
@@ -537,11 +537,11 @@ rows:
   - nonexistent_chart
 """
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
         )
 
@@ -552,7 +552,7 @@ rows:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """Test that valid static-data YAML compiles and executes successfully."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         yaml_content = """
 title: Valid Dashboard
@@ -570,11 +570,11 @@ rows:
   - chart
 """
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
         )
         assert result.status == "ok"
@@ -590,7 +590,7 @@ rows:
         whose SQL query omits `source:` and relies on `charts/meta.yml: source:`
         would otherwise fail with ERR-SOURCE-REQUIRED.
         """
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         (tmp_path / "dbt_charts.yml").write_text(
             'sources:\n  db:\n    type: duckdb\n    path: ":memory:"\n'
@@ -621,11 +621,11 @@ rows:
   - inline_chart
 """
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
         )
         assert result.status == "ok", (
@@ -646,7 +646,7 @@ rows:
         meta.yml of its own) must not inherit charts/meta.yml's default
         source — the cascade only walks the anchor's own ancestors.
         """
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         (tmp_path / "dbt_charts.yml").write_text(
             'sources:\n  db:\n    type: duckdb\n    path: ":memory:"\n'
@@ -665,11 +665,11 @@ rows:
             "charts:\n  c:\n    query: q\n    type: kpi\n    value: n\nrows:\n  - c\n"
         )
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=InMemoryBoard(yaml_content, path=project.path("reports/_t.yml")),
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
         )
         assert result.status == "failed", (
@@ -701,7 +701,7 @@ rows:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """format='terminal' renders charts to an ANSI/text string."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         (tmp_path / "dbt_charts.yml").write_text(
             "sources:\n  mem:\n    type: duckdb\n    path: ':memory:'\n"
@@ -722,11 +722,11 @@ rows:
   - bars
 """
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
             format="terminal",
         )
@@ -738,11 +738,11 @@ rows:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """Test that render_dashboard requires one of board or compile_result."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
-        registry = build_adapter_registry(local_project(tmp_path), read_only=False)
+        registry = build_exec_env(local_project(tmp_path), read_only=False)
         result = render_dashboard(
-            adapter_registry=registry,
+            env=registry,
             project=local_project(tmp_path),
             result_cache=None,
         )
@@ -790,10 +790,10 @@ rows:
     ) -> None:
         """chart= focuses one existing chart: the render contains it and not
         its siblings — reuse-by-reference instead of re-deriving the query."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=InMemoryBoard(
                 self._TWO_CHART_YAML, path=project.path("charts/_t.yml")
@@ -801,7 +801,7 @@ rows:
             chart="monthly_sales",
             format="text",
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
         )
 
@@ -813,19 +813,19 @@ rows:
     def test_render_chart_argument_works_on_path_arm(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         boards = tmp_path / "charts"
         boards.mkdir(exist_ok=True)
         (boards / "sales.yml").write_text(self._TWO_CHART_YAML)
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=project.path("charts/sales.yml").read_board(),
             chart="monthly_sales",
             format="text",
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
         )
 
@@ -839,7 +839,7 @@ rows:
     ) -> None:
         """A variable the focused chart depends on survives the focus and its
         runtime value lands in the rendered output."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         (tmp_path / "dbt_charts.yml").write_text(
             "sources:\n  mem:\n    type: duckdb\n    path: ':memory:'\n"
@@ -870,14 +870,14 @@ rows:
   - regional_sales
 """
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
             chart="regional_sales",
             variables={"region": "US"},
             format="text",
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
         )
 
@@ -891,17 +891,17 @@ rows:
     ) -> None:
         """A bad chart id must fail loudly with the real ids — never silently
         render the full dashboard."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=InMemoryBoard(
                 self._TWO_CHART_YAML, path=project.path("charts/_t.yml")
             ),
             chart="does_not_exist",
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
         )
 
@@ -915,19 +915,19 @@ rows:
     ) -> None:
         """as_link URLs address whole saved boards; a focused link is not a
         thing — reject rather than return a link that ignores the focus."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         boards = tmp_path / "charts"
         boards.mkdir(exist_ok=True)
         (boards / "sales.yml").write_text(self._TWO_CHART_YAML)
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=project.path("charts/sales.yml").read_board(),
             chart="monthly_sales",
             as_link=True,
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
         )
 
@@ -998,14 +998,14 @@ rows:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """Unknown formats error fast instead of silently routing through `else`."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         project = local_project(tmp_path)
         result = render_dashboard(
             board=InMemoryBoard("title: x", path=project.path("charts/_t.yml")),
             format="xyz",
             project=project,
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
             result_cache=None,
         )
 
@@ -1016,7 +1016,7 @@ rows:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """Default format should be JSON, not HTML."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         dashboard = tmp_path / "tiny.yml"
         dashboard.write_text(
@@ -1038,11 +1038,11 @@ rows:
         )
 
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=project.path("tiny.yml").read_board(),
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
             server_port=8765,
         )
@@ -1057,7 +1057,7 @@ rows:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """When a path is provided, the response must include a localhost URL."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         dashboard = tmp_path / "url_test.yml"
         dashboard.write_text(
@@ -1082,12 +1082,12 @@ rows:
         )
 
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=project.path("url_test.yml").read_board(),
             project=project,
             variables={"region": "US"},
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
             server_port=8765,
         )
@@ -1102,7 +1102,7 @@ rows:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """charts/*.yml paths should produce the /<slug> route served by dct serve."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         boards = tmp_path / "charts"
         boards.mkdir()
@@ -1129,12 +1129,12 @@ rows:
         )
 
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=project.path("charts/sales.yml").read_board(),
             project=project,
             variables={"region": "US"},
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
             server_port=8765,
         )
@@ -1185,7 +1185,7 @@ rows:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """No server_port means no URL, regardless of the board's location."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         yaml_content = """
 title: Inline
@@ -1203,10 +1203,10 @@ rows:
   - c
 """
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
-            adapter_registry=registry,
+            env=registry,
             project=project,
             result_cache=None,
         )
@@ -1219,7 +1219,7 @@ rows:
     ) -> None:
         """A pathless (path=None) board gets no preview URL even when a
         server_port is set — there is no addressable leaf to link to."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         yaml_content = (
             "title: Inline\n"
@@ -1228,10 +1228,10 @@ rows:
             "rows:\n  - c\n"
         )
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=InMemoryBoard(yaml_content, path=None),
-            adapter_registry=registry,
+            env=registry,
             project=project,
             result_cache=None,
             server_port=8765,
@@ -1245,17 +1245,17 @@ rows:
     ) -> None:
         """Compile errors from a pathless (path=None) board carry no source
         range — there is no real board file to point the agent at."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         yaml_content = (
             "charts:\n  c:\n    query: nope\n    type: kpi\n    value: v\n"
             "rows:\n  - c\n"
         )
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=InMemoryBoard(yaml_content, path=None),
-            adapter_registry=registry,
+            env=registry,
             project=project,
             result_cache=None,
         )
@@ -1269,7 +1269,7 @@ rows:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """Callers without an embedded server get no URL."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         dashboard = tmp_path / "no_port.yml"
         dashboard.write_text(
@@ -1291,11 +1291,11 @@ rows:
         )
 
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=project.path("no_port.yml").read_board(),
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
         )  # server_port defaults to None
 
@@ -1355,7 +1355,7 @@ class TestRenderDashboardAsLink:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """JSON render output should stringify Python date values from query results."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         csv_path = tmp_path / "revenue.csv"
         csv_path.write_text("created_date,amount\n2026-01-01,100\n2026-01-02,200\n")
@@ -1388,11 +1388,11 @@ rows:
         )
 
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=project.path("revenue.yml").read_board(),
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
             format="json",
             server_port=8765,
@@ -1412,7 +1412,7 @@ class TestRenderDashboardDiagnostics:
         """Compilation errors produce Diagnostic objects, not strings."""
         from dbt_charts.core.diagnostics import Diagnostic
         from dbt_charts.core.diagnostics.registry import REGISTRY
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         yaml_content = """
 title: Bad
@@ -1422,11 +1422,11 @@ rows:
   - nonexistent_chart
 """
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
             project=project,
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
         )
 
@@ -1443,12 +1443,12 @@ rows:
     ) -> None:
         """Input-validation errors (no path/content) produce Diagnostics."""
         from dbt_charts.core.diagnostics import Diagnostic
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
-        registry = build_adapter_registry(local_project(tmp_path), read_only=False)
+        registry = build_exec_env(local_project(tmp_path), read_only=False)
         result = render_dashboard(
             project=local_project(tmp_path),
-            adapter_registry=registry,
+            env=registry,
             result_cache=None,
         )
 
@@ -1461,14 +1461,14 @@ rows:
     ) -> None:
         """Truly unknown format (xyz) is rejected with a Diagnostic."""
         from dbt_charts.core.diagnostics import Diagnostic
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         project = local_project(tmp_path)
         result = render_dashboard(
             board=InMemoryBoard("title: x", path=project.path("charts/_t.yml")),
             format="xyz",
             project=project,
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
             result_cache=None,
         )
 
@@ -1480,17 +1480,17 @@ rows:
     ) -> None:
         """CLI render_command must open DuckDB read-only so it doesn't fight serve for the lock."""
         from dbt_charts.cli.commands.render import render_command
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         captured: dict[str, Any] = {}
-        real_build = build_adapter_registry
+        real_build = build_exec_env
 
         def spy_build(project_root, **kwargs):
             captured["read_only"] = kwargs.get("read_only")
             return real_build(project_root, **kwargs)
 
         monkeypatch.setattr(
-            "dbt_charts.agent_api.project_session.build_adapter_registry", spy_build
+            "dbt_charts.agent_api.project_session.build_exec_env", spy_build
         )
         (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
         board = tmp_path / "f.yml"
@@ -1507,7 +1507,7 @@ rows:
         """result_cache passed by the caller must reach the Executor unchanged."""
         from unittest.mock import patch
 
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         class FakeCache:
             def close(self) -> None:
@@ -1525,9 +1525,9 @@ rows:
             raise _Done
 
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         with (
-            patch("dbt_charts.core.board.Executor", side_effect=capture_and_stop),
+            patch("dbt_charts.core.board.make_context", side_effect=capture_and_stop),
             pytest.raises(_Done),
         ):
             render_dashboard(
@@ -1536,7 +1536,7 @@ rows:
                     "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\nrows:\n  - c\n",
                     path=project.path("charts/_t.yml"),
                 ),
-                adapter_registry=registry,
+                env=registry,
                 project=project,
                 result_cache=sentinel_cache,  # type: ignore[arg-type]
             )
@@ -1553,14 +1553,14 @@ rows:
         """
         from unittest.mock import MagicMock
 
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env, close_env
         from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
         mock_cache = MagicMock(spec=TrivialDuckDBCache)
         mock_cache.get.return_value = None
 
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=True)
+        registry = build_exec_env(project, read_only=True)
         try:
             result = render_dashboard(
                 board=InMemoryBoard(
@@ -1568,45 +1568,42 @@ rows:
                     "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\nrows:\n  - c\n",
                     path=project.path("charts/_t.yml"),
                 ),
-                adapter_registry=registry,
+                env=registry,
                 project=project,
                 result_cache=mock_cache,
             )
         finally:
-            registry.close()
+            close_env(registry)
 
         assert result.status == "ok"
         mock_cache.close.assert_not_called()
 
-    def test_use_cache_false_propagates_to_executor(
+    def test_use_cache_false_propagates_to_the_context(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """render_dashboard(use_cache=False) passes use_cache=False to Executor."""
+        """render_dashboard(use_cache=False) passes use_cache=False to make_context."""
         from unittest.mock import patch
 
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         captured: dict[str, Any] = {}
 
-        original_executor = __import__(
-            "dbt_charts.core.execute.executor", fromlist=["Executor"]
-        ).Executor
+        from dbt_charts.core.execute.plan import make_context
 
-        class CapturingExecutor(original_executor):
-            def __init__(self, *args, **kwargs):
-                captured["use_cache"] = kwargs.get("use_cache", True)
-                super().__init__(*args, **kwargs)
+        def capturing_context(*args, **kwargs):
+            captured["use_cache"] = kwargs.get("use_cache", True)
+            return make_context(*args, **kwargs)
 
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
-        with patch("dbt_charts.core.board.Executor", CapturingExecutor):
+        registry = build_exec_env(project, read_only=False)
+        with patch("dbt_charts.core.board.make_context", capturing_context):
             render_dashboard(
                 board=InMemoryBoard(
                     "title: T\nqueries:\n  q:\n    columns: [v]\n    values:\n      - [1]\n"
                     "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\nrows:\n  - c\n",
                     path=project.path("charts/_t.yml"),
                 ),
-                adapter_registry=registry,
+                env=registry,
                 use_cache=False,
                 project=project,
                 result_cache=None,
@@ -1617,7 +1614,7 @@ rows:
     def test_execution_failure_keeps_compile_warnings(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         board_yaml = (
             "theme: solid\n"
@@ -1641,7 +1638,7 @@ rows:
         project = local_project(tmp_path)
         result = render_dashboard(
             board=InMemoryBoard(board_yaml, path=project.path("charts/_t.yml")),
-            adapter_registry=build_adapter_registry(project, read_only=False),
+            env=build_exec_env(project, read_only=False),
             project=project,
             result_cache=None,
         )
@@ -1657,7 +1654,7 @@ rows:
         tmp_path: Path,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         board_yaml = (
             "theme: solid\n"
@@ -1672,7 +1669,7 @@ rows:
         project = local_project(tmp_path)
         result = render_dashboard(
             board=InMemoryBoard(board_yaml, path=project.path("charts/_t.yml")),
-            adapter_registry=build_adapter_registry(project, read_only=False),
+            env=build_exec_env(project, read_only=False),
             project=project,
             result_cache=None,
             ignore_codes={"WARN-SCHEMA-MIGRATED"} if ignored else None,
@@ -1688,7 +1685,7 @@ rows:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """MissingRequiredVariablesError carries label info in fields and message."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         board_yaml = (
             "variables:\n"
@@ -1710,10 +1707,10 @@ rows:
             "  - c\n"
         )
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=InMemoryBoard(board_yaml, path=project.path("charts/_t.yml")),
-            adapter_registry=registry,
+            env=registry,
             project=project,
             result_cache=None,
         )
@@ -1833,7 +1830,7 @@ class TestDashboardPathTypes:
     def test_render_dashboard_accepts_path_arg(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         dashboard = tmp_path / "r.yml"
         dashboard.write_text(
@@ -1841,10 +1838,10 @@ class TestDashboardPathTypes:
             "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\nrows:\n  - c\n"
         )
         project = local_project(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
+        registry = build_exec_env(project, read_only=False)
         result = render_dashboard(
             board=project.path("r.yml").read_board(),
-            adapter_registry=registry,
+            env=registry,
             project=project,
             result_cache=None,
         )
@@ -1870,14 +1867,14 @@ class TestRequiredProjectScopedArgs:
         with pytest.raises(TypeError, match="project"):
             render_dashboard(  # type: ignore[call-arg]
                 board=InMemoryBoard("charts: {}", path=None),
-                adapter_registry=None,
+                env=None,
                 result_cache=None,
             )
         with pytest.raises(TypeError, match="result_cache"):
             render_dashboard(  # type: ignore[call-arg]
                 board=InMemoryBoard("charts: {}", path=None),
                 project=local_project(Path("/tmp")),
-                adapter_registry=None,
+                env=None,
             )
 
     def test_render_inspect_dashboard_requires_project(self) -> None:

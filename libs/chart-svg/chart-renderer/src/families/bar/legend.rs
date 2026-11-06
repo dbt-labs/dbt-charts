@@ -2,7 +2,8 @@
 
 use crate::families::color_scale::{ContinuousColor, NumericLegends};
 use crate::families::layers::{LayerClaim, LayerScale, OverlayLayer};
-use crate::families::legend::{LegendConfig, LegendEntry, LegendSymbol, fold_legend_token, legend_title_text, narrow_legend_entries, resolve_legend_values};
+use crate::families::legend::{LegendConfig, LegendEntry, LegendSymbol, legend_title_text, narrow_legend_entries};
+use ::bind::legend::{fold_legend_token, resolve_legend_values};
 
 use std::collections::HashMap;
 
@@ -292,7 +293,7 @@ pub(super) fn build_legend_state(
             } else {
                 stack_order.to_vec()
             };
-            stacked_legend_entries(&order, palette_domain, palette, category_scale, wide_labels, patterns)?
+            stacked_legend_entries(&authored_legend_order(order, legend, wide_labels), palette_domain, palette, category_scale, wide_labels, patterns)?
         } else {
             stacked_legend_entries(
                 &grouped_legend_domain(color_domain, legend, wide_labels),
@@ -311,6 +312,16 @@ pub(super) fn build_legend_state(
 }
 
 // ── Horizontal bar render ─────────────────────────────────────────────────────
+
+/// A stacked bar's legend series, `order` (the stack's own) unless `legend.values` is authored: it then
+/// names the entries shown, in its order, as `resolve_legend_values` reads it. The stack keeps its order.
+pub(super) fn authored_legend_order(order: Vec<String>, legend: &LegendConfig, wide_labels: &HashMap<String, String>) -> Vec<String> {
+    let Some(values) = legend.values.as_ref().filter(|values| !values.is_empty()) else { return order };
+    let painted: Vec<String> = order.iter().map(|series| ::bind::wide::wide_series_display(series, wide_labels)).collect();
+    let domain: Vec<&str> = order.iter().map(String::as_str).collect();
+    let aliases: Vec<&str> = painted.iter().map(String::as_str).collect();
+    resolve_legend_values(values, &domain, Some(&aliases)).into_iter().map(|i| order[i].clone()).collect()
+}
 
 /// A grouped bar's legend domain: `color_domain` (alphabetical, the VL
 /// default), unless `legend.values` is authored as a FULL reordering of it
@@ -333,7 +344,7 @@ pub(super) fn grouped_legend_domain(
         return color_domain.to_vec();
     };
     // `wide_legend_aliases`: a wide entry answers to its raw name and its painted label.
-    let painted = |entry: &String| crate::common::wide_series_display(entry, wide_labels);
+    let painted = |entry: &String| ::bind::wide::wide_series_display(entry, wide_labels);
     let mut folded_to_entries: std::collections::HashMap<String, Vec<&String>> =
         std::collections::HashMap::new();
     for entry in color_domain {
@@ -378,14 +389,14 @@ pub(super) fn grouped_legend_domain(
 /// Fill color keys off `palette_domain`; entries are sequenced independently
 /// by `legend_domain` — production's
 /// `apply_legend_entry_order` pins the legend to `order` (horizontal) or
-/// `reversed(order)` (vertical) for a stacked bar; see `common::sorted_series_by_stack_order`'s
+/// `reversed(order)` (vertical) for a stacked bar; see `bind::stack::sorted_series_by_stack_order`'s
 /// doc comment. A grouped (`stack = "none"`) color bar has no stack order to
 /// pin to, so its caller passes `grouped_legend_domain` as `legend_domain` —
 /// alphabetical display order, the VL default, unless an authored
 /// `legend.values` full reordering wins.
 /// One `(painted label, fill)` per legend series: the fill keys on the raw
 /// series name, the label is its wide-measure display text
-/// (`common::wide_series_display`; a non-wide series is its own label).
+/// (`bind::wide::wide_series_display`; a non-wide series is its own label).
 pub(super) fn stacked_legend_entries(
     legend_domain: &[String],
     palette_domain: &[String],
@@ -398,7 +409,7 @@ pub(super) fn stacked_legend_entries(
         .iter()
         .map(|s| {
             let fill = crate::common::series_color(s, palette_domain, palette, scale, patterns)?.swatch("none", 0.0).fill;
-            Ok((crate::common::wide_series_display(s, wide_labels), fill))
+            Ok((::bind::wide::wide_series_display(s, wide_labels), fill))
         })
         .collect()
 }
@@ -407,6 +418,6 @@ pub(super) fn stacked_legend_entries(
 pub(super) fn bar_link_keys<'a>(r: &BarResolved, color_domain: &'a [String], wide_labels: &HashMap<String, String>) -> Vec<(String, &'a str)> {
     color_domain
         .iter()
-        .map(|s| (crate::common::wide_series_display(s, wide_labels), crate::common::wide_link_key(s, !r.wide_measures.is_empty(), r.series_from_measures)))
+        .map(|s| (::bind::wide::wide_series_display(s, wide_labels), ::bind::wide::wide_link_key(s, !r.wide_measures.is_empty(), r.series_from_measures)))
         .collect()
 }

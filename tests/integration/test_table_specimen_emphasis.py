@@ -25,20 +25,20 @@ from collections.abc import Callable
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile_file
 from dbt_charts.core.compile.config import load_project_sources
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import AdapterRegistry
+from dbt_charts.core.execute.env import ExecEnv, make_exec_env
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 from .._paths import DBT_CHARTS_DIR
+from .._run import Run
 
 EXAMPLES_DIR = DBT_CHARTS_DIR / "examples"
 SPECIMEN = EXAMPLES_DIR / "playground" / "charts" / "cards" / "table-emphasis.yml"
 
 
-def _registry(local_project: Callable[..., FilesystemProject]) -> AdapterRegistry:
+def _registry(local_project: Callable[..., FilesystemProject]) -> ExecEnv:
     project = local_project(EXAMPLES_DIR / "playground")
-    reg = AdapterRegistry(
+    reg = make_exec_env(
         project=project,
         project_sources=load_project_sources(project),
         file_materializer=FileSourceMaterializer(project),
@@ -61,9 +61,9 @@ def _compile_and_render(
     assert board is not None
 
     cache = TrivialDuckDBCache()
-    executor = Executor(
+    executor = Run(
         board,
-        adapter_registry=_registry(local_project),
+        env=_registry(local_project),
         query_registry=result.query_registry,
         result_cache=cache,
     )

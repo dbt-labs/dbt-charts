@@ -16,7 +16,6 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock
 
 import duckdb
 import pytest
@@ -29,12 +28,12 @@ from dbt_charts.core.compile.template.daterange import (
 )
 from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_FORMAT_COLUMN_MISSING
 from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import utc_now
+from dbt_charts.core.execute.env import build_exec_env
+from dbt_charts.core.execute.plan import utc_now
 from dbt_charts.core.render import render
 
-from ..._results import rows_schema
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, rows_by_sql, scripted_env
 
 
 def _daily_rows(n: int) -> list[dict[str, object]]:
@@ -46,18 +45,8 @@ def _category_rows(n: int) -> list[dict[str, object]]:
 
 
 def _make_executor(board, query_registry, rows):
-    ok = Mock()
-    ok.is_success = True
-    ok.data = rows
-    ok.schema = rows_schema(rows)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.return_value = ok
-    return Executor(
-        board, adapter_registry=mock_registry, query_registry=query_registry
-    )
+    mock_registry = scripted_env(ScriptedBackend(rows))
+    return Run(board, env=mock_registry, query_registry=query_registry)
 
 
 _BOARD_YAML = """
@@ -95,7 +84,7 @@ def test_bar_band_width_warning_uses_real_layout_width_not_theme_default() -> No
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _daily_rows(100))
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     codes = {w.code for w in render_result.warnings}
     assert "WARN-BAR-BAND-WIDTH-TOO-NARROW" in codes, (
@@ -156,7 +145,7 @@ def test_pie_total_exceeds_inner_radius_uses_layout_height() -> None:
         result.board, result.query_registry, [{"amount": 1_000_000}]
     )
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     codes = {w.code for w in render_result.warnings}
     assert "WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS" in codes, (
@@ -213,7 +202,7 @@ def test_bar_band_width_warning_uses_narrowest_placement_no_tabs() -> None:
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _category_rows(200))
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     codes = {(w.chart, w.code) for w in render_result.warnings}
     assert ("s", "WARN-BAR-BAND-WIDTH-TOO-NARROW") in codes, (
@@ -238,7 +227,7 @@ def test_truncated_titles_warn_once_for_a_chart_placed_twice() -> None:
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _category_rows(3))
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     paths = sorted(
         str(w.path)
@@ -286,23 +275,13 @@ _PER_LAYER_ROWS: dict[str, list[dict[str, object]]] = {
 
 
 def _make_per_query_executor(board, query_registry, rows_by_query):
-    """Executor whose adapter returns a different result set per query name."""
-
-    def _execute(_query, _variables, **kwargs):
-        ok = Mock()
-        ok.is_success = True
-        ok.data = rows_by_query[kwargs["query_name"]]
-        ok.schema = rows_schema(ok.data)
-        ok.resolved_relations = None
-        ok.truncated_reason = None
-        return ok
-
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.side_effect = _execute
-    return Executor(
-        board, adapter_registry=mock_registry, query_registry=query_registry
+    """Executor whose backend returns a different result set per query."""
+    backend = ScriptedBackend(
+        side_effect=rows_by_sql(
+            {query_registry[name].sql: rows for name, rows in rows_by_query.items()}
+        )
     )
+    return Run(board, env=scripted_env(backend), query_registry=query_registry)
 
 
 def test_y_scale_mismatch_fires_when_a_layer_has_its_own_query() -> None:
@@ -319,7 +298,7 @@ def test_y_scale_mismatch_fires_when_a_layer_has_its_own_query() -> None:
         result.board, result.query_registry, _PER_LAYER_ROWS
     )
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     mismatches = [
         w
@@ -374,7 +353,7 @@ def test_bar_band_width_warning_fires_on_grouped_horizontal_bar() -> None:
         result.board, result.query_registry, _grouped_series_rows(20, 12)
     )
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert not render_result.chart_errors, render_result.chart_errors
 
     narrow = [
@@ -398,7 +377,7 @@ def test_no_fire_on_comfortable_grouped_horizontal_bar() -> None:
         result.board, result.query_registry, _grouped_series_rows(20, 2)
     )
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert not render_result.chart_errors, render_result.chart_errors
 
     codes = {w.code for w in render_result.warnings}
@@ -436,7 +415,7 @@ def test_no_fire_on_dense_single_series_horizontal_bar() -> None:
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _daily_rows(500))
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert not render_result.chart_errors, render_result.chart_errors
 
     codes = {w.code for w in render_result.warnings}
@@ -480,7 +459,7 @@ def test_no_fire_on_layout_wrapper_clamped_single_series_horizontal_bar() -> Non
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _daily_rows(200))
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert not render_result.chart_errors, render_result.chart_errors
 
     codes = {w.code for w in render_result.warnings}
@@ -509,7 +488,7 @@ def test_no_fire_when_authored_height_clears_the_floor() -> None:
         result.board, result.query_registry, _grouped_series_rows(20, 12)
     )
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert not render_result.chart_errors, render_result.chart_errors
 
     codes = {w.code for w in render_result.warnings}
@@ -571,13 +550,15 @@ def _render_with_duckdb(
     result = compile(yaml_text, base_dir=project.directory())
     assert result.success, [d.message for d in result.errors]
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
         clock=clock,
     )
-    svg = render(result.board, executor, format="svg", variables=variables).output
+    svg = render(
+        result.board, executor.ctx, executor.ledger, format="svg", variables=variables
+    ).output
     assert isinstance(svg, str)
     return svg
 
@@ -695,9 +676,9 @@ def test_a_preset_name_literal_resolves_when_the_executor_runs_outside_a_render(
     project = local_project(tmp_path)
     result = compile(_LITERAL, base_dir=project.directory())
     assert result.success and result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
         clock=lambda: datetime(2026, 10, 20, 12, 0, tzinfo=UTC),
     )
@@ -729,7 +710,7 @@ cols:
 """
 
 
-def _collected_executor(tmp_path: Path) -> Executor:
+def _collected_executor(tmp_path: Path) -> Run:
     (tmp_path / "dbt_charts.yml").write_text(
         "sources:\n  db:\n    type: duckdb\n    path: local.duckdb\n"
     )
@@ -737,9 +718,9 @@ def _collected_executor(tmp_path: Path) -> Executor:
     project = FilesystemProject(tmp_path)
     result = compile(_COLLECTED_YAML, base_dir=project.directory())
     assert result.success and result.board is not None, result.errors
-    return Executor(
+    return Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
 
@@ -755,11 +736,11 @@ def test_render_never_calls_the_executor_after_collect(
     ) -> None:  # type-state: explicit_any — test stub
         raise AssertionError("render executed a query after collect")
 
-    monkeypatch.setattr(Executor, "execute_query", forbidden)
-    monkeypatch.setattr(Executor, "execute_query_result", forbidden)
-    monkeypatch.setattr(Executor, "execute_chart", forbidden)
+    monkeypatch.setattr(Run, "execute_query", forbidden)
+    monkeypatch.setattr(Run, "execute_query_result", forbidden)
+    monkeypatch.setattr(Run, "execute_chart", forbidden)
 
-    result = render(executor.board, executor, format=format)
+    result = render(executor.board, executor.ctx, executor.ledger, format=format)
 
     assert result.board_error is None
     assert [e.code for e in result.chart_errors], "q_bad's failure is per-chart"
@@ -795,13 +776,15 @@ def test_strict_override_of_a_hidden_tab_variable_checks_its_options(
 ) -> None:
     result = compile(_HIDDEN_TAB_YAML)
     assert result.success and result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(tmp_path)),
+        env=build_exec_env(FilesystemProject(tmp_path)),
         query_registry=result.query_registry,
     )
 
-    rendered = render(result.board, executor, variables={"country": "US"})
+    rendered = render(
+        result.board, executor.ctx, executor.ledger, variables={"country": "US"}
+    )
 
     assert rendered.board_error is None, rendered.board_error
 
@@ -835,15 +818,15 @@ def test_a_memo_hit_missing_a_formats_column_fails_only_its_chart(
     project = FilesystemProject(tmp_path)
     result = compile(_FORMAT_HIT_YAML, base_dir=project.directory())
     assert result.success and result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
     with pytest.raises(QueryError):
         executor.execute_query("q", {})  # leaves the rows in the memo
 
-    rendered = render(result.board, executor)
+    rendered = render(result.board, executor.ctx, executor.ledger)
 
     assert rendered.board_error is None
     assert [d.code for d in rendered.chart_errors] == [

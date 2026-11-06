@@ -10,12 +10,14 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.board.normalized import Board
-from dbt_charts.core.execute import Executor, run as run_stage
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute import run as run_stage
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.lookup import Ledger, Miss
 from dbt_charts.core.execute.plan import ExecContext
 from dbt_charts.core.render.render_result import RenderResult
 from dbt_charts.core.render.renderer import prefetch_tab_queries, render
+
+from ..._run import Run
 
 LocalProject = Callable[..., FilesystemProject]
 
@@ -108,13 +110,13 @@ def _spied_render(
     local_project: LocalProject,
     monkeypatch: pytest.MonkeyPatch,
     **render_kwargs: Any,
-) -> tuple[RenderResult, list[str], Board, Executor]:
+) -> tuple[RenderResult, list[str], Board, Run]:
     result = compile(yaml_content)
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
     )
     seen: list[str] = []
@@ -125,7 +127,7 @@ def _spied_render(
         return original(ctx, ledger, miss)
 
     monkeypatch.setattr(run_stage, "execute_miss", spy)
-    rendered = render(result.board, executor, **render_kwargs)
+    rendered = render(result.board, executor.ctx, executor.ledger, **render_kwargs)
     return rendered, seen, result.board, executor
 
 
@@ -204,7 +206,9 @@ def test_prefetch_runs_only_the_hidden_tabs(
     )
     seen.clear()
 
-    prefetched = prefetch_tab_queries(board, executor, {}, max_workers=2)
+    prefetched = prefetch_tab_queries(
+        board, executor.ctx, executor.ledger, {}, max_workers=2
+    )
 
     assert prefetched == {"hidden": None}
     assert seen == ["hidden"]
@@ -216,9 +220,12 @@ def test_prefetch_skips_queries_already_cached(
     _rendered, _seen, board, executor = _spied_render(
         _TWO_TAB_BOARD, local_project, monkeypatch, format="svg"
     )
-    prefetch_tab_queries(board, executor, {}, max_workers=2)
+    prefetch_tab_queries(board, executor.ctx, executor.ledger, {}, max_workers=2)
 
-    assert prefetch_tab_queries(board, executor, {}, max_workers=2) == {}
+    assert (
+        prefetch_tab_queries(board, executor.ctx, executor.ledger, {}, max_workers=2)
+        == {}
+    )
 
 
 def test_a_query_that_opts_out_of_prefetch_stays_cold(
@@ -229,7 +236,9 @@ def test_a_query_that_opts_out_of_prefetch_stays_cold(
     )
     assert set(seen) == {"a"}
 
-    prefetched = prefetch_tab_queries(board, executor, {}, max_workers=2)
+    prefetched = prefetch_tab_queries(
+        board, executor.ctx, executor.ledger, {}, max_workers=2
+    )
 
     assert set(prefetched) == {"b1"}
 
@@ -243,7 +252,10 @@ def test_nothing_is_prefetched_unless_the_cache_policy_asks(
     )
 
     assert rendered.prefetch_query_names == frozenset()
-    assert prefetch_tab_queries(board, executor, {}, max_workers=2) == {}
+    assert (
+        prefetch_tab_queries(board, executor.ctx, executor.ledger, {}, max_workers=2)
+        == {}
+    )
 
 
 def test_render_reports_only_hidden_queries_that_prefetch(
@@ -268,7 +280,9 @@ def test_prefetch_failure_is_returned_not_raised(
 
     monkeypatch.setattr(run_stage, "execute_miss", boom)
 
-    prefetched = prefetch_tab_queries(board, executor, {}, max_workers=2)
+    prefetched = prefetch_tab_queries(
+        board, executor.ctx, executor.ledger, {}, max_workers=2
+    )
 
     assert isinstance(prefetched["hidden"], RuntimeError)
 

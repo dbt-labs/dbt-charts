@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from unittest.mock import Mock
 
 import pytest
 
@@ -17,8 +16,10 @@ from dbt_charts.core.compile.format import (
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.style.authored import TableColumnConfig
 from dbt_charts.core.compile.resolve.chart._table import _with_resolved_scale_stops
-from dbt_charts.core.execute import Executor, QueryError
+from dbt_charts.core.execute import QueryError
 
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 from .._svg_render import render_board_to_svg
 
 _KPI_COMPACT = get_theme_style().charts.kpi.value.compact
@@ -459,21 +460,13 @@ rows:
 """
 
 
-def _executor(rows: list[dict[str, int]]) -> Executor:
+def _executor(rows: list[dict[str, int]]) -> Run:
     compiled = compile_board(_SQL_BOARD)
     assert compiled.success
-    ok = Mock(
-        is_success=True,
-        data=rows,
-        resolved_relations=None,
-        truncated_reason=None,
-    )
-    registry = Mock()
-    registry.project_file_sources.return_value = {}
-    registry.execute.return_value = ok
-    return Executor(
+    registry = scripted_env(ScriptedBackend(rows))
+    return Run(
         compiled.board,
-        adapter_registry=registry,
+        env=registry,
         query_registry=compiled.query_registry,
     )
 

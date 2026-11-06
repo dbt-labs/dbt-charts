@@ -41,4 +41,3 @@ pub mod legend;
 pub mod layers;
 pub mod multiples;
 pub mod temporal;
-pub mod x_type;

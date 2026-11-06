@@ -371,7 +371,7 @@ class _SharedChartFields(_BaseChartFields):
         DisplayText(),
         Field(
             default=None,
-            description="Heading naming what the chart shows. Rejected on type: kpi.",
+            description="Heading naming what the chart shows, in Title Case like every heading. Rejected on type: kpi.",
         ),
     ]
     # None = no subtitle.

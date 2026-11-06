@@ -47,11 +47,11 @@ pub struct MeasurePayload {
     /// `style.fonts.numeral`: the family the digits paint in, so the family they measure in.
     pub numeral_family: String,
     /// The board's number locale: the formatted cell text is what is measured.
-    pub format_locale: crate::number_locale::NumberLocale,
+    pub format_locale: ::bind::formats::locale::NumberLocale,
     /// The board's time locale: a date cell's month and day names.
     pub time_locale: d3rs::time_format::Locale,
     /// The board's time zone: an aware date cell prints its wall clock there.
-    #[serde(default = "crate::time_zone::utc", deserialize_with = "crate::time_zone::deserialize")]
+    #[serde(default = "::bind::time_zone::utc", deserialize_with = "::bind::time_zone::deserialize")]
     pub time_zone: jiff::tz::TimeZone,
     /// The board's language: a column header derived from its name speaks it.
     #[serde(default)]
@@ -64,14 +64,14 @@ pub struct MeasurePayload {
     pub sub_unit_specs: Option<std::collections::BTreeMap<String, String>>,
     /// The `str()` text of each tagged cell in `rows`; filled when parsed.
     #[serde(skip)]
-    pub cell_text: crate::common::CellText,
+    pub cell_text: ::bind::rows::CellText,
 }
 
 impl<'de> Deserialize<'de> for MeasurePayload {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let mut payload = MeasurePayload::deserialize(deserializer)?;
         payload.cell_text =
-            crate::common::decode_cells(&mut payload.rows).map_err(serde::de::Error::custom)?;
+            ::bind::rows::decode_cells(&mut payload.rows).map_err(serde::de::Error::custom)?;
         Ok(payload)
     }
 }
@@ -281,9 +281,9 @@ fn measure_in_scope(
     payload: &MeasurePayload,
     fonts: &FontBook,
 ) -> Result<Option<IntrinsicWidth>, String> {
-    crate::number_locale::with_number_locale(&payload.format_locale, || {
-        crate::time_locale::with_time_locale(&payload.time_locale, || {
-            crate::time_zone::with_time_zone(&payload.time_zone, || {
+    ::bind::formats::locale::with_number_locale(&payload.format_locale, || {
+        ::bind::time_locale::with_time_locale(&payload.time_locale, || {
+            ::bind::time_zone::with_time_zone(&payload.time_zone, || {
                 display_text::language::with_language(payload.language, || {
                     natural_width_in_scope(payload, fonts)
                 })

@@ -15,9 +15,10 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.resolve.chart.label_data import _jinja_string_literal
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
+
+from .._run import Run
 
 _BOARD = """\
 style:
@@ -43,13 +44,13 @@ def test_a_brace_in_a_slice_format_affix_is_a_chart_error(
     result = compile_board(_BOARD.format(affix=affix))
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
     )
 
-    rendered = render(result.board, executor, format="svg")
+    rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
 
     assert any(
         "Pie chart 'p'" in str(error) and "contains '{'" in str(error)

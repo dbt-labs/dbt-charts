@@ -52,6 +52,8 @@ pub(crate) struct Spot {
     pub pos: Position,
     pub size: (f64, f64),
     pub nudge: (f64, f64),
+    /// A band label overlaid along an edge stays centered on its band but never crosses the plot's side edges.
+    pub in_plot: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -260,7 +262,11 @@ fn rule_shape(ann: &Annotation, ctx: &AnnotationCtx, b_map: &AxisMap, site: &Sit
 }
 
 fn band_shape(ann: &Annotation, ctx: &AnnotationCtx, b_map: &AxisMap, site: &Site) -> Result<Option<Shape>, Diagnostic> {
-    let Some(sa) = span_or_full(&ctx.x, &ann.x, site)? else { return Ok(None) };
+    let sa = match &ann.x {
+        Some(a) => ctx.x.band_span(a, site)?,
+        None => Some(ctx.x.range_px()),
+    };
+    let Some(sa) = sa else { return Ok(None) };
     let Some(sb) = span_or_full(b_map, &ann.y, site)? else { return Ok(None) };
     let (x0, y0) = screen(ctx.orientation, sa.0, sb.0);
     let (x1, y1) = screen(ctx.orientation, sa.1, sb.1);
@@ -513,6 +519,7 @@ pub(crate) fn separate(items: &mut [Placed], ctx: &AnnotationCtx) {
 /// chart's ink past the plot.
 fn put(spot: &Spot, pos: Position, extra: f64, ctx: &AnnotationCtx) -> (f64, f64, TextAnchor) {
     let (x, y, anchor) = place_box(spot.geom, spot.size, pos);
+    let x = if spot.in_plot && pos.overlay && matches!(pos.edge, Edge::Top | Edge::Bottom) { x.min(ctx.plot.w - spot.size.0).max(0.0) } else { x };
     let out = if pos.overlay { -extra } else { extra };
     let (ox, oy) = match pos.edge {
         Edge::Top => (0.0, -out),
@@ -596,10 +603,15 @@ pub(crate) fn arrange(items: &mut [Placed], ctx: &AnnotationCtx, occupied: &[Bou
         let at = |x: f64, y: f64| Bounds::new(x, y, x + w, y + h);
         // (group, box, anchor and edge) per candidate; `None` keeps the text's own.
         let mut candidates: Vec<(u8, Bounds, Option<(TextAnchor, Edge)>)> = vec![(0, start, None)];
+        let band_label = matches!((items[i].mark.as_ref(), items[i].spot.map(|s| s.geom)), (Some(Mark::Rect { .. }), Some(Geom::Rect { .. })));
         if let Some(spot) = items[i].spot.filter(|s| s.pos.auto_edge || s.pos.auto_align) {
             for (group, extra) in [(1, 0.0), (2, GAP)] {
                 for (edge, align) in COMPASS {
                     if (!spot.pos.auto_edge && edge != spot.pos.edge) || (!spot.pos.auto_align && align != spot.pos.align) {
+                        continue;
+                    }
+                    // A band's label stays on the band's own axis: flipping to its other end, never beside it.
+                    if band_label && matches!(edge, Edge::Top | Edge::Bottom) != matches!(spot.pos.edge, Edge::Top | Edge::Bottom) {
                         continue;
                     }
                     let (x, y, anchor) = put(&spot, Position { edge, align, ..spot.pos }, extra, ctx);
@@ -697,7 +709,13 @@ pub(crate) fn place<'a>(ann: &'a Annotation, ctx: &AnnotationCtx) -> Result<Opti
     let mut anchor_point = None;
     let pad = if style.text.frame.visible { style.text.frame.padding } else { 0.0 };
     let cap = style.text.max_share.map_or(f64::INFINITY, |share| share * ctx.plot.w);
-    let limit = style.text.max_width.map(|px| px.min(ctx.plot.w - 2.0 * (pad + GAP)).min(cap));
+    // A band's label wraps to the band's own width; the style key wraps frame notes and trends only.
+    let band = (ann.kind == Kind::Band).then(|| band_shape(ann, ctx, b_map, &site)).transpose()?;
+    let band_width = match &band {
+        Some(Some((_, Some(Geom::Rect { x0, x1, .. })))) => Some(x1 - x0 - 2.0 * pad),
+        _ => None,
+    };
+    let limit = band_width.or_else(|| style.text.max_width.map(|px| px.min(ctx.plot.w - 2.0 * (pad + GAP)).min(cap)));
     let block = ann.text.as_ref().map(|text| text::measure_block(ctx.fonts, text, &style.text, limit)).transpose()?;
     let leader = match &block {
         Some(b) if ann.connector == ConnectorKind::None => leader_needed(ann, ctx, &site, (b.w + 2.0 * pad, b.h + 2.0 * pad))?,
@@ -713,10 +731,9 @@ pub(crate) fn place<'a>(ann: &'a Annotation, ctx: &AnnotationCtx) -> Result<Opti
     };
     let geom = match ann.kind {
         Kind::Rule | Kind::Band => {
-            let shape = if ann.kind == Kind::Rule {
-                rule_shape(ann, ctx, b_map, &site)?
-            } else {
-                band_shape(ann, ctx, b_map, &site)?
+            let shape = match band {
+                Some(shape) => shape,
+                None => rule_shape(ann, ctx, b_map, &site)?,
             };
             let Some((mark, geom)) = shape else { return Ok(None) };
             placed.mark = mark;
@@ -765,7 +782,7 @@ pub(crate) fn place<'a>(ann: &'a Annotation, ctx: &AnnotationCtx) -> Result<Opti
         // A connected note sits its line length off the anchor on its edge side;
         // `overlay` there only lets the text draw over the plot.
         let pos = if connected && anchor_point.is_some() { Position { overlay: false, ..style.text.position } } else { style.text.position };
-        let spot = Spot { geom, pos, size, nudge: (style.text.dx, style.text.dy) };
+        let spot = Spot { geom, pos, size, nudge: (style.text.dx, style.text.dy), in_plot: ann.kind == Kind::Band };
         let (x, y, anchor) = match (ann.enclose, anchor_point) {
             (Some(Enclose::Rect), Some(p)) if !connected => {
                 let (x, y) = settle(p.0 - size.0 / 2.0 + style.text.dx, p.1 - size.1 / 2.0 + style.text.dy, size, ctx);
@@ -812,7 +829,7 @@ mod tests {
     use crate::annotation::{DataMark, PlotRect, Reach};
     use diagnostic::collect;
     use crate::vega_fit::Bounds;
-    use crate::time_axis::testing::day;
+    use ::bind::time_axis::testing::day;
     use measure::FontBook;
 
     const W: f64 = 40.0;
@@ -967,7 +984,7 @@ mod tests {
                 Orientation::Horizontal => PlotRect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 },
             },
             reach: Reach::default(),
-            x: AxisMap::Time { extent: (day("2024-01-01"), day("2024-12-31")), range: (0.0, along) },
+            x: AxisMap::Time { extent: (day("2024-01-01"), day("2024-12-31")), range: (0.0, along), grain: None },
             y: AxisMap::Linear { domain: (0.0, 40_000_000.0), range: y_range },
             layer_y: vec![AxisMap::Linear { domain: (0.0, 20.0), range: y_range }],
             orientation,
@@ -1502,6 +1519,109 @@ mod tests {
         assert!(close(a.y, b.y));
     }
 
+    /// The contract band over `from..to` (dates), labeled `text`, placed against the 200px test plot.
+    fn labeled_band(from: &str, to: &str, text: &str) -> (TextBox, (f64, f64)) {
+        let anns = copies(3, &[&|a| {
+            a.x = Some(Anchor::Range { from: date_value(from), to: date_value(to) });
+            a.y = None;
+            a.text = Some(text.into());
+            a.style.text.position = Position { edge: Edge::Top, align: Align::Center, overlay: true, auto_edge: false, auto_align: false };
+        }]);
+        let items = resolved(anns, Reach::default());
+        let Some(Mark::Rect { x, w, .. }) = items[0].mark else { panic!() };
+        (text_of(&items[0]).clone(), (x, x + w))
+    }
+
+    /// A band across the full plot width, over y 0..20M, labeled `Now` at `edge` with overlay off.
+    fn outside_band_text(edge: Edge, dx: f64) -> TextBox {
+        let anns = copies(3, &[&|a| {
+            a.x = None;
+            a.y = Some(Anchor::Range { from: Some(super::super::model::Scalar::Number(0.0)), to: Some(super::super::model::Scalar::Number(20_000_000.0)) });
+            a.text = Some("Now".into());
+            a.style.text.dx = dx;
+            a.style.text.position = Position { edge, align: Align::Center, overlay: false, auto_edge: false, auto_align: false };
+        }]);
+        text_of(&resolved(anns, Reach::default())[0]).clone()
+    }
+
+    #[test]
+    fn a_band_label_placed_outside_stays_outside_the_plot_edges() {
+        let right = outside_band_text(Edge::Right, 0.0);
+        assert!(right.x >= 200.0, "{right:?}");
+        let left = outside_band_text(Edge::Left, 0.0);
+        assert!(left.x + left.w <= 0.0 + 1e-9, "{left:?}");
+    }
+
+    #[test]
+    fn an_authored_dx_moves_a_band_label_past_the_plot_edge() {
+        let t = labeled_band_dx("2024-12-01", "2024-12-31", 30.0);
+        assert!(t.x + t.w > 200.0, "{t:?}");
+    }
+
+    fn labeled_band_dx(from: &str, to: &str, dx: f64) -> TextBox {
+        let anns = copies(3, &[&|a| {
+            a.x = Some(Anchor::Range { from: date_value(from), to: date_value(to) });
+            a.y = None;
+            a.text = Some("Now".into());
+            a.style.text.dx = dx;
+            a.style.text.position = Position { edge: Edge::Top, align: Align::Center, overlay: true, auto_edge: false, auto_align: false };
+        }]);
+        text_of(&resolved(anns, Reach::default())[0]).clone()
+    }
+
+    fn band_line_width(line: &str) -> f64 {
+        text::measure(&fonts(), line, &contract()[3].style.text).unwrap().w
+    }
+
+    #[test]
+    fn a_band_label_is_centered_and_wraps_to_the_band_by_words() {
+        let (t, (x0, x1)) = labeled_band("2024-02-01", "2024-06-01", "Current month label");
+        assert!(t.lines.len() > 1, "{:?}", t.lines);
+        assert_eq!(t.lines.join(" "), "Current month label");
+        assert!(t.lines.iter().all(|l| band_line_width(l) <= x1 - x0 + 1e-9), "{:?} in {}", t.lines, x1 - x0);
+        assert_eq!(t.anchor, TextAnchor::Middle);
+        assert!(close(t.x + t.w / 2.0, (x0 + x1) / 2.0), "{t:?}");
+    }
+
+    #[test]
+    fn a_short_band_label_stays_one_line() {
+        let (t, (x0, x1)) = labeled_band("2024-03-01", "2024-06-01", "Now");
+        assert_eq!(t.lines, ["Now"]);
+        assert!(close(t.x + t.w / 2.0, (x0 + x1) / 2.0));
+    }
+
+    #[test]
+    fn a_word_wider_than_its_band_stays_whole_centered_and_may_pass_the_band_edges() {
+        let (t, (x0, x1)) = labeled_band("2024-03-01", "2024-03-20", "Current month");
+        assert_eq!(t.lines, ["Current", "month"]);
+        assert!(t.w > x1 - x0, "{t:?}");
+        assert!(close(t.x + t.w / 2.0, (x0 + x1) / 2.0), "{t:?}");
+    }
+
+    #[test]
+    fn a_band_label_wider_than_its_band_shifts_inward_at_the_plot_edge() {
+        let (t, _) = labeled_band("2024-01-01", "2024-01-10", "Current month");
+        assert!(t.x >= -1e-9, "{t:?}");
+        let (t, _) = labeled_band("2024-12-20", "2024-12-31", "Current month");
+        assert!(t.x + t.w <= 200.0 + 1e-9, "{t:?}");
+    }
+
+    #[test]
+    fn a_band_label_that_must_move_off_a_mark_flips_across_the_band_staying_centered() {
+        let anns = copies(3, &[&|a| {
+            a.x = Some(Anchor::Range { from: date_value("2024-03-01"), to: date_value("2024-07-01") });
+            a.y = None;
+            a.text = Some("Now".into());
+            a.style.text.position = Position { edge: Edge::Top, align: Align::Center, overlay: true, auto_edge: true, auto_align: false };
+        }]);
+        let mark = DataMark::Box(Bounds::new(0.0, 0.0, 200.0, 25.0));
+        let items = resolved_over(anns, vec![mark.clone()]);
+        let (t, Some(Mark::Rect { x, w, .. })) = (text_of(&items[0]), &items[0].mark) else { panic!() };
+        assert!(!hits(&items[0], &mark), "{t:?}");
+        assert_eq!(t.anchor, TextAnchor::Middle, "{t:?}");
+        assert!(close(t.x + t.w / 2.0, x + w / 2.0), "{t:?}");
+    }
+
     /// A 543x339 plot with the right axis' ink beside it, dated so that
     /// 2025-12-01 sits at x 364.6 and 2026-10-20 at x 520.
     fn wide_resolved(anns: Vec<Annotation>) -> Vec<Placed<'static>> {
@@ -1511,7 +1631,7 @@ mod tests {
         c.plot = PlotRect { x: 0.0, y: 0.0, w: 543.0, h: 339.0 };
         let per_day = (520.0 - 364.6) / (day("2026-10-20") - day("2025-12-01"));
         let start = day("2025-12-01") - 364.6 / per_day;
-        c.x = AxisMap::Time { extent: (start, start + 543.0 / per_day), range: (0.0, 543.0) };
+        c.x = AxisMap::Time { extent: (start, start + 543.0 / per_day), range: (0.0, 543.0), grain: None };
         c.y = AxisMap::Linear { domain: (0.0, 31.0), range: (339.0, 0.0) };
         c.reach = Reach { left: 0.0, top: 0.0, right: 40.0, bottom: 30.0 };
         let c: &'static AnnotationCtx = Box::leak(Box::new(c));

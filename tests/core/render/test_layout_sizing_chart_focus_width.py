@@ -16,10 +16,11 @@ from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
 from dbt_charts.core.compile.resolve import preferred_chart_width
 from dbt_charts.core.compile.sizing import board_container_width
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import Project
 from dbt_charts.core.render.board_resolve import build_resolved_board
+
+from ..._run import Run
 
 _THREE_COL_YAML = """\
 queries:
@@ -56,9 +57,9 @@ def _sized_layout(
     board: Board,
     local_project: Callable[..., Project],
 ) -> ResolvedBoard:
-    executor = Executor(
+    executor = Run(
         board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=None,
     )
     resolved_board, _cache = build_resolved_board(

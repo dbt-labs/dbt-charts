@@ -2,22 +2,21 @@
 
 ``render_board_svg`` and everything below it need only three things from the
 execution layer: fetch a query's rows and their declared types, ask when the cache entries backing them
-were written, and ask when this render happened. ``Executor`` provides both (and satisfies this Protocol
-structurally, with no changes of its own), but it is not the only possible
-provider: replaying a recorded board from a serialized artifact has rows on
-hand and no warehouse to reach.
+were written, and ask when this render happened. ``QueryResults`` provides them,
+and so does ``ReplayDataProvider``: replaying a recorded board from a serialized
+artifact has rows on hand and no warehouse to reach.
 
 Typing the render path against this Protocol rather than the concrete
-``Executor`` is what makes such a provider a type-checked participant instead of
-a duck-typed stand-in smuggled past an annotation. It is also a step toward the
+``QueryResults`` is what makes such a provider a type-checked participant instead
+of a duck-typed stand-in smuggled past an annotation. It is also a step toward the
 boundary ``core/AGENTS.md`` commits to — render as a pure function of
 ``(Resolved*, data)`` plus foreign-format translation.
 
 **Deliberately absent**, because the post-resolve path does not use them:
-``adapter_registry``, ``board`` and the other resolve-time reads. The resolve
-path takes ``ResolveDataProvider``, which adds them; ``Executor`` and the
-collected ``QueryResults`` both satisfy it. ``render()`` collects its queries up
-front and reads ``QueryResults``, which never executes a query.
+``board``, ``link_schema`` and the other resolve-time reads. The resolve
+path takes ``ResolveDataProvider``, which adds them; ``QueryResults`` satisfies
+it. ``render()`` collects its queries up front and reads ``QueryResults``, which
+never executes a query.
 
 Keep this Protocol minimal. Widening it to accommodate a new render-time reach
 into the execution layer is the signal that the reach itself belongs earlier, on
@@ -36,8 +35,9 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.chart.normalized import Chart
     from dbt_charts.core.compile.template.listings import ListingCall, TextListings
     from dbt_charts.core.compile.template.parameterized import DateRangeFilter
+    from dbt_charts.core.dbt_manifest import RawTableFormats
     from dbt_charts.core.diagnostics.base import DbtChartsError
-    from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+    from dbt_charts.core.execute.link_schema import LinkSchema
 
 
 # Not @runtime_checkable: `cache_hit_ats` is a property, so this is a data
@@ -51,12 +51,11 @@ class ChartDataProvider(Protocol):
     def execute_query(self, query_name: str, variables: VariableValues) -> CacheRows:
         """Return the rows for ``query_name`` under ``variables``.
 
-        Deliberately narrower than ``Executor.execute_query``: every post-resolve
-        call site passes exactly ``(query_name, variables)`` with a real mapping.
-        ``Executor``'s extra defaulted ``use_cache`` / ``force_refresh`` and its
-        wider ``VariableValues | None`` still satisfy this — an implementation may
-        accept more than the Protocol promises. Declaring only what the seam uses
-        keeps a provider from modeling cache control it has no concept of.
+        Every post-resolve call site passes exactly ``(query_name, variables)``
+        with a real mapping. An implementation may accept more than the Protocol
+        promises (``ReplayDataProvider`` takes ``VariableValues | None``);
+        declaring only what the seam uses keeps a provider from modeling cache
+        control it has no concept of.
         """
         ...
 
@@ -96,14 +95,17 @@ class ChartDataProvider(Protocol):
 
 class ResolveDataProvider(ChartDataProvider, Protocol):
     """A ``ChartDataProvider`` plus the resolve-time context the board resolve
-    path reads: the board's link settings and the adapters auto-link asks for
-    schema and foreign keys. ``Executor`` and ``QueryResults`` both satisfy it."""
+    path reads: the board's link settings, the schema and foreign keys auto-link
+    needs (planned before render), and the dbt column formats lineage starts
+    from. ``QueryResults`` satisfies it."""
 
     @property
     def board(self) -> Board: ...
 
     @property
-    def adapter_registry(self) -> AdapterRegistry: ...
+    def link_schema(self) -> LinkSchema: ...
+
+    def base_column_formats(self, source: str | None) -> RawTableFormats: ...
 
     @property
     def column_format_errors(self) -> dict[str, DbtChartsError]: ...

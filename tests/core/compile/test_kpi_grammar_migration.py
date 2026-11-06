@@ -11,27 +11,24 @@ import yaml
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
     migrate_yaml_text,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.chart.normalized import KpiChart
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     load_yaml_schema_catalog,
 )
 
+from ._engine_migrations import migrate_mapping
+
 _QUERIES = {"q1": {"sql": "select 1 as v, 0.1 as d", "source": "test"}}
 _LINE_HEIGHT_WARNING = "line_height has no effect on KPI text slots"
 
 
 def _migrate(raw: dict[str, Any]) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        migrated = migrate_mapping(
-            raw, catalog=load_yaml_schema_catalog(), registry=registry
-        )
+        migrated = migrate_mapping(raw)
     AuthoredBoard.model_validate(migrated)
     return migrated
 
@@ -187,19 +184,15 @@ def test_chart_local_title_leftovers_and_slot_characters_are_deleted() -> None:
 def test_kpi_line_height_is_dropped_with_a_warning(
     chart_style: dict[str, Any],
 ) -> None:
-    _, registry = _board_migration_context()
     with pytest.warns(SchemaMigrationWarning, match=_LINE_HEIGHT_WARNING):
         migrated = migrate_mapping(
             _board({"style": chart_style}),
-            catalog=load_yaml_schema_catalog(),
-            registry=registry,
         )
     assert "line_height" not in str(migrated)
     AuthoredBoard.model_validate(migrated)
 
 
 def test_theme_kpi_line_height_is_dropped_with_a_warning() -> None:
-    _, registry = _board_migration_context()
     raw = _board(
         {},
         style={
@@ -212,9 +205,7 @@ def test_theme_kpi_line_height_is_dropped_with_a_warning() -> None:
         },
     )
     with pytest.warns(SchemaMigrationWarning, match=_LINE_HEIGHT_WARNING):
-        migrated = migrate_mapping(
-            raw, catalog=load_yaml_schema_catalog(), registry=registry
-        )
+        migrated = migrate_mapping(raw)
     assert "line_height" not in str(migrated)
 
 
@@ -265,14 +256,11 @@ rows: [c1]
 
 @pytest.mark.parametrize("text", [_OLD_KPI, _OLD_THEME_KPI], ids=["chart", "theme"])
 def test_text_migration_matches_the_mapping_migration(text: str) -> None:
-    _, registry = _board_migration_context()
-    catalog = load_yaml_schema_catalog()
+    load_yaml_schema_catalog()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        rewritten = migrate_yaml_text(text, catalog=catalog, registry=registry)
-        expected = migrate_mapping(
-            yaml.safe_load(text), catalog=catalog, registry=registry
-        )
+        rewritten = migrate_yaml_text(text)
+        expected = migrate_mapping(yaml.safe_load(text))
     assert yaml.safe_load(rewritten) == expected
 
 

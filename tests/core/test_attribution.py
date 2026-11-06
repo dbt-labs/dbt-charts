@@ -6,7 +6,7 @@ Pin the behavior a warehouse cost model depends on:
 - the engine's ``dbt_charts_`` namespace cannot be shadowed by an author
 - runtime context accumulates across scopes and unwinds cleanly
 
-The dbt-side transport is covered by ``execute/adapters/test_query_header.py``.
+The dbt-side transport is covered by ``execute/backends/test_query_header.py``.
 """
 
 from __future__ import annotations

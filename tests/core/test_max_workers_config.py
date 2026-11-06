@@ -10,8 +10,9 @@ import pytest
 
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import get_execution_config, reset_config
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
+
+from .._run import Run
 
 # importlib.import_module uses sys.modules directly, bypassing the attribute-
 # traversal problem caused by dbt_charts.core.__init__ shadowing the render
@@ -47,16 +48,16 @@ def board_and_executor():
     from unittest.mock import Mock
 
     from dbt_charts.core.column_types import literal_schema
-    from dbt_charts.core.execute.adapters.base import QueryResult
+    from dbt_charts.core.execute.query_result import QueryResult
 
     result = compile(BOARD_YAML)
     assert result.success, result.errors
     registry = Mock()
-    registry.project_file_sources.return_value = {}
+    registry.sources.all.return_value = {}
     registry.execute.return_value = QueryResult(
         data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
     )
-    executor = Executor(result.board, adapter_registry=registry)
+    executor = Run(result.board, env=registry)
     return result.board, executor
 
 
@@ -72,12 +73,12 @@ class TestMaxWorkersResolution:
         board, executor = board_and_executor
         captured = []
 
-        def fake_parallel(_, found, max_workers):
+        def fake_parallel(_ctx, _ledger, found, max_workers):
             captured.append(max_workers)
             return {}
 
-        with patch.object(Executor, "run_misses", fake_parallel):
-            render(board, executor, max_workers=3)
+        with patch("dbt_charts.core.render.renderer.run_misses", fake_parallel):
+            render(board, executor.ctx, executor.ledger, max_workers=3)
 
         assert captured == [3]
 
@@ -86,12 +87,12 @@ class TestMaxWorkersResolution:
         monkeypatch.setenv("DCT_MAX_WORKERS", "12")
         captured = []
 
-        def fake_parallel(_, found, max_workers):
+        def fake_parallel(_ctx, _ledger, found, max_workers):
             captured.append(max_workers)
             return {}
 
-        with patch.object(Executor, "run_misses", fake_parallel):
-            render(board, executor)
+        with patch("dbt_charts.core.render.renderer.run_misses", fake_parallel):
+            render(board, executor.ctx, executor.ledger)
 
         assert captured == [12]
 
@@ -102,12 +103,12 @@ class TestMaxWorkersResolution:
         monkeypatch.delenv("DCT_MAX_WORKERS", raising=False)
         captured = []
 
-        def fake_parallel(_, found, max_workers):
+        def fake_parallel(_ctx, _ledger, found, max_workers):
             captured.append(max_workers)
             return {}
 
-        with patch.object(Executor, "run_misses", fake_parallel):
-            render(board, executor)
+        with patch("dbt_charts.core.render.renderer.run_misses", fake_parallel):
+            render(board, executor.ctx, executor.ledger)
 
         assert captured == [get_execution_config().max_workers]
         assert captured[0] > 0
@@ -117,11 +118,11 @@ class TestMaxWorkersResolution:
         monkeypatch.setenv("DCT_MAX_WORKERS", "12")
         captured = []
 
-        def fake_parallel(_, found, max_workers):
+        def fake_parallel(_ctx, _ledger, found, max_workers):
             captured.append(max_workers)
             return {}
 
-        with patch.object(Executor, "run_misses", fake_parallel):
-            render(board, executor, max_workers=5)
+        with patch("dbt_charts.core.render.renderer.run_misses", fake_parallel):
+            render(board, executor.ctx, executor.ledger, max_workers=5)
 
         assert captured == [5]

@@ -11,14 +11,14 @@ from pydantic import ValidationError
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._engine_migrations import migrate_mapping
 
 
 @pytest.fixture
@@ -49,10 +49,9 @@ def test_authored_value_labels_are_dropped_with_a_notice(
     catalog: YamlSchemaCatalog,
 ) -> None:
     raw = _board({"type": "bar", "value_visible": True, "value_suffix": "%", "max": 5})
-    _, registry = _board_migration_context()
 
     with pytest.warns(SchemaMigrationWarning, match="value column") as caught:
-        migrated = migrate_mapping(raw, catalog=catalog, registry=registry)
+        migrated = migrate_mapping(raw)
 
     assert migrated["charts"]["t"]["style"]["columns"]["v"]["spark"] == {
         "type": "bar",
@@ -70,11 +69,10 @@ def test_theme_label_block_is_dropped(catalog: YamlSchemaCatalog) -> None:
             "label": {"inset_x": 4, "min_size": 9, "height_offset": 5},
         },
     )
-    _, registry = _board_migration_context()
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        migrated = migrate_mapping(raw, catalog=catalog, registry=registry)
+        migrated = migrate_mapping(raw)
 
     assert migrated["style"]["charts"]["table"]["spark"]["bar"] == {
         "border": {"radius": 2}

@@ -30,7 +30,7 @@ from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.render import layout_sizing
 
 _TEST_QUERY = SqlQuery(sql="SELECT 1", source="test")
@@ -81,7 +81,7 @@ def test_repeated_pie_is_resolved_independently_for_each_slot_width() -> None:
             ("Partners & Channel", 10),
         ]
     ]
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
     executor.execute_query.return_value = rows
     rs, ctx = resolve_style_and_context(get_theme_style())
@@ -110,7 +110,7 @@ def test_repeated_non_pie_reuses_its_canonical_resolved_chart() -> None:
     from dbt_charts.core.render.layout_sizing import SizingRenderCtx, _require_resolved
 
     chart = _bar_chart("shared_bar")
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
     executor.render_with_range_filters.return_value = None
     executor.execute_query.return_value = [{"x": "A", "y": 1}]
@@ -136,7 +136,7 @@ def test_same_chart_same_width_is_deduplicated():
     item1 = LayoutItem(type="chart", width=400.0, height=0.0, chart=chart)
     item2 = LayoutItem(type="chart", width=400.0, height=0.0, chart=chart)
 
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
     rs, ctx = resolve_style_and_context(get_theme_style())
     render_ctx = SizingRenderCtx(
@@ -183,7 +183,7 @@ def test_natural_height_tiny_overshoot_clamped_to_static_estimate():
     chart = _bar_chart("daily_activity")
     WIDTH = 600.0
 
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
     rs, ctx = resolve_style_and_context(get_theme_style())
     render_ctx = SizingRenderCtx(
@@ -247,7 +247,7 @@ def test_natural_height_large_undershoot_is_not_clamped_up():
     chart = _pie_chart("plan_mix")
     WIDTH = 1180.0
 
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
     rs, ctx = resolve_style_and_context(get_theme_style())
     render_ctx = SizingRenderCtx(
@@ -316,7 +316,7 @@ def test_align_cols_heights_same_chart_different_heights_get_separate_entries():
     item1 = LayoutItem(type="chart", width=WIDTH, height=0.0, chart=chart)
     item2 = LayoutItem(type="chart", width=WIDTH, height=0.0, chart=chart)
 
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
     rs, ctx = resolve_style_and_context(get_theme_style())
 
@@ -396,7 +396,9 @@ class TestGridRowAlignment:
             col=1,
         )
 
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
         executor.rendered_at = None
         rs, ctx = resolve_style_and_context(get_theme_style())
 
@@ -473,7 +475,9 @@ class TestGridRowAlignment:
             type="chart", width=WIDTH, height=ROW_HEIGHT, chart=chart_b, row=0, col=1
         )
 
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
         executor.rendered_at = None
         rs, ctx = resolve_style_and_context(get_theme_style())
 
@@ -536,7 +540,9 @@ class TestGridRowAlignment:
             type="chart", width=WIDTH, height=ROW1_H, chart=chart_r1, row=1, col=0
         )
 
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
         executor.rendered_at = None
         rs, ctx = resolve_style_and_context(get_theme_style())
 
@@ -595,7 +601,9 @@ class TestColsBoardItemAlignment:
         item_a = LayoutItem(type="chart", width=WIDTH, height=INFLATED_H, chart=chart_a)
         item_b = LayoutItem(type="chart", width=WIDTH, height=INFLATED_H, chart=chart_b)
 
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
         executor.rendered_at = None
         rs, ctx = resolve_style_and_context(get_theme_style())
 
@@ -666,7 +674,9 @@ class TestColsBoardItemAlignment:
         )
         layout = Layout.model_validate({"type": "cols", "items": [pie_item, bar_item]})
 
-        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+        executor = MagicMock(
+            spec=QueryResults, board=SimpleNamespace(links=BoardLinks())
+        )
         executor.rendered_at = None
         rs, ctx = resolve_style_and_context(get_theme_style())
         render_ctx = SizingRenderCtx(

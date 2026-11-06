@@ -1,6 +1,6 @@
-"""Integration tests: typed SourceConfig flows to the backend via AdapterRegistry.
+"""Integration tests: typed SourceConfig flows to the backend via ExecEnv.
 
-Pins that AdapterRegistry.execute() invokes the resolver exactly once per query
+Pins that run_query() invokes the resolver exactly once per query
 and passes the typed SourceConfig to the backend.
 """
 
@@ -21,9 +21,10 @@ from dbt_charts.core.compile.models.source import (
     ResolvedSourceConfig,
 )
 from dbt_charts.core.dialects import SQLDialect
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 from dbt_charts.core.execute.backends.base import BackendRegistry
 from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.env import ExecEnv, make_exec_env
+from dbt_charts.core.execute.run import run_query
 from dbt_charts.core.execute.source_resolver import SourceResolver
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
@@ -50,9 +51,9 @@ class _CapturingBackend:
 def _make_registry(
     local_project: Callable[..., FilesystemProject],
     resolver: SourceResolver | None = None,
-) -> tuple[AdapterRegistry, _CapturingBackend]:
+) -> tuple[ExecEnv, _CapturingBackend]:
     backend = _CapturingBackend()
-    registry = AdapterRegistry(
+    registry = make_exec_env(
         project=local_project(Path()),
         resolver=resolver,
         backends=BackendRegistry({"duckdb": backend}),
@@ -85,12 +86,12 @@ def _compiled_board(sources: dict[str, dict] | None = None) -> Any:
 
 
 class TestAdapterReceivesTypedSourceConfig:
-    """AdapterRegistry invokes resolver once and passes SourceConfig to adapter."""
+    """ExecEnv invokes resolver once and passes SourceConfig to adapter."""
 
     def test_resolver_invoked_once_per_execute(
         self, local_project: Callable[..., FilesystemProject]
     ):
-        """Resolver is called exactly once per AdapterRegistry.execute() call."""
+        """Resolver is called exactly once per run_query() call."""
         from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 
         mock_resolver = MagicMock(spec=SourceResolver)
@@ -100,7 +101,7 @@ class TestAdapterReceivesTypedSourceConfig:
 
         registry, backend = _make_registry(local_project, resolver=mock_resolver)
         query = _sql_query(source="db")
-        registry.execute(query)
+        run_query(registry, query)
 
         assert mock_resolver.resolve.call_count == 1
 
@@ -114,7 +115,7 @@ class TestAdapterReceivesTypedSourceConfig:
         mock_resolver.resolve.return_value = duckdb_config
 
         registry, backend = _make_registry(local_project, resolver=mock_resolver)
-        registry.execute(_sql_query(source="db"))
+        run_query(registry, _sql_query(source="db"))
 
         assert len(backend.received) == 1
         assert backend.received[0] is duckdb_config
@@ -129,14 +130,14 @@ class TestAdapterReceivesTypedSourceConfig:
 
         registry, backend = _make_registry(local_project, resolver=mock_resolver)
         with pytest.raises(AssertionError, match="no dbt project"):
-            registry.execute(_sql_query(source="db"))
+            run_query(registry, _sql_query(source="db"))
 
         assert backend.received == []
 
     def test_board_sources_passed_to_resolver(
         self, local_project: Callable[..., FilesystemProject]
     ):
-        """AdapterRegistry passes board.sources to the resolver."""
+        """ExecEnv passes board.sources to the resolver."""
         mock_resolver = MagicMock(spec=SourceResolver)
         mock_resolver.resolve.return_value = DuckDBSourceConfig(type="duckdb")
 
@@ -145,7 +146,7 @@ class TestAdapterReceivesTypedSourceConfig:
 
         registry, _ = _make_registry(local_project, resolver=mock_resolver)
         query = _sql_query(source="my_db")
-        registry.execute(query, board=board)
+        run_query(registry, query, board=board)
 
         resolver_call = mock_resolver.resolve.call_args
         assert resolver_call.kwargs.get("board_sources") == board_sources or (
@@ -169,7 +170,7 @@ class TestAdapterReceivesTypedSourceConfig:
         )
 
         registry, backend = _make_registry(local_project, resolver=mock_resolver)
-        result = registry.execute(_sql_query(source="bad_db"))
+        result = run_query(registry, _sql_query(source="bad_db"))
 
         assert not result.is_success
         assert result.error is not None
@@ -177,7 +178,7 @@ class TestAdapterReceivesTypedSourceConfig:
 
 
 class TestDbtContextWireUp:
-    """When a dbt project is linked, AdapterRegistry threads a DbtContext into the
+    """When a dbt project is linked, ExecEnv threads a DbtContext into the
     resolver, letting unknown string source names defer to the dbt project
     instead of raising ERR-SOURCE-NOT-FOUND.
     """
@@ -190,21 +191,19 @@ class TestDbtContextWireUp:
         mock_resolver = MagicMock(spec=SourceResolver)
         mock_resolver.resolve.return_value = DuckDBSourceConfig(type="duckdb")
 
-        registry = AdapterRegistry(
-            project=local_project(Path()), resolver=mock_resolver
-        )
+        registry = make_exec_env(project=local_project(Path()), resolver=mock_resolver)
 
         # Without a dbt project the resolver sees dbt_context=None.
-        registry.execute(_sql_query(source="some_name"))
+        run_query(registry, _sql_query(source="some_name"))
         assert mock_resolver.resolve.call_args.kwargs["dbt_context"] is None
 
-        linked = AdapterRegistry(
+        linked = make_exec_env(
             project=local_project(Path()),
             resolver=mock_resolver,
             dbt_context=DbtContext(dbt_project_path=Path(), target=None),
         )
 
-        linked.execute(_sql_query(source="some_name"))
+        run_query(linked, _sql_query(source="some_name"))
         assert isinstance(
             mock_resolver.resolve.call_args.kwargs["dbt_context"], DbtContext
         )

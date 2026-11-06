@@ -18,10 +18,14 @@ use crate::pattern::library;
 use measure::baseline_shift;
 use scene::{Attrs, Chars, Escape, Node, PathData, Role, Run, Shape};
 use measure::FontBook;
+use std::cell::Cell;
 use crate::vega_fit;
 use crate::families::scatter_shape::{self, Bounds};
 use d3rs::vega_symbol::VegaSymbol;
 use crate::scene_path::scene_path;
+
+/// The canvas-colored outline under an overlay legend's labels, in px.
+const LEGEND_HALO_WIDTH: f64 = 5.0;
 
 #[derive(Deserialize)]
 pub struct LegendConfig {
@@ -33,6 +37,10 @@ pub struct LegendConfig {
     /// when the card is too narrow for one row, else 0 — one row).
     #[serde(default)]
     pub columns: Option<u32>,
+    /// The wrap [`limited_labels`] found a top or bottom legend needs once its labels were measured
+    /// against the room it has, so every later layout of this legend agrees. Never authored.
+    #[serde(skip)]
+    pub fitted_columns: Cell<Option<u32>>,
     pub label: LegendLabel,
     pub title: LegendTitle,
     /// Authored `style.legend.values`. A grouped bar's legend domain uses
@@ -45,7 +53,7 @@ pub struct LegendConfig {
     #[serde(default)]
     pub values: Option<Vec<String>>,
     /// VL `symbolLimit` (`legend_to_vl`'s `symbol_limit`): the most entries a
-    /// symbol legend draws; Vega folds the rest into an "…N entries" row.
+    /// symbol legend draws; a "+N more" note holds the rest.
     #[serde(default)]
     pub symbol_limit: Option<u32>,
     /// Authored `legend.symbol_shape` (VL `symbolType`).
@@ -221,90 +229,13 @@ pub fn slide_union(
     Ok(if along_x { (shift, 0.0) } else { (0.0, shift) })
 }
 
-/// Case/separator-fold a legend token for alias matching: collapse `-`, `_`
-/// and runs of whitespace to a single space, then lowercase, so
-/// `net_revenue`, `Net-Revenue` and `net revenue` all fold to the same key.
-///
-/// ASCII-equivalent to `emitters/_channels.py`'s `_fold_legend_token`, not
-/// identical: that folds with `casefold()`, this with `to_lowercase()`, so
-/// they disagree where casefold expands a character: `straße` folds to
-/// `strasse` in Python and stays `straße` here.
-pub fn fold_legend_token(token: &str) -> String {
-    let mut out = String::with_capacity(token.len());
-    let mut last_was_sep = false;
-    for c in token.chars() {
-        if c == '-' || c == '_' || c.is_whitespace() {
-            if !last_was_sep {
-                out.push(' ');
-            }
-            last_was_sep = true;
-        } else {
-            out.push(c);
-            last_was_sep = false;
-        }
-    }
-    out.trim().to_lowercase()
-}
-
-/// Production's `apply_legend_entry_order` for an authored `legend.values`
-/// (`emitters/_channels.py`: `resolve_legend_entries`, then the dedupe and the
-/// nothing-matched fallback): indices into `domain` in authored order. A
-/// token takes the domain entry it spells exactly, else the one entry whose
-/// alias it spells exactly, else the one entry it folds to
-/// (`fold_legend_token`); a token matching nothing, or more than one entry at
-/// its tier, is dropped, never guessed. When no token resolves the whole
-/// domain keeps its own order. `authored` is never empty here (an explicit
-/// `values: []` draws a title-only legend, which callers handle before this).
-///
-/// `aliases`, when given, is one extra spelling per `domain` entry (a wide
-/// fold's raw measure name for its humanized label, `wide_legend_aliases`);
-/// an alias spelling another entry's own name never resolves to this one.
-pub fn resolve_legend_values(
-    authored: &[String],
-    domain: &[&str],
-    aliases: Option<&[&str]>,
-) -> Vec<usize> {
-    let alias_of = |idx: usize| aliases.map(|spellings| spellings[idx]);
-    let resolve = |token: &str| -> Option<usize> {
-        if let Some(idx) = domain.iter().position(|entry| *entry == token) {
-            return Some(idx);
-        }
-        let mut aliased = (0..domain.len()).filter(|&idx| alias_of(idx) == Some(token));
-        if let (Some(idx), None) = (aliased.next(), aliased.next()) {
-            return Some(idx);
-        }
-        let folded = fold_legend_token(token);
-        let mut matches = (0..domain.len()).filter(|&idx| {
-            fold_legend_token(domain[idx]) == folded
-                || alias_of(idx).is_some_and(|alias| {
-                    !domain.contains(&alias) && fold_legend_token(alias) == folded
-                })
-        });
-        match (matches.next(), matches.next()) {
-            (Some(idx), None) => Some(idx),
-            _ => None,
-        }
-    };
-    let mut resolved: Vec<usize> = Vec::new();
-    for token in authored {
-        if let Some(idx) = resolve(token).filter(|idx| !resolved.contains(idx)) {
-            resolved.push(idx);
-        }
-    }
-    if resolved.is_empty() {
-        (0..domain.len()).collect()
-    } else {
-        resolved
-    }
-}
-
 /// An authored `legend.values` narrows and orders a layered chart's whole
 /// entry list (base + every layer's own) the way Vega's legend `values` does
 /// (`apply_legend_entry_order`); `[]` draws a title-only legend.
 pub(crate) fn narrow_legend_entries<'a>(entries: Vec<LegendEntry<'a>>, legend: &LegendConfig) -> Vec<LegendEntry<'a>> {
     let Some(values) = &legend.values else { return entries };
     let labels: Vec<&str> = entries.iter().map(|e| e.label).collect();
-    let narrowed = if values.is_empty() { Vec::new() } else { resolve_legend_values(values, &labels, None) };
+    let narrowed = if values.is_empty() { Vec::new() } else { ::bind::legend::resolve_legend_values(values, &labels, None) };
     narrowed.into_iter().map(|i| entries[i]).collect()
 }
 
@@ -381,7 +312,9 @@ pub struct LegendGrid {
 }
 
 const VEGA_SYMBOL_SIZE: f64 = 100.0;
-const VEGA_DASH_SYMBOL_SIZE: f64 = 2000.0;
+/// A dashed swatch shows two cycles of its pattern, and is never shorter than the solid line glyph.
+const DASH_SWATCH_CYCLES: f64 = 2.0;
+const DASH_SWATCH_MIN_LEN: f64 = 20.0;
 /// The line mark's legend glyph: the fixed 20px segment `M-10,0L10,0`.
 const VEGA_STROKE_SYMBOL_SIZE: f64 = 400.0;
 const VEGA_SYMBOL_STROKE_WIDTH: f64 = 1.5;
@@ -398,6 +331,14 @@ pub(crate) fn entry_symbol<'a>(fill: &str, symbol: Option<LegendSymbol<'a>>) -> 
     } else {
         symbol
     }
+}
+
+/// The length of a dash swatch: two cycles of `pattern` (a list of odd length repeats to even,
+/// as SVG reads it), at least the solid line glyph's.
+fn dash_swatch_len(pattern: &str) -> f64 {
+    let lengths: Vec<f64> = pattern.split([',', ' ']).filter(|n| !n.is_empty()).map(|n| n.parse().expect("an engine dasharray is numbers")).collect();
+    let cycle: f64 = lengths.iter().sum::<f64>() * if lengths.len() % 2 == 1 { 2.0 } else { 1.0 };
+    (DASH_SWATCH_CYCLES * cycle).max(DASH_SWATCH_MIN_LEN)
 }
 
 /// Lay `label_ws` (one per entry, in legend order) out at `font_size` in
@@ -428,8 +369,9 @@ pub fn legend_grid(
             .iter()
             .any(|s| matches!(s, Some(LegendSymbol::Stroke(_) | LegendSymbol::StrokedCircle(_))));
     let stroke_w = if symbols.iter().any(|s| matches!(s, Some(LegendSymbol::ThinCircle))) { 1.0 } else { VEGA_SYMBOL_STROKE_WIDTH };
-    let size = if symbols.iter().any(|s| matches!(s, Some(LegendSymbol::Dash(_)))) {
-        (VEGA_DASH_SYMBOL_SIZE.sqrt() + VEGA_SYMBOL_STROKE_WIDTH).ceil().max(font_size)
+    let widest_dash = symbols.iter().filter_map(|s| match s { Some(LegendSymbol::Dash(pattern)) => Some(dash_swatch_len(pattern)), _ => None }).fold(None, |widest: Option<f64>, len| Some(widest.map_or(len, |w| w.max(len))));
+    let size = if let Some(len) = widest_dash {
+        (len + VEGA_SYMBOL_STROKE_WIDTH).ceil().max(font_size)
     } else if mixed {
         font_size
     } else {
@@ -451,7 +393,7 @@ pub fn legend_grid(
         }
         Some(LegendSymbol::Stroke(w)) => stroke_half_extent(10.0, w).0,
         Some(LegendSymbol::ShortStroke) => stroke_half_extent(5.0, VEGA_SYMBOL_STROKE_WIDTH).0,
-        Some(LegendSymbol::Dash(_)) => VEGA_DASH_SYMBOL_SIZE.sqrt() / 2.0 + VEGA_SYMBOL_STROKE_WIDTH,
+        Some(LegendSymbol::Dash(pattern)) => dash_swatch_len(pattern) / 2.0 + VEGA_SYMBOL_STROKE_WIDTH,
         Some(LegendSymbol::PatternKey) => PATTERN_KEY_LEFT,
         Some(LegendSymbol::FilledCircle | LegendSymbol::FilledGlyph(_) | LegendSymbol::FilledSquare) => {
             VEGA_SYMBOL_SIZE.sqrt() / 2.0
@@ -478,7 +420,7 @@ pub fn legend_grid(
     let y2 = |i: usize| (c + extent_y(i).1).max(text_y1 + font_size);
     let key_extra = if symbols.iter().any(|s| matches!(s, Some(LegendSymbol::PatternKey))) { library::KEY_W - 10.0 } else { 0.0 };
     let label_x = size + key_extra + label_offset;
-    let x2 = |i: usize| label_x + label_ws[i];
+    let x2 = |i: usize| if matches!(symbols.get(i), Some(Some(LegendSymbol::Overflow))) { label_ws[i] } else { label_x + label_ws[i] };
     let neg = |v: f64| if v < 0.0 { (-v).ceil() } else { 0.0 };
     // `x1` of the column being PLACED (Vega's `gridLayout` takes it from
     // the column, not a fixed entry) — the min over that column's own
@@ -748,7 +690,7 @@ pub(crate) fn stack_legends(blocks: &[(f64, f64)], along_x: bool) -> (Vec<f64>, 
 }
 
 /// Vega's default `symbolLimit`: the most entries a symbol legend draws before
-/// it folds the rest into an "…N entries" row.
+/// it folds the rest into a "+N more" note.
 pub(crate) const VEGA_LEGEND_SYMBOL_LIMIT: u32 = 30;
 
 /// A legend's start-anchored origin (its group's top-left, in plot
@@ -918,22 +860,21 @@ pub fn limit_legend_text<'a>(
     Ok(LimitedLegendText { labels: drawn, label_ws, title, title_w })
 }
 
-/// The width a legend's entry grid may take: the chart's `width` less the offset the plot's
-/// origin sits in from the card, for a legend above or below the plot, which Vega anchors at that
-/// origin and lets run past the card; `None` where the legend sits beside the plot (it takes its
-/// own gutter) or floats over it.
-pub fn legend_room(cfg: &LegendConfig, width: Option<f64>) -> Option<f64> {
-    width
-        .filter(|_| !cfg.position.overlay && matches!(cfg.position.edge.as_str(), "top" | "bottom"))
-        .map(|width| width - VEGA_LEGEND_OFFSET)
+/// The width a legend's entry grid may take, `span` being what is left of the card from where the
+/// row starts: for a legend above or below the plot, which Vega anchors at the plot's left edge;
+/// `None` where the legend sits beside the plot (it takes its own gutter) or floats over it.
+pub fn legend_room(cfg: &LegendConfig, span: f64) -> Option<f64> {
+    (!cfg.position.overlay && matches!(cfg.position.edge.as_str(), "top" | "bottom")).then_some(span)
 }
 
 /// The narrowest a label is cut to, in px, when the legend must shrink to its room.
 const MIN_FIT_LABEL_LIMIT: f64 = 40.0;
 
-/// Each entry's label as it is drawn: cut with an ellipsis at `labelLimit`, and, where the legend
-/// has only `room` px, at the widest limit that lets its grid fit (never under
-/// [`MIN_FIT_LABEL_LIMIT`]), so long names shorten instead of running off the card.
+/// Each entry's label as it is drawn: cut with an ellipsis at `labelLimit`. Where the legend has
+/// only `room` px and its entries do not fit one row, it wraps into the most columns that fit
+/// (recorded in `cfg.fitted_columns`; an authored `columns` is kept), and only when even one
+/// entry per row is too wide are labels cut, at the widest limit that fits (never under
+/// [`MIN_FIT_LABEL_LIMIT`]).
 pub fn limited_labels(
     entries: &[LegendEntry],
     mixed_marks: bool,
@@ -951,9 +892,18 @@ pub fn limited_labels(
         let drawn = cut(limit)?;
         Ok(vega_legend(&with_drawn_labels(entries, &drawn), mixed_marks, title, cfg, fonts)?.box_w <= room.expect("fits is asked only with room"))
     };
+    cfg.fitted_columns.set(None);
     let Some(_) = room else { return cut(theme_limit) };
     if fits(theme_limit)? {
         return cut(theme_limit);
+    }
+    if cfg.direction == "horizontal" && cfg.columns.unwrap_or(0) == 0 {
+        for columns in (1..entries.len() as u32).rev() {
+            cfg.fitted_columns.set(Some(columns));
+            if fits(theme_limit)? {
+                return cut(theme_limit);
+            }
+        }
     }
     let (mut lo, mut hi) = (MIN_FIT_LABEL_LIMIT.min(theme_limit), theme_limit);
     while hi - lo > 1.0 {
@@ -973,11 +923,40 @@ pub fn with_drawn_labels<'a>(entries: &[LegendEntry<'a>], drawn: &'a [String]) -
         .collect()
 }
 
-/// `symbolLimit`: vega-encode's `LegendEntries` keeps the first `limit - 1` of `count` entries and
-/// folds the rest into one "…N entries" row that carries the next entry's own swatch. `None` where
-/// the entries fit.
-pub fn fold_symbol_limit(count: usize, limit: usize) -> Option<(usize, String)> {
-    (limit > 0 && count > limit).then(|| (limit - 1, format!("\u{2026}{} entries", count - (limit - 1))))
+/// A side legend stacks one entry per row, so past `height` it would run off the card. The count
+/// of leading entries that fit beside an overflow row naming the rest, and that row's label; `None`
+/// where the legend fits or sits elsewhere than a side edge.
+pub fn fold_to_height(
+    entries: &[LegendEntry],
+    mixed_marks: bool,
+    title: &str,
+    cfg: &LegendConfig,
+    fonts: &FontBook,
+    height: f64,
+) -> Result<Option<(usize, String)>, String> {
+    if cfg.position.overlay || !matches!(cfg.position.edge.as_str(), "left" | "right") {
+        return Ok(None);
+    }
+    let fits = |shown: &[LegendEntry]| -> Result<bool, String> {
+        Ok(vega_legend(shown, mixed_marks, title, cfg, fonts)?.box_h() <= height)
+    };
+    if fits(entries)? {
+        return Ok(None);
+    }
+    for kept in (1..entries.len().saturating_sub(1)).rev() {
+        let (_, label) = ::bind::legend::fold_symbol_limit(entries.len(), kept + 1).expect("kept leaves at least two entries to fold");
+        if fits(&folded_entries(entries, kept, &label))? {
+            return Ok(Some((kept, label)));
+        }
+    }
+    Err(format!("legend: {} entries do not fit a {height}px card even folded into one overflow row", entries.len()))
+}
+
+/// The first `kept` of `entries`, then one swatchless note labeled `label`.
+pub fn folded_entries<'a>(entries: &[LegendEntry<'a>], kept: usize, label: &'a str) -> Vec<LegendEntry<'a>> {
+    let mut folded = entries[..kept].to_vec();
+    folded.push(LegendEntry { label, symbol: Some(LegendSymbol::Overflow), series_key: None, recede: None, action: None, ..entries[kept] });
+    folded
 }
 
 /// Lay `entries` out as Vega would under `title_text` (empty for none).
@@ -1021,9 +1000,9 @@ pub fn vega_legend(
 /// in one row (0) for a horizontal one. Production forwards only a positive
 /// count (`legend_to_vl`, `vl_field_maps.py:1050-1051`).
 pub fn entry_columns(cfg: &LegendConfig) -> usize {
-    match cfg.columns {
-        Some(columns) if columns > 0 => columns as usize,
-        _ => usize::from(cfg.direction == "vertical"),
+    match cfg.columns.filter(|&columns| columns > 0).or(cfg.fitted_columns.get()) {
+        Some(columns) => columns as usize,
+        None => usize::from(cfg.direction == "vertical"),
     }
 }
 
@@ -1137,6 +1116,9 @@ pub enum LegendSymbol<'a> {
     /// triangles are shorter than the circle along one axis. Laid out by
     /// [`legend_grid`] only; nothing draws through [`drawn_symbol_legend`].
     Glyph(crate::families::scatter_shape::Bounds),
+    /// The "+N more" note a folded legend closes on: no swatch, and its label starts at the
+    /// column's left edge, under the swatches.
+    Overflow,
 }
 
 /// The glyph an entry draws when the author set `legend.symbol_shape`, or hollowed the
@@ -1182,6 +1164,7 @@ pub fn vega_default_legend(themed: &LegendConfig) -> LegendConfig {
         position: LegendPosition { edge: "right".into(), align: LegendAlign::Start, overlay: false },
         direction: "vertical".into(),
         columns: None,
+        fitted_columns: Cell::default(),
         label: LegendLabel { font: font(&themed.label.font, 10.0, "400"), padding: Some(4.0), max_width: None },
         title: LegendTitle { font: font(&themed.title.font, 11.0, "bold"), visible: None },
         values: None,
@@ -1209,6 +1192,7 @@ pub fn symbol_legend(
     legend_x: f64,
     legend_y: f64,
     stamp_series: bool,
+    canvas: &str,
 ) -> Node {
     // Vega joins the entries with ", " for its own aria-label, ambiguous once a name holds a
     // comma: the legend then says only how many series it names.
@@ -1236,6 +1220,7 @@ pub fn symbol_legend(
         let x = legend_x + grid.col_x[i % columns];
         let y = legend_y + grid.row_y[i / columns];
         let c = grid.size / 2.0;
+        let overflow = matches!(entry.symbol, Some(LegendSymbol::Overflow));
         let mut symbol = entry_symbol(entry.fill, entry.symbol).unwrap_or(default_symbol);
         let authored = authored_glyph(cfg, Some(symbol));
         if let Some((path, bounds, opacity)) = &authored {
@@ -1248,14 +1233,16 @@ pub fn symbol_legend(
                 }
             };
         }
-        let mut symbol = symbol_node(symbol, entry.fill, (x + c, y + c));
         let receded = |attrs: Attrs| match entry.recede {
             Some(recede) => recede.recede_attrs(attrs),
             None => attrs,
         };
-        symbol.attrs = receded(std::mem::take(&mut symbol.attrs));
         let linked = matches!(entry.action, Some(LegendAction::Link(_)));
-        let symbol = Node::group(Role::Legend, contract::legend_symbol_attrs(linked), vec![symbol]);
+        let symbol = (!overflow).then(|| {
+            let mut symbol = symbol_node(symbol, entry.fill, (x + c, y + c));
+            symbol.attrs = receded(std::mem::take(&mut symbol.attrs));
+            Node::group(Role::Legend, contract::legend_symbol_attrs(linked), vec![symbol])
+        });
         // `data-dbt-series` -- the untruncated join key `_stamp_series_keys`
         // (converters/chart.py:367-385, :457-461: the label's text, stripped) stamps -- fires exactly when
         // `stamp_series` is true: a series row was promoted with NO
@@ -1269,21 +1256,34 @@ pub fn symbol_legend(
             .num("font-size", size).quick_some("font-style", label_font.style.as_deref())
             .set("font-weight", weight.clone())
             .set("fill", color);
-        let at = (x + grid.label_x, y + c + baseline_shift("middle", size));
+        let at = (x + if overflow { 0.0 } else { grid.label_x }, y + c + baseline_shift("middle", size));
         let label = text_revealing_full_name(Role::Legend, at, receded(label_attrs), entry.label, entry.series_key.map(str::trim).filter(|full| *full != entry.label));
         let label_group = contract::legend_label_attrs(series_key, linked);
         let label_group = match entry.action {
             Some(LegendAction::Toggle { view, series }) => view.clickable(label_group, series),
             _ => label_group,
         };
-        let label = Node::group(Role::Legend, label_group, vec![label]);
+        let knockout = cfg.position.overlay.then(|| {
+            let halo = Attrs::new()
+                .set("text-anchor", "start")
+                .vega("font-family", family)
+                .num("font-size", size).quick_some("font-style", label_font.style.as_deref())
+                .set("font-weight", weight.clone())
+                .set("fill", canvas)
+                .set("stroke", canvas)
+                .num("stroke-width", LEGEND_HALO_WIDTH)
+                .set("stroke-linejoin", "round")
+                .set("aria-hidden", "true");
+            text_revealing_full_name(Role::Legend, at, halo, entry.label, None)
+        });
+        let label = Node::group(Role::Legend, label_group, knockout.into_iter().chain([label]).collect());
         match entry.action {
             Some(LegendAction::Link(link)) => cells.push(Node::new(
                 Role::Chrome,
                 Attrs::new().set("href", link.href()).set_if(entry.recede.is_some(), "data-dbt-receded", "true"),
-                Shape::Link(vec![symbol, label]),
+                Shape::Link(symbol.into_iter().chain([label]).collect()),
             )),
-            _ => cells.extend([symbol, label]),
+            _ => cells.extend(symbol.into_iter().chain([label])),
         }
     }
     children.push(Node::group(Role::Legend, contract::legend_entries_attrs(), cells));
@@ -1362,13 +1362,14 @@ fn symbol_node(symbol: LegendSymbol, fill: &str, (cx, cy): (f64, f64)) -> Node {
         .translate(cx - PATTERN_KEY_LEFT, cy - library::KEY_H / 2.0),
         LegendSymbol::Dash(pattern) => {
             let attrs = Attrs::new().set("fill", fill).set("stroke", fill).num("stroke-width", 1.5);
-            path(scene_path(&VegaSymbol::Stroke.draw(VEGA_DASH_SYMBOL_SIZE)), dashed(pattern, attrs))
+            path(scene_path(&VegaSymbol::Stroke.draw(dash_swatch_len(pattern).powi(2))), dashed(pattern, attrs))
         }
         LegendSymbol::DashCircle(pattern) => {
             let attrs = Attrs::new().set("fill", "none").set("stroke", fill).num("stroke-width", 1.5);
             path(disc(), dashed(pattern, attrs))
         }
         LegendSymbol::Glyph(..) => unreachable!("a glyph symbol is laid out, never emitted here"),
+        LegendSymbol::Overflow => unreachable!("the overflow note draws no swatch"),
         LegendSymbol::Stroke(width) => {
             path(scene_path(&VegaSymbol::Stroke.draw(VEGA_STROKE_SYMBOL_SIZE)), Attrs::new().set("fill", fill).set("stroke", fill).num("stroke-width", width))
         }
@@ -1385,9 +1386,9 @@ const SIZE_LEGEND_TICK_COUNT: usize = 5;
 pub fn size_legend_ticks(domain: (f64, f64), drop_zero: bool) -> Result<(Vec<f64>, Vec<String>), String> {
     let ticks = d3rs::ticks::d3_ticks(domain.0, domain.1, SIZE_LEGEND_TICK_COUNT);
     let step = ticks.get(1).map_or(1.0, |&v| v - ticks[0]);
-    let spec = crate::number_locale::vega_tick_spec(step);
+    let spec = ::bind::formats::locale::vega_tick_spec(step);
     let values: Vec<f64> = ticks.into_iter().filter(|&v| !(drop_zero && v == 0.0)).collect();
-    let labels = values.iter().map(|&v| crate::number_locale::d3_format(&spec, v)).collect::<Result<_, _>>()?;
+    let labels = values.iter().map(|&v| ::bind::formats::locale::d3_format(&spec, v)).collect::<Result<_, _>>()?;
     Ok((values, labels))
 }
 
@@ -1525,9 +1526,10 @@ pub fn drawn_symbol_legend(
     legend_x: f64,
     legend_y: f64,
     stamp_series: bool,
+    canvas: &str,
 ) -> Option<Node> {
     (!(entries.is_empty() && legend.title.is_empty()))
-        .then(|| symbol_legend(entries, legend, cfg, default_symbol, legend_x, legend_y, stamp_series))
+        .then(|| symbol_legend(entries, legend, cfg, default_symbol, legend_x, legend_y, stamp_series, canvas))
 }
 
 #[derive(Deserialize)]
@@ -1577,7 +1579,7 @@ pub fn legend_title_text(
     cfg: &LegendConfig,
     field_labels: &FieldLabels,
 ) -> Result<String, String> {
-    if cfg.title.visible == Some(false) || color_field == crate::common::WIDE_LABEL_FIELD {
+    if cfg.title.visible == Some(false) || color_field == ::bind::wide::WIDE_LABEL_FIELD {
         return Ok(String::new());
     }
     color_channel_title(color_field, cfg, field_labels)
@@ -1619,46 +1621,6 @@ mod tests {
         assert_eq!((read.edge.as_str(), read.align), ("right", LegendAlign::Start));
         let centered = serde_json::json!({"edge": "top", "align": "center", "overlay": false});
         assert_eq!(legend_position(centered).unwrap().align, LegendAlign::Center);
-    }
-
-    /// `resolve_legend_entries`' two tiers: the exact spelling, else the one
-    /// folded match; an unmatched or ambiguous token drops; nothing resolving
-    /// leaves the domain's own order.
-    #[test]
-    fn authored_values_resolve_exact_then_folded_and_drop_what_does_not_match() {
-        let domain = ["Net Revenue", "Net-Revenue 2", "Tools"];
-        let authored = |tokens: &[&str]| tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>();
-        let resolve = |tokens: &[&str]| resolve_legend_values(&authored(tokens), &domain, None);
-        assert_eq!(resolve(&["Tools", "net_revenue"]), [2, 0]);
-        assert_eq!(resolve(&["tools", "Tools", "nothing"]), [2]);
-        // "net revenue 2" folds to exactly one entry; "net-revenue" to the
-        // first only, so each resolves.
-        assert_eq!(resolve_legend_values(&authored(&["net revenue 2"]), &domain, None), [1]);
-        // Nothing resolves: the whole domain, in its own order.
-        assert_eq!(resolve_legend_values(&authored(&["x", "y"]), &domain, None), [0, 1, 2]);
-        // Two entries folding to one key make the token ambiguous: dropped.
-        assert_eq!(resolve_legend_values(&authored(&["a b"]), &["A-B", "a_b"], None), [0, 1]);
-    }
-
-    /// A wide fold's raw measure name resolves to its humanized entry
-    /// (`wide_legend_aliases`); an alias two entries share, or one that spells
-    /// another entry's own name, resolves to neither.
-    #[test]
-    fn authored_values_resolve_an_alias_after_the_exact_spelling() {
-        let authored = |tokens: &[&str]| tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>();
-        let domain = ["growth %", "total cost"];
-        let aliases: &[&str] = &["growth_pct", "total_cost"];
-        let resolve =
-            |tokens: &[&str]| resolve_legend_values(&authored(tokens), &domain, Some(aliases));
-        assert_eq!(resolve(&["growth_pct", "total cost"]), [0, 1]);
-        assert_eq!(resolve(&["total_cost", "growth %"]), [1, 0]);
-        assert_eq!(resolve(&["Total-Cost"]), [1]);
-        assert_eq!(resolve(&["growth pct"]), [0]);
-        let shared: &[&str] = &["x", "x"];
-        assert_eq!(resolve_legend_values(&authored(&["x"]), &domain, Some(shared)), [0, 1]);
-        let stolen: &[&str] = &["total cost", "total_cost"];
-        assert_eq!(resolve_legend_values(&authored(&["total cost"]), &domain, Some(stolen)), [1]);
-        assert_eq!(resolve_legend_values(&authored(&["total-cost"]), &domain, Some(stolen)), [1]);
     }
 
     /// `end` reads as a placement; whether a family may draw it is the
@@ -1803,7 +1765,7 @@ mod tests {
         legend_y: f64,
         stamp_series: bool,
     ) {
-        let node = drawn_symbol_legend(entries, legend, cfg, default_symbol, legend_x, legend_y, stamp_series);
+        let node = drawn_symbol_legend(entries, legend, cfg, default_symbol, legend_x, legend_y, stamp_series, "#ffffff");
         out.extend(node.map(|node| print::print(&[node])));
     }
 
@@ -1857,6 +1819,26 @@ mod tests {
         let symbols = [Some(LegendSymbol::Square("#40639c"))];
         assert_eq!(legend_grid(&[70.0], &symbols, true, 11.0, 0, 8.0).size, 11.0);
         assert_eq!(legend_grid(&[70.0], &symbols, false, 11.0, 0, 8.0).size, 12.0);
+    }
+
+    /// A dashed swatch is two pattern cycles long, no shorter than the solid line glyph: a "6,3"
+    /// line reads as 20px like a solid one, not the 45px a strokeDash legend drew.
+    #[test]
+    fn a_dash_swatch_is_two_cycles_long_and_no_shorter_than_a_solid_one() {
+        assert_eq!(dash_swatch_len(""), 20.0);
+        assert_eq!(dash_swatch_len("6,3"), 20.0);
+        assert_eq!(dash_swatch_len("20 10"), 60.0);
+        assert_eq!(dash_swatch_len("10,5,5"), 80.0);
+        let dashed = |pattern| {
+            let entries = [LegendEntry { label: "a", fill: "#40639c", symbol: Some(LegendSymbol::Dash(pattern)), series_key: None, recede: None, action: None }];
+            let cfg = legend_cfg("vertical", None);
+            let legend = vega_legend(&entries, true, "", &cfg, &test_fonts()).unwrap();
+            let mut svg = String::new();
+            emit_vega_legend(&mut svg, &entries, &legend, &cfg, LegendSymbol::Circle, 0.0, 0.0, false);
+            svg
+        };
+        assert!(dashed("20,10").contains("M-30,0L30,0"), "{}", dashed("20,10"));
+        assert!(dashed("6,3").contains("M-10,0L10,0"), "{}", dashed("6,3"));
     }
 
     #[test]

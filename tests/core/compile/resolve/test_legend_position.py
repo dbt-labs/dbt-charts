@@ -40,7 +40,9 @@ _DIRECT = [("A", 40.0), ("B", 30.0), ("C", 20.0), ("D", 10.0)]
 
 
 def _bar(
-    position: dict[str, Any] | None = None, direction: str | None = None
+    position: dict[str, Any] | None = None,
+    direction: str | None = None,
+    orientation: str = "vertical",
 ) -> BarChart:
     legend: dict[str, Any] = {} if position is None else {"position": position}
     if direction is not None:
@@ -52,7 +54,9 @@ def _bar(
         x="cat",
         y="val",
         color="series",
-        style=BarChartStylePatch.model_validate({"legend": legend}),
+        style=BarChartStylePatch.model_validate(
+            {"orientation": orientation, "legend": legend}
+        ),
     )
 
 
@@ -112,6 +116,26 @@ def test_authored_leaves_win(
         _bar(authored), _ROWS, width=900.0
     ).legend.position
     assert (position.edge, position.align, position.overlay) == expected
+
+
+def test_a_horizontal_bar_never_floats_its_legend_over_the_bars() -> None:
+    authored = {"edge": "top", "overlay": True}
+    horizontal = make_test_resolved_chart(
+        _bar(authored, orientation="horizontal"), _ROWS, width=900.0
+    )
+    assert (horizontal.legend.position.edge, horizontal.legend.position.overlay) == (
+        "top",
+        False,
+    )
+    no_edge = make_test_resolved_chart(
+        _bar({"overlay": True}, orientation="horizontal"), _ROWS, width=900.0
+    )
+    assert (no_edge.legend.position.edge, no_edge.legend.position.overlay) == (
+        "top",
+        False,
+    )
+    vertical = make_test_resolved_chart(_bar(authored), _ROWS, width=900.0)
+    assert vertical.legend.position.overlay is True
 
 
 def test_overlay_without_an_edge_anchors_to_the_top() -> None:
@@ -428,7 +452,9 @@ def _many(width: float, **legend: Any) -> Any:
         x="cat",
         y="val",
         color="series",
-        style=BarChartStylePatch.model_validate({"legend": legend}),
+        style=BarChartStylePatch.model_validate(
+            {"orientation": "vertical", "legend": legend}
+        ),
     )
     return make_test_resolved_chart(chart, _MANY_ROWS, width=width).legend
 

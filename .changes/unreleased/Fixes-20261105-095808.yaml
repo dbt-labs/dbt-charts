@@ -1,0 +1,3 @@
+kind: Fixes
+body: Band labels center on the band and wrap to its width, a band on a daily, monthly, or other bucketed line or area chart is centered on its bucket's mark, and a band past the last point is clipped instead of widening the axis.
+time: 2026-11-05T09:58:08.856812-08:00

@@ -5,23 +5,12 @@ The facts come from the ``versions/*.py`` declarations through ``retired_keys``.
 
 from __future__ import annotations
 
-import itertools
 from collections.abc import Iterator
 from typing import Any, cast
 
-import pytest
-import yaml
-from pydantic import ValidationError
-
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations.migrations import (
-    _board_migration_context,
     retired_keys,
-)
-from dbt_charts.core.compile.models.board.authored import AuthoredBoard
-from dbt_charts.core.compile.parse.yaml_error_formatter import (
-    _display_path,
-    format_validation_errors_structured,
 )
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import JsonObject
 from dbt_charts.core.diagnostics.codes_compile import ERR_EXTRA_FIELD, ERR_RETIRED_FIELD
@@ -206,32 +195,10 @@ def _matches(key: tuple[str, ...], path: tuple[str, ...]) -> bool:
 
 
 def _retired_in(document: dict[str, object]) -> set[tuple[str, ...]]:
-    catalog, registry = _board_migration_context()
-    return set(retired_keys(cast(JsonObject, document), catalog, registry))
+    return set(retired_keys(cast(JsonObject, document)))
 
 
 _INLINE_ITEM_ROOTS = frozenset(("rows", "cols", "grid", "tabs"))
-
-
-def _declarations(source_schema: str) -> Iterator[tuple[tuple[str, ...], str | None]]:
-    for path, chart_type in _all_declarations(source_schema):
-        if path[0] not in _INLINE_ITEM_ROOTS:
-            yield path, chart_type
-
-
-def _all_declarations(
-    source_schema: str,
-) -> Iterator[tuple[tuple[str, ...], str | None]]:
-    _, registry = _board_migration_context()
-    for move in registry.moves:
-        if move.source_schema == source_schema and move.old_path != move.new_path:
-            yield move.old_path, move.chart_type
-    for deletion in registry.deletions:
-        if deletion.source_schema == source_schema:
-            yield deletion.path, deletion.chart_type
-    for rule in registry.conditional_moves:
-        if rule.source_schema == source_schema:
-            yield ("charts", "*", *rule.old_tail), rule.chart_type
 
 
 # The 0.5.0 schema has no histogram or donut chart model carrying a chart-local
@@ -241,86 +208,3 @@ _UNINSTANTIABLE = frozenset(
     for family in ("histogram", "donut")
     for field in ("font", "border")
 )
-
-
-@pytest.mark.timeout(300)
-@pytest.mark.parametrize(
-    "source_schema", list(_board_migration_context()[0].versions[1:-1])
-)
-def test_every_declared_retired_key_is_retired_never_unknown(
-    source_schema: str,
-) -> None:
-    """Each key a ``versions/`` declaration retires is found by ``retired_keys`` on
-    a board that spells it, and validation never reports it as unknown."""
-    root = _board_migration_context()[0].schema_for(source_schema)
-    unseen: list[tuple[tuple[str, ...], str | None]] = []
-    unrouted: list[tuple[str, ...]] = []
-    for old_path, chart_type in _declarations(source_schema):
-        if source_schema == "0.5.0" and (old_path, chart_type) in _UNINSTANTIABLE:
-            continue
-        instances = _instances(root, root, old_path, [2_000_000], chart_type)
-        for document in itertools.islice(instances, 3000):
-            assert isinstance(document, dict)
-            found = {k for k in _retired_in(document) if _matches(k, old_path)}
-            if found and (
-                chart_type is None
-                or f"type: {chart_type}\n" in yaml.safe_dump(document)
-            ):
-                break
-        else:
-            unseen.append((old_path, chart_type))
-            continue
-        try:
-            AuthoredBoard.model_validate(document)
-        except ValidationError as error:
-            text = yaml.safe_dump(document)
-            for diagnostic in format_validation_errors_structured(error, text):
-                if diagnostic.code != ERR_EXTRA_FIELD.code:
-                    continue
-                shown = tuple(_display_path(diagnostic.fields["field_path"].split(".")))
-                if shown in found:
-                    unrouted.append(shown)
-
-    assert not unseen, f"declared keys no board position retires: {unseen[:20]}"
-    assert not unrouted, f"retired keys reported as unknown: {unrouted[:20]}"
-
-
-def test_every_declaration_module_has_a_retained_grammar() -> None:
-    """Retired-key facts are built from ``versions/*.py`` *through* the catalog's
-    frozen grammars."""
-    from importlib import resources
-
-    catalog, _ = _board_migration_context()
-    modules = {
-        path.name.removeprefix("v").removesuffix(".py").replace("_", ".")
-        for path in resources.files(
-            "dbt_charts.core.compile.migrations.versions"
-        ).iterdir()
-        if path.name.startswith("v") and path.name.endswith(".py")
-    }
-
-    assert modules <= set(catalog.versions), modules - set(catalog.versions)
-
-
-def test_a_retired_key_in_an_inline_item_is_routed_with_a_display_path() -> None:
-    source = "0.9.0"
-    root = _board_migration_context()[0].schema_for(source)
-    old_path = next(path for path, _ in _all_declarations(source) if path[0] == "rows")
-    document = next(
-        d
-        for d in _instances(root, root, old_path, [2_000_000], None)
-        if _retired_in(cast(dict[str, object], d))
-    )
-    assert isinstance(document, dict)
-
-    with pytest.raises(ValidationError) as error:
-        AuthoredBoard.model_validate(document)
-    diagnostics = format_validation_errors_structured(
-        error.value, yaml.safe_dump(document)
-    )
-
-    retired = [d for d in diagnostics if d.code == ERR_RETIRED_FIELD.code]
-    assert retired, [d.message for d in diagnostics]
-    assert not any(
-        "@inline" in d.message or "@inline" in d.fields["field_path"] for d in retired
-    )

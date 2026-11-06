@@ -15,8 +15,8 @@ import pytest
 from dbt_charts.core.compile.models.source import TrinoSourceConfig
 from dbt_charts.core.connections import bulk_schema_for_config
 from dbt_charts.core.dialects import get_dialect
-from dbt_charts.core.execute.adapters.base import resolve_effective_row_limit
 from dbt_charts.core.execute.drivers import open_driver
+from dbt_charts.core.execute.query_result import resolve_effective_row_limit
 from dbt_charts.core.execute.result import arrow_to_query_result
 
 pytestmark = pytest.mark.skipif(

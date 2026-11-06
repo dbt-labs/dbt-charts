@@ -19,10 +19,22 @@ from dbt_charts.core.board import BoardRenderResult
 from dbt_charts.core.compile.config import load_project_sources
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.diagnostics import ERR_SOURCE_NOT_FOUND, ERR_SOURCE_NOT_NAMED
+from dbt_charts.core.compile.models.source import DbtProfileSourceConfig
+from dbt_charts.core.diagnostics import (
+    ERR_DBT_PROFILE_UNRESOLVED,
+    ERR_SOURCE_NOT_FOUND,
+    ERR_SOURCE_NOT_NAMED,
+)
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_CONFIG_INVALID
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
+from dbt_charts.core.execute.plan_sources import (
+    list_sql_sources,
+    resolve_query_source,
+    resolve_source_config,
+)
+from dbt_charts.core.execute.run import run_query
+from dbt_charts.core.execute.source_resolver import DbtContext, DefaultSourceResolver
 
 
 @pytest.fixture(autouse=True)
@@ -69,12 +81,12 @@ def test_sourceless_sql_runs_against_the_profile_named_source(
 ) -> None:
     root = _dbt_project(tmp_path / "shop", charts_yml=charts_yml)
 
-    registry = build_adapter_registry(FilesystemProject(root), read_only=True)
+    registry = build_exec_env(FilesystemProject(root), read_only=True)
 
-    assert registry.list_sql_sources() == [
+    assert list_sql_sources(registry.sources) == [
         {"name": "shop_profile", "type": "dbt_profile"}
     ]
-    result = registry.execute(_SOURCELESS)
+    result = run_query(registry, _SOURCELESS)
     assert result.error is None, result.error
     assert result.data == [{"n": 42}]
 
@@ -85,11 +97,16 @@ def test_declaring_a_source_disables_the_implicit_one(tmp_path: Path) -> None:
         charts_yml="sources:\n  mine:\n    type: duckdb\n    path: ':memory:'\n",
     )
 
-    registry = build_adapter_registry(FilesystemProject(root), read_only=True)
+    registry = build_exec_env(FilesystemProject(root), read_only=True)
 
-    assert [s["name"] for s in registry.list_sql_sources()] == ["mine"]
+    assert [s["name"] for s in list_sql_sources(registry.sources)] == ["mine"]
     with pytest.raises(DbtChartsError) as exc_info:
-        registry.resolve_query_source(_SOURCELESS)
+        resolve_query_source(
+            _SOURCELESS,
+            sources=registry.sources,
+            resolver=registry.resolver,
+            dbt_context=registry.dbt_context,
+        )
     assert exc_info.value.code is ERR_SOURCE_NOT_NAMED
 
 
@@ -99,11 +116,16 @@ def test_a_project_without_dbt_project_yml_still_needs_a_named_source(
     root = tmp_path / "plain"
     root.mkdir()
 
-    registry = build_adapter_registry(FilesystemProject(root), read_only=True)
+    registry = build_exec_env(FilesystemProject(root), read_only=True)
 
-    assert registry.list_sql_sources() == []
+    assert list_sql_sources(registry.sources) == []
     with pytest.raises(DbtChartsError) as exc_info:
-        registry.resolve_query_source(_SOURCELESS)
+        resolve_query_source(
+            _SOURCELESS,
+            sources=registry.sources,
+            resolver=registry.resolver,
+            dbt_context=registry.dbt_context,
+        )
     assert exc_info.value.code is ERR_SOURCE_NOT_NAMED
 
 
@@ -129,10 +151,15 @@ def test_implicit_source_does_not_swallow_a_named_unknown_source(
     tmp_path: Path,
 ) -> None:
     root = _dbt_project(tmp_path / "shop")
-    registry = build_adapter_registry(FilesystemProject(root), read_only=True)
+    registry = build_exec_env(FilesystemProject(root), read_only=True)
 
     with pytest.raises(DbtChartsError) as exc_info:
-        registry.resolve_query_source(SqlQuery(sql="SELECT 1", source="typo"))
+        resolve_query_source(
+            SqlQuery(sql="SELECT 1", source="typo"),
+            sources=registry.sources,
+            resolver=registry.resolver,
+            dbt_context=registry.dbt_context,
+        )
     assert exc_info.value.code is ERR_SOURCE_NOT_FOUND
 
 
@@ -242,14 +269,16 @@ def test_sourceless_package_board_fails_when_the_host_names_no_default(
 def test_resolve_source_config_follows_the_same_sourceless_rule(
     tmp_path: Path,
 ) -> None:
-    dbt = build_adapter_registry(FilesystemProject(_dbt_project(tmp_path / "shop")))
+    dbt = build_exec_env(FilesystemProject(_dbt_project(tmp_path / "shop")))
     plain_root = tmp_path / "plain"
     plain_root.mkdir()
-    plain = build_adapter_registry(FilesystemProject(plain_root))
+    plain = build_exec_env(FilesystemProject(plain_root))
 
-    assert dbt.resolve_source_config(None) == {"type": "dbt_profile"}
+    assert resolve_source_config(dbt.sources, dbt.project, None) == {
+        "type": "dbt_profile"
+    }
     with pytest.raises(DbtChartsError) as exc_info:
-        plain.resolve_source_config(None)
+        resolve_source_config(plain.sources, plain.project, None)
     assert exc_info.value.code is ERR_SOURCE_NOT_NAMED
 
 
@@ -290,8 +319,8 @@ def test_registry_target_selects_the_implicit_source_connection(
     root = _two_target_project(tmp_path / "shop")
     monkeypatch.setenv("DBT_TARGET", "dev")
 
-    registry = build_adapter_registry(FilesystemProject(root), target="alt")
-    result = registry.execute(_SOURCELESS)
+    registry = build_exec_env(FilesystemProject(root), target="alt")
+    result = run_query(registry, _SOURCELESS)
 
     assert result.error is None, result.error
     assert result.data == [{"n": 7}]
@@ -306,8 +335,8 @@ def test_a_source_that_names_its_target_keeps_it(
     )
     monkeypatch.setenv("DBT_TARGET", "alt")
 
-    registry = build_adapter_registry(FilesystemProject(root), target="alt")
-    result = registry.execute(SqlQuery(sql="SELECT n FROM numbers", source="pinned"))
+    registry = build_exec_env(FilesystemProject(root), target="alt")
+    result = run_query(registry, SqlQuery(sql="SELECT n FROM numbers", source="pinned"))
 
     assert result.error is None, result.error
     assert result.data == [{"n": 42}]
@@ -333,3 +362,92 @@ def test_package_board_renders_from_its_integration_tests_dbt_project(
         rendered = session.render_board(board=board)
 
     assert rendered.status == "ok", (rendered.validation_errors, rendered.chart_errors)
+
+
+def _expand_profile(
+    project: Path | None,
+    outputs: dict[str, dict[str, str]] | None = None,
+    **cfg: str,
+) -> None:
+    if project is not None and outputs is not None:
+        project.mkdir()
+        (project / "dbt_project.yml").write_text("name: shop\nprofile: shop_profile\n")
+        (project / "profiles.yml").write_text(
+            yaml.safe_dump({"shop_profile": {"target": "dev", "outputs": outputs}})
+        )
+    elif project is not None:
+        project.mkdir()
+    DefaultSourceResolver()._expand_dbt_profile(
+        DbtProfileSourceConfig(type="dbt_profile", **cfg),
+        DbtContext(dbt_project_path=project) if project is not None else None,
+    )
+
+
+_DEV_DUCKDB = {"dev": {"type": "duckdb", "path": ":memory:"}}
+
+
+@pytest.mark.parametrize(
+    ("outputs", "cfg", "message"),
+    [
+        pytest.param(None, {"profile": "shop_profile"}, "profiles.yml", id="no-file"),
+        pytest.param(_DEV_DUCKDB, {"profile": "other"}, "other", id="unknown-profile"),
+        pytest.param(
+            _DEV_DUCKDB,
+            {"profile": "shop_profile", "target": "prod"},
+            "prod",
+            id="unknown-target",
+        ),
+        pytest.param(
+            {"dev": {"type": "snowflake", "account": "xy"}},
+            {"profile": "shop_profile"},
+            "",
+            id="invalid-snowflake-target",
+        ),
+        pytest.param(
+            {"dev": {"type": "trino", "host": "h"}},
+            {"profile": "shop_profile"},
+            "",
+            id="invalid-trino-target",
+        ),
+        pytest.param(
+            {"dev": {"type": "lakecompute", "password": "hunter2"}},
+            {"profile": "shop_profile"},
+            "",
+            id="invalid-lakecompute-target",
+        ),
+    ],
+)
+def test_an_unreadable_dbt_profile_is_a_coded_error(
+    tmp_path: Path,
+    outputs: dict[str, dict[str, str]] | None,
+    cfg: dict[str, str],
+    message: str,
+) -> None:
+    with pytest.raises(DbtChartsError) as exc_info:
+        _expand_profile(tmp_path / "shop", outputs=outputs, **cfg)
+
+    assert exc_info.value.code is ERR_DBT_PROFILE_UNRESOLVED
+    assert message in str(exc_info.value)
+    assert "hunter2" not in str(exc_info.value)
+
+
+def test_a_profiles_dir_without_a_linked_project_is_a_coded_error() -> None:
+    with pytest.raises(DbtChartsError) as exc_info:
+        _expand_profile(None, profile="shop_profile", profiles_dir="dbt")
+
+    assert exc_info.value.code is ERR_DBT_PROFILE_UNRESOLVED
+    assert "no dbt project is linked" in str(exc_info.value)
+
+
+def test_dbt_profiles_dir_env_without_profiles_yml_is_a_coded_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("DBT_PROFILES_DIR", str(empty))
+
+    with pytest.raises(DbtChartsError) as exc_info:
+        _expand_profile(tmp_path / "shop", profile="shop_profile")
+
+    assert exc_info.value.code is ERR_DBT_PROFILE_UNRESOLVED
+    assert "does not contain profiles.yml" in str(exc_info.value)

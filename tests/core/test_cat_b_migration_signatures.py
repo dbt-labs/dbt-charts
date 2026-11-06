@@ -21,6 +21,6 @@ def test_render_dashboard_requires_project() -> None:
     with pytest.raises(TypeError, match="project"):
         render_dashboard(  # type: ignore[call-arg]
             board=InMemoryBoard("charts: {}", path=None),
-            adapter_registry=None,  # type: ignore[arg-type]
+            env=None,  # type: ignore[arg-type]
             result_cache=None,
         )

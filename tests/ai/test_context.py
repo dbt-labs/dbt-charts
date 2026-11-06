@@ -73,23 +73,23 @@ class TestResolveDashboardPath:
 
 
 class TestDbtChartsAIContextHoldsProjectSession:
-    """DbtChartsAIContext exposes the ProjectSession + its adapter_registry."""
+    """DbtChartsAIContext exposes the ProjectSession + its env."""
 
-    def test_context_exposes_project_session_and_adapter_registry(
+    def test_context_exposes_project_session_and_env(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
 
         class _StubProjectSession:
             project = local_project(tmp_path)
-            adapter_registry = registry
+            env = registry
 
             def refresh(self) -> None: ...
 
         ctx = DbtChartsAIContext(project_session=_StubProjectSession())  # type: ignore[arg-type]
-        assert ctx.project_session.adapter_registry is registry
+        assert ctx.project_session.env is registry
 
     def test_resolve_dashboard_path_uses_project_root_not_cwd(
         self,
@@ -99,7 +99,7 @@ class TestDbtChartsAIContextHoldsProjectSession:
     ) -> None:
         """The cwd fallback at ai/context.py:35 is replaced with
         self.project_session.project.root / 'charts'."""
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
@@ -108,11 +108,11 @@ class TestDbtChartsAIContextHoldsProjectSession:
         elsewhere.mkdir()
         monkeypatch.chdir(elsewhere)  # ensure cwd != project_root
 
-        registry = build_adapter_registry(local_project(project_dir), read_only=True)
+        registry = build_exec_env(local_project(project_dir), read_only=True)
 
         class _StubProjectSession:
             project = local_project(project_dir)
-            adapter_registry = registry
+            env = registry
 
             @property
             def charts_dir(self) -> Path:
@@ -143,13 +143,13 @@ class TestResolveWithSymlinkedChartsDir:
         link_boards = tmp_path / "charts"
         link_boards.symlink_to(real_boards)
 
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
 
-        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+        registry = build_exec_env(local_project(tmp_path), read_only=True)
 
         class _StubProjectSession:
             project = local_project(tmp_path)
-            adapter_registry = registry
+            env = registry
 
             @property
             def charts_dir(self) -> Path:

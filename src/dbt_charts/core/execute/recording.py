@@ -26,13 +26,13 @@ from pydantic import (
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_render import ERR_BOARD_RECORDING_INVALID
-from dbt_charts.core.execute.adapters.base import ResolvedRelation
 from dbt_charts.core.execute.cache_backend import ResultRows
+from dbt_charts.core.execute.query_result import ResolvedRelation
 from dbt_charts.core.execute.result_codec import decode_result, encode_result
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
-    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.execute.query_results import QueryResults
 
 
 def _decoded(
@@ -99,28 +99,26 @@ class BoardRecording(BaseModel):
 
 
 def record_board(
-    resolved: ResolvedBoard, executor: Executor, variables: VariableValues
+    resolved: ResolvedBoard, results: QueryResults, variables: VariableValues
 ) -> BoardRecording:
     """Capture the rows and provenance a resolved board was rendered against.
 
-    Call this after `build_resolved_board` has already run every query once
-    for data-aware sizing — every lookup here is a cache hit, not a new
-    execution.
+    *results* must hold every query of ``resolved.queries``; the resolve read
+    them, so a read here never executes anything.
 
-    ``recorded_at`` is the executor's own ``rendered_at``, so a replay stamps
+    ``recorded_at`` is the results' own ``rendered_at``, so a replay stamps
     exactly what the live render it records stamped.
     """
     results_by_query = {
-        name: executor.execute_query_result(name, variables)
-        for name in resolved.queries
+        name: results.execute_query_result(name, variables) for name in resolved.queries
     }
     provenance = {
         name: relations
         for name in resolved.queries
-        if (relations := executor.get_query_provenance(name))
+        if (relations := results.provenance.get(name))
     }
     return BoardRecording(
-        recorded_at=executor.rendered_at,
+        recorded_at=results.rendered_at,
         variables=dict(variables),
         results_by_query=results_by_query,
         provenance=provenance,

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import BoardRenderResult, render_dashboard
-from dbt_charts.core.execute.adapters import AdapterRegistry
+from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.project import InMemoryBoard
 from dbt_charts.core.render.render_result import RenderResult
 
@@ -55,13 +55,13 @@ def _full_render(project: FilesystemProject, link: str) -> BoardRenderResult:
     render_result = RenderResult(output='{"id": "test", "title": "Board", "items": []}')
     with (
         patch("dbt_charts.core.board.render", return_value=render_result),
-        patch("dbt_charts.core.board.Executor"),
+        patch("dbt_charts.core.board.make_context"),
     ):
         return render_dashboard(
             board=InMemoryBoard(
                 _BOARD.format(link=link), path=project.path("charts/people.yml")
             ),
-            adapter_registry=MagicMock(spec=AdapterRegistry),
+            env=MagicMock(spec=ExecEnv),
             format="json",
             project=project,
             result_cache=None,

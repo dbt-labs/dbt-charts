@@ -14,7 +14,7 @@ import re
 from typing import Any
 from unittest.mock import MagicMock
 
-from .._lookup import collect_via_execute_query
+from .._lookup import render_via
 from ._svg_render import PINNED_RENDER_TIME
 
 # ---------------------------------------------------------------------------
@@ -50,14 +50,12 @@ def _make_executor() -> Any:
     exc = MagicMock()
     exc.render_with_range_filters.return_value = None
     exc.execute_query.return_value = [{"cat": "A", "val": 10}]
-    exc.execute_batch.return_value = {}
     exc._query_results = {}
     # No cache in play here — the real Executor.cache_hit_ats contract is an
     # empty list until a persistent-cache hit occurs, which never happens
     # against this mock's adapter stand-in.
     exc.cache_hit_ats = []
     exc.rendered_at = PINNED_RENDER_TIME
-    collect_via_execute_query(exc)
     return exc
 
 
@@ -168,16 +166,14 @@ variables:
 
 class TestEndToEnd:
     def test_render_produces_svg(self):
-        from dbt_charts.core.render.renderer import render
 
         board = _compile_board()
         executor = _make_executor()
-        result = render(board, executor, format="svg").output
+        result = render_via(executor, board, format="svg").output
         assert isinstance(result, str) and "<svg" in result
 
     def test_render_with_title_produces_svg(self):
         """Title rendering still works after ResolvedBoard migration."""
-        from dbt_charts.core.render.renderer import render
 
         board = _compile_board(
             """
@@ -196,7 +192,7 @@ charts:
 """
         )
         executor = _make_executor()
-        result = render(board, executor, format="svg").output
+        result = render_via(executor, board, format="svg").output
         assert isinstance(result, str) and "<svg" in result
 
     def test_board_margin_is_the_outer_page_padding(self):
@@ -206,7 +202,6 @@ charts:
         so what an author writes is what Cloud, dct serve, and exports show.
         Content then starts at margin + card_padding.
         """
-        from dbt_charts.core.render.renderer import render
 
         board = _compile_board(
             """
@@ -221,7 +216,7 @@ text: Hello
         )
         executor = _make_executor()
 
-        svg = render(board, executor, format="svg").output
+        svg = render_via(executor, board, format="svg").output
 
         assert isinstance(svg, str)
         # The tagged group's own position plus its padded box's inset
@@ -248,7 +243,6 @@ text: Hello
         Width is the asymmetric arm: it is already padding-inclusive
         (layout.width is the container), so it tracks the board width, not content.
         """
-        from dbt_charts.core.render.renderer import render
 
         def _viewbox(width: int, margin: int) -> tuple[float, float]:
             board = _compile_board(
@@ -262,7 +256,7 @@ style:
 text: Hello
 """
             )
-            svg = render(board, _make_executor(), format="svg").output
+            svg = render_via(_make_executor(), board, format="svg").output
             assert isinstance(svg, str)
             box = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', svg)
             assert box is not None
@@ -278,7 +272,6 @@ text: Hello
         """A nested board's own style.border.dash_array reaches its stroked
         border rect (render_nested_board) when authored directly on that
         nested board, not on the root."""
-        from dbt_charts.core.render.renderer import render
 
         board = _compile_board(
             """
@@ -305,14 +298,13 @@ rows:
 """
         )
         executor = _make_executor()
-        svg = render(board, executor, format="svg").output
+        svg = render_via(executor, board, format="svg").output
         assert isinstance(svg, str)
         assert 'stroke-dasharray="4,4"' in svg
         assert 'stroke-linecap="round"' in svg
 
     def test_render_nested_board(self):
         """Nested board layout renders without crash."""
-        from dbt_charts.core.render.renderer import render
 
         board = _compile_board(
             """
@@ -332,5 +324,5 @@ rows:
 """
         )
         executor = _make_executor()
-        result = render(board, executor, format="svg").output
+        result = render_via(executor, board, format="svg").output
         assert isinstance(result, str) and "<svg" in result

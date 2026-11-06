@@ -9,12 +9,12 @@ use column_types::ColumnType;
 use serde_json::Value;
 
 use super::{x_time_axis, color_extent, drawn_at, quantitative_color, rows_at, size_scale_domain, validate_scatter_layers, ScatterResolved, Shape};
-use crate::common::color_domain_of;
-use crate::common::row_str;
+use ::bind::rows::color_domain_of;
+use ::bind::rows::row_str;
 use diagnostic::Diagnostic;
 use crate::families::layers::OverlayLayer;
-use crate::families::temporal::{infer_vega_type, VegaType};
-use crate::time_axis::TimeAxis;
+use ::bind::temporal::{infer_vega_type, VegaType};
+use ::bind::time_axis::TimeAxis;
 use crate::Payload;
 
 /// A scatter chart bound to its rows.
@@ -72,11 +72,11 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     let mut prepared: Cow<Payload> = Cow::Borrowed(payload);
     let mut wide_series: Vec<String> = Vec::new();
     if !r.wide_measures.is_empty() {
-        let wide_labels = display_text::wide_measure_labels_for(&r.wide_measures, &r.field_labels)?;
+        let wide_labels = display_text::wide_measure_labels(&r.wide_measures, &r.field_labels)?.labels;
         let mut fold_order = r.wide_measures.clone();
         fold_order.sort();
         let dimension = r.color.clone();
-        let raw_names = crate::common::wide_series_names(&r.wide_measures, dimension.as_deref(), &payload.rows);
+        let raw_names = ::bind::wide::wide_series_names(&r.wide_measures, dimension.as_deref(), &payload.rows);
         // Display text per raw series name: the measure part humanized, a
         // `color:` dimension value kept verbatim ahead of it.
         let mut shown: HashMap<String, String> = HashMap::new();
@@ -86,34 +86,34 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
                     shown.insert(measure.clone(), wide_labels[measure].clone());
                 }
                 Some(dim) => {
-                    for v in crate::common::wide_dimension_values(&payload.rows, dim) {
+                    for v in ::bind::wide::wide_dimension_values(&payload.rows, dim) {
                         shown.insert(
-                            format!("{v}{}{measure}", crate::common::WIDE_SERIES_SEPARATOR),
-                            format!("{v}{}{}", crate::common::WIDE_SERIES_SEPARATOR, wide_labels[measure]),
+                            format!("{v}{}{measure}", ::bind::wide::WIDE_SERIES_SEPARATOR),
+                            format!("{v}{}{}", ::bind::wide::WIDE_SERIES_SEPARATOR, wide_labels[measure]),
                         );
                     }
                 }
             }
         }
         wide_series = raw_names.iter().map(|raw| shown[raw].clone()).collect();
-        let folded = crate::common::unfold_wide_rows(&payload.rows, &fold_order, dimension.as_deref())
+        let folded = ::bind::wide::unfold_wide_rows(&payload.rows, &fold_order, dimension.as_deref())
             .into_iter()
             .map(|mut row| {
-                if let Some(Value::String(raw)) = row.remove(crate::common::WIDE_LABEL_FIELD) {
-                    row.insert(crate::common::WIDE_LABEL_FIELD.to_string(), Value::String(shown[&raw].clone()));
+                if let Some(Value::String(raw)) = row.remove(::bind::wide::WIDE_LABEL_FIELD) {
+                    row.insert(::bind::wide::WIDE_LABEL_FIELD.to_string(), Value::String(shown[&raw].clone()));
                 }
                 row
             })
             .collect();
-        r.link_color = Some(r.color.clone().unwrap_or_else(|| crate::common::WIDE_KEY_FIELD.to_string()));
+        r.link_color = Some(r.color.clone().unwrap_or_else(|| ::bind::wide::WIDE_KEY_FIELD.to_string()));
         r.link_y = r.wide_measures[0].clone();
-        r.color = Some(crate::common::WIDE_LABEL_FIELD.to_string());
-        prepared = Cow::Owned(payload.with_inputs(payload.resolved.clone(), folded).with_row_types(crate::common::unfold_wide_types(&payload.schema.rows, &r.wide_measures)?));
+        r.color = Some(::bind::wide::WIDE_LABEL_FIELD.to_string());
+        prepared = Cow::Owned(payload.with_inputs(payload.resolved.clone(), folded).with_row_types(::bind::wide::unfold_wide_types(&payload.schema.rows, &r.wide_measures)?));
     }
     // A labeled bucket or a year-shaped x reads as its ISO start, as line rewrites the column: a year is a
     // time axis, never a number line joined to zero.
-    if r.link_x_labeled || crate::common::is_year_shaped(&prepared.schema.rows, &prepared.rows, &r.x)? {
-        let rows = crate::families::temporal::normalize_labeled_temporal(&prepared.schema.rows, &prepared.rows, &r.x)?.into_owned();
+    if r.link_x_labeled || ::bind::rows::is_year_shaped(&prepared.schema.rows, &prepared.rows, &r.x)? {
+        let rows = ::bind::temporal::normalize_labeled_temporal(&prepared.schema.rows, &prepared.rows, &r.x)?.into_owned();
         let row_types = prepared.schema.rows.clone().with(&r.x, ColumnType::Date);
         prepared = Cow::Owned(prepared.with_inputs(prepared.resolved.clone(), rows).with_row_types(row_types));
     }
@@ -121,7 +121,7 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     // A column types the way production's `infer_vega_type_from_data` reads
     // it: its first ten cells decide, so a quantitative column drops a later
     // string row (`kept_reading`) and anything else is a nominal band, whose
-    // domain order comes from `common::vega_ascending_sort`.
+    // domain order comes from `bind::rows::vega_ascending_sort`.
     let column_is_measure = |field: &str| infer_vega_type(&prepared.schema.rows, &prepared.rows, field).map(|t| t == VegaType::Quantitative);
     let x_numeric = column_is_measure(&r.x)?;
     let y_numeric = column_is_measure(&r.y)?;
@@ -140,9 +140,9 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
             .filter(|v| !v.is_empty() && seen.insert(v.clone()))
             .collect();
         let refs: Vec<&str> = distinct.iter().map(String::as_str).collect();
-        if crate::families::temporal::x_is_standard_date(&prepared.schema.rows, &r.x, &refs)?
-            || crate::families::temporal::x_is_temporal_candidate(&prepared.schema.rows, &r.x, &refs)?
-                && crate::families::temporal::detect_time_unit(&crate::time_axis::Dates::read(&distinct)).is_some()
+        if ::bind::temporal::x_is_standard_date(&prepared.schema.rows, &r.x, &refs)?
+            || ::bind::temporal::x_is_temporal_candidate(&prepared.schema.rows, &r.x, &refs)?
+                && ::bind::temporal::detect_time_unit(&::bind::time_axis::Dates::read(&distinct)).is_some()
         {
             (true, false)
         } else {
@@ -167,7 +167,7 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     let y_measure = y_numeric && (!r.style.axis_y.tick_values.is_empty() || y_log || independent_facet);
     let drawn = drawn_at(&prepared.rows, &r, x_nominal, x_dates, y_nominal);
     let drawn_rows = rows_at(&prepared.rows, &drawn);
-    // `wide_series` (the sorted, authored-measure-COMPLETE domain, `common::wide_series_names` +
+    // `wide_series` (the sorted, authored-measure-COMPLETE domain, `bind::wide::wide_series_names` +
     // humanization) feeds a wide chart's domain instead of a row scan — a measure null on every row
     // still owns a domain/palette slot, same law bar.rs's own `color_domain` split applies
     // (`build_chart_domains`).
@@ -198,7 +198,7 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     )?;
     if let Some(narrowed) = r.legend_view.clone().and_then(|view| view.narrowed(&prepared, r.color.as_deref().expect("a legend view needs a color field"))) {
         if narrowed.refits_axes() {
-            let shown = |field: &str| -> Vec<f64> { narrowed.payload.rows.iter().filter_map(|row| crate::common::row_num(row, field)).collect() };
+            let shown = |field: &str| -> Vec<f64> { narrowed.payload.rows.iter().filter_map(|row| ::bind::rows::row_num(row, field)).collect() };
             for (axis, field, numeric) in [(&mut r.style.axis_x, r.x.as_str(), !x_nominal && !x_dates), (&mut r.style.axis_y, r.y.as_str(), !y_nominal)] {
                 if numeric {
                     crate::legend_view::refit(axis, &shown(field), true);

@@ -21,8 +21,8 @@ from dbt_charts.core.diagnostics.codes_execute import (
 )
 from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters.dbt_utils import source_target_path
 from dbt_charts.core.execute.dbt_jinja import REF_CALL_RE, SOURCE_CALL_RE
+from dbt_charts.core.execute.dbt_utils import source_target_path
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.compiler import CompileResult

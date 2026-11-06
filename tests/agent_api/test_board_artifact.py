@@ -19,7 +19,7 @@ from dbt_charts.agent_api.board_artifact import (
     render_board_from_files,
 )
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 
 _CLIP_ID = re.compile(r"clip\d+")
 _RENDER_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
@@ -62,7 +62,7 @@ def test_emit_board_artifact_writes_both_files(
         tmp_path / "out" / "board.artifact.json",
         tmp_path / "out" / "board.recording.json",
         project=project,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
     )
 
     assert result.success, result.errors
@@ -85,7 +85,7 @@ def test_emitted_artifact_has_no_row_data(
         artifact_path,
         tmp_path / "out" / "board.recording.json",
         project=project,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
     )
 
     artifact = json.loads(artifact_path.read_text())
@@ -110,7 +110,7 @@ def test_emit_board_artifact_fails_on_compile_error(
         tmp_path / "out" / "board.artifact.json",
         tmp_path / "out" / "board.recording.json",
         project=project,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
     )
 
     assert not result.success
@@ -128,7 +128,7 @@ def test_emit_board_artifact_fails_on_missing_board(
         tmp_path / "out" / "board.artifact.json",
         tmp_path / "out" / "board.recording.json",
         project=project,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
     )
 
     assert not result.success
@@ -140,7 +140,7 @@ def test_render_board_from_files_reproduces_the_live_render(
 ) -> None:
     (tmp_path / "board.yml").write_text(_YAML)
     project = local_project(tmp_path)
-    adapter_registry = build_adapter_registry(project)
+    env = build_exec_env(project)
     artifact_path = tmp_path / "out" / "board.artifact.json"
     recording_path = tmp_path / "out" / "board.recording.json"
 
@@ -149,24 +149,25 @@ def test_render_board_from_files_reproduces_the_live_render(
         artifact_path,
         recording_path,
         project=project,
-        adapter_registry=adapter_registry,
+        env=env,
     )
 
     # Live render through the normal compile+execute+render path, for comparison.
     from dbt_charts.agent_api._paths import resolve_board_or_error
     from dbt_charts.core.compile.compiler import compile_file
     from dbt_charts.core.diagnostics import Diagnostic
-    from dbt_charts.core.execute.executor import Executor
     from dbt_charts.core.render.board_resolve import build_resolved_board
     from dbt_charts.core.render.boards import render_board_svg
+
+    from .._run import Run
 
     located = resolve_board_or_error(tmp_path / "board.yml", project)
     assert not isinstance(located, Diagnostic)
     compile_result = compile_file(located)
     assert compile_result.board is not None
-    live_executor = Executor(
+    live_executor = Run(
         compile_result.board,
-        adapter_registry,
+        env,
         query_registry=compile_result.query_registry,
     )
     live_resolved, live_cache = build_resolved_board(
@@ -241,7 +242,7 @@ def _emit_and_replay(
         artifact_path,
         recording_path,
         project=project,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         variables=variables,
     )
     assert emitted.success, emitted.errors
@@ -325,7 +326,7 @@ def test_emit_board_artifact_fails_on_a_chart_that_cannot_resolve(
         tmp_path / "out" / "board.json",
         tmp_path / "out" / "board.rows.json",
         project=project,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
     )
 
     assert result.success is False
@@ -354,7 +355,7 @@ def test_a_board_whose_text_reads_a_query_emits_and_replays(
         artifact_path,
         recording_path,
         project=project,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
     )
     assert emitted.success, emitted.errors
 
@@ -405,7 +406,7 @@ def test_artifact_keeps_a_filter_link_over_the_text_link_on_every_tab(
         tmp_path / "out" / "board.artifact.json",
         tmp_path / "out" / "board.recording.json",
         project=project,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
     )
 
     assert result.success, result.errors
@@ -456,10 +457,85 @@ def test_emit_board_artifact_rejects_invalid_variable_overrides(
         tmp_path / "out" / "board.artifact.json",
         tmp_path / "out" / "board.recording.json",
         project=project,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         variables=variables,
     )
 
     assert not result.success
     assert [e.code for e in result.errors] == [code]
     assert not (tmp_path / "out" / "board.artifact.json").exists()
+
+
+def test_replayed_board_prints_a_multiselect_in_its_title_as_a_natural_list(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    project = local_project(tmp_path)
+    (tmp_path / "board.yml").write_text(
+        _MULTISELECT_YAML.replace(
+            "title: Emitted Board", "title: Sales in {{ regions }}"
+        ).replace(
+            "      static: [North, South]",
+            "      static: [North, South]\n    default: [North, South]",
+        )
+    )
+    artifact_path = tmp_path / "out" / "board.artifact.json"
+    recording_path = tmp_path / "out" / "board.recording.json"
+    emitted = emit_board_artifact(
+        tmp_path / "board.yml",
+        artifact_path,
+        recording_path,
+        project=project,
+        env=build_exec_env(project),
+    )
+    assert emitted.success, emitted.errors
+
+    replayed = render_board_from_files(artifact_path, recording_path)
+
+    assert replayed.success, replayed.errors
+    assert replayed.svg is not None
+    assert "Sales in North and South" in replayed.svg
+
+
+def test_emit_board_artifact_plans_the_automatic_link_schema(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    import sqlite3
+
+    db = tmp_path / "orders.sqlite"
+    conn = sqlite3.connect(str(db))
+    conn.execute("CREATE TABLE orders (id INTEGER, status TEXT)")
+    conn.execute("INSERT INTO orders VALUES (1, 'open')")
+    conn.commit()
+    conn.close()
+    (tmp_path / "dbt_charts.yml").write_text(
+        f"sources:\n  dw:\n    type: sqlite\n    path: {db}\n"
+    )
+    (tmp_path / "board.yml").write_text(
+        """
+title: Linked
+links:
+  auto: true
+source: dw
+queries:
+  rows:
+    source: dw
+    sql: SELECT id, status FROM main.orders
+charts:
+  orders:
+    query: rows
+    type: table
+rows:
+  - orders
+"""
+    )
+    project = local_project(tmp_path)
+    result = emit_board_artifact(
+        tmp_path / "board.yml",
+        tmp_path / "out" / "board.artifact.json",
+        tmp_path / "out" / "board.recording.json",
+        project=project,
+        env=build_exec_env(project),
+    )
+    assert result.success, result.errors
+    assert result.artifact_path is not None
+    assert "/data/dw/main/orders/detail/" in result.artifact_path.read_text()

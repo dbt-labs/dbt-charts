@@ -9,20 +9,20 @@ import pytest
 
 from dbt_charts.agent_api.validate import ValidateResult, validate
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters import AdapterRegistry
+from dbt_charts.core.execute.env import ExecEnv, make_exec_env
 from dbt_charts.core.project import Project
 
 
 @pytest.fixture
 def empty_registry(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
-) -> AdapterRegistry:
-    """A bare AdapterRegistry rooted at tmp_path — no adapters registered.
+) -> ExecEnv:
+    """A bare ExecEnv rooted at tmp_path — no adapters registered.
 
     Used by tests that want to exercise the error path (empty registry
     can't execute) without spinning up a real adapter.
     """
-    return AdapterRegistry(project=local_project(tmp_path))
+    return make_exec_env(project=local_project(tmp_path))
 
 
 @pytest.fixture

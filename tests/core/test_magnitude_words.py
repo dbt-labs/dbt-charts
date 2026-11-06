@@ -16,12 +16,8 @@ from dbt_charts.core.text.format_d3 import (
     Notation,
     NumberLocaleName,
     format_d3,
-    regional_scope,
-)
-from dbt_charts.core.text.magnitude_words import (
-    _BY_LANGUAGE,
-    _BY_REGION,
     magnitude_words,
+    regional_scope,
 )
 
 _FR = {
@@ -46,11 +42,6 @@ def _formatted(regional: Regional, value: float, notation: Notation) -> str:
 def test_every_named_locale_has_its_words(name: NumberLocaleName) -> None:
     analytic, narrative = magnitude_words(name)
     assert all(w.strip() for w in (*analytic, *narrative))
-
-
-@pytest.mark.parametrize("region", _BY_REGION)
-def test_a_region_row_differs_from_its_language(region: str) -> None:
-    assert _BY_REGION[region] != _BY_LANGUAGE[region.split("-")[0]]
 
 
 @pytest.mark.parametrize(

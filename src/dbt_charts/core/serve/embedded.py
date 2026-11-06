@@ -17,7 +17,7 @@ import socket
 from typing import TYPE_CHECKING
 
 from dbt_charts._install_hint import install_hint
-from dbt_charts.core.execute.adapters import LOCAL_AUTHORING_REGISTRY_KWARGS
+from dbt_charts.core.execute.env import LOCAL_AUTHORING_ENV_KWARGS
 from dbt_charts.core.serve.port import bind_available_port
 from dbt_charts.core.serve.server import create_server
 
@@ -59,12 +59,12 @@ def build_embedded_server(
     listener = bind_available_port(port_hint, host=host, max_attempts=max_attempts)
 
     # The embedded preview backs `dct mcp serve`, whose primary
-    # session opens with LOCAL_AUTHORING_REGISTRY_KWARGS (read-only + external
+    # session opens with LOCAL_AUTHORING_ENV_KWARGS (read-only + external
     # access on). Pass the same posture so the clickable preview agrees with the
     # tool-side render — standalone `dct serve` is the surface that tightens to
     # strict read-only, not these authoring surfaces.
     server = build_server(
-        create_server(project, **LOCAL_AUTHORING_REGISTRY_KWARGS),
+        create_server(project, **LOCAL_AUTHORING_ENV_KWARGS),
         host=host,
         port=listener.getsockname()[1],
         log_level=log_level,

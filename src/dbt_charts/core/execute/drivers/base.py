@@ -10,9 +10,9 @@ non-driver source takes the dbt path exactly as it always has and this module
 never learns that path exists.
 
 A driver opens a connection, runs a statement bounded by a
-:class:`~dbt_charts.core.execute.adapters.base.RowFetchLimit` the caller already
+:class:`~dbt_charts.core.execute.query_result.RowFetchLimit` the caller already
 resolved, runs session SQL, and closes. It resolves no ceiling, classifies no
-error and converts no rows of its own: those live in ``execute/adapters/base.py``
+error and converts no rows of its own: those live in ``execute/query_result.py``
 and ``execute/result.py``, shared with the dbt path.
 """
 
@@ -29,7 +29,7 @@ from dbt_charts.core.compile.models.source import (
 if TYPE_CHECKING:
     import nanoarrow as na
 
-    from dbt_charts.core.execute.adapters.base import RowFetchLimit
+    from dbt_charts.core.execute.query_result import RowFetchLimit
 
 
 # The source types on the Arrow seam — one arm in `open_driver` each. Named here

@@ -9,7 +9,7 @@ returns the JSON Schema an artifact conforms to.
 
 Business logic (the resolve/record/dump/load primitives) lives in
 `dbt_charts.core.execute.recording` and `dbt_charts.core.render.board_replay`;
-this module wires them to a `Project` + `AdapterRegistry` and to plain
+this module wires them to a `Project` + `ExecEnv` and to plain
 filesystem paths for the artifact/recording files, which are generated
 build outputs rather than project (board YAML) content.
 """
@@ -35,7 +35,9 @@ from dbt_charts.core.compile.template.variables import (
 from dbt_charts.core.diagnostics import ERR_FILE_NOT_FOUND, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.collect import collect_all_query_names
+from dbt_charts.core.execute.plan import make_context
+from dbt_charts.core.execute.query_results import execute
 from dbt_charts.core.execute.recording import load_board_recording, record_board
 from dbt_charts.core.project import board_identity
 from dbt_charts.core.render.board_replay import (
@@ -46,11 +48,12 @@ from dbt_charts.core.render.board_replay import (
 from dbt_charts.core.render.board_resolve import build_resolved_board
 from dbt_charts.core.render.chart.automatic_link import (
     set_filter_variables_context,
+    with_link_schema,
 )
 
 if TYPE_CHECKING:
-    from dbt_charts.core.execute.adapters import AdapterRegistry
     from dbt_charts.core.execute.cache_backend import QueryResultCache
+    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import Project
 
 
@@ -88,7 +91,7 @@ def emit_board_artifact(
     recording_path: Path,
     *,
     project: Project,
-    adapter_registry: AdapterRegistry,
+    env: ExecEnv,
     variables: dict[str, Any] | None = None,
     use_cache: bool = True,
     result_cache: QueryResultCache | None = None,
@@ -118,9 +121,9 @@ def emit_board_artifact(
     except ExecutionError as exc:
         return EmitBoardArtifactResult(success=False, errors=[exc.to_diagnostic()])
     assert located.path is not None  # resolved from a path, so it has one
-    executor = Executor(
+    ctx = make_context(
         board,
-        adapter_registry=adapter_registry,
+        env,
         query_registry=compile_result.query_registry,
         use_cache=use_cache,
         result_cache=result_cache,
@@ -135,7 +138,7 @@ def emit_board_artifact(
     merged_variables: dict[str, Any] = normalize_render_values(
         {**board.variable_defaults, **(variables or {})},
         board.variable_registry or {},
-        board.clock(executor.rendered_at),
+        board.clock(ctx.rendered_at),
     )
 
     # Matches render()'s prologue: the declared variable names are set for the
@@ -145,8 +148,15 @@ def emit_board_artifact(
     )
     resolve_errors: dict[str, ChartResolveFailure] = {}
     try:
+        # Every query the resolve reads, and every one the recording keeps.
+        results = execute(
+            ctx,
+            collect_all_query_names(board) | board.queries.keys(),
+            merged_variables,
+        )
+        results = with_link_schema(results, ctx, board, merged_variables)
         resolved, _render_cache = build_resolved_board(
-            board, executor, merged_variables, resolve_errors=resolve_errors
+            board, results, merged_variables, resolve_errors=resolve_errors
         )
     except DbtChartsError as exc:
         return EmitBoardArtifactResult(success=False, errors=[exc.to_diagnostic()])
@@ -163,7 +173,7 @@ def emit_board_artifact(
             errors=[failure.diagnostic for failure in resolve_errors.values()],
         )
 
-    recording = record_board(resolved, executor, merged_variables)
+    recording = record_board(resolved, results, merged_variables)
 
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_bytes(dump_board_artifact(resolved))

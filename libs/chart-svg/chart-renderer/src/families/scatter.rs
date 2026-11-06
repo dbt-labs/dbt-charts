@@ -11,7 +11,7 @@
 //! BOTH categorical — the fit shape always keeps one continuous axis. A
 //! wide (`y: [a, b]`) chart unfolds into long rows once, in
 //! `bind`, before any other law runs — same seam as bar.rs/line.rs
-//! (`common::unfold_wide_rows`'s own doc comment), landing a nominal x on
+//! (`bind::wide::unfold_wide_rows`'s own doc comment), landing a nominal x on
 //! the fit arm with one colored point per measure per category (the
 //! "dot/band plot").
 //!
@@ -26,18 +26,17 @@
 //! - a non-numeric `sort.by`
 
 use diagnostic::Diagnostic;
-use crate::time_axis::{Grain as AxisGrain, TimeAxis};
+use ::bind::time_axis::{Grain as AxisGrain, TimeAxis};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::common::{color_domain_of, MeasuredAs};
-use crate::common::{
-    format_y_label, row_num, row_str, symbol_radius, AxisStyle, ChartSort, Font,
-    FormatSlot, RulerConfig, StyleChannel, TickLabelConfig, TitleStyle,
-};
+use ::bind::rows::color_domain_of;
+use crate::common::MeasuredAs;
+use crate::common::{format_y_label, symbol_radius, AxisStyle, Font, FormatSlot, RulerConfig, StyleChannel, TickLabelConfig, TitleStyle};
+use ::bind::rows::{row_num, row_str, ChartSort};
 use crate::families::axis_caption::{vega_axis_format, AxisCaption, CaptionScale, NumericScale};
 use crate::families::layers::{
     claim_layers, panel_layer_rows, resolve_layer_rows,
@@ -45,7 +44,7 @@ use crate::families::layers::{
     OverlayLineLayer, OverlayScatterLayer, YSides,
 };
 use crate::families::facet_compose;
-use crate::families::temporal::{infer_vega_type, VegaType};
+use ::bind::temporal::{infer_vega_type, VegaType};
 use crate::families::color_scale::{ContinuousColor, GradientAt};
 use crate::families::legend;
 use crate::families::facet_title::{layout_title, TitleLayout, TitleSource};
@@ -130,6 +129,23 @@ fn clamp_to_zero(from: f64, to: f64) -> f64 {
     if from.signum() == to.signum() { to } else { 0.0 }
 }
 
+/// A data-fit domain rounded out to the axis's own tick boundaries, then
+/// one tick step further past a non-zero end a data value still lands on:
+/// a dot on the plot edge reads as clipped, unless the edge is zero.
+pub(super) fn nice_clear_of_data(lo: f64, hi: f64, (data_lo, data_hi): (f64, f64), tick_count: usize, min_step: Option<f64>) -> (f64, f64) {
+    let (nice_lo, nice_hi) = d3rs::ticks::d3_nice(lo, hi, tick_count);
+    if nice_hi <= nice_lo {
+        return (nice_lo, nice_hi);
+    }
+    let count = d3rs::ticks::vega_tick_count(nice_lo, nice_hi, tick_count, min_step);
+    let step = d3rs::ticks::d3_tick_step(nice_lo, nice_hi, count);
+    // An authored tick step can exceed the step the domain rounded to, so clamp at zero.
+    (
+        if data_lo == nice_lo && nice_lo != 0.0 { clamp_to_zero(nice_lo, nice_lo - step) } else { nice_lo },
+        if data_hi == nice_hi && nice_hi != 0.0 { clamp_to_zero(nice_hi, nice_hi + step) } else { nice_hi },
+    )
+}
+
 impl LinearX {
     /// The scale's domain on a plot `pw` wide.
     pub(crate) fn domain_at(&self, pw: f64) -> (f64, f64) {
@@ -142,28 +158,10 @@ impl LinearX {
             let (nice_hi, nice_lo) = d3rs::ticks::d3_nice(hi, lo, 10);
             (nice_lo, nice_hi)
         } else if self.fit {
-            self.nice_clear_of_data(lo, hi)
+            nice_clear_of_data(lo, hi, self.raw, self.tick_count, self.min_step)
         } else {
             d3rs::ticks::d3_nice(lo, hi, 10)
         }
-    }
-
-    /// A data-fit domain rounded out to the axis's own tick boundaries, then
-    /// one tick step further past a non-zero end a data value still lands on:
-    /// a dot on the plot edge reads as clipped, unless the edge is zero.
-    fn nice_clear_of_data(&self, lo: f64, hi: f64) -> (f64, f64) {
-        let (nice_lo, nice_hi) = d3rs::ticks::d3_nice(lo, hi, self.tick_count);
-        if nice_hi <= nice_lo {
-            return (nice_lo, nice_hi);
-        }
-        let count = d3rs::ticks::vega_tick_count(nice_lo, nice_hi, self.tick_count, self.min_step);
-        let step = d3rs::ticks::d3_tick_step(nice_lo, nice_hi, count);
-        let (data_lo, data_hi) = self.raw;
-        // An authored tick step can exceed the step the domain rounded to, so clamp at zero.
-        (
-            if data_lo == nice_lo && nice_lo != 0.0 { clamp_to_zero(nice_lo, nice_lo - step) } else { nice_lo },
-            if data_hi == nice_hi && nice_hi != 0.0 { clamp_to_zero(nice_hi, nice_hi + step) } else { nice_hi },
-        )
     }
 
     /// A position as a fraction of the plot. d3 puts every value of a
@@ -194,11 +192,11 @@ impl LinearX {
             // precision the tick step implies.
             None => {
                 let step = d3rs::ticks::d3_tick_step(domain.0, domain.1, count);
-                let spec = crate::number_locale::vega_tick_spec(step);
+                let spec = ::bind::formats::locale::vega_tick_spec(step);
                 values
                     .iter()
                     .map(|&tv| {
-                        crate::number_locale::d3_format(&spec, tv).map_err(|e| format!("scatter x label format: {e}"))
+                        ::bind::formats::locale::d3_format(&spec, tv).map_err(|e| format!("scatter x label format: {e}"))
                     })
                     .collect::<Result<_, _>>()?
             }
@@ -211,7 +209,7 @@ impl LinearX {
                 .enumerate()
                 .map(|(i, (label, &tv))| {
                     let digits = match &self.format {
-                        Some(slot) => crate::number_locale::d3_format(&slot.spec, tv).map_err(|e| format!("scatter x label format: {e}"))?,
+                        Some(slot) => ::bind::formats::locale::d3_format(&slot.spec, tv).map_err(|e| format!("scatter x label format: {e}"))?,
                         None => label.clone(),
                     };
                     crate::labels_expr::speak_value("x", src, tv, &digits, i, values.len())
@@ -237,6 +235,9 @@ struct ScatterResolved {
     /// Effective chart background — see `BarResolved::background` and
     /// `docs/laws-shared.md#background`.
     background: String,
+    /// The chart's opaque composited canvas: the knockout ink, where `background` may be `transparent`.
+    #[serde(deserialize_with = "crate::common::de_canvas")]
+    canvas: String,
     x: String,
     y: String,
     #[serde(default)]
@@ -266,10 +267,10 @@ struct ScatterResolved {
     /// Orders a categorical channel's band domain; inert on a measure.
     #[serde(default)]
     sort: Option<ChartSort>,
-    multiples: Option<crate::families::multiples::MultiplesConfig>,
+    multiples: Option<::bind::multiples::MultiplesConfig>,
     /// Baked small-multiples partition dimensions (`resolved.panel_axes`).
     #[serde(default)]
-    panel_axes: Vec<crate::families::multiples::PartitionAxis>,
+    panel_axes: Vec<::bind::multiples::PartitionAxis>,
     #[serde(default)]
     layers: Vec<Value>,
     #[serde(default)]
@@ -417,7 +418,7 @@ impl ScatterResolved {
         r.link_context = payload.link_context.clone();
         r.link_y = r.y.clone();
         r.link_color = r.color.clone();
-        r.link_x_labeled = crate::families::temporal::has_labeled_bucket(&payload.rows, &r.x);
+        r.link_x_labeled = ::bind::temporal::has_labeled_bucket(&payload.rows, &r.x);
         Ok(r)
     }
 }
@@ -873,7 +874,7 @@ fn point_scale_domain(
             let row = source.iter().find(|row| category_text(row, field) == *category).expect("domain built from source");
             by_label.push(row.get(field).cloned().unwrap_or(Value::Null));
         }
-        let ordered = crate::common::vega_ascending_sort(by_label).map_err(|e| format!("scatter: {e}"))?;
+        let ordered = ::bind::rows::vega_ascending_sort(by_label).map_err(|e| format!("scatter: {e}"))?;
         return Ok(ordered
             .iter()
             .map(|v| match v {
@@ -883,7 +884,7 @@ fn point_scale_domain(
             })
             .collect());
     };
-    crate::common::min_ranked_domain(domain, &source, |row| category_text(row, field), sort).map_err(|e| format!("scatter: {e}"))
+    ::bind::rows::min_ranked_domain(domain, &source, |row| category_text(row, field), sort).map_err(|e| format!("scatter: {e}"))
 }
 
 /// The point mark's size scale range — Vega-Lite's own fixed default for a
@@ -935,7 +936,7 @@ fn measure_reading(
 ) -> Option<(Option<f64>, Option<f64>)> {
     let y = if y_nominal { None } else { Some(row_num(row, &r.y)?) };
     let size = match r.size.as_deref() {
-        Some(size_field) => Some(row.get(size_field).and_then(crate::common::js_to_number).filter(|v| v.is_finite())?),
+        Some(size_field) => Some(row.get(size_field).and_then(::bind::rows::js_to_number).filter(|v| v.is_finite())?),
         None => None,
     };
     if let Some(color_field) = r.color.as_deref().filter(|_| quantitative_color(r)) {
@@ -1052,9 +1053,9 @@ fn log_x_axis(ax_x: &AxisStyle, x_min: f64, x_max: f64, pw: f64) -> Result<(LogA
             (true, slot) => {
                 // Vega labels an unformatted log axis with d3's bare `,` specifier.
                 let label = match slot {
-                    Some(slot) if ax_x.labels.expr.is_some() => crate::number_locale::d3_format(&slot.spec, tv),
+                    Some(slot) if ax_x.labels.expr.is_some() => ::bind::formats::locale::d3_format(&slot.spec, tv),
                     Some(slot) => slot.paint_tick(tv),
-                    None => crate::number_locale::d3_format(",", tv),
+                    None => ::bind::formats::locale::d3_format(",", tv),
                 }
                 .map_err(|e| format!("scatter x label format: {e}"))?;
                 ax_x.labels.apply_expr("x", tv, label, i, ladder.ticks.len())
@@ -1130,7 +1131,9 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
     let ax_x = p.ax_x;
     let x_font_size = ax_x.labels.font.size_or(11.0);
     let x_family = ax_x.labels.font.family_or("sans-serif");
-    let x_label_pad = ax_x.labels.padding.unwrap_or(6.0);
+    // `labels.visible: false` keeps ticks and grid but no label text, and no gutter for it.
+    let x_labels_hidden = ax_x.labels.visible == Some(false);
+    let x_label_pad = if x_labels_hidden { 0.0 } else { ax_x.labels.padding.unwrap_or(6.0) };
     let edge = ax_x.x_edge();
     let sign = edge.sign();
     // `plot_bottom` is the y of the plot edge the axis hangs from. Vega's crisp half pixel shifts the group down on either edge.
@@ -1162,6 +1165,7 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
     }
     let x_label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
     let x_label_weight = ax_x.labels.font.weight_str();
+    let painted_labels: &[String] = if x_labels_hidden { &[] } else { p.labels };
     if p.angle != 0.0 {
         // Vega's SVG text transform for a rotated item: translate to the
         // anchor, rotate, then the baseline shift — bar's own
@@ -1173,7 +1177,7 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
             "right" => "end",
             _ => "middle",
         };
-        for (&frac, lbl) in p.ticks.iter().zip(p.labels) {
+        for (&frac, lbl) in p.ticks.iter().zip(painted_labels) {
             let pos = plot_left + x_pos(frac) + label_crisp;
             items.push(
                 crate::text::label(
@@ -1214,7 +1218,7 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
             }))
         });
         let x_label_visible = x_label_visible.transpose()?;
-        for (i, (&frac, lbl)) in p.ticks.iter().zip(p.labels).enumerate() {
+        for (i, (&frac, lbl)) in p.ticks.iter().zip(painted_labels).enumerate() {
             if x_label_visible.as_ref().is_some_and(|v| !v[i]) {
                 continue;
             }
@@ -1236,7 +1240,7 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
     }
 
     let x_title_band = crate::common::axis_title_band(&ax_x.title, p.title);
-    if p.angle != 0.0 && x_title_band > 0.0 {
+    if p.angle != 0.0 && x_title_band > 0.0 && !x_labels_hidden {
         // Vega's `axisTitleLayout` offsets the title by the label ink's reach past
         // the pivot plus `titlePadding`, read from `rotated_category_label_ink`.
         let anchor_y = plot_bottom + x_axis_drop + sign * (x_tick_eff + x_label_pad);
@@ -1252,10 +1256,11 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
         let title_padding = ax_x.title.padding.unwrap_or(10.0);
         let title_y = anchor_y + sign * (reach + title_padding) + measure::baseline_shift(edge.baseline(), title_fs);
         items.extend(crate::common::axis_title_at(p.title, &ax_x.title, plot_left + plot_w / 2.0, title_y, p.title_key));
-    } else if p.ticks.is_empty() {
-        // An axis with no ticks has no label bounds to clear: the title sits one padding below the axis origin.
+    } else if p.ticks.is_empty() || x_labels_hidden {
+        // An axis with no labels has no label bounds to clear: the title sits one padding past its tick marks.
         let title_fs = ax_x.title.font.size_or(11.0);
-        let title_y = plot_bottom + x_axis_drop + sign * ax_x.title.padding.unwrap_or(10.0) + measure::baseline_shift(edge.baseline(), title_fs);
+        let tick_reach = if p.ticks.is_empty() { 0.0 } else { x_tick_eff };
+        let title_y = plot_bottom + x_axis_drop + sign * (tick_reach + ax_x.title.padding.unwrap_or(10.0)) + measure::baseline_shift(edge.baseline(), title_fs);
         items.extend(crate::common::axis_title_at(p.title, &ax_x.title, plot_left + plot_w / 2.0, title_y, p.title_key));
     } else {
         let label_rows = p.labels.iter().map(|l| crate::text::line_count(l)).max().unwrap_or(1);
@@ -1552,6 +1557,9 @@ impl PlainXAxis {
     /// The axis with its label reaches measured for a plot `pw` wide.
     pub(crate) fn sized_for(&self, ax_x: &AxisStyle, pw: f64, fonts: &FontBook) -> Result<Self, String> {
         let mut sized = self.clone();
+        if ax_x.labels.visible == Some(false) {
+            return Ok(sized);
+        }
         let (ticks, labels, _) = self.ticks_at(pw)?;
         let (size, family) = (ax_x.labels.font.size_or(11.0), ax_x.labels.font.family_or("sans-serif"));
         let limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
@@ -1653,22 +1661,22 @@ fn x_time_axis(
         return Ok(TimeAxis::new(AxisGrain::default(), std::collections::HashMap::new()));
     }
     let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
-    let law = crate::families::x_type::resolve_cartesian_x_type(
+    let law = ::bind::x_type::resolve_cartesian_x_type(
         &payload.schema.rows,
         &payload.rows,
         &r.x,
-        &crate::families::x_type::XAxis::of(&r.style.axis_x),
+        &r.style.axis_x.x_axis(),
         "scatter",
         false,
         &panel_fields,
     )?;
     let grain = AxisGrain {
         unit: match law.grain {
-            crate::families::x_type::Grain::Calendar(tu) => Some(tu),
+            ::bind::x_type::Grain::Calendar(tu) => Some(tu),
             _ => None,
         },
         part: match law.grain {
-            crate::families::x_type::Grain::Part(part) => Some(part),
+            ::bind::x_type::Grain::Part(part) => Some(part),
             _ => None,
         },
         band: false,
@@ -1744,17 +1752,17 @@ impl<'a> XLayers<'a> {
 /// Vega's NaN position.
 fn x_has_nan_years(payload: &Payload, r: &ScatterResolved) -> Result<bool, String> {
     let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
-    let law = crate::families::x_type::resolve_cartesian_x_type(
+    let law = ::bind::x_type::resolve_cartesian_x_type(
         &payload.schema.rows,
         &payload.rows,
         &r.x,
-        &crate::families::x_type::XAxis::of(&r.style.axis_x),
+        &r.style.axis_x.x_axis(),
         "scatter",
         false,
         &panel_fields,
     )?;
-    Ok(law.vl_type == crate::families::temporal::VegaType::Temporal
-        && matches!(law.grain, crate::families::x_type::Grain::Calendar(_)))
+    Ok(law.vl_type == ::bind::temporal::VegaType::Temporal
+        && matches!(law.grain, ::bind::x_type::Grain::Calendar(_)))
 }
 
 fn date_axis(
@@ -1775,7 +1783,7 @@ fn date_axis(
         .label_usable_ratio
         .ok_or("scatter: label_usable_ratio absent (theme required for a date x axis)")?;
     let mut time = time.clone();
-    let unreadable = |e: crate::time_axis::Unreadable| e.diagnostic(&r.id, &r.x, "scatter");
+    let unreadable = |e: ::bind::time_axis::Unreadable| e.diagnostic(&r.id, &r.x, "scatter");
     let (mut ladder, mut kept) = axis_dates(rows, drawn, &r.x);
     let layer_dates: Vec<String> = layers
         .columns
@@ -1786,11 +1794,11 @@ fn date_axis(
     ladder.extend(layer_dates.iter().cloned());
     kept.extend(layer_dates);
     let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
-    let law = crate::families::x_type::resolve_cartesian_x_type(
+    let law = ::bind::x_type::resolve_cartesian_x_type(
         types,
         rows,
         &r.x,
-        &crate::families::x_type::XAxis::of(&r.style.axis_x),
+        &r.style.axis_x.x_axis(),
         "scatter",
         false,
         &panel_fields,
@@ -1799,7 +1807,7 @@ fn date_axis(
     // part, whose domain is not the calendar the annotation names. Their tick
     // dates join the ladder; the extent takes the days themselves.
     let mut extra_days: Vec<i64> = Vec::new();
-    if !matches!(law.grain, crate::families::x_type::Grain::Part(_)) {
+    if !matches!(law.grain, ::bind::x_type::Grain::Part(_)) {
         extra_days.extend(crate::annotation::x_day_bounds(&r.annotations));
         for &days in &extra_days {
             let (y, m, d) = d3rs::calendar::civil_from_days(days);
@@ -1807,8 +1815,8 @@ fn date_axis(
         }
     }
     // An ordinal scale is a band scale beside a bar layer: its buckets are its own domain.
-    let ordinal = law.vl_type == crate::families::temporal::VegaType::Ordinal;
-    if let (false, crate::families::x_type::Grain::Calendar(_)) = (ordinal, law.grain) {
+    let ordinal = law.vl_type == ::bind::temporal::VegaType::Ordinal;
+    if let (false, ::bind::x_type::Grain::Calendar(_)) = (ordinal, law.grain) {
         // The scale runs on to the end of the last bucket a bar occupies, once that
         // passes every datum.
         let mut last_end: Option<f64> = None;
@@ -1821,7 +1829,7 @@ fn date_axis(
         }
         let last_datum = kept.iter().filter_map(|d| time.get(d)).map(|instant| instant.at.floor()).reduce(f64::max);
         if let Some(end) = last_end.filter(|end| Some(*end) > last_datum) {
-            let end = crate::families::temporal::instant_iso(end);
+            let end = ::bind::temporal::instant_iso(end);
             ladder.push(end.clone());
             kept.push(end);
         }
@@ -1885,7 +1893,7 @@ fn rule_aria(tooltip_labels: bool, spec: &str, title: &str, datum: f64) -> Resul
     if !tooltip_labels {
         return Ok(None);
     }
-    let v = crate::number_locale::d3_format(spec, datum)
+    let v = ::bind::formats::locale::d3_format(spec, datum)
         .map_err(|e| format!("scatter: baseline rule tooltip format: {e}"))?;
     Ok(Some(format!("{title}: {v}")))
 }
@@ -1995,7 +2003,7 @@ fn legend_entry_order(
         Some(authored) if authored.is_empty() => Ok(Vec::new()),
         Some(authored) => {
             let domain: Vec<&str> = color_domain.iter().map(String::as_str).collect();
-            Ok(legend::resolve_legend_values(authored, &domain, raw_measures))
+            Ok(::bind::legend::resolve_legend_values(authored, &domain, raw_measures))
         }
     }
 }
@@ -2210,10 +2218,10 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
         return Err("scatter: multiples with no baked panel_axes — resolve() should always supply at least one".into());
     }
     let axes = &r.panel_axes;
-    let panels = multiples::regroup(axes, &payload.rows).map_err(|e| format!("scatter: {e}"))?;
-    let panel_rows_n = multiples::panel_axis_cardinality(axes, mc.rows.as_deref());
-    let panel_cols_n = multiples::panel_axis_cardinality(axes, mc.columns.as_deref());
-    let missing = multiples::empty_leading_cells(panels.len(), panel_rows_n, panel_cols_n)?;
+    let panels = ::bind::multiples::regroup(axes, &payload.rows).map_err(|e| format!("scatter: {e}"))?;
+    let panel_rows_n = ::bind::multiples::panel_axis_cardinality(axes, mc.rows.as_deref());
+    let panel_cols_n = ::bind::multiples::panel_axis_cardinality(axes, mc.columns.as_deref());
+    let missing = ::bind::multiples::empty_leading_cells(panels.len(), panel_rows_n, panel_cols_n)?;
     let index_of = |field: &Option<String>| field.as_deref().and_then(|f| axes.iter().position(|a| a.field == f));
 
     // The date axis is resolved once, against the naive per-panel width the
@@ -2475,7 +2483,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
             height: Box::new(|_| vl.box_h()),
             paint: Box::new(|x, y, _, _| {
                 let (entries, symbol) = if layered { (&layered_entries, layered_legend.base_glyph) } else { (&legend_entries, default_symbol) };
-                legend::drawn_symbol_legend(entries, vl, legend_cfg, symbol, x, y, false).into_iter().collect()
+                legend::drawn_symbol_legend(entries, vl, legend_cfg, symbol, x, y, false, r.canvas.as_str()).into_iter().collect()
             }),
         }))
         .chain(gradient_color.as_ref().map(|(scale, title)| facet_compose::LegendChrome {
@@ -2506,7 +2514,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
                     numeric.measure_part(index, legend_cfg, fonts, (0.0, ph)).expect("legend fonts are measured when the numeric legends are built").1
                 }),
                 paint: Box::new(move |x, y, pw, ph| {
-                    numeric.part_nodes(index, legend_cfg, fonts, (pw, ph), (x, y)).expect("legend fonts are measured when the numeric legends are built")
+                    numeric.part_nodes(index, legend_cfg, fonts, (pw, ph), (x, y), r.canvas.as_str()).expect("legend fonts are measured when the numeric legends are built")
                 }),
             }
         }))
@@ -2575,7 +2583,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
 pub(crate) struct ScatterPanelOpts<'a> {
     /// This panel's canonical key, the `panel` an annotation names.
     pub(crate) panel_key: &'a str,
-    /// This panel's place in `multiples::regroup` order; keeps clip ids unique.
+    /// This panel's place in `::bind::multiples::regroup` order; keeps clip ids unique.
     pub(crate) panel_ordinal: usize,
     pub(crate) plot_w: f64,
     pub(crate) plot_h: f64,
@@ -2686,7 +2694,7 @@ mod tests {
         ay["domain_max"] = serde_json::json!(254.5);
         let resolved = serde_json::json!({
             "chart_type": "scatter", "field_labels": {},
-            "id": "c", "title": null, "title_style": null, "background": "#ffffff",
+            "id": "c", "title": null, "title_style": null, "background": "#ffffff", "canvas": "#ffffff",
             "x": "spend", "y": "pipeline",
             "color": if with_color { serde_json::json!("segment") } else { serde_json::Value::Null },
             "palette": ["#3164a3", "#779bc9"],
@@ -3238,6 +3246,28 @@ mod tests {
         assert!(!years.is_empty() && years.len() < 40 && years.iter().all(|y| y % 5 == 0), "{years:?}");
     }
 
+    /// A date x typed ordinal links each dot by its ISO date.
+    #[test]
+    fn ordinal_date_x_links_the_rows_iso_date() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let mut p = make_scatter_payload(false);
+        p["rows"] = serde_json::json!([
+            {"spend": "2026-01-01", "pipeline": 150.0},
+            {"spend": "2026-02-01", "pipeline": 170.0},
+            {"spend": "2026-03-01", "pipeline": 160.0},
+        ]);
+        p["resolved"]["style"]["axis_x"]["type"] = serde_json::json!("ordinal");
+        p["resolved"]["style"]["axis_x"]["is_quantitative"] = serde_json::json!(false);
+        p["resolved"]["style"]["axis_x"]["labels"]["format"] = serde_json::json!(null);
+        p["resolved"]["style"]["label_usable_ratio"] = serde_json::json!(0.8);
+        p["resolved"]["link"] = serde_json::json!("/p/{{ x }}");
+        p["resolved"]["link_open"] = serde_json::json!("page");
+        let payload: Payload = serde_json::from_value(p).unwrap();
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(!svg.contains("0NaN"), "{svg}");
+        assert!(svg.contains("href=\"/p/2026-02-01\""), "{svg}");
+    }
+
     /// A payload lacking `style.single_series_fill` refuses rather than
     /// falling back to the palette.
     #[test]
@@ -3328,7 +3358,7 @@ mod tests {
         json["board_style"] = serde_json::json!({
             "font": TEST_FONT, "text_mark_font": {"family": TEST_FONT, "size": 11.0}, "secondary_color": null, "tones": null,
             "title_case": null, "continuous_height": null,
-            "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()
+            "format_locale": ::bind::formats::locale::en_us_wire(), "time_locale": ::bind::time_locale::en_us_wire()
         });
     }
 
@@ -3568,8 +3598,8 @@ mod tests {
         assert!(unbaked == authored, "the unbaked domain differs from the authored -40..50");
     }
 
-    /// `zero: false` skips the zero join but keeps `nice`: y 20..43 draws
-    /// 20..44 (`fixtures/scatter-specifics/unbaked-y-domain-zero-false`).
+    /// `zero: false` skips the zero join but keeps `nice`, and a data extreme
+    /// on the niced non-zero edge moves out one tick step: y 20..43 draws 18..44.
     #[test]
     fn an_unbaked_zero_false_y_domain_draws_the_niced_extent() {
         let ys = [20.0, 27.0, 31.0, 38.0, 43.0];
@@ -3577,10 +3607,10 @@ mod tests {
         let unbaked = render_json(unbaked_y_payload(&ys, &ladder, true));
         let authored = render_json(with_authored_y_domain(
             unbaked_y_payload(&ys, &ladder, true),
-            20.0,
+            18.0,
             44.0,
         ));
-        assert!(unbaked == authored, "the unbaked domain differs from the authored 20..44");
+        assert!(unbaked == authored, "the unbaked domain differs from the authored 18..44");
     }
 
     /// The fit arm's authored-pair refusal reads the rows Vega keeps: a row
@@ -4339,7 +4369,7 @@ mod tests {
         json["board_style"] = serde_json::json!({
             "font": TEST_FONT, "text_mark_font": {"family": TEST_FONT, "size": 11.0}, "secondary_color": null, "tones": null,
             "title_case": null, "continuous_height": null,
-            "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()
+            "format_locale": ::bind::formats::locale::en_us_wire(), "time_locale": ::bind::time_locale::en_us_wire()
         });
         let svg = render_json(json);
         assert!(svg.contains("M-3.87,-3.87L3.87,-3.87L3.87,3.87L-3.87,3.87Z"), "a square mark for the second category: {svg}");
@@ -4356,7 +4386,7 @@ mod tests {
         json["board_style"] = serde_json::json!({
             "font": TEST_FONT, "text_mark_font": {"family": TEST_FONT, "size": 11.0}, "secondary_color": null, "tones": null,
             "title_case": null, "continuous_height": null,
-            "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()
+            "format_locale": ::bind::formats::locale::en_us_wire(), "time_locale": ::bind::time_locale::en_us_wire()
         });
         for (i, row) in json["rows"].as_array_mut().unwrap().iter_mut().enumerate() {
             row["region"] = serde_json::json!(["East", "West"][i % 2]);
@@ -4642,7 +4672,7 @@ mod tests {
 
     /// The wide-measure "dot/band plot" — `y: [a, b]` folded onto a nominal
     /// x, the shape `charts/point-charts_5::actual_vs_target`'s corpus row
-    /// exercises: one fold, `common::unfold_wide_rows` + `wide_measure_
+    /// exercises: one fold, `bind::wide::unfold_wide_rows` + `wide_measure_
     /// labels_for`, both a bar/line-shared function, applied once at the
     /// top of `render` before the fit-arm gate ever runs. Two points per
     /// category, colored by the RAW-sorted (`total_cost` < `unit_price`)
@@ -4704,7 +4734,7 @@ mod tests {
         assert!(svg.contains(">Total cost<"), "{svg}");
         assert!(svg.contains(">Unit price<"), "{svg}");
         assert!(!svg.contains("total_cost") && !svg.contains("unit_price"), "{svg}");
-        assert!(!svg.contains(crate::common::WIDE_LABEL_FIELD), "{svg}");
+        assert!(!svg.contains(::bind::wide::WIDE_LABEL_FIELD), "{svg}");
         // The legend title's own font (size 12, weight 600) paints nowhere
         // in this chart when there's no title to paint — axis titles are
         // hidden (`axis_json`'s `title.visible: false`) and every axis
@@ -4744,7 +4774,7 @@ mod tests {
         json["board_style"] = serde_json::json!({
             "font": TEST_FONT, "text_mark_font": {"family": TEST_FONT, "size": 11.0}, "secondary_color": null, "tones": null,
             "title_case": null, "continuous_height": null,
-            "format_locale": crate::number_locale::en_us_wire(), "language": "de", "time_locale": crate::time_locale::en_us_wire()
+            "format_locale": ::bind::formats::locale::en_us_wire(), "language": "de", "time_locale": ::bind::time_locale::en_us_wire()
         });
         let svg = display_text::language::with_language(display_text::language::Language::new("de").unwrap(), || {
             render_json(json)
@@ -4822,7 +4852,7 @@ mod tests {
         assert!(labels.iter().all(|a| !a.contains("10.0")), "{labels:?}");
         assert!(labels.iter().any(|a| a.contains(": 10; ")), "{labels:?}");
 
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut dated = make_wide_quantitative_x_payload();
         dated["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.0f");
         dated["resolved"]["style"]["label_usable_ratio"] = serde_json::json!(0.85);
@@ -4837,7 +4867,7 @@ mod tests {
     /// the first), not d3's full month name on the tick.
     #[test]
     fn a_time_axis_names_months_between_boundary_ticks() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut json = make_scatter_payload(false);
         json["resolved"]["style"]["label_usable_ratio"] = serde_json::json!(0.85);
         json["resolved"]["style"]["axis_x"]["labels"]["time_unit"] = serde_json::json!("yearmonth");
@@ -4857,7 +4887,7 @@ mod tests {
     /// An authored `labels.align` turns interval mode off: d3's month names stay on the ticks instead of interval quarters.
     #[test]
     fn an_authored_label_align_turns_interval_labels_off() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut json = make_scatter_payload(false);
         json["resolved"]["style"]["label_usable_ratio"] = serde_json::json!(0.85);
         json["resolved"]["style"]["axis_x"]["labels"]["time_unit"] = serde_json::json!("yearquarter");
@@ -4881,7 +4911,7 @@ mod tests {
     /// An authored `labels.angle` takes effect: it turns interval mode off rather than being dropped by it.
     #[test]
     fn an_authored_angle_on_a_grainless_date_axis_is_kept() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut json = make_scatter_payload(false);
         json["resolved"]["style"]["label_usable_ratio"] = serde_json::json!(0.85);
         json["resolved"]["style"]["axis_x"]["labels"]["time_unit"] = serde_json::json!("year");
@@ -4898,7 +4928,7 @@ mod tests {
 
     /// Daily scatter rows from 2026-03-03 over `days` days, 600px wide, on a daily-grain time axis.
     fn daily_scatter_labels(days: i64, label_unit: Option<&str>) -> Vec<String> {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut json = make_scatter_payload(false);
         json["resolved"]["style"]["label_usable_ratio"] = serde_json::json!(0.85);
         json["resolved"]["style"]["axis_x"]["time_unit"] = serde_json::json!("yearmonthdate");
@@ -4939,7 +4969,7 @@ mod tests {
     /// zero, and no tick carries a thousands comma. A non-year numeric x keeps its zero join.
     #[test]
     fn a_year_shaped_x_draws_a_year_axis_not_a_zero_joined_number_line() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let tick_labels = |svg: &str| -> Vec<String> {
             svg.split("<text").skip(1).filter_map(|t| t.split('>').nth(1)?.split('<').next().map(str::to_string)).collect()
         };
@@ -5426,7 +5456,7 @@ mod tests {
     /// Date bands pass the gate and every band is relabeled through the format.
     #[test]
     fn a_time_label_format_on_date_bands_relabels_every_band() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut json = make_dot_plot_payload(serde_json::json!([
             {"median_response_hours": 3.0, "team": "2024-02"},
             {"median_response_hours": 1.0, "team": "2024-01"},
@@ -6532,6 +6562,17 @@ mod tests {
         assert!(!svg.contains("Pipeline, Trend"), "{svg}");
     }
 
+    /// A data-fit y whose extremes land on nice ticks clears them one step; a zero edge stays, an authored bound is verbatim.
+    #[test]
+    fn a_data_fit_measure_domain_clears_a_non_zero_edge() {
+        let mut ax: crate::common::AxisStyle = serde_json::from_value(axis_json(None)).unwrap();
+        ax.scale = serde_json::json!({"continuous": {"zero": false}});
+        assert_eq!(super::layout::unauthored_measure_domain(&ax, 20.0, 80.0, 100.0, false), (15.0, 85.0));
+        assert_eq!(super::layout::unauthored_measure_domain(&ax, -20.0, 0.0, 100.0, false), (-22.0, 0.0));
+        ax.domain_max = Some(80.0);
+        assert_eq!(super::layout::unauthored_measure_domain(&ax, 20.0, 80.0, 100.0, true).1, 80.0);
+    }
+
     /// The layer union returns Vega-Lite's default `nice`, which rounds a baked bound too.
     #[test]
     fn a_layered_measure_domain_rounds_a_baked_bound() {
@@ -6893,7 +6934,7 @@ mod tests {
     /// Rows in query order or in time order draw the same marks and place an annotation on the same date.
     #[test]
     fn unordered_rows_draw_the_marks_and_annotations_of_ordered_rows() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let rule = || vec![annotation(0, date_value("2024-02-20"), serde_json::Value::Null)];
         let ordered = render_json(dated_scatter(["2024-01-15", "2024-02-15", "2024-03-15"], rule()));
         // The y values follow their rows, so reorder the whole row.
@@ -6901,7 +6942,7 @@ mod tests {
         shuffled["rows"].as_array_mut().unwrap().reverse();
         let shuffled = render_json(shuffled);
         let marks = |svg: &str| -> Vec<String> {
-            let mut marks: Vec<String> = crate::time_axis::testing::geometry(svg);
+            let mut marks: Vec<String> = ::bind::time_axis::testing::geometry(svg);
             marks.sort();
             marks
         };
@@ -6911,7 +6952,7 @@ mod tests {
     /// Two points on one day, hours apart, sit hours apart on the axis.
     #[test]
     fn a_time_of_day_places_the_point() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let svg = render_json(dated_scatter(["2024-03-01T08:00:00", "2024-03-01T20:00:00", "2024-03-02T08:00:00"], Vec::new()));
         let xs: Vec<f64> = svg
             .split("<path transform=\"translate(")
@@ -6925,17 +6966,17 @@ mod tests {
     /// An offset timestamp sits where its UTC spelling does.
     #[test]
     fn an_offset_timestamp_point_sits_where_its_utc_spelling_does() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let offset = render_json(dated_scatter(["2024-03-01T23:30:00-05:00", "2024-03-03T01:00:00+05:30", "2024-03-04T08:00:00+0100"], Vec::new()));
         let utc = render_json(dated_scatter(["2024-03-02T04:30:00Z", "2024-03-02T19:30:00Z", "2024-03-04T07:00:00Z"], Vec::new()));
-        assert_eq!(crate::time_axis::testing::geometry(&offset), crate::time_axis::testing::geometry(&utc));
+        assert_eq!(::bind::time_axis::testing::geometry(&offset), ::bind::time_axis::testing::geometry(&utc));
     }
 
     /// On a New York board an aware point's tooltip header reads the New York clock; a naive one as written.
     #[test]
     fn an_aware_point_reads_its_tooltip_clock_in_the_board_zone() {
-        let _locale = crate::time_locale::en_us_scope();
-        let _zone = crate::time_zone::zone_scope("America/New_York");
+        let _locale = ::bind::time_locale::en_us_scope();
+        let _zone = ::bind::time_zone::zone_scope("America/New_York");
         let headers = |xs: [&str; 3]| {
             let mut json = make_wide_quantitative_x_payload();
             json["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.0f");
@@ -6983,7 +7024,7 @@ mod tests {
     /// An authored x domain may end on a timestamp, which the UTC scale takes as the instant it is.
     #[test]
     fn an_authored_timestamp_domain_sets_the_utc_scale() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let mut json = dated_scatter(["2024-01-15", "2024-02-15", "2024-03-15"], Vec::new());
         json["resolved"]["style"]["axis_x"]["scale"]["continuous"]["domain"] = serde_json::json!(["2024-01-01T12:00:00", "2024-04-01T12:00:00"]);
         render_json(json);
@@ -7090,5 +7131,99 @@ mod tests {
         assert_eq!(svg.unwrap(), print::print(&laid.nodes));
         assert!(!laid.diagnostics.is_empty(), "the payload must warn for forwarding to be tested");
         assert_eq!(sunk, laid.diagnostics);
+    }
+
+    /// The widest `attr` any gridline reaches: the plot's width (`x2`) or height (`y2`).
+    fn grid_extent(svg: &str, attr: &str) -> f64 {
+        svg.split("<line ")
+            .filter_map(|tag| tag.split(&format!("{attr}=\"")).nth(1)?.split('"').next()?.parse::<f64>().ok())
+            .fold(0.0_f64, f64::max)
+    }
+
+    /// `labels.visible: false` on either scatter axis paints no tick labels and
+    /// frees their gutter; ticks, grid and the axis title keep their own switches.
+    #[test]
+    fn hidden_axis_labels_paint_nothing_and_free_their_gutter_on_a_scatter() {
+        for (axis, position, gone, grid_attr) in [
+            ("axis_y", "right", ">200<", "x2"),
+            ("axis_y", "left", ">200<", "x2"),
+            ("axis_x", "bottom", ">30<", "y2"),
+        ] {
+            let render_with = |visible: bool| {
+                let mut json = make_scatter_payload(false);
+                json["resolved"]["style"][axis]["labels"]["visible"] = serde_json::json!(visible);
+                if axis == "axis_y" {
+                    json["resolved"]["style"][axis]["position"] = serde_json::json!(position);
+                }
+                render_json(json)
+            };
+            let (shown, hidden) = (render_with(true), render_with(false));
+            let case = format!("{axis} {position}");
+            assert!(shown.contains(gone), "{case}: control paints tick labels: {shown}");
+            assert!(!hidden.contains(gone), "{case}: tick labels painted: {hidden}");
+            assert!(
+                grid_extent(&hidden, grid_attr) > grid_extent(&shown, grid_attr),
+                "{case}: plot did not grow: {} -> {}",
+                grid_extent(&shown, grid_attr),
+                grid_extent(&hidden, grid_attr)
+            );
+        }
+    }
+
+    /// A date x axis and a category x axis honor `labels.visible: false` too: no label text, the freed
+    /// gutter goes to the plot, and the axis title (its own `visible` leaf) stays.
+    #[test]
+    fn hidden_x_labels_cover_date_and_category_axes_and_keep_the_title() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let dated = || dated_scatter(["2024-01-15", "2024-02-15", "2024-03-15"], Vec::new());
+        let categories = || {
+            let mut json = make_scatter_payload(false);
+            for (row, x) in json["rows"].as_array_mut().unwrap().iter_mut().zip(["North", "South", "West"]) {
+                row["spend"] = serde_json::json!(x);
+            }
+            json
+        };
+        for (case, make, label) in [("date", dated as fn() -> serde_json::Value, ">Feb"), ("category", categories, ">South<")] {
+            let render_with = |visible: bool| {
+                let mut json = make();
+                json["resolved"]["style"]["axis_x"]["labels"]["visible"] = serde_json::json!(visible);
+                json["resolved"]["style"]["axis_x"]["title"]["visible"] = serde_json::json!(true);
+                render_json(json)
+            };
+            let (shown, hidden) = (render_with(true), render_with(false));
+            assert!(shown.contains(label), "{case}: control paints x labels: {shown}");
+            assert!(!hidden.contains(label), "{case}: x labels painted: {hidden}");
+            assert!(hidden.contains(">Spend<"), "{case}: the axis title is gone: {hidden}");
+            assert!(grid_extent(&hidden, "y2") > grid_extent(&shown, "y2"), "{case}: plot did not grow");
+        }
+    }
+
+    /// A hidden x ladder keeps its tick marks, and the axis title clears them inside the canvas.
+    #[test]
+    fn hidden_x_labels_with_ticks_leave_the_title_inside_the_canvas() {
+        let mut json = make_scatter_payload(false);
+        json["resolved"]["style"]["axis_x"]["labels"]["visible"] = serde_json::json!(false);
+        json["resolved"]["style"]["axis_x"]["ticks"] = serde_json::json!({"visible": true, "length": 40.0, "color": "#999999", "width": 1.0});
+        json["resolved"]["style"]["axis_x"]["title"]["visible"] = serde_json::json!(true);
+        let svg = render_json(json);
+        let attr = |tag: &str, name: &str| -> f64 { tag.split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap().parse().unwrap() };
+        let title = svg.split("<text").find(|t| t.contains(">Spend<")).expect("the x title");
+        assert!(attr(title, "y") < attr(&svg, "height"), "title baseline {} outside canvas {}", attr(title, "y"), attr(&svg, "height"));
+    }
+
+    /// Hidden y labels reserve no half-font overhang above and below the plot.
+    #[test]
+    fn hidden_y_labels_reserve_no_half_font_height() {
+        let render_with = |visible: bool| {
+            let mut json = make_scatter_payload(false);
+            json["resolved"]["style"]["axis_y"]["labels"]["visible"] = serde_json::json!(visible);
+            json["resolved"]["style"]["axis_y"]["labels"]["font"]["size"] = serde_json::json!(60.0);
+            json["resolved"]["style"]["axis_x"]["labels"]["visible"] = serde_json::json!(false);
+            json["resolved"]["style"]["axis_y"]["title"]["visible"] = serde_json::json!(false);
+            json["resolved"]["style"]["axis_x"]["title"]["visible"] = serde_json::json!(false);
+            render_json(json)
+        };
+        let (shown, hidden) = (render_with(true), render_with(false));
+        assert!(grid_extent(&hidden, "y2") > grid_extent(&shown, "y2"), "{} vs {}", grid_extent(&hidden, "y2"), grid_extent(&shown, "y2"));
     }
 }

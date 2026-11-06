@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'Scatter, horizontal bar and line small-multiples charts now honor `labels.visible: false` on an axis, hiding its tick labels and releasing the space they took.'
+time: 2026-11-04T01:03:42.363813-08:00

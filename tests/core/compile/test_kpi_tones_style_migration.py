@@ -29,15 +29,15 @@ import pytest
 from dbt_charts.core.compile.migrations import (
     MigrationError,
     SchemaMigrationWarning,
-    migrate_mapping,
     migrate_yaml_text,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._engine_migrations import migrate_mapping
 
 
 @pytest.fixture
@@ -46,10 +46,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: dict[str, Any], catalog: YamlSchemaCatalog) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 def test_style_charts_kpi_tones_migrates_to_style_tones(
@@ -169,7 +168,6 @@ def test_migrate_yaml_text_raises_for_style_charts_kpi_tones(
     The in-memory migration leaves an empty ``style.charts.kpi`` mapping,
     which the text writer cannot express, so its final check fails loud.
     """
-    _, registry = _board_migration_context()
     yaml_text = (
         "charts:\n"
         "  revenue_kpi:\n"
@@ -185,7 +183,7 @@ def test_migrate_yaml_text_raises_for_style_charts_kpi_tones(
     )
 
     with pytest.raises(MigrationError, match="diverged"):
-        migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+        migrate_yaml_text(yaml_text)
 
 
 def _nested(depth: int) -> dict[str, Any]:

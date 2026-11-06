@@ -25,10 +25,8 @@ use crate::families::legend::{
     slide_block, drawn_symbol_legend, vega_legend, LegendEntry, LegendSymbol, VEGA_GRADIENT_LENGTH_MAX,
     VEGA_GRADIENT_LENGTH_MIN,
 };
-use crate::families::temporal::{
-    axis_time_format, fold_steep, resolve_vertical_temporal_labels, rewrite_with_expr, AuthoredTimeFormat, ExprBands,
-    TemporalLabel, TimeUnit,
-};
+use crate::families::temporal::{axis_time_format, fold_steep, resolve_vertical_temporal_labels, rewrite_with_expr, AuthoredTimeFormat, ExprBands, TemporalLabel};
+use ::bind::temporal::{TimeUnit};
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::layout::{IntrinsicWidth, Layout, Rect};
 use crate::vega_fit::{self, Bounds};
@@ -87,7 +85,7 @@ fn y_date_labels(
     let overlap = labels_cfg.overlap.as_ref().ok_or("heatmap: axis_y.labels.overlap absent (theme required)")?;
     let min_gap = labels_cfg.min_gap.ok_or("heatmap: axis_y.labels.min_gap absent (theme required)")?;
     let ladder = resolve_vertical_temporal_labels(
-        &crate::time_axis::Dates::read(&dated),
+        &::bind::time_axis::Dates::read(&dated),
         data_tu,
         chart_h * usable_ratio,
         ax_y.fiscal_year_start_month,
@@ -714,7 +712,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     match (&symbol_legend_box, &bound.coloring) {
         (Some(legend), _) => {
             let (dx, dy) = legend_slide(&r.id, &r.legend.position, legend, (plot_w, plot_h))?;
-            body.extend(drawn_symbol_legend(&symbol_entries, legend, &r.legend, LegendSymbol::FilledSquare, leg_x + dx, leg_y + dy, false));
+            body.extend(drawn_symbol_legend(&symbol_entries, legend, &r.legend, LegendSymbol::FilledSquare, leg_x + dx, leg_y + dy, false, r.canvas.as_str()));
         }
         (None, Coloring::Gradient { .. }) if vertical_gradient => {
             if let Some(legend) = &gradient_legend {

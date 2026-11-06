@@ -2,7 +2,7 @@
 name = "display-text"
 version = "0.0.1"
 edition = "2021"
-description = "Display text shared by compile, resolve and chart-renderer: names derived from columns (core/text/humanize.py::slug_to_text, core/text/case.py::field_title) and the board language's word catalogs (language/<lang>.json)."
+description = "Display text shared by compile, resolve and chart-renderer: names derived from columns (core/text/humanize.py::slug_to_text, core/text/case.py::field_title), the board language's word catalogs (language/<lang>.json), d3's number and time locales (locale/{number,time}/<tag>.json), and a named locale's magnitude words and first weekday (locale/magnitude_words.json, locale/first_day.json)."
 
 [dependencies]
 regex = "1"

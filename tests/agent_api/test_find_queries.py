@@ -23,12 +23,12 @@ from dbt_charts.core.constants.find_queries import (
     INLINE_ROWS,
     MAX_CACHED_VARIANTS,
 )
-from dbt_charts.core.execute.adapters import AdapterRegistry, build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import ExecEnv, build_exec_env
 from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 from .._results import rows_result
+from .._run import Run
 
 _REVENUE = """title: Revenue by region
 notes: Quarterly revenue across regions.
@@ -90,8 +90,8 @@ def cache() -> Iterator[TrivialDuckDBCache]:
 
 
 @pytest.fixture
-def registry(project: FilesystemProject) -> AdapterRegistry:
-    return build_adapter_registry(project, read_only=False)
+def registry(project: FilesystemProject) -> ExecEnv:
+    return build_exec_env(project, read_only=False)
 
 
 Put = Callable[..., tuple[str, str, str]]
@@ -99,7 +99,7 @@ Put = Callable[..., tuple[str, str, str]]
 
 @pytest.fixture
 def put(
-    project: FilesystemProject, registry: AdapterRegistry, cache: TrivialDuckDBCache
+    project: FilesystemProject, registry: ExecEnv, cache: TrivialDuckDBCache
 ) -> Put:
     """Cache rows for *board*'s *query* under the key the executor reads them
     with today, as *writer* (default: that board and query) wrote them *age*
@@ -116,9 +116,9 @@ def put(
         loaded = load_board(Path(f"{board}.yml"), project)
         assert not isinstance(loaded, BoardFailure)
         variables = {"region": region} if region is not None else {}
-        executor = Executor(
+        executor = Run(
             loaded.board,
-            adapter_registry=registry,
+            env=registry,
             query_registry=loaded.query_registry,
         )
         [planned] = plan(executor.ctx, [query], variables)
@@ -146,7 +146,7 @@ def put(
 def test_ranking_follows_the_board_search(
     project: FilesystemProject,
     cache: TrivialDuckDBCache,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     put: Put,
 ) -> None:
     result = find_queries(project, cache, registry, "revenue", None)
@@ -158,7 +158,7 @@ def test_ranking_follows_the_board_search(
 def test_a_board_lists_its_variables_and_every_query(
     project: FilesystemProject,
     cache: TrivialDuckDBCache,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     put: Put,
 ) -> None:
     [board] = find_queries(project, cache, registry, "revenue", None).boards
@@ -182,7 +182,7 @@ def test_a_board_lists_its_variables_and_every_query(
 def test_a_small_default_slice_carries_its_rows(
     project: FilesystemProject,
     cache: TrivialDuckDBCache,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     put: Put,
 ) -> None:
     """A total or a short breakdown is the answer itself, so the listing hands
@@ -208,7 +208,7 @@ def test_a_small_default_slice_carries_its_rows(
 def test_inlined_rows_stay_within_the_listing_budget(
     project: FilesystemProject,
     cache: TrivialDuckDBCache,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     put: Put,
 ) -> None:
     (Path(project.root) / "charts" / "big.yml").write_text(
@@ -235,7 +235,7 @@ def test_inlined_rows_stay_within_the_listing_budget(
 def test_synthetic_queries_are_not_listed(
     project: FilesystemProject,
     cache: TrivialDuckDBCache,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     put: Put,
 ) -> None:
     """A chart's inline query and a variable's options query compile under
@@ -267,7 +267,7 @@ def test_synthetic_queries_are_not_listed(
 def test_a_query_notes_match_finds_the_board(
     project: FilesystemProject,
     cache: TrivialDuckDBCache,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     put: Put,
 ) -> None:
     result = find_queries(project, cache, registry, "answers revenue by region", None)
@@ -278,7 +278,7 @@ def test_a_query_notes_match_finds_the_board(
 def test_a_cached_query_lists_its_variants_default_slice_then_newest_first(
     project: FilesystemProject,
     cache: TrivialDuckDBCache,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     put: Put,
 ) -> None:
     put(timedelta(hours=1), "EU", rows=2)
@@ -307,7 +307,7 @@ def test_a_cached_query_lists_its_variants_default_slice_then_newest_first(
 def test_read_names_the_variables_of_a_non_default_slice(
     project: FilesystemProject,
     cache: TrivialDuckDBCache,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     put: Put,
 ) -> None:
     """With only another region cached, the call that reads it must pass that
@@ -326,7 +326,7 @@ def test_read_names_the_variables_of_a_non_default_slice(
 def test_variants_are_limited_to_the_window_and_the_cap_with_an_older_count(
     project: FilesystemProject,
     cache: TrivialDuckDBCache,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     put: Put,
 ) -> None:
     inside = MAX_CACHED_VARIANTS + 2
@@ -347,7 +347,7 @@ def test_variants_are_limited_to_the_window_and_the_cap_with_an_older_count(
 def test_another_boards_entries_are_not_listed(
     project: FilesystemProject,
     cache: TrivialDuckDBCache,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     put: Put,
 ) -> None:
     put(timedelta(hours=1), None, board="tickets", query="tix")
@@ -360,7 +360,7 @@ def test_another_boards_entries_are_not_listed(
 def test_an_entry_another_board_read_is_listed_under_the_reading_name(
     project: FilesystemProject,
     cache: TrivialDuckDBCache,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     put: Put,
 ) -> None:
     key = put(timedelta(hours=1), "US", writer=("tickets", "tix"))
@@ -372,7 +372,7 @@ def test_an_entry_another_board_read_is_listed_under_the_reading_name(
 
 
 def test_without_a_cache_the_result_says_so(
-    project: FilesystemProject, registry: AdapterRegistry
+    project: FilesystemProject, registry: ExecEnv
 ) -> None:
     result = find_queries(project, None, registry, "revenue", None)
 
@@ -381,7 +381,7 @@ def test_without_a_cache_the_result_says_so(
 
 
 def test_with_a_cache_the_result_says_it_is_attached(
-    project: FilesystemProject, cache: TrivialDuckDBCache, registry: AdapterRegistry
+    project: FilesystemProject, cache: TrivialDuckDBCache, registry: ExecEnv
 ) -> None:
     assert find_queries(project, cache, registry, "revenue", None).cache == "attached"
 
@@ -389,7 +389,7 @@ def test_with_a_cache_the_result_says_it_is_attached(
 def test_rows_cached_under_an_earlier_definition_are_not_listed(
     project: FilesystemProject,
     cache: TrivialDuckDBCache,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     put: Put,
 ) -> None:
     put(timedelta(hours=1), None, query="plain")
@@ -406,7 +406,7 @@ def test_rows_cached_under_an_earlier_definition_are_not_listed(
 def test_limit_takes_the_top_boards(
     project: FilesystemProject,
     cache: TrivialDuckDBCache,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     put: Put,
 ) -> None:
     both = find_queries(project, cache, registry, "", None)
@@ -419,7 +419,7 @@ def test_limit_takes_the_top_boards(
 def test_a_board_that_does_not_compile_reports_why(
     project: FilesystemProject,
     cache: TrivialDuckDBCache,
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     tmp_path: Path,
 ) -> None:
     (tmp_path / "charts" / "broken.yml").write_text(
@@ -456,3 +456,30 @@ def test_terse_age(seconds: int, age: str) -> None:
 def test_limit_is_bounded(limit: int) -> None:
     with pytest.raises(ValidationError):
         FindQueriesArgs.model_validate({"text": "x", "limit": limit})
+
+
+def test_a_board_with_a_composing_query_lists_every_query(
+    project: FilesystemProject,
+    cache: TrivialDuckDBCache,
+    registry: ExecEnv,
+) -> None:
+    (project.root / "charts" / "funnel.yml").write_text(
+        "title: Composed funnel\n"
+        "source: db\n"
+        "queries:\n"
+        "  base:\n"
+        "    sql: select 1 as n\n"
+        "  composed:\n"
+        "    sql: select n from {{ queries.base.cache }}\n"
+        "charts:\n"
+        "  c:\n"
+        "    query: composed\n"
+        "    type: table\n"
+        "rows:\n"
+        "  - c\n"
+    )
+
+    [board] = find_queries(project, cache, registry, "funnel", None).boards
+
+    assert board.errors == []
+    assert [query.name for query in board.queries] == ["base", "composed"]

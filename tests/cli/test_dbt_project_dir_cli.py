@@ -2,7 +2,7 @@
 
 Proves the seams composed in cli/_project.py (resolve_dbt_project_dir),
 cli/filesystem_project.py (dbt_root/dbt_project), core/dbt_manifest.py
-(manifest_project dispatch), and core/execute/adapters/adapter_registry.py
+(manifest_project dispatch), and core/execute/env.py
 (the dbt_root-based sibling rule) work together end-to-end: a board's
 ref('orders') resolves against an external directory's target/manifest.json,
 not the dct project's own (nonexistent) one.

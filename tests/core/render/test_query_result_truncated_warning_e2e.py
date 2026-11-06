@@ -10,15 +10,14 @@ hand-built WarningContext.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import Mock
 
 import pytest
 
 from dbt_charts.core.compile import compile
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 
-from ..._results import rows_schema
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 _CODE = "WARN-QUERY-RESULT-TRUNCATED"
 
@@ -39,27 +38,24 @@ rows:
 """
 
 
-def _make_executor(board: object, query_registry: object, truncated_reason: str | None):
-    ok = Mock()
-    ok.is_success = True
-    ok.data = [{"x": 1}, {"x": 2}, {"x": 3}]
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = truncated_reason
-    mock_registry = Mock()
-    mock_registry.project_file_sources.return_value = {}
-    mock_registry.execute.return_value = ok
-    return Executor(
-        board, adapter_registry=mock_registry, query_registry=query_registry
-    )
+def _make_executor(
+    board: object,
+    query_registry: object,
+    monkeypatch: pytest.MonkeyPatch,
+    truncated: bool,
+):
+    """A run over three rows; *truncated* lowers the row ceiling below that."""
+    monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "2" if truncated else "100")
+    mock_registry = scripted_env(ScriptedBackend([{"x": 1}, {"x": 2}, {"x": 3}]))
+    return Run(board, env=mock_registry, query_registry=query_registry)
 
 
-def test_fires_when_query_result_truncated() -> None:
+def test_fires_when_query_result_truncated(monkeypatch: pytest.MonkeyPatch) -> None:
     result = compile(_BOARD_YAML)
     assert result.success and result.board is not None, result.errors
-    executor = _make_executor(result.board, result.query_registry, "max_rows")
+    executor = _make_executor(result.board, result.query_registry, monkeypatch, True)
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
     warnings = list(render_result.warnings)
 
     codes = {w.code for w in warnings}
@@ -68,16 +64,16 @@ def test_fires_when_query_result_truncated() -> None:
     assert w.chart == "c"
     assert w.level == "warning"
     assert "max_rows" in w.message
-    assert "3" in w.message
+    assert "2" in w.message
     assert w.fix
 
 
-def test_silent_when_not_truncated() -> None:
+def test_silent_when_not_truncated(monkeypatch: pytest.MonkeyPatch) -> None:
     result = compile(_BOARD_YAML)
     assert result.success and result.board is not None, result.errors
-    executor = _make_executor(result.board, result.query_registry, None)
+    executor = _make_executor(result.board, result.query_registry, monkeypatch, False)
 
-    render_result = render(result.board, executor, format="svg")
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
     codes = {w.code for w in render_result.warnings}
     assert _CODE not in codes
 
@@ -150,11 +146,12 @@ class TestUnattributedTruncation:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from dbt_charts.cli.filesystem_project import FilesystemProject
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
-        from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+        from ..._run import Run
 
         # Ceiling low enough to truncate the upstream but not the composed result
         # (composed query limits are ceiling-bound on *its* fetch, not reused).
@@ -184,18 +181,20 @@ rows:
         (tmp_path / "dbt_charts.yml").write_text(
             "sources:\n  db:\n    type: duckdb\n", encoding="utf-8"
         )
-        registry = build_adapter_registry(project)
+        registry = build_exec_env(project)
         result = compile(board_yaml)
         assert result.success and result.board is not None, result.errors
         cache = TrivialDuckDBCache(db_path=tmp_path / "cache.duckdb")
         try:
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=registry,
+                env=registry,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
-            render_result = render(result.board, executor, format="svg")
+            render_result = render(
+                result.board, executor.ctx, executor.ledger, format="svg"
+            )
         finally:
             cache.close()
 
@@ -227,20 +226,21 @@ class TestTruncationWarningSurvivesCacheWarm:
 
     def _project_and_registry(self, tmp_path: Path) -> tuple[object, object]:
         from dbt_charts.cli.filesystem_project import FilesystemProject
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
+        from dbt_charts.core.execute.env import (
+            build_exec_env,
         )
 
         project = FilesystemProject(tmp_path)
         (tmp_path / "dbt_charts.yml").write_text("sources:\n  db:\n    type: duckdb\n")
-        registry = build_adapter_registry(project)
+        registry = build_exec_env(project)
         return project, registry
 
     def test_warning_survives_a_persistent_cache_warm(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+        from ..._run import Run
 
         monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "3")
         board_yaml = """\
@@ -263,27 +263,31 @@ rows:
         _, registry = self._project_and_registry(tmp_path)
         cache = TrivialDuckDBCache(db_path=tmp_path / "cache.duckdb")
         try:
-            executor1 = Executor(
+            executor1 = Run(
                 result.board,
-                adapter_registry=registry,
+                env=registry,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
-            fresh_render = render(result.board, executor1, format="svg")
+            fresh_render = render(
+                result.board, executor1.ctx, executor1.ledger, format="svg"
+            )
             fresh_codes = {w.code for w in fresh_render.warnings}
             assert _CODE in fresh_codes, fresh_codes
 
             # A brand-new Executor sharing the same persistent cache: the
             # in-memory memo is empty, so this must warm from the persistent
             # entry — not re-run the query — and still carry the warning.
-            executor2 = Executor(
+            executor2 = Run(
                 result.board,
-                adapter_registry=registry,
+                env=registry,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
             assert "q" in executor2.lookup(["q"]).hits
-            warm_render = render(result.board, executor2, format="svg")
+            warm_render = render(
+                result.board, executor2.ctx, executor2.ledger, format="svg"
+            )
             warm_codes = {w.code for w in warm_render.warnings}
             assert _CODE in warm_codes, (
                 "a persistent-cache warm hit must still surface the "
@@ -302,8 +306,9 @@ rows:
         an entry that was NOT truncated at write time, is None — so a warm
         read that skips re-enforcement would serve the full, untruncated
         rowset under the new, tighter ceiling)."""
-        from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+        from ..._run import Run
 
         board_yaml = """\
 title: Probe
@@ -327,9 +332,9 @@ rows:
         try:
             # Write under a loose ceiling: all 10 rows fit, no truncation.
             monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "100")
-            executor1 = Executor(
+            executor1 = Run(
                 result.board,
-                adapter_registry=registry,
+                env=registry,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
@@ -341,9 +346,9 @@ rows:
             # The warm read must re-slice to the new ceiling, not serve the
             # full 10 rows the earlier write cached.
             monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "3")
-            executor2 = Executor(
+            executor2 = Run(
                 result.board,
-                adapter_registry=registry,
+                env=registry,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )

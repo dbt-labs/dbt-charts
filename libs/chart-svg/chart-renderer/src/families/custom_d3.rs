@@ -373,7 +373,7 @@ impl Object for TickFormatter {
     fn call(self: &Arc<Self>, _state: &State<'_, '_>, args: &[Value]) -> Result<Value, Error> {
         let [value] = bind(&self.site, ["value"], 1, args)?.map(|v| v.expect("required"));
         let value = finite(&self.site, "value", &value)?;
-        let locale = crate::number_locale::active_number_locale();
+        let locale = ::bind::formats::locale::active_number_locale();
         let text = match &self.format {
             TickFormat::Span { span, spec } => {
                 tick_format(&locale.locale, spec.as_deref(), span.0, span.1, self.count, value)

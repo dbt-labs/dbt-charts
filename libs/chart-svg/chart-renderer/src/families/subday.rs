@@ -3,14 +3,14 @@
 //! (`time_unit_detect.py`'s `default_subday_label_expr_for`, `default_subday_tick_interval`,
 //! `subday_header_for`).
 
-use super::temporal::{
-    end_labels_fit, every_instants, interval_axis, AuthoredTickCadence, BareMark, BareTick, LabelPeriods, TimeUnit,
-};
+use super::temporal::{end_labels_fit, every_instants, interval_axis, AuthoredTickCadence, BareMark, BareTick, LabelPeriods};
+
+use ::bind::temporal::{TimeUnit};
 use d3rs::calendar::civil_from_days;
 use d3rs::time::Unit;
 use jiff::tz::TimeZone;
 use crate::common::AxisStyle;
-use crate::time_axis::TimeAxis;
+use ::bind::time_axis::TimeAxis;
 
 /// The clock the instants of an axis are read on: an offset or a bare date is an absolute instant, a bare
 /// timestamp is local time (the render pins the zone, so both read alike), and a mix has no single reader.
@@ -56,7 +56,7 @@ impl SubdaySource {
             (_, true) => Zone::Naive,
             _ => Zone::Absolute,
         };
-        Self { instants, zone, timed, aware: crate::time_zone::all_aware(read) }
+        Self { instants, zone, timed, aware: ::bind::time_zone::all_aware(read) }
     }
 
     /// Whether the column's instants print their clock in the board zone.
@@ -74,7 +74,7 @@ impl SubdaySource {
         let (instants, zone) = match domain {
             None => (self.instants.clone(), self.zone),
             Some(pair) => {
-                let mut bounds = TimeAxis::new(crate::time_axis::Grain::default(), std::collections::HashMap::new());
+                let mut bounds = TimeAxis::new(::bind::time_axis::Grain::default(), std::collections::HashMap::new());
                 for text in pair {
                     bounds.add(text).ok()?;
                 }
@@ -228,7 +228,7 @@ impl SubdayPlan {
             },
         };
         // An aware column's midnights and hours are the board zone's.
-        let wall = |ms: i64| if source.aware { crate::time_zone::wall_ms(ms).ok() } else { Some(ms) };
+        let wall = |ms: i64| if source.aware { ::bind::time_zone::wall_ms(ms).ok() } else { Some(ms) };
         let (first, last) = (wall(extent.first)?, wall(extent.last)?);
         let vocab = count.zip(ceiling).and_then(|(count, ceiling)| {
             let span_ms = span_ms as f64;
@@ -436,13 +436,13 @@ impl Header {
 
     /// Whether the rows cross a midnight of the clock they print on.
     fn with_date(self) -> Result<bool, String> {
-        let day = |ms: i64| Ok::<_, String>(if self.aware { crate::time_zone::wall_ms(ms)? } else { ms }.div_euclid(DAY_MS));
+        let day = |ms: i64| Ok::<_, String>(if self.aware { ::bind::time_zone::wall_ms(ms)? } else { ms }.div_euclid(DAY_MS));
         Ok(day(self.first)? != day(self.last)?)
     }
 
     /// The header of the row at `at`: its wall clock, in the board zone when the column is aware.
     pub fn text(self, at: f64) -> Result<String, String> {
-        let at = if self.aware { crate::time_zone::wall_day(at)? } else { at };
+        let at = if self.aware { ::bind::time_zone::wall_day(at)? } else { at };
         let seconds = if self.seconds { ":%S" } else { "" };
         let time = if self.clock24 {
             clock_text(at, &format!("%H:%M{seconds}"))?
@@ -504,7 +504,7 @@ pub fn plan_for(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::time_axis::testing::day;
+    use ::bind::time_axis::testing::day;
 
     fn setup(outer_width: f64) -> AxisSetup<'static> {
         AxisSetup {
@@ -520,7 +520,7 @@ mod tests {
     }
 
     fn source_of(values: &[&str]) -> SubdaySource {
-        let mut axis = TimeAxis::new(crate::time_axis::Grain::default(), std::collections::HashMap::new());
+        let mut axis = TimeAxis::new(::bind::time_axis::Grain::default(), std::collections::HashMap::new());
         for text in values {
             let _ = axis.add(text);
         }
@@ -541,7 +541,7 @@ mod tests {
 
     #[test]
     fn a_day_of_hours_ticks_every_six_and_reads_the_clock_words() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let (plan, lo, hi) = plan_over(&day_hours("2024-03-05", 24), 600.0);
         let step = plan.ladder.expect("the clock ladder fits");
         let ticks = step.instants(lo, hi).unwrap();
@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn crossing_midnights_stacks_the_date_under_each_midnight() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let values: Vec<String> = day_hours("2024-03-05", 24).into_iter().chain(day_hours("2024-03-06", 24)).collect();
         let (plan, lo, hi) = plan_over(&values, 600.0);
         assert!(plan.stacked());
@@ -568,13 +568,13 @@ mod tests {
         let values = ["2024-03-10T04:00:00Z", "2024-03-10T20:00:00Z", "2024-03-11T11:00:00Z"];
         let source = source_of(&values);
         assert!(!SubdayPlan::of(&source, &setup(600.0)).expect("a plan").stacked());
-        let _la = crate::time_zone::zone_scope("America/Los_Angeles");
+        let _la = ::bind::time_zone::zone_scope("America/Los_Angeles");
         assert!(SubdayPlan::of(&source, &setup(600.0)).expect("a plan").stacked());
     }
 
     #[test]
     fn a_narrow_card_reads_numerals_and_the_24_hour_clock_its_own() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let values = day_hours("2024-03-05", 24);
         let refs: Vec<&str> = values.iter().map(String::as_str).collect();
         let source = source_of(&refs);
@@ -588,7 +588,7 @@ mod tests {
 
     #[test]
     fn a_span_of_days_keeps_vega_s_own_labels_and_an_offset_its_own_ticks() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let wide: Vec<String> = (0..400).map(|d| format!("{}T12:00:00", civil_text(day("2024-01-01") + d as f64))).collect();
         let refs: Vec<&str> = wide.iter().map(String::as_str).collect();
         let plan = SubdayPlan::of(&source_of(&refs), &setup(600.0)).expect("a plan");
@@ -607,25 +607,25 @@ mod tests {
 
     #[test]
     fn an_aware_clock_reads_the_board_zone_across_a_dst_change_and_a_naive_one_as_written() {
-        let _locale = crate::time_locale::en_us_scope();
-        let _zone = crate::time_zone::zone_scope("America/New_York");
+        let _locale = ::bind::time_locale::en_us_scope();
+        let _zone = ::bind::time_zone::zone_scope("America/New_York");
         let header = |values: &[String]| {
             let refs: Vec<&str> = values.iter().map(String::as_str).collect();
             Header::of(&source_of(&refs), Some(24)).expect("a header")
         };
         let aware: Vec<String> = (5..10).map(|h| format!("2024-03-10T{h:02}:00:00Z")).collect();
-        let texts: Vec<String> = aware.iter().map(|v| header(&aware).text(crate::time_axis::testing::day(v)).unwrap()).collect();
+        let texts: Vec<String> = aware.iter().map(|v| header(&aware).text(::bind::time_axis::testing::day(v)).unwrap()).collect();
         assert_eq!(texts, ["00:00", "01:00", "03:00", "04:00", "05:00"]);
         let naive: Vec<String> = (5..10).map(|h| format!("2024-03-10T{h:02}:00:00")).collect();
-        assert_eq!(header(&naive).text(crate::time_axis::testing::day(&naive[2])).unwrap(), "07:00");
+        assert_eq!(header(&naive).text(::bind::time_axis::testing::day(&naive[2])).unwrap(), "07:00");
         // 03:00Z to 05:00Z crosses New York's midnight: the header names the date.
         let midnight: Vec<String> = (3..6).map(|h| format!("2024-03-10T{h:02}:00:00Z")).collect();
-        assert_eq!(header(&midnight).text(crate::time_axis::testing::day(&midnight[0])).unwrap(), "9 Mar 2024, 22:00");
+        assert_eq!(header(&midnight).text(::bind::time_axis::testing::day(&midnight[0])).unwrap(), "9 Mar 2024, 22:00");
     }
 
     #[test]
     fn the_tooltip_header_names_the_time_within_two_days_and_the_date_across_midnight() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let within: Vec<&str> = vec!["2024-03-05T09:00:00", "2024-03-05T17:30:00"];
         let header = Header::of(&source_of(&within), Some(12)).expect("a header");
         assert_eq!(header.text(day(within[1])).unwrap(), "5:30pm");
@@ -648,7 +648,7 @@ mod tests {
 
     #[test]
     fn day_labels_over_hourly_data_sit_at_noon_between_midnight_ticks() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let values: Vec<String> = (5..8).flat_map(|d| day_hours(&format!("2024-03-0{d}"), 24)).collect();
         let (mut plan, lo, hi) = plan_over(&values, 600.0);
         plan.day_labels = DayLabels::Authored;
@@ -667,8 +667,8 @@ mod tests {
     /// drawing a midnight gridline under every other label.
     #[test]
     fn day_labels_too_crowded_to_name_every_day_keep_the_clock_axis() {
-        let _locale = crate::time_locale::en_us_scope();
-        let first = crate::time_axis::testing::day("2024-03-01");
+        let _locale = ::bind::time_locale::en_us_scope();
+        let first = ::bind::time_axis::testing::day("2024-03-01");
         let values: Vec<String> = (0..40).flat_map(|d| day_hours(&civil_text(first + d as f64), 24)).collect();
         let (mut plan, lo, hi) = plan_over(&values, 600.0);
         plan.day_labels = DayLabels::Authored;
@@ -691,7 +691,7 @@ mod tests {
 
     /// Five-minute data from `from` with 6-hour ticks.
     fn five_minute_day(from: &str, width: f64) -> Vec<(BareMark, String)> {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let values: Vec<String> = (0..).map(|k| 5 * k).take_while(|m| *m < 24 * 60).map(|m| format!("2024-03-05T{:02}:{:02}:00", m / 60, m % 60)).filter(|v| v.as_str() >= from).collect();
         let (plan, lo, hi) = plan_over(&values, width);
         let ticks = super::super::temporal::bare_temporal_ticks((lo, hi), width, None, None, Some(&plan), false).unwrap();

@@ -18,8 +18,7 @@ from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
 from dbt_charts.core.compile.normalize.chart_focus import focus_on_chart
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import Project
 from dbt_charts.core.render import layout_sizing
 from dbt_charts.core.render.board_resolve import (
@@ -27,6 +26,8 @@ from dbt_charts.core.render.board_resolve import (
     build_resolved_board_static,
 )
 from dbt_charts.core.render.chart.table_overflow import collect_table_overflows
+
+from ..._run import Run
 
 
 def _queries(n_cols: int, text: str = "alpha-bravo-") -> str:
@@ -50,10 +51,10 @@ _TABLE = "charts:\n  t:\n    query: q\n    type: table\n"
 _ONE_ROW = "rows:\n  - t\n"
 
 
-def _executor(board: Board, project: Project) -> Executor:
-    return Executor(
+def _executor(board: Board, project: Project) -> Run:
+    return Run(
         board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=None,
     )
 

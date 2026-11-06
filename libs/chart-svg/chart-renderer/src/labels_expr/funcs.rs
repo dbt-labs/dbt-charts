@@ -263,7 +263,7 @@ fn new_date(args: &[Val]) -> Res<f64> {
         many => {
             let n = |i: usize, default: f64| many.get(i).map_or(default, Val::to_number);
             let wall = d3rs::calendar::make_time(d3rs::calendar::full_year(n(0, f64::NAN)), n(1, 0.0), n(2, 1.0), n(3, 0.0), n(4, 0.0), n(5, 0.0), n(6, 0.0));
-            crate::time_zone::expression_local_instant_ms(wall).map_err(EvalError::Unmodeled)?
+            ::bind::time_zone::expression_local_instant_ms(wall).map_err(EvalError::Unmodeled)?
         }
     })
 }
@@ -596,7 +596,7 @@ fn sequence_too_long() -> EvalError {
 
 /// The board's time vocabulary, which production stamps into the Vega config `timeFormat` and `timeParse` read.
 fn time_locale() -> Res<std::rc::Rc<d3rs::time_format::Locale>> {
-    crate::time_locale::active_time_locale().map_err(EvalError::Unknown)
+    ::bind::time_locale::active_time_locale().map_err(EvalError::Unknown)
 }
 
 /// vega-util's `repeat`, which concatenates `floor(reps)` copies of `c` until V8 refuses the string.
@@ -1317,7 +1317,7 @@ pub fn call(name: &str, vals: &[Val], datum: &Val) -> Res<Val> {
                     // The padding, and the copies the numeral and grouping steps make of it.
                     val::building(width as f64, width as f64 * 8.0)?;
                 }
-                Val::string(crate::number_locale::d3_format(&spec, n(0)).map_err(EvalError::Throws)?)?
+                Val::string(::bind::formats::locale::d3_format(&spec, n(0)).map_err(EvalError::Throws)?)?
             }
         }
         "timeFormat" | "utcFormat" => {

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A scatter's data-fit y axis moves a non-zero end that a dot sat on out one tick step, as the x axis does.
+time: 2026-11-03T17:25:46.723637-08:00

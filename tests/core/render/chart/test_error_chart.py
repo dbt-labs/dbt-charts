@@ -28,8 +28,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style_and_context,
 )
 from dbt_charts.core.compile.resolve.style.palette import color as resolve_palette_color
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
+from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.project import Project
 from dbt_charts.core.render.chart.rendering import render_chart_item
 from dbt_charts.core.render.chart.vega_lite import render_chart
@@ -183,8 +183,8 @@ def test_explicit_callout_chart_skips_query_execution(make_chart) -> None:
         title="Execution Not Needed",
         message="Rendered directly from authored message",
     )
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    executor.execute_chart.side_effect = AssertionError(
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
+    executor.execute_query.side_effect = AssertionError(
         "callout charts should not execute queries"
     )
 
@@ -199,7 +199,7 @@ def test_explicit_callout_chart_skips_query_execution(make_chart) -> None:
         render_cache={},
     )
 
-    executor.execute_chart.assert_not_called()
+    executor.execute_query.assert_not_called()
     svg_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", svg)).strip()
     assert "Rendered directly from" in svg_text
     assert "authored message" in svg_text
@@ -227,7 +227,7 @@ def test_explicit_callout_chart_never_shrinks_below_layout_slot_height() -> None
         ),
         query_is_inline=False,
     )
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
 
     rs, ctx = resolve_style_and_context(get_theme_style())
     svg, height = render_chart_item(
@@ -266,7 +266,7 @@ rows:
 
     board = result.board
     assert board is not None
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
 
     pre_resolved = {
         name: resolve(v2, [], chart_style_context=board.chart_style_context)
@@ -295,7 +295,7 @@ rows:
 
 def test_chart_data_error_fallback_wraps_message(make_chart) -> None:
     chart = make_chart("kpi", x=None, y=None, value="value", label="Broken KPI")
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = [{"value": 1}, {"value": 2}]
     executor.execute_query_result.return_value = rows_result(
         executor.execute_query.return_value
@@ -327,9 +327,9 @@ def test_kpi_error_fallback_layout_item_matches_authored_callout_padding(
 ) -> None:
     from dbt_charts.core.compile import compile
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.execute.executor import Executor
     from dbt_charts.core.render.chart.rendering import render_layout_item
 
+    from ...._run import Run
     from ..._board_utils import apply_static_layout
 
     yaml_content = """
@@ -351,9 +351,9 @@ rows:
     assert result.success and result.board is not None
 
     board = apply_static_layout(result.board)
-    executor = Executor(
+    executor = Run(
         board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
     )
     from dbt_charts.core.render.board_resolve import (
@@ -383,9 +383,9 @@ def test_callout_chart_layout_item_uses_full_item_width_without_outer_card_paddi
 ) -> None:
     from dbt_charts.core.compile import compile
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.execute.executor import Executor
     from dbt_charts.core.render.chart.rendering import render_layout_item
 
+    from ...._run import Run
     from ..._board_utils import apply_static_layout
 
     yaml_content = """
@@ -400,9 +400,9 @@ rows:
     assert result.success and result.board is not None
 
     board = apply_static_layout(result.board)
-    executor = Executor(
+    executor = Run(
         board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
     )
     from dbt_charts.core.render.board_resolve import (
@@ -485,7 +485,7 @@ def test_vl_chart_error_tile_renders_through_engine_with_code_hint_and_error_lin
 
     monkeypatch.setattr(_engine, "render_chart", spy)
     chart = make_chart("bar", x="region", y="revenue")
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.side_effect = ChartDataError.from_code(
         ERR_DBT_MODEL_COLUMN_MISSING,
         query_name="q",
@@ -521,7 +521,7 @@ def _failed_tile_svg(make_chart, theme: str, title: str | None) -> str:
     from dbt_charts.core.diagnostics.codes_execute import ERR_DBT_MODEL_COLUMN_MISSING
 
     chart = make_chart("bar", x="region", y="revenue", title=title)
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.side_effect = ChartDataError.from_code(
         ERR_DBT_MODEL_COLUMN_MISSING,
         query_name="q",
@@ -856,7 +856,7 @@ def test_a_render_stage_failure_draws_its_tile_where_the_band_puts_the_body(
     chart = make_chart(
         "bar", x="region", y="revenue", title="Revenue", subtitle="By region, 2026"
     )
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.side_effect = ChartDataError.from_code(
         ERR_DBT_MODEL_COLUMN_MISSING,
         query_name="q",

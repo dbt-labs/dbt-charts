@@ -24,13 +24,18 @@ from dbt_charts.core.connections import test_connection
 from dbt_charts.core.dbt_manifest import manifest_relpath
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+from dbt_charts.core.execute.backends.dbt_adapter_factory import (
     SUPPORTED_ADAPTER_TYPES,
     AdapterNotInstalledError,
     import_adapter_module,
 )
 from dbt_charts.core.execute.drivers import is_driver_source, require_driver_extra
+from dbt_charts.core.execute.env import ExecEnv
+from dbt_charts.core.execute.plan_sources import (
+    list_sql_sources,
+    resolve_query_source,
+    resolve_source_config,
+)
 from dbt_charts.core.project import Project
 from dbt_charts.core.project_roots import resolve_profiles_path
 
@@ -233,12 +238,14 @@ def _source_checks(
 ) -> list[DoctorCheck]:
     with ProjectSession.open(root) as session:
         try:
-            registry = session.adapter_registry
-            names = [source["name"] for source in registry.list_sql_sources()]
+            env = session.env
+            names = [source["name"] for source in list_sql_sources(env.sources)]
             dbt_sources = {
                 name: raw
                 for name in names
-                if (raw := registry.resolve_source_config(name))["type"]
+                if (raw := resolve_source_config(env.sources, env.project, name))[
+                    "type"
+                ]
                 == "dbt_profile"
             }
             profiles_dirs = {
@@ -265,7 +272,7 @@ def _source_checks(
                 DoctorCheck(code="adapter", status="skip", message="no sources"),
                 DoctorCheck(code="connection", status="skip", message="no sources"),
             ]
-        adapters = {name: _adapter_check(registry, name) for name in names}
+        adapters = {name: _adapter_check(env, name) for name in names}
         checks = [*profiles, *(check for check, _ in adapters.values())]
         if not with_warehouse:
             return checks + [
@@ -287,13 +294,18 @@ def _adapter_skip(name: str, message: str) -> DoctorCheck:
 
 
 def _adapter_check(
-    registry: AdapterRegistry, name: str
+    env: ExecEnv, name: str
 ) -> tuple[DoctorCheck, ResolvedSourceConfig | None]:
     """The source's adapter check, plus its resolved config for the probe."""
     try:
-        # A named query is the registry's public way to expand a `dbt_profile`
+        # Resolving a named query expands a `dbt_profile`
         # source into its concrete warehouse config.
-        config = registry.resolve_query_source(SqlQuery(sql="SELECT 1", source=name))
+        config = resolve_query_source(
+            SqlQuery(sql="SELECT 1", source=name),
+            sources=env.sources,
+            resolver=env.resolver,
+            dbt_context=env.dbt_context,
+        )
         if config is None:
             raise RuntimeError(f"source {name!r} resolved to no config")
         if config.source_category != "database":

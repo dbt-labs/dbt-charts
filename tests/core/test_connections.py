@@ -520,7 +520,7 @@ def test_bulk_schema_for_config_scopes_bigquery_to_the_region(
             return None, table
 
     monkeypatch.setattr(
-        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+        "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
         lambda creds, **kwargs: _CapturingAdapter(),
     )
     tree = bulk_schema_for_config(
@@ -608,7 +608,7 @@ def test_test_connection_reports_the_credential_error_not_the_cleanup_crash(
 ) -> None:
     open_error = RuntimeError(_PEM_FAILURE)
     monkeypatch.setattr(
-        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+        "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
         lambda creds, **kwargs: _CleanupCrashingAdapter(open_error),
     )
 
@@ -680,7 +680,7 @@ class _FailingAdapter:
 
 def _failing(monkeypatch: pytest.MonkeyPatch, open_error: Exception) -> None:
     monkeypatch.setattr(
-        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+        "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
         lambda creds, **kwargs: _FailingAdapter(open_error),
     )
 
@@ -707,7 +707,7 @@ class _RecordingAdapter:
 
 def _recording(monkeypatch: pytest.MonkeyPatch, adapter: _RecordingAdapter) -> None:
     monkeypatch.setattr(
-        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+        "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
         lambda creds, **kwargs: adapter,
     )
 
@@ -745,7 +745,7 @@ def _catalogs_adapter(
         return adapter
 
     monkeypatch.setattr(
-        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter", _build
+        "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter", _build
     )
     return built
 
@@ -769,7 +769,7 @@ def test_list_catalogs_runs_show_catalogs_through_the_adapter_without_a_catalog(
 def test_list_catalogs_bounds_the_session_open_retry_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dbt_charts.core.execute.adapters import dbt_adapter_factory
+    from dbt_charts.core.execute.backends import dbt_adapter_factory
 
     real_build_adapter = dbt_adapter_factory.build_adapter
     retry_budgets: list[int] = []
@@ -986,7 +986,7 @@ def test_test_connection_propagates_a_missing_adapter_package_unclassified(
         "dbt-snowflake is not installed. Install it with: pip install dbt-snowflake"
     )
     monkeypatch.setattr(
-        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+        "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
         lambda creds, **kwargs: (_ for _ in ()).throw(ImportError(install_hint)),
     )
 
@@ -1009,7 +1009,7 @@ def test_test_connection_propagates_an_unsupported_adapter_type_unclassified(
     """build_adapter's own ValueError (unsupported adapter type) is a caller
     bug, not a warehouse outcome."""
     monkeypatch.setattr(
-        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+        "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
         lambda creds, **kwargs: (_ for _ in ()).throw(
             ValueError("Unsupported adapter type 'oracle'. Supported: postgres, ...")
         ),
@@ -1263,7 +1263,7 @@ def test_test_connection_classifies_duckdb_empty_path(
         "Unable to determine target database name from 'path' field in profile"
     )
     monkeypatch.setattr(
-        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+        "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
         lambda creds, **kwargs: (_ for _ in ()).throw(RuntimeError(driver_text)),
     )
 
@@ -1460,7 +1460,7 @@ def test_test_connection_builds_the_adapter_from_connect_credentials(
         return _RecordingAdapter()
 
     monkeypatch.setattr(
-        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter", _build
+        "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter", _build
     )
 
     success, _ = probe_connection(
@@ -1591,7 +1591,7 @@ def test_bulk_tables_for_config_reads_tables_not_columns_for_bigquery(
             return None, table
 
     monkeypatch.setattr(
-        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+        "dbt_charts.core.execute.backends.dbt_adapter_factory.build_adapter",
         lambda creds, **kwargs: _CapturingAdapter(),
     )
     tables = bulk_tables_for_config(

@@ -363,12 +363,12 @@ def test_build_resolver_accepts_path_cache(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
     """build_resolver must accept cache_path: Path | None (PR 2 migration)."""
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
 
     project = tmp_path / "myproject"
     project.mkdir()
     (project / "dbt_charts.yml").write_text("# marker\n")
-    registry = build_adapter_registry(local_project(project), read_only=True)
+    registry = build_exec_env(local_project(project), read_only=True)
     cache = tmp_path / "cache.json"
 
     # Path argument must be accepted without raising TypeError

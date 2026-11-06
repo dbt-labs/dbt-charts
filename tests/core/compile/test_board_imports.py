@@ -16,7 +16,7 @@ from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.normalize.dispatch import normalize_board
 from dbt_charts.core.compile.parse.parser import parse_yaml
 from dbt_charts.core.compile.validate.dispatch import validate_board
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 
 
 class TestBoardFileImports:
@@ -126,8 +126,9 @@ rows:
         defaults must NOT be baked into the imported file's content at compile
         time — the templates must survive so render-time substitution works.
         """
-        from dbt_charts.core.execute import Executor
         from dbt_charts.core.render import render
+
+        from ..._run import Run
 
         child_content = """
 title: "Child for {{ model }}"
@@ -166,19 +167,20 @@ rows:
         )
 
         # Render-time substitution must work (default values)
-        executor = Executor(
+        executor = Run(
             compiled,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry={},
         )
-        svg = render(compiled, executor, format="svg").output
+        svg = render(compiled, executor.ctx, executor.ledger, format="svg").output
         assert "Child for my_table" in svg
         assert "Processing sales" in svg
 
         # And with a different value
         svg_custom = render(
             compiled,
-            executor,
+            executor.ctx,
+            executor.ledger,
             format="svg",
             variables={"model": "orders", "column": "revenue"},
         ).output

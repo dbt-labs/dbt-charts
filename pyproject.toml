@@ -135,7 +135,7 @@ dependencies = [
     "dbt-core>=1.12; python_version >= '3.14'",
     "dbt-adapters>=1.20,<2",
     "dbt-common>=1.0",
-    # core/execute/adapters/dbt_adapter_factory.py monkeypatches
+    # core/execute/backends/dbt_adapter_factory.py monkeypatches
     # dbt.adapters.duckdb.environments.Environment.initialize_db (a classmethod
     # swap, not a public API) to force read-only introspection connections.
     # Capped below the next major since that internal shape can move without
@@ -318,8 +318,13 @@ cache-keys = [
     { file = "libs/chart-svg/*/src/**/*" },
     { file = "libs/chart-svg/*/assets/**/*" },
     { file = "libs/chart-svg/display-text/language/*.json" },
+    { file = "libs/chart-svg/display-text/locale/*.json" },
+    { file = "libs/chart-svg/display-text/locale/*/*.json" },
+    { file = "libs/chart-svg/*/build.rs" },
     { file = "libs/chart-svg/chart-renderer/data/*.json" },
+    { file = "libs/chart-svg/bind/data/*.json" },
     { file = "src/dbt_charts/core/defaults/palettes/tone/*.yml" },
+    { file = "src/dbt_charts/data/schemas/yaml/*.json" },
     { file = "libs/chart-svg/*/Cargo.toml" },
     { file = "libs/chart-svg/python/Cargo.lock" },
 ]
@@ -461,7 +466,7 @@ forbidden_module_paths = [
 # transitive dep of the optional
 # `databricks` extra, not a runtime dep.
 # `psycopg2`, `redshift_connector`, `snowflake` and `numpy` are imported inside
-# the family readers of execute/adapters/typed_fetch.py for their type
+# the family readers of execute/backends/typed_fetch.py for their type
 # constants, each present only when the matching dbt adapter (or, for numpy,
 # databricks-sql) is installed.
 # `openai` is the lazy import inside ai/openai_gateway.py's OpenAIGateway. No

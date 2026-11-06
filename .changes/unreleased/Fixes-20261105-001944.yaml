@@ -1,0 +1,3 @@
+kind: Fixes
+body: Very dense bar charts draw visible bars, legend.values orders stacked-bar legends, and stacked-column series labels skip a thin final period, and a horizontal bar's top or bottom legend wraps instead of cutting a label and no longer floats over the bars.
+time: 2026-11-05T00:19:44.198309-08:00

@@ -24,15 +24,15 @@ import pytest
 
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.parse.parser import load_yaml_mapping
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._engine_migrations import migrate_mapping
 
 
 @pytest.fixture
@@ -41,10 +41,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: dict[str, Any], catalog: YamlSchemaCatalog) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 def _board(**extra: Any) -> dict[str, Any]:
@@ -243,10 +242,9 @@ charts:
 rows: [directory]
 """
 
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        migrated = migrate_yaml_text(source, catalog=catalog, registry=registry)
+        migrated = migrate_yaml_text(source)
 
     assert "# Industry cells filter the list." in migrated
     assert "notes: Won revenue by account." in migrated
@@ -314,10 +312,9 @@ rows:
     rows: [c1]
 """
 
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        migrated = migrate_yaml_text(source, catalog=catalog, registry=registry)
+        migrated = migrate_yaml_text(source)
 
     assert "      description:\n" in migrated, "the query identifier must survive"
     assert "      notes:\n" not in migrated
@@ -438,10 +435,9 @@ cols:
       y: b
 """
 
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        migrated = migrate_yaml_text(source, catalog=catalog, registry=registry)
+        migrated = migrate_yaml_text(source)
 
     assert "  - description:\n" in migrated, "the chart identifier must survive"
     assert "notes: real board prose" in migrated
@@ -568,10 +564,9 @@ def test_sub_board_retired_keys_migrate_like_top_level_ones(
 def test_sub_board_retired_keys_migrate_on_disk(catalog: YamlSchemaCatalog) -> None:
     from dbt_charts.core.compile.migrations import migrate_yaml_text
 
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        migrated = migrate_yaml_text(SUB_BOARD, catalog=catalog, registry=registry)
+        migrated = migrate_yaml_text(SUB_BOARD)
 
     assert "description" not in migrated
     assert migrated.count("notes:") == 6

@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.merge import scope_patch
+from dbt_charts.core.compile.migrations import prepare_board_mapping
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard, TabItem
 from dbt_charts.core.compile.models.chart.authored import (
     CHART_SUPPORT_TABLE_SUPPORTED_TYPES,
@@ -1705,7 +1706,7 @@ def build_design(yaml_text: str, path: str) -> tuple[DesignTarget, dict[str, Any
         build_source_index_from_node(node, yaml_text, "<design-target>").source_map
     )
     mapping = mapping_from_node(node, yaml_text)
-    board = parse_mapping(mapping, yaml_text)
+    board = parse_mapping(prepare_board_mapping(mapping), yaml_text)
     if "theme" in authored:
         # `theme:` is authoring sugar the parser folds into `extends:` before
         # the walk sees either, so the source map holds the spelling the file

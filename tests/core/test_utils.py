@@ -43,13 +43,16 @@ class TestIsYearShaped:
         assert is_year_shaped([2010, 2011, 42]) is False
         assert is_year_shaped(["2010", "Q1"]) is False
 
-    def test_integral_float_years_in_range(self) -> None:
-        # a DOUBLE column returns 2014 as 2014.0; the render engine reads it as a year
-        assert is_year_shaped([2014.0, 2015.0]) is True
+    @pytest.mark.parametrize(
+        "samples",
+        [[2014.0, 2015.0], [2014.5], [42.0], [float("nan")], [float("inf")]],
+    )
+    def test_float_never_year(self, samples: list[float]) -> None:
+        # a DOUBLE column of years is a measure
+        assert is_year_shaped(samples) is False
 
-    @pytest.mark.parametrize("value", [2014.5, 42.0, float("nan"), float("inf")])
-    def test_other_floats_not_year(self, value: float) -> None:
-        assert is_year_shaped([value]) is False
+    def test_one_float_disqualifies_integer_years(self) -> None:
+        assert is_year_shaped([2014, 2015.0]) is False
 
     def test_booleans_not_year(self) -> None:
         assert is_year_shaped([True, False]) is False

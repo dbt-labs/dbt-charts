@@ -16,13 +16,14 @@ from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.compile.models.primitives import LanguageCode, Regional
 from dbt_charts.core.compile.resolve.style.board import resolve_style
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.board_resolve import (
     build_resolved_board_static as resolve_board,
 )
 from dbt_charts.core.render.layouts import render_tabs_layout
 from dbt_charts.core.text.format_d3 import regional_scope
+
+from .._run import Run
 
 
 def _regional(**fields: object) -> Regional:
@@ -105,9 +106,9 @@ tabs:
         - c1
 """)
     assert result.success
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        env=build_exec_env(local_project(Path.cwd())),
         query_registry=result.query_registry,
     )
     reset_config()

@@ -17,25 +17,21 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import Mock
 
 import pytest
+
+from dbt_charts.core.execute.env import ExecEnv
+
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 if TYPE_CHECKING:
     from dbt_charts.cli.filesystem_project import FilesystemProject
     from dbt_charts.core.board import BoardRenderResult
 
 
-def _mock_adapter(rows: list[dict[str, Any]]) -> Mock:
-    """Adapter registry mock that returns ``rows`` for every query."""
-    ok = Mock()
-    ok.is_success = True
-    ok.data = rows
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    registry = Mock()
-    registry.execute.return_value = ok
-    registry.project_file_sources.return_value = {}
+def _mock_adapter(rows: list[dict[str, Any]]) -> ExecEnv:
+    """Exec env mock that returns ``rows`` for every query."""
+    registry = scripted_env(ScriptedBackend(rows))
     return registry
 
 
@@ -55,7 +51,7 @@ def _render(
     board = InMemoryBoard(board_yaml, path=project.path("charts/_t.yml"))
     return render_dashboard(
         board=board,
-        adapter_registry=registry,
+        env=registry,
         format=format,
         project=project,
         result_cache=None,
@@ -477,11 +473,11 @@ def test_quick_guide_example_reports_the_real_backgrounds(
     background, not ``charts.background`` — is caught again."""
     from dbt_charts.core.compile import compile_file
     from dbt_charts.core.diagnostics import WARN_LOW_TEXT_CONTRAST
-    from dbt_charts.core.execute import Executor
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
     from dbt_charts.core.render import render
 
     from ..._paths import DBT_CHARTS_DIR
+    from ..._run import Run
 
     project = local_project(DBT_CHARTS_DIR)
     result = compile_file(
@@ -491,12 +487,12 @@ def test_quick_guide_example_reports_the_real_backgrounds(
     )
     assert result.success, result.errors
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
-    rendered = render(result.board, executor, format="svg")
+    rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
     matches = [w for w in rendered.warnings if w.code == WARN_LOW_TEXT_CONTRAST.code]
     assert matches == [], (
         f"the shipped quick-guide example should carry no low-contrast text: {matches}"

@@ -84,12 +84,12 @@ def test_lookup_board_query_sql_without_project_dir_raises_type_error(
 
 
 def test_query_board_without_project_dir_raises_type_error(tmp_path: Path) -> None:
-    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.execute.env import make_exec_env
 
     board = tmp_path / "f.yml"
     board.write_text(_VALID_BOARD)
     with pytest.raises(TypeError):
-        _query.query_board("revenue", board, adapter_registry=AdapterRegistry({}))  # type: ignore[call-arg]
+        _query.query_board("revenue", board, env=make_exec_env({}))  # type: ignore[call-arg]
 
 
 def test_get_board_without_project_dir_raises_type_error(tmp_path: Path) -> None:

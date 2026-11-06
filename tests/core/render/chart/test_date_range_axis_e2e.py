@@ -17,8 +17,9 @@ from dbt_charts.core.compile import compile as compile_yaml
 from dbt_charts.core.compile.config import (
     ProjectSourcesConfig,
 )
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
+
+from ...._run import Run
 
 # Mondays: the first and last of March 2026 (Sun the 1st, Tue the 31st) both sit
 # in weeks with no order, and the week of the 16th has none either.
@@ -62,7 +63,7 @@ rows:
 """
 
 
-def _setup(yaml: str, tmp_path: Path) -> tuple[Any, Executor]:
+def _setup(yaml: str, tmp_path: Path) -> tuple[Any, Run]:
     warehouse = tmp_path / "warehouse.duckdb"
     values = ",".join(
         f"(DATE '{day}', DATE '2026-01-01', {i + 1})" for i, day in enumerate(_ORDERS)
@@ -84,9 +85,9 @@ def _setup(yaml: str, tmp_path: Path) -> tuple[Any, Executor]:
         ),
     )
     assert result.success and result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(tmp_path)),
+        env=build_exec_env(FilesystemProject(tmp_path)),
         query_registry=result.query_registry,
     )
     return result.board, executor

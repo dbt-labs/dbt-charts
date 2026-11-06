@@ -10,9 +10,10 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
+
+from ..._run import Run
 
 _ANCHOR_RE = re.compile(r"<a\b[^>]*>")
 
@@ -20,12 +21,12 @@ _ANCHOR_RE = re.compile(r"<a\b[^>]*>")
 def _render_svg(board_yaml: str) -> str:
     result = compile_board(board_yaml)
     assert result.success and result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        env=build_exec_env(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
     )
-    rendered = render(result.board, executor, format="svg")
+    rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert not rendered.chart_errors, rendered.chart_errors
     assert isinstance(rendered.output, str)
     return rendered.output

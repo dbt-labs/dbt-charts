@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters import AdapterRegistry, build_adapter_registry
+from dbt_charts.core.execute.env import ExecEnv, build_exec_env
 
 # ---------------------------------------------------------------------------
 # Fixture — reproduction board from the task worksheet (DuckDB :memory:)
@@ -57,9 +57,9 @@ charts:
 def probe_registry(
     tmp_path: Path,
     local_project: Callable[..., FilesystemProject],
-) -> AdapterRegistry:
+) -> ExecEnv:
     (tmp_path / "dbt_charts.yml").write_text(_DBT_CHARTS_YML)
-    return build_adapter_registry(local_project(tmp_path), read_only=False)
+    return build_exec_env(local_project(tmp_path), read_only=False)
 
 
 @pytest.fixture
@@ -80,7 +80,7 @@ class TestComposedQueryExecution:
     def test_composed_query_returns_expected_rows(
         self,
         tmp_path: Path,
-        probe_registry: AdapterRegistry,
+        probe_registry: ExecEnv,
         probe_board_path: Path,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
@@ -90,7 +90,7 @@ class TestComposedQueryExecution:
             "wrapper",
             probe_board_path,
             local_project(tmp_path),
-            adapter_registry=probe_registry,
+            env=probe_registry,
         )
         assert result.success is True, result.errors
         # wrapper: SELECT seven, {{ n }} AS n FROM {{ queries.base }}
@@ -101,7 +101,7 @@ class TestComposedQueryExecution:
     def test_composed_query_matches_render_path_value(
         self,
         tmp_path: Path,
-        probe_registry: AdapterRegistry,
+        probe_registry: ExecEnv,
         probe_board_path: Path,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
@@ -112,7 +112,7 @@ class TestComposedQueryExecution:
             "wrapper",
             probe_board_path,
             local_project(tmp_path),
-            adapter_registry=probe_registry,
+            env=probe_registry,
         )
         assert result.success is True, result.errors
         seven_values = [row["seven"] for row in result.data]
@@ -121,7 +121,7 @@ class TestComposedQueryExecution:
     def test_plain_query_still_works(
         self,
         tmp_path: Path,
-        probe_registry: AdapterRegistry,
+        probe_registry: ExecEnv,
         probe_board_path: Path,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
@@ -132,7 +132,7 @@ class TestComposedQueryExecution:
             "plain",
             probe_board_path,
             local_project(tmp_path),
-            adapter_registry=probe_registry,
+            env=probe_registry,
         )
         assert result.success is True, result.errors
         assert result.data == [{"n": 3}]
@@ -140,7 +140,7 @@ class TestComposedQueryExecution:
     def test_var_override_on_composed_query(
         self,
         tmp_path: Path,
-        probe_registry: AdapterRegistry,
+        probe_registry: ExecEnv,
         probe_board_path: Path,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
@@ -151,7 +151,7 @@ class TestComposedQueryExecution:
             "wrapper",
             probe_board_path,
             local_project(tmp_path),
-            adapter_registry=probe_registry,
+            env=probe_registry,
             vars={"n": 9},
         )
         assert result.success is True, result.errors
@@ -160,7 +160,7 @@ class TestComposedQueryExecution:
     def test_undefined_variable_still_fails(
         self,
         tmp_path: Path,
-        probe_registry: AdapterRegistry,
+        probe_registry: ExecEnv,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         """The fix must not make every unknown name resolve silently."""
@@ -185,7 +185,7 @@ charts:
             "bad",
             path,
             local_project(tmp_path),
-            adapter_registry=probe_registry,
+            env=probe_registry,
         )
         assert result.success is False
         # Pin the loud path: the failure must name the missing variable, not
@@ -331,7 +331,7 @@ class TestComposedQueryWithTemplatedReference:
     def test_composed_query_renders_referenced_querys_variable(
         self,
         tmp_path: Path,
-        probe_registry: AdapterRegistry,
+        probe_registry: ExecEnv,
         templated_ref_board_path: Path,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
@@ -341,7 +341,7 @@ class TestComposedQueryWithTemplatedReference:
             "wrapper",
             templated_ref_board_path,
             local_project(tmp_path),
-            adapter_registry=probe_registry,
+            env=probe_registry,
         )
         assert result.success is True, result.errors
         assert result.data == [{"one": 1, "n": 3}]
@@ -349,7 +349,7 @@ class TestComposedQueryWithTemplatedReference:
     def test_composed_query_var_override_reaches_referenced_query(
         self,
         tmp_path: Path,
-        probe_registry: AdapterRegistry,
+        probe_registry: ExecEnv,
         templated_ref_board_path: Path,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
@@ -359,7 +359,7 @@ class TestComposedQueryWithTemplatedReference:
             "wrapper",
             templated_ref_board_path,
             local_project(tmp_path),
-            adapter_registry=probe_registry,
+            env=probe_registry,
             vars={"n": 9},
         )
         assert result.success is True, result.errors
@@ -421,7 +421,7 @@ class TestComposedQueryPropagatesSetupSql:
     def test_query_board_runs_referenced_querys_setup_sql(
         self,
         tmp_path: Path,
-        probe_registry: AdapterRegistry,
+        probe_registry: ExecEnv,
         setup_sql_board_path: Path,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
@@ -431,7 +431,7 @@ class TestComposedQueryPropagatesSetupSql:
             "wrapper",
             setup_sql_board_path,
             local_project(tmp_path),
-            adapter_registry=probe_registry,
+            env=probe_registry,
         )
         assert result.success is True, result.errors
         assert result.data == [{"v": 5}]

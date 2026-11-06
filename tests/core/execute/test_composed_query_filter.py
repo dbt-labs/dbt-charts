@@ -19,8 +19,9 @@ from pathlib import Path
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import compile
 from dbt_charts.core.compile.config import ProjectSourcesConfig
-from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
+
+from ..._run import Run
 
 
 def _project_with_db_source(
@@ -39,12 +40,12 @@ def _project_with_db_source(
 
 def _build_board_and_executor(
     yaml_body: str, local_project: Callable[..., FilesystemProject]
-) -> Executor:
+) -> Run:
     result = compile(yaml_body)
     assert result.success, [str(e) for e in result.errors]
     assert result.board is not None
-    registry = build_adapter_registry(_project_with_db_source(local_project))
-    return Executor(result.board, registry, use_cache=False)
+    registry = build_exec_env(_project_with_db_source(local_project))
+    return Run(result.board, registry, use_cache=False)
 
 
 class TestComposedQueryWithFilter:

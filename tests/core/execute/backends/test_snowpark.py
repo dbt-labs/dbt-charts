@@ -33,9 +33,10 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_WAREHOUSE_RUNTIME,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 from dbt_charts.core.execute.backends.base import BackendRegistry
 from dbt_charts.core.execute.backends.snowpark import SnowparkBackend
+from dbt_charts.core.execute.env import ExecEnv, make_exec_env
+from dbt_charts.core.execute.run import run_query
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
 
@@ -168,9 +169,9 @@ def _duckdb_source() -> DuckDBSourceConfig:
     return DuckDBSourceConfig(type="duckdb", path=":memory:")
 
 
-def _registry(session: Any, tmp_path: Any) -> AdapterRegistry:
+def _registry(session: Any, tmp_path: Any) -> ExecEnv:
     """The registry a Snowpark host builds: ``snowflake`` routed to its session."""
-    return AdapterRegistry(
+    return make_exec_env(
         project=FilesystemProject(tmp_path),
         backends=BackendRegistry({"snowflake": SnowparkBackend(session=session)}),
     )
@@ -181,8 +182,8 @@ class TestExecute:
         session = _FakeSession(rows=[{"ID": 1}])
         adapter = _registry(session, tmp_path)
         query = SqlQuery(sql="SELECT * FROM t WHERE id = {{ id }}", source="sf")
-        result = adapter.execute(
-            query, variables={"id": 5}, source_config=_snowflake_source()
+        result = run_query(
+            adapter, query, variables={"id": 5}, source_config=_snowflake_source()
         )
         assert result.is_success, result.error
         assert session.received_sql == ["SELECT * FROM t WHERE id = 5"]
@@ -191,7 +192,7 @@ class TestExecute:
         session = _FakeSession(rows=[{"ID": 1, "NAME": "alice"}])
         adapter = _registry(session, tmp_path)
         query = SqlQuery(sql="SELECT id, name FROM t", source="sf")
-        result = adapter.execute(query, source_config=_snowflake_source())
+        result = run_query(adapter, query, source_config=_snowflake_source())
         assert result.is_success, result.error
         assert result.columns == ["id", "name"]
         assert result.data == [{"id": 1, "name": "alice"}]
@@ -202,7 +203,7 @@ class TestExecute:
         session = _FakeSession(raises=RuntimeError("SQL compilation error: bad table"))
         adapter = _registry(session, tmp_path)
         query = SqlQuery(sql="SELECT * FROM missing", source="sf")
-        result = adapter.execute(query, source_config=_snowflake_source())
+        result = run_query(adapter, query, source_config=_snowflake_source())
         assert result.is_success is False
         assert result.error is not None and result.error.code is ERR_WAREHOUSE_RUNTIME
         assert result.data == []
@@ -214,7 +215,7 @@ class TestExecute:
         query = SqlQuery(
             sql="SELECT 1", source="sf", setup_sql="CREATE TEMP TABLE x AS SELECT 1"
         )
-        result = adapter.execute(query, source_config=_snowflake_source())
+        result = run_query(adapter, query, source_config=_snowflake_source())
         assert result.is_success is False
         assert session.received_sql == []
 
@@ -227,12 +228,14 @@ class TestExecute:
 
     def test_a_non_snowflake_source_is_refused(self, tmp_path: Any) -> None:
         session = _FakeSession(rows=[{"X": 1}])
-        registry = AdapterRegistry(
+        registry = make_exec_env(
             project=FilesystemProject(tmp_path),
             backends=BackendRegistry({"duckdb": SnowparkBackend(session=session)}),
         )
-        result = registry.execute(
-            SqlQuery(sql="SELECT 1", source="db"), source_config=_duckdb_source()
+        result = run_query(
+            registry,
+            SqlQuery(sql="SELECT 1", source="db"),
+            source_config=_duckdb_source(),
         )
         assert result.error is not None
         assert "only snowflake sources" in str(result.error)
@@ -263,7 +266,8 @@ class TestRowLimit:
         session = _FakeSession(rows=[{"ID": i} for i in range(10)])
         adapter = _registry(session, tmp_path)
 
-        result = adapter.execute(
+        result = run_query(
+            adapter,
             SqlQuery(sql="SELECT id FROM t", source="sf"),
             source_config=_snowflake_source(),
         )
@@ -280,7 +284,8 @@ class TestRowLimit:
         session = _FakeSession(rows=[{"ID": i} for i in range(10)])
         adapter = _registry(session, tmp_path)
 
-        result = adapter.execute(
+        result = run_query(
+            adapter,
             SqlQuery(sql="SELECT id FROM t", source="sf", limit=2),
             source_config=_snowflake_source(),
         )
@@ -317,7 +322,8 @@ class _MidStreamFailure:
 
 def test_mid_stream_failure_returns_a_warehouse_error(tmp_path: Any) -> None:
     adapter = _registry(_MidStreamFailure(), tmp_path)
-    result = adapter.execute(
+    result = run_query(
+        adapter,
         SqlQuery(sql="SELECT id FROM t", source="sf"),
         source_config=_snowflake_source(),
     )
@@ -352,7 +358,8 @@ def test_stream_is_closed_when_the_ceiling_stops_the_fetch_early(
                 closed.append(True)
 
     adapter = _registry(_Stream(), tmp_path)
-    adapter.execute(
+    run_query(
+        adapter,
         SqlQuery(sql="SELECT id FROM t", source="sf"),
         source_config=_snowflake_source(),
     )
@@ -364,8 +371,10 @@ def test_variant_is_json_and_decoded(tmp_path: Any) -> None:
         rows=[{"V": '{"a": [1, 2]}'}, {"V": None}], datatypes=[VariantType()]
     )
     adapter = _registry(session, tmp_path)
-    result = adapter.execute(
-        SqlQuery(sql="SELECT v FROM t", source="sf"), source_config=_snowflake_source()
+    result = run_query(
+        adapter,
+        SqlQuery(sql="SELECT v FROM t", source="sf"),
+        source_config=_snowflake_source(),
     )
     assert result.schema == {"v": ColumnType(kind="json")}
     assert result.data == [{"v": {"a": [1, 2]}}, {"v": None}]
@@ -374,8 +383,10 @@ def test_variant_is_json_and_decoded(tmp_path: Any) -> None:
 def test_an_undecodable_variant_is_not_a_warehouse_error(tmp_path: Any) -> None:
     session = _FakeSession(rows=[{"V": "not json"}], datatypes=[VariantType()])
     adapter = _registry(session, tmp_path)
-    result = adapter.execute(
-        SqlQuery(sql="SELECT v FROM t", source="sf"), source_config=_snowflake_source()
+    result = run_query(
+        adapter,
+        SqlQuery(sql="SELECT v FROM t", source="sf"),
+        source_config=_snowflake_source(),
     )
     assert result.error is not None
     assert result.error.code is not ERR_WAREHOUSE_RUNTIME
@@ -385,8 +396,10 @@ def test_an_undecodable_variant_is_not_a_warehouse_error(tmp_path: Any) -> None:
 def test_null_type_is_string(tmp_path: Any) -> None:
     session = _FakeSession(rows=[{"N": None}], datatypes=[NullType()])
     adapter = _registry(session, tmp_path)
-    result = adapter.execute(
-        SqlQuery(sql="SELECT null AS n", source="sf"), source_config=_snowflake_source()
+    result = run_query(
+        adapter,
+        SqlQuery(sql="SELECT null AS n", source="sf"),
+        source_config=_snowflake_source(),
     )
     assert result.schema == {"n": ColumnType(kind="string")}
 
@@ -394,7 +407,8 @@ def test_null_type_is_string(tmp_path: Any) -> None:
 def test_an_unmapped_type_raises_naming_the_column(tmp_path: Any) -> None:
     session = _FakeSession(rows=[{"V": 1}], datatypes=[VectorType()])
     adapter = _registry(session, tmp_path)
-    result = adapter.execute(
+    result = run_query(
+        adapter,
         SqlQuery(sql="SELECT v FROM t", source="sf"),
         source_config=_snowflake_source(),
     )
@@ -407,8 +421,10 @@ def test_an_unmapped_type_raises_naming_the_column(tmp_path: Any) -> None:
 def test_geography_is_declared_string(tmp_path: Any) -> None:
     session = _FakeSession(rows=[{"G": "{}"}], datatypes=[GeographyType()])
     adapter = _registry(session, tmp_path)
-    result = adapter.execute(
-        SqlQuery(sql="SELECT g FROM t", source="sf"), source_config=_snowflake_source()
+    result = run_query(
+        adapter,
+        SqlQuery(sql="SELECT g FROM t", source="sf"),
+        source_config=_snowflake_source(),
     )
     assert result.schema == {"g": ColumnType(kind="string")}
 
@@ -418,7 +434,8 @@ def test_decimal_scale_splits_integer_from_decimal(tmp_path: Any) -> None:
         rows=[{"A": 1, "B": 1}], datatypes=[DecimalType(0), DecimalType(2)]
     )
     adapter = _registry(session, tmp_path)
-    result = adapter.execute(
+    result = run_query(
+        adapter,
         SqlQuery(sql="SELECT a, b FROM t", source="sf"),
         source_config=_snowflake_source(),
     )
@@ -445,7 +462,8 @@ def test_timestamp_zone_splits_wall_clock_from_instant(tmp_path: Any) -> None:
         ],
     )
     adapter = _registry(session, tmp_path)
-    result = adapter.execute(
+    result = run_query(
+        adapter,
         SqlQuery(sql="SELECT n, z, l FROM t", source="sf"),
         source_config=_snowflake_source(),
     )
@@ -465,8 +483,10 @@ def test_identifier_quoted_columns_become_raw_names(tmp_path: Any) -> None:
         rows=[{"X": 1, "Y": 2, "Z": 3}], columns=["ID", '"my col"', '"a""b"']
     )
     adapter = _registry(session, tmp_path)
-    result = adapter.execute(
-        SqlQuery(sql="SELECT 1", source="sf"), source_config=_snowflake_source()
+    result = run_query(
+        adapter,
+        SqlQuery(sql="SELECT 1", source="sf"),
+        source_config=_snowflake_source(),
     )
     assert result.data == [{"id": 1, "my col": 2, 'a"b': 3}]
 
@@ -478,7 +498,8 @@ def test_repeated_or_case_colliding_columns_raise(
     session = _FakeSession(rows=[{"X": 1, "Y": 2}], columns=columns)
     adapter = _registry(session, tmp_path)
     with pytest.raises(ExecutionError) as excinfo:
-        adapter.execute(
+        run_query(
+            adapter,
             SqlQuery(sql="SELECT 1 AS id, 2 AS id", source="sf"),
             source_config=_snowflake_source(),
         )
@@ -493,8 +514,10 @@ class TestSessionContext:
         self, tmp_path: Any, session: _FakeSession, source: SnowflakeSourceConfig
     ) -> Any:
         adapter = _registry(session, tmp_path)
-        return adapter.execute(
-            SqlQuery(sql="SELECT id FROM orders", source="sf"), source_config=source
+        return run_query(
+            adapter,
+            SqlQuery(sql="SELECT id FROM orders", source="sf"),
+            source_config=source,
         )
 
     def test_a_different_database_is_refused_before_any_sql(

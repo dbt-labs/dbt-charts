@@ -4,13 +4,13 @@
 
 use std::collections::HashMap;
 
-use column_types::{CellMismatch, ColumnType, ColumnTypes, Dataset, QueryDatasets};
+use column_types::{CellMismatch, ColumnType, ColumnTypes, QueryDatasets};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use diagnostic::codes;
 use diagnostic::Diagnostic;
-use crate::families::temporal::{infer_vega_type, VegaType};
+use ::bind::temporal::{infer_vega_type, VegaType};
 use crate::Payload;
 
 /// The declared types of a chart's `rows` and of each entry of its `datasets`.

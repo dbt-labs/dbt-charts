@@ -63,7 +63,7 @@ def test_height_provider_uses_nested_board_resolved_style() -> None:
         resolve_chart_style_context,
         resolve_style,
     )
-    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.execute.query_results import QueryResults
     from dbt_charts.core.render import layout_sizing
     from dbt_charts.core.render.layout_sizing import (
         SizingRenderCtx,
@@ -94,7 +94,7 @@ def test_height_provider_uses_nested_board_resolved_style() -> None:
 
     outer_layout = Layout.model_validate({"type": "cols", "items": [board_item]})
 
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = []
     render_ctx = SizingRenderCtx(
         results=executor,
@@ -163,7 +163,7 @@ def test_sibling_nested_boards_different_themes_get_correct_resolved_styles() ->
         resolve_chart_style_context,
         resolve_style,
     )
-    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.execute.query_results import QueryResults
     from dbt_charts.core.render import layout_sizing
     from dbt_charts.core.render.layout_sizing import (
         SizingRenderCtx,
@@ -215,7 +215,7 @@ def test_sibling_nested_boards_different_themes_get_correct_resolved_styles() ->
         {"type": "cols", "items": [cream_board_item, stark_board_item]}
     )
 
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = []
     render_ctx = SizingRenderCtx(
         results=executor,
@@ -287,7 +287,7 @@ def test_height_provider_resolved_style_param_propagated_to_render(
         resolve_chart_style_context,
         resolve_style,
     )
-    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.execute.query_results import QueryResults
     from dbt_charts.core.render import layout_sizing
     from dbt_charts.core.render.layout_sizing import (
         SizingRenderCtx,
@@ -316,7 +316,7 @@ def test_height_provider_resolved_style_param_propagated_to_render(
     )
     outer_layout = Layout.model_validate({"type": "cols", "items": [board_item]})
 
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = []
     render_ctx = SizingRenderCtx(
         results=executor,
@@ -370,7 +370,7 @@ def test_cols_alignment_in_nested_board_uses_that_boards_card_padding() -> None:
         resolve_chart_style_context,
         resolve_style,
     )
-    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.execute.query_results import QueryResults
     from dbt_charts.core.render import layout_sizing
     from dbt_charts.core.render.layout_sizing import (
         SizingRenderCtx,
@@ -395,7 +395,7 @@ def test_cols_alignment_in_nested_board_uses_that_boards_card_padding() -> None:
         type="board", width=400.0, height=300.0, board=nested_board, chart=None
     )
 
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     render_ctx = SizingRenderCtx(
         results=executor,
         resolved_style=outer_rs,

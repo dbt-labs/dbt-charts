@@ -21,10 +21,10 @@ from dbt_charts.core.diagnostics.codes_execute import (
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.dialects import get_dialect
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+from dbt_charts.core.execute.backends.dbt_adapter_factory import (
     SUPPORTED_ADAPTER_TYPES,
 )
-from dbt_charts.core.execute.adapters.typed_fetch import (
+from dbt_charts.core.execute.backends.typed_fetch import (
     _CLIENTS,
     _FAMILIES,
     fetch_typed,

@@ -29,7 +29,7 @@ import pytest
 
 from dbt_charts.agent_api.pack import propose_pack
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters import AdapterRegistry
+from dbt_charts.core.execute.source_registry import SourceRegistry
 from dbt_charts.core.pack.models import PackProposal
 from dbt_charts.core.pack.proposal_store import load_proposal
 
@@ -93,9 +93,8 @@ def _patch_for_source(source_name: str, adapter: _FakeAdapter) -> Any:
         "dbt_charts.core.inspect.resolver._schema_adapter_factory",
         return_value=adapter,
     )
-    p_resolve = patch.object(
-        AdapterRegistry,
-        "resolve_source_config",
+    p_resolve = patch(
+        "dbt_charts.core.inspect.resolver.resolve_source_config",
         return_value={"type": "duckdb", "path": ":memory:"},
     )
     return p_factory, p_resolve
@@ -118,13 +117,17 @@ def test_propose_pack_returns_tuple(
 
     p_factory, p_resolve = _patch_for_source("fivetran_zendesk", adapter)
 
-    def _fake_list_sql_sources(self: AdapterRegistry) -> list[dict[str, Any]]:
+    def _fake_list_sql_sources(sources: SourceRegistry) -> list[dict[str, Any]]:
         return [{"name": "fivetran_zendesk", "type": "duckdb"}]
 
     with (
         p_factory,
         p_resolve,
-        patch.object(AdapterRegistry, "list_sql_sources", _fake_list_sql_sources),
+        patch("dbt_charts.agent_api.pack.list_sql_sources", _fake_list_sql_sources),
+        patch(
+            "dbt_charts.core.inspect.resolver.list_sql_sources",
+            _fake_list_sql_sources,
+        ),
     ):
         proposal, out_path = propose_pack(local_project(tmp_path))
 
@@ -145,13 +148,17 @@ def test_propose_pack_returned_path_exists_on_disk(
 
     p_factory, p_resolve = _patch_for_source("fivetran_zendesk", adapter)
 
-    def _fake_list_sql_sources(self: AdapterRegistry) -> list[dict[str, Any]]:
+    def _fake_list_sql_sources(sources: SourceRegistry) -> list[dict[str, Any]]:
         return [{"name": "fivetran_zendesk", "type": "duckdb"}]
 
     with (
         p_factory,
         p_resolve,
-        patch.object(AdapterRegistry, "list_sql_sources", _fake_list_sql_sources),
+        patch("dbt_charts.agent_api.pack.list_sql_sources", _fake_list_sql_sources),
+        patch(
+            "dbt_charts.core.inspect.resolver.list_sql_sources",
+            _fake_list_sql_sources,
+        ),
     ):
         _proposal, out_path = propose_pack(local_project(tmp_path))
 
@@ -171,13 +178,17 @@ def test_propose_pack_written_yml_is_loadable(
 
     p_factory, p_resolve = _patch_for_source("fivetran_zendesk", adapter)
 
-    def _fake_list_sql_sources(self: AdapterRegistry) -> list[dict[str, Any]]:
+    def _fake_list_sql_sources(sources: SourceRegistry) -> list[dict[str, Any]]:
         return [{"name": "fivetran_zendesk", "type": "duckdb"}]
 
     with (
         p_factory,
         p_resolve,
-        patch.object(AdapterRegistry, "list_sql_sources", _fake_list_sql_sources),
+        patch("dbt_charts.agent_api.pack.list_sql_sources", _fake_list_sql_sources),
+        patch(
+            "dbt_charts.core.inspect.resolver.list_sql_sources",
+            _fake_list_sql_sources,
+        ),
     ):
         proposal, out_path = propose_pack(local_project(tmp_path))
 
@@ -196,13 +207,17 @@ def test_propose_pack_mode_override(
 
     p_factory, p_resolve = _patch_for_source("fivetran_zendesk", adapter)
 
-    def _fake_list_sql_sources(self: AdapterRegistry) -> list[dict[str, Any]]:
+    def _fake_list_sql_sources(sources: SourceRegistry) -> list[dict[str, Any]]:
         return [{"name": "fivetran_zendesk", "type": "duckdb"}]
 
     with (
         p_factory,
         p_resolve,
-        patch.object(AdapterRegistry, "list_sql_sources", _fake_list_sql_sources),
+        patch("dbt_charts.agent_api.pack.list_sql_sources", _fake_list_sql_sources),
+        patch(
+            "dbt_charts.core.inspect.resolver.list_sql_sources",
+            _fake_list_sql_sources,
+        ),
     ):
         proposal, _path = propose_pack(local_project(tmp_path), mode="domain-first")
 
@@ -220,11 +235,15 @@ def test_propose_pack_no_sources_raises(
     """propose_pack raises ValueError when no sources are configured."""
     (tmp_path / "dbt_charts.yml").write_text("")
 
-    def _fake_list_sql_sources(self: AdapterRegistry) -> list[dict[str, Any]]:
+    def _fake_list_sql_sources(sources: SourceRegistry) -> list[dict[str, Any]]:
         return []
 
     with (
-        patch.object(AdapterRegistry, "list_sql_sources", _fake_list_sql_sources),
+        patch("dbt_charts.agent_api.pack.list_sql_sources", _fake_list_sql_sources),
+        patch(
+            "dbt_charts.core.inspect.resolver.list_sql_sources",
+            _fake_list_sql_sources,
+        ),
         pytest.raises(ValueError, match="no sources"),
     ):
         propose_pack(local_project(tmp_path))
@@ -265,19 +284,22 @@ def test_propose_pack_multi_schema_source_all_schemas_visible(
         "dbt_charts.core.inspect.resolver._schema_adapter_factory",
         return_value=adapter,
     )
-    p_resolve = patch.object(
-        AdapterRegistry,
-        "resolve_source_config",
+    p_resolve = patch(
+        "dbt_charts.core.inspect.resolver.resolve_source_config",
         return_value={"type": "duckdb", "path": ":memory:"},
     )
 
-    def _fake_list_sql_sources(self: AdapterRegistry) -> list[dict[str, Any]]:
+    def _fake_list_sql_sources(sources: SourceRegistry) -> list[dict[str, Any]]:
         return [{"name": "db", "type": "duckdb"}]
 
     with (
         p_factory,
         p_resolve,
-        patch.object(AdapterRegistry, "list_sql_sources", _fake_list_sql_sources),
+        patch("dbt_charts.agent_api.pack.list_sql_sources", _fake_list_sql_sources),
+        patch(
+            "dbt_charts.core.inspect.resolver.list_sql_sources",
+            _fake_list_sql_sources,
+        ),
     ):
         proposal, _out_path = propose_pack(
             local_project(tmp_path), mode="connector-first"
@@ -321,19 +343,22 @@ def test_propose_pack_multi_schema_single_source_detected(
         "dbt_charts.core.inspect.resolver._schema_adapter_factory",
         return_value=adapter,
     )
-    p_resolve = patch.object(
-        AdapterRegistry,
-        "resolve_source_config",
+    p_resolve = patch(
+        "dbt_charts.core.inspect.resolver.resolve_source_config",
         return_value={"type": "duckdb", "path": ":memory:"},
     )
 
-    def _fake_list_sql_sources(self: AdapterRegistry) -> list[dict[str, Any]]:
+    def _fake_list_sql_sources(sources: SourceRegistry) -> list[dict[str, Any]]:
         return [{"name": "db", "type": "duckdb"}]
 
     with (
         p_factory,
         p_resolve,
-        patch.object(AdapterRegistry, "list_sql_sources", _fake_list_sql_sources),
+        patch("dbt_charts.agent_api.pack.list_sql_sources", _fake_list_sql_sources),
+        patch(
+            "dbt_charts.core.inspect.resolver.list_sql_sources",
+            _fake_list_sql_sources,
+        ),
     ):
         proposal, _out_path = propose_pack(
             local_project(tmp_path), mode="connector-first"
@@ -367,19 +392,22 @@ def test_propose_pack_dbt_internal_schemas_excluded(
         "dbt_charts.core.inspect.resolver._schema_adapter_factory",
         return_value=adapter,
     )
-    p_resolve = patch.object(
-        AdapterRegistry,
-        "resolve_source_config",
+    p_resolve = patch(
+        "dbt_charts.core.inspect.resolver.resolve_source_config",
         return_value={"type": "duckdb", "path": ":memory:"},
     )
 
-    def _fake_list_sql_sources(self: AdapterRegistry) -> list[dict[str, Any]]:
+    def _fake_list_sql_sources(sources: SourceRegistry) -> list[dict[str, Any]]:
         return [{"name": "db", "type": "duckdb"}]
 
     with (
         p_factory,
         p_resolve,
-        patch.object(AdapterRegistry, "list_sql_sources", _fake_list_sql_sources),
+        patch("dbt_charts.agent_api.pack.list_sql_sources", _fake_list_sql_sources),
+        patch(
+            "dbt_charts.core.inspect.resolver.list_sql_sources",
+            _fake_list_sql_sources,
+        ),
     ):
         proposal, _out_path = propose_pack(
             local_project(tmp_path), mode="connector-first"

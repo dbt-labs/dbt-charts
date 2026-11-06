@@ -25,11 +25,12 @@ from pydantic import TypeAdapter
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import compile as compile_board
 from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.replay_provider import ReplayDataProvider
 from dbt_charts.core.render.board_resolve import build_resolved_board
 from dbt_charts.core.render.boards import render_board_svg
+
+from ..._run import Run
 
 _ADAPTER: TypeAdapter[ResolvedBoard] = TypeAdapter(ResolvedBoard)
 _CLIP_ID = re.compile(r"clip\d+")
@@ -91,9 +92,9 @@ def test_board_renders_from_an_artifact_with_no_warehouse(tmp_path: Path) -> Non
 
     # ── Live render, through a real Executor ────────────────────────────────
     project = FilesystemProject(tmp_path)
-    executor = Executor(
+    executor = Run(
         result.board,
-        build_adapter_registry(project),
+        build_exec_env(project),
         query_registry=result.query_registry,
     )
     variables: dict[str, Any] = {}
@@ -150,9 +151,9 @@ def test_replayed_board_stamps_the_recording_time(tmp_path: Path) -> None:
     assert result.board is not None
 
     project = FilesystemProject(tmp_path)
-    executor = Executor(
+    executor = Run(
         result.board,
-        build_adapter_registry(project),
+        build_exec_env(project),
         query_registry=result.query_registry,
     )
     variables: dict[str, Any] = {}
@@ -177,10 +178,10 @@ def test_replayed_board_stamps_the_recording_time(tmp_path: Path) -> None:
     assert "Data as of 05:06 UTC on 4 Mar 2019" in replay_svg
 
 
-def test_replay_needs_no_adapter_registry(tmp_path: Path) -> None:
+def test_replay_needs_no_env(tmp_path: Path) -> None:
     """Rendering this board reaches for no warehouse connection.
 
-    ``ReplayDataProvider`` has no ``adapter_registry`` attribute, so any reach
+    ``ReplayDataProvider`` has no ``env`` attribute, so any reach
     for one while rendering raises AttributeError instead of quietly opening a
     connection. Scope honestly: this covers only the paths *this board*
     exercises, so it is a backstop, not a proof. The comprehensive guard is
@@ -193,9 +194,9 @@ def test_replay_needs_no_adapter_registry(tmp_path: Path) -> None:
     assert result.board is not None
 
     project = FilesystemProject(tmp_path)
-    executor = Executor(
+    executor = Run(
         result.board,
-        build_adapter_registry(project),
+        build_exec_env(project),
         query_registry=result.query_registry,
     )
     variables: dict[str, Any] = {}

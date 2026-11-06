@@ -24,7 +24,7 @@ from urllib.parse import quote_plus
 from dbt_charts.core.compile.sources.dbt_jinja import render_dbt_jinja_in_dict
 
 if TYPE_CHECKING:
-    from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+    from dbt_charts.core.execute.env import ExecEnv
 
 logger = logging.getLogger(__name__)
 
@@ -399,18 +399,18 @@ def parse_dbt_profiles_yaml(content: str) -> list[dict[str, object]]:
 
 
 def detect_database_type_from_registry(
-    registry: AdapterRegistry,
+    registry: ExecEnv,
     *,
     default_profile_name: str = "default",
     default_target_name: str = "dev",
 ) -> dict[str, str]:
-    """Detect database type information from an adapter registry.
+    """Detect database type information from an exec env.
 
     Reads the dbt profiles.yml of the linked dbt project, or else the registry's
     ``profile_type`` (the DuckDB backend has no dbt profile).
 
     Args:
-        registry: AdapterRegistry instance to inspect.
+        registry: ExecEnv instance to inspect.
         default_profile_name: Profile name to use when adapter doesn't specify one.
         default_target_name: Target name to use when adapter doesn't specify one.
 

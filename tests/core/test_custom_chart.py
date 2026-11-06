@@ -20,11 +20,11 @@ from dbt_charts.core.compile.template.output_budget import (
     remaining_template_output_bytes,
     template_output_budget,
 )
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
 
 from .._results import rows_result
+from .._run import Run
 
 BOARD = """
 queries:
@@ -90,12 +90,12 @@ def _errors(result: Any) -> list[str]:
 def _render(project: FilesystemProject, yaml_text: str) -> Any:
     result = _compile(project, yaml_text)
     assert result.success, [d.message for d in result.errors]
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(project),
+        env=build_exec_env(project),
         query_registry=result.query_registry,
     )
-    return render(result.board, executor, format="svg")
+    return render(result.board, executor.ctx, executor.ledger, format="svg")
 
 
 class TestCompile:
@@ -643,13 +643,13 @@ class TestUntestedBranches:
         )
         project = _project(tmp_path, template)
         result = _compile(project, yaml_text)
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
             query_registry=result.query_registry,
         )
         with template_output_budget(1000):
-            out = render(result.board, executor, format="svg")
+            out = render(result.board, executor.ctx, executor.ledger, format="svg")
         assert [d.code for d in out.chart_errors] == ["ERR-CUSTOM-RENDER"]
         assert "exceeded" in out.chart_errors[0].message
 
@@ -964,13 +964,17 @@ class TestVariablesAndFonts:
         )
         result = _compile(project, yaml_text)
         assert result.success, [d.message for d in result.errors]
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
             query_registry=result.query_registry,
         )
         svg = render(
-            result.board, executor, format="svg", variables={"stage": "signup"}
+            result.board,
+            executor.ctx,
+            executor.ledger,
+            format="svg",
+            variables={"stage": "signup"},
         ).output
         assert isinstance(svg, str)
         assert "<text>signup:1:signup</text>" in svg
@@ -983,12 +987,14 @@ class TestVariablesAndFonts:
         project = _project(tmp_path, template)
         result = _compile(project, _board_yaml())
         assert result.success
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
             query_registry=result.query_registry,
         )
-        html = render(result.board, executor, format="html", standalone=True).output
+        html = render(
+            result.board, executor.ctx, executor.ledger, format="html", standalone=True
+        ).output
         assert isinstance(html, str)
         painted = re.search(r'<text font-family="([^"]+)">x</text>', html)
         assert painted, "the template paints the board font"
@@ -1056,18 +1062,18 @@ class TestReviewRegressions:
         project = _project(tmp_path, template)
         result = _compile(project, yaml_text)
         assert result.success, [d.message for d in result.errors]
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
             query_registry=result.query_registry,
         )
         unbounded = 10**9
         with template_output_budget(unbounded):
-            render(result.board, executor, format="svg")
+            render(result.board, executor.ctx, executor.ledger, format="svg")
             both_charts = unbounded - remaining_template_output_bytes()
         # Everything but the last byte: the first chart fits, the second does not.
         with template_output_budget(both_charts - 1):
-            out = render(result.board, executor, format="svg")
+            out = render(result.board, executor.ctx, executor.ledger, format="svg")
         assert [d.code for d in out.chart_errors] == ["ERR-CUSTOM-RENDER"]
         assert "exceeded" in out.chart_errors[0].message
 
@@ -1118,13 +1124,13 @@ class TestReviewRegressions:
         project = _project(tmp_path, template)
         result = _compile(project, yaml_text)
         assert result.success, [d.message for d in result.errors]
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(project),
+            env=build_exec_env(project),
             query_registry=result.query_registry,
         )
         with template_output_budget(500):
-            out = render(result.board, executor, format="svg")
+            out = render(result.board, executor.ctx, executor.ledger, format="svg")
         assert [d.code for d in out.chart_errors] == ["ERR-CUSTOM-RENDER"]
         assert "exceeded 500 bytes" in out.chart_errors[0].message
 

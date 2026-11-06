@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -15,7 +16,6 @@ from dbt_charts.agent_api.files import (
     delete_file,
     move_file,
     read_file,
-    refuse_blind_overwrite,
     write_file,
 )
 from dbt_charts.cli.filesystem_project import FilesystemProject
@@ -381,20 +381,28 @@ class TestPackageBoardCopyOnWrite:
         assert result.path == "charts/zendesk/overview.yml"
         assert (pkg_project.root / self.PKG_BOARD).read_text() == "title: Pkg\n"
 
-    def test_read_returns_the_host_copy_and_keeps_the_overwrite_guard_honest(
+    def test_read_returns_the_host_copy_and_its_hash_guards_the_overwrite(
         self, pkg_project: FilesystemProject
     ) -> None:
         copy = pkg_project.root / "charts/zendesk/overview.yml"
         copy.parent.mkdir(parents=True)
         copy.write_text("title: Mine\n", encoding="utf-8")
 
-        assert read_file(self.PKG_BOARD, pkg_project).content == "title: Mine\n"
-        refusal = refuse_blind_overwrite(self.PKG_BOARD, pkg_project, set())
-        assert refusal is not None
-        assert (
-            refuse_blind_overwrite(self.PKG_BOARD, pkg_project, {self.PKG_BOARD})
-            is None
+        read = read_file(self.PKG_BOARD, pkg_project)
+        assert read.content == "title: Mine\n"
+        assert read.content_sha256 == hashlib.sha256(b"title: Mine\n").hexdigest()
+
+        # The hash is of the host copy that would be overwritten, not the package file.
+        refused = write_file(self.PKG_BOARD, "title: X\n", pkg_project)
+        assert refused.success is False
+        assert "has not been read" in (refused.error or "")
+        assert copy.read_text() == "title: Mine\n"
+
+        written = write_file(
+            self.PKG_BOARD, "title: X\n", pkg_project, read.content_sha256
         )
+        assert written.success is True
+        assert copy.read_text() == "title: X\n"
 
     def test_non_board_package_files_are_not_redirected(
         self, pkg_project: FilesystemProject

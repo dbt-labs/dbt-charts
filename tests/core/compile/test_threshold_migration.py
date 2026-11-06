@@ -25,14 +25,14 @@ import pytest
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+
+from ._engine_migrations import migrate_mapping
 
 
 @pytest.fixture
@@ -41,10 +41,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: dict[str, Any], catalog: YamlSchemaCatalog) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 def _board_with_chart_local_grid_zero() -> dict[str, Any]:
@@ -155,30 +154,6 @@ EXPECTED_THRESHOLD_MOVES = (
     "tabs.items.*.style.charts.line.axis_y.grid.zero",
     "tabs.items.*.style.charts.scatter.axis_y.grid.zero",
 )
-
-
-def test_resolved_move_set_is_exactly_the_documented_positions(
-    catalog: YamlSchemaCatalog,
-) -> None:
-    """The ``grid.zero`` tail resolves to these 27 positions and no others.
-
-    A bad anchor (e.g. a typo in the parent-key qualifier) either silently
-    resolves to zero moves or picks up an unintended position such as
-    ``scale.continuous.zero`` -- both change this set, so this is the test
-    that actually fails on a broken declaration rather than just checking
-    "no exception was raised".
-    """
-    from dbt_charts.core.compile.migrations.versions.v0_7_0 import moves
-
-    threshold_moves = [
-        move
-        for move in moves("0.6.0", "0.7.0", catalog=catalog)
-        if move.old_path[-2:] == ("grid", "zero")
-    ]
-    resolved = tuple(sorted(".".join(move.old_path) for move in threshold_moves))
-    assert resolved == EXPECTED_THRESHOLD_MOVES
-    for move in threshold_moves:
-        assert move.new_path == (*move.old_path[:-1], "threshold")
 
 
 def test_axis_y_grid_zero_compiles_clean_end_to_end() -> None:

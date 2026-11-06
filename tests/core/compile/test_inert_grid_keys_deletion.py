@@ -21,12 +21,6 @@ from pydantic import ValidationError
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
-)
-from dbt_charts.core.compile.migrations.migrations import (
-    Deletion,
-    MigrationError,
-    _board_migration_context,
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
@@ -34,7 +28,7 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     load_yaml_schema_catalog,
 )
 
-from ._migration_declarations import checked_registry
+from ._engine_migrations import migrate_mapping
 
 DELETED_GRID_KEYS = ("row_height", "default_width", "default_height", "gap")
 
@@ -45,10 +39,9 @@ def catalog() -> YamlSchemaCatalog:
 
 
 def _migrate(raw: dict[str, Any], catalog: YamlSchemaCatalog) -> dict[str, Any]:
-    _, registry = _board_migration_context()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaMigrationWarning)
-        return migrate_mapping(raw, catalog=catalog, registry=registry)
+        return migrate_mapping(raw)
 
 
 def _grid_board(**grid_keys: Any) -> dict[str, Any]:
@@ -63,16 +56,6 @@ def _grid_board(**grid_keys: Any) -> dict[str, Any]:
         },
         "grid": {"columns": 24, **grid_keys, "items": [{"item": "sales", "width": 12}]},
     }
-
-
-def test_registry_declares_the_0_5_0_grid_deletions() -> None:
-    """Declared at the 0.5.0 -> 0.6.0 boundary, now frozen -- not at
-    ``catalog.latest_released.version``, which is 0.6.0 itself post-freeze."""
-    _, registry = _board_migration_context()
-    deletions = registry.deletions_from("0.5.0")
-
-    declared = {d.path for d in deletions if d.path[0] == "grid"}
-    assert declared == {("grid", key) for key in DELETED_GRID_KEYS}
 
 
 def test_inert_grid_keys_stripped_from_authored_board(
@@ -113,34 +96,6 @@ def test_nested_board_grid_keys_stripped(catalog: YamlSchemaCatalog) -> None:
     AuthoredBoard.model_validate(migrated)
 
 
-def test_a_gap_deletion_is_rejected_on_the_dev_boundary(
-    catalog: YamlSchemaCatalog,
-) -> None:
-    """Root ``grid.gap`` is already gone from 0.6.0, so it has nothing left to
-    retire on the 0.6.0 -> 0.7.0 boundary and ``retired_at_root`` does not
-    apply.
-
-    Scoped to that boundary: the same tail is accepted at 0.5.0 -> 0.6.0, which
-    is where a conversion would go.
-    """
-    _, registry = _board_migration_context()
-
-    with pytest.raises(MigrationError, match="still exists in"):
-        checked_registry(
-            registry.moves,
-            (
-                *registry.deletions,
-                Deletion(
-                    catalog.latest_released.version,
-                    catalog.dev.version,
-                    ("grid", "gap"),
-                ),
-            ),
-            registry.conditional_moves,
-            catalog=catalog,
-        )
-
-
 def test_style_layout_grid_gap_survives_the_grid_deletions(
     catalog: YamlSchemaCatalog,
 ) -> None:
@@ -163,10 +118,9 @@ def test_authoring_a_deleted_grid_key_is_rejected(key: str) -> None:
 
 def test_grid_gap_strip_names_the_style_key(catalog: YamlSchemaCatalog) -> None:
     """The removal has a working replacement, so the warning names it."""
-    _, registry = _board_migration_context()
 
     with pytest.warns(SchemaMigrationWarning, match="style.layout.grid.gap"):
-        migrate_mapping(_grid_board(gap="md"), catalog=catalog, registry=registry)
+        migrate_mapping(_grid_board(gap="md"))
 
 
 def test_the_canonical_four_key_block_compiles() -> None:

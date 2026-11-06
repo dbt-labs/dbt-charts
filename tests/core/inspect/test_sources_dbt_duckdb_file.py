@@ -15,7 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+from dbt_charts.core.execute.backends.dbt_adapter_factory import build_adapter
 from dbt_charts.core.inspect.sources.dbt import DbtSchemaSource
 
 

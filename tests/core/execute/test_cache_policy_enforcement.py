@@ -1,4 +1,4 @@
-"""Regression tests: Executor honors the stamped per-query CachePolicy.
+"""Regression tests: Run honors the stamped per-query CachePolicy.
 
 Covers:
 - `cache: false` — never reads from nor writes to the persistent cache
@@ -18,27 +18,20 @@ import pytest
 
 from dbt_charts.core.compile import compile as df_compile
 from dbt_charts.core.diagnostics.execution import QueryError
-from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure
 from dbt_charts.core.execute.cache_keys import stored_query_hash
+from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.execute.lookup import lookup_and_record, query_data_ages
 from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
-from ..._results import rows_result, rows_schema
+from ..._results import rows_result
+from ..._run import Run
+from ..._scripted_env import ScriptedBackend, backend_of, scripted_env
 
 
-def _ok_adapter(value: int = 1) -> Mock:
-    ok = Mock()
-    ok.is_success = True
-    ok.data = [{"value": value}]
-    ok.schema = rows_schema(ok.data)
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    registry = Mock()
-    registry.project_file_sources.return_value = {}
-    registry.execute.return_value = ok
-    return registry
+def _ok_adapter(value: int = 1) -> ExecEnv:
+    return scripted_env(ScriptedBackend([{"value": value}]))
 
 
 def _board_yaml(cache_block: str) -> str:
@@ -67,9 +60,9 @@ class TestCacheDisabledIsNoStore:
         try:
             result = df_compile(_board_yaml("cache: false"))
             adapter = _ok_adapter()
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
@@ -78,14 +71,14 @@ class TestCacheDisabledIsNoStore:
 
             # A fresh Executor sharing the same persistent cache must see
             # nothing — the first run must not have written through.
-            executor2 = Executor(
+            executor2 = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
             executor2.execute_query("q")
-            assert adapter.execute.call_count == 2, (
+            assert backend_of(adapter).execute.call_count == 2, (
                 "cache: false must re-run the query on the second executor — "
                 "a persistent write on the first run would have served a hit instead"
             )
@@ -110,15 +103,15 @@ class TestCacheDisabledIsNoStore:
             )
 
             adapter = _ok_adapter(value=1)
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
             data = executor.execute_query("q")
             assert data == [{"value": 1}], "must ignore the pre-seeded cache entry"
-            assert adapter.execute.call_count == 1
+            assert backend_of(adapter).execute.call_count == 1
         finally:
             cache.close()
 
@@ -157,16 +150,16 @@ rows:
 """
         result = df_compile(two_charts)
         adapter = _ok_adapter()
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=adapter,
+            env=adapter,
             query_registry=result.query_registry,
             result_cache=None,
         )
         first = executor.execute_query("q")
         second = executor.execute_query("q")
         assert first == second == [{"value": 1}]
-        assert adapter.execute.call_count == 1, (
+        assert backend_of(adapter).execute.call_count == 1, (
             "cache: false must still memoize within one render — every consumer "
             "of a query has to see the same rows read at the same instant"
         )
@@ -178,15 +171,15 @@ rows:
         """
         result = df_compile(_board_yaml("cache: 1h"))
         adapter = _ok_adapter()
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=adapter,
+            env=adapter,
             query_registry=result.query_registry,
             result_cache=None,
         )
         executor.execute_query("q", use_cache=False)
         executor.execute_query("q", use_cache=False)
-        assert adapter.execute.call_count == 1
+        assert backend_of(adapter).execute.call_count == 1
 
 
 class TestDisabledRootStillHonorsANearerOptIn:
@@ -218,13 +211,13 @@ class TestDisabledRootStillHonorsANearerOptIn:
                 assert result.board.queries["q"].cache.enabled is True
                 adapter = _ok_adapter()
                 for _ in range(2):
-                    Executor(
+                    Run(
                         result.board,
-                        adapter_registry=adapter,
+                        env=adapter,
                         query_registry=result.query_registry,
                         result_cache=cache,
                     ).execute_query("q")
-                assert adapter.execute.call_count == 1, (
+                assert backend_of(adapter).execute.call_count == 1, (
                     "the second executor must be served from the store"
                 )
         finally:
@@ -239,14 +232,14 @@ class TestTtlLazyExpiry:
         try:
             result = df_compile(_board_yaml("cache:\n      ttl: 1s"))
             adapter = _ok_adapter(value=1)
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
             executor.execute_query("q")
-            assert adapter.execute.call_count == 1
+            assert backend_of(adapter).execute.call_count == 1
 
             # Directly age the stored entry past the 1s ttl — no sleep, no
             # timing flake.
@@ -261,20 +254,19 @@ class TestTtlLazyExpiry:
                     [key[0], stored_query_hash(key[1]), key[2]],
                 )
 
-            adapter.execute.return_value.data = [{"value": 2}]
-            adapter.execute.return_value.schema = rows_schema(
-                adapter.execute.return_value.data
-            )
+            backend_of(adapter).rows = [{"value": 2}]
             # A fresh Executor forces the persistent-cache path (bypasses the
             # first executor's own in-memory _cache memo).
-            executor2 = Executor(
+            executor2 = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
             data = executor2.execute_query("q")
-            assert adapter.execute.call_count == 2, "expired entry must re-execute"
+            assert backend_of(adapter).execute.call_count == 2, (
+                "expired entry must re-execute"
+            )
             assert data == [{"value": 2}]
         finally:
             cache.close()
@@ -284,22 +276,24 @@ class TestTtlLazyExpiry:
         try:
             result = df_compile(_board_yaml("cache:\n      ttl: 1h"))
             adapter = _ok_adapter(value=1)
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
             executor.execute_query("q")
 
-            executor2 = Executor(
+            executor2 = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
             data = executor2.execute_query("q")
-            assert adapter.execute.call_count == 1, "unexpired entry must be served"
+            assert backend_of(adapter).execute.call_count == 1, (
+                "unexpired entry must be served"
+            )
             assert data == [{"value": 1}]
         finally:
             cache.close()
@@ -312,9 +306,9 @@ class TestTtlLazyExpiry:
             assert query.cache.ttl_timedelta is None
 
             adapter = _ok_adapter(value=1)
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
@@ -332,14 +326,16 @@ class TestTtlLazyExpiry:
                     [key[0], stored_query_hash(key[1]), key[2]],
                 )
 
-            executor2 = Executor(
+            executor2 = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
             data = executor2.execute_query("q")
-            assert adapter.execute.call_count == 1, "ttl: forever must never expire"
+            assert backend_of(adapter).execute.call_count == 1, (
+                "ttl: forever must never expire"
+            )
             assert data == [{"value": 1}]
         finally:
             cache.close()
@@ -353,22 +349,22 @@ class TestUseCacheFalseIsNoStore:
         try:
             result = df_compile(_board_yaml("cache: true"))
             adapter = _ok_adapter()
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
             executor.execute_query("q", use_cache=False)
 
-            executor2 = Executor(
+            executor2 = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
             executor2.execute_query("q")
-            assert adapter.execute.call_count == 2, (
+            assert backend_of(adapter).execute.call_count == 2, (
                 "use_cache=False must not have written through to the persistent cache"
             )
         finally:
@@ -383,9 +379,9 @@ class TestCacheHitAts:
         cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
         try:
             result = df_compile(_board_yaml("cache: true"))
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=_ok_adapter(),
+                env=_ok_adapter(),
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
@@ -401,17 +397,17 @@ class TestCacheHitAts:
         try:
             result = df_compile(_board_yaml("cache: true"))
             adapter = _ok_adapter()
-            seed_executor = Executor(
+            seed_executor = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
             seed_executor.execute_query("q")
 
-            hit_executor = Executor(
+            hit_executor = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
@@ -469,10 +465,10 @@ _TTL_1H = "cache:\n      ttl: 1h"
 _SIBLING_YAML = _sibling_yaml(_TTL_24H, _TTL_1H)
 
 
-def _sibling_executor(board, registry, adapter, cache) -> Executor:
-    return Executor(
+def _sibling_executor(board, registry, adapter, cache) -> Run:
+    return Run(
         board,
-        adapter_registry=adapter,
+        env=adapter,
         query_registry=registry,
         result_cache=cache,
     )
@@ -530,21 +526,18 @@ class TestSiblingQueriesKeepTheirOwnTtl:
             _sibling_executor(
                 result.board, result.query_registry, adapter, cache
             ).execute_query("patient")
-            assert adapter.execute.call_count == 1
+            assert backend_of(adapter).execute.call_count == 1
 
             # Two hours pass: past the 1h policy, well inside the 24h one.
             _age_shared_entry(cache, result.board, ("patient", "impatient"), hours=2)
 
             # A distinguishable value proves a re-run rather than a stale hit.
-            adapter.execute.return_value.data = [{"value": 2}]
-            adapter.execute.return_value.schema = rows_schema(
-                adapter.execute.return_value.data
-            )
+            backend_of(adapter).rows = [{"value": 2}]
 
             impatient = _sibling_executor(
                 result.board, result.query_registry, adapter, cache
             ).execute_query("impatient")
-            assert adapter.execute.call_count == 2, (
+            assert backend_of(adapter).execute.call_count == 2, (
                 "the 1h query must re-execute: its own ttl has elapsed, even "
                 "though the 24h query wrote the entry"
             )
@@ -564,14 +557,14 @@ class TestSiblingQueriesKeepTheirOwnTtl:
             _sibling_executor(
                 result.board, result.query_registry, adapter, cache
             ).execute_query("impatient")
-            assert adapter.execute.call_count == 1
+            assert backend_of(adapter).execute.call_count == 1
 
             _age_shared_entry(cache, result.board, ("patient", "impatient"), hours=2)
 
             patient = _sibling_executor(
                 result.board, result.query_registry, adapter, cache
             ).execute_query("patient")
-            assert adapter.execute.call_count == 1, (
+            assert backend_of(adapter).execute.call_count == 1, (
                 "the 24h query is still inside its own ttl and must be served "
                 "the entry the 1h query wrote"
             )
@@ -603,10 +596,7 @@ class TestForceRefreshClearsEveryPolicySlot:
             assert executor.execute_query("impatient") == [{"value": 1}]
             assert len(executor.ledger.memo) == 2, "two policies, two slots"
 
-            adapter.execute.return_value.data = [{"value": 2}]
-            adapter.execute.return_value.schema = rows_schema(
-                adapter.execute.return_value.data
-            )
+            backend_of(adapter).rows = [{"value": 2}]
             executor.execute_query("patient", force_refresh=True)
 
             assert executor.execute_query("impatient") == [{"value": 2}], (
@@ -641,9 +631,9 @@ class TestNoStoreIsEnforcedAtTheStoreRead:
                 *key, rows_result([{"value": 999}]), board_slug="test", query_name="q"
             )
 
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=_ok_adapter(),
+                env=_ok_adapter(),
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
@@ -701,7 +691,7 @@ class TestSiblingsDoNotShareOneMemoSlot:
             _sibling_executor(
                 result.board, result.query_registry, adapter, cache
             ).execute_query("patient")
-            assert adapter.execute.call_count == 1
+            assert backend_of(adapter).execute.call_count == 1
             _age_shared_entry(cache, result.board, ("patient", "impatient"), hours=2)
 
             # Both queries now run on ONE executor, the 24h one first: it takes a
@@ -710,16 +700,15 @@ class TestSiblingsDoNotShareOneMemoSlot:
                 result.board, result.query_registry, adapter, cache
             )
             assert executor.execute_query("patient") == [{"value": 1}]
-            assert adapter.execute.call_count == 1, "the 24h query is inside its ttl"
-
-            # A distinguishable value proves a re-run rather than a memo hit.
-            adapter.execute.return_value.data = [{"value": 2}]
-            adapter.execute.return_value.schema = rows_schema(
-                adapter.execute.return_value.data
+            assert backend_of(adapter).execute.call_count == 1, (
+                "the 24h query is inside its ttl"
             )
 
+            # A distinguishable value proves a re-run rather than a memo hit.
+            backend_of(adapter).rows = [{"value": 2}]
+
             impatient = executor.execute_query("impatient")
-            assert adapter.execute.call_count == 2, (
+            assert backend_of(adapter).execute.call_count == 2, (
                 "the 1h query must re-execute: 2h-old rows are past its own ttl, "
                 "even though a 24h sibling warmed the memo slot first"
             )
@@ -742,21 +731,18 @@ class TestSiblingsDoNotShareOneMemoSlot:
             _sibling_executor(
                 result.board, result.query_registry, adapter, cache
             ).execute_query("patient")
-            assert adapter.execute.call_count == 1
+            assert backend_of(adapter).execute.call_count == 1
 
             executor = _sibling_executor(
                 result.board, result.query_registry, adapter, cache
             )
             assert executor.execute_query("patient") == [{"value": 1}]
-            assert adapter.execute.call_count == 1
+            assert backend_of(adapter).execute.call_count == 1
 
-            adapter.execute.return_value.data = [{"value": 2}]
-            adapter.execute.return_value.schema = rows_schema(
-                adapter.execute.return_value.data
-            )
+            backend_of(adapter).rows = [{"value": 2}]
 
             live = executor.execute_query("live")
-            assert adapter.execute.call_count == 2, (
+            assert backend_of(adapter).execute.call_count == 2, (
                 "cache: false is a real no-store: it must execute rather than be "
                 "served rows a sibling read off disk"
             )
@@ -781,7 +767,7 @@ class TestSiblingsDoNotShareOneMemoSlot:
             assert executor.execute_query("first") == [{"value": 1}]
             assert executor.execute_query("second") == [{"value": 1}]
 
-            assert adapter.execute.call_count == 1, (
+            assert backend_of(adapter).execute.call_count == 1, (
                 "identical SQL at an identical policy must still execute once — "
                 "policy-scoping the memo key must not split same-policy siblings"
             )
@@ -803,13 +789,12 @@ class TestQueryDataAgesOnFailure:
 
     def test_failed_adapter_query_contributes_data_age_record(self) -> None:
         result = df_compile(_board_yaml("cache: false"))
-        registry = Mock()
-        registry.project_file_sources.return_value = {}
-        registry.execute.side_effect = RuntimeError("warehouse down")
+        registry_backend = ScriptedBackend(error=RuntimeError("warehouse down"))
+        registry = scripted_env(registry_backend)
 
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=registry,
+            env=registry,
             query_registry=result.query_registry,
             result_cache=None,
         )
@@ -838,9 +823,9 @@ class TestQueryDataAgesOnFailure:
                 *key, RuntimeError("seed failure"), board_slug="test", query_name="q"
             )
 
-            executor = Executor(
+            executor = Run(
                 result.board,
-                adapter_registry=_ok_adapter(),
+                env=_ok_adapter(),
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
@@ -874,18 +859,11 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
         cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
         try:
             result = df_compile(_board_yaml("cache: true"))
-            adapter = Mock()
-            adapter.project_file_sources.return_value = {}
-            ok = Mock()
-            ok.is_success = True
-            ok.data = [{"value": i} for i in range(10)]
-            ok.schema = rows_schema(ok.data)
-            ok.resolved_relations = None
-            ok.truncated_reason = None
-            adapter.execute.return_value = ok
-            executor = Executor(
+            adapter_backend = ScriptedBackend([{"value": i} for i in range(10)])
+            adapter = scripted_env(adapter_backend)
+            executor = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
@@ -915,22 +893,18 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
         cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
         try:
             result = df_compile(_board_yaml("cache: true"))
-            adapter = Mock()
-            adapter.project_file_sources.return_value = {}
-            ok = Mock()
-            ok.is_success = True
-            ok.data = [
-                {"value": "small"},
-                {"value": "x" * 500},
-                {"value": "also small"},
-            ]
-            ok.schema = rows_schema(ok.data)
-            ok.resolved_relations = None
-            ok.truncated_reason = None
-            adapter.execute.return_value = ok
-            executor = Executor(
+            adapter = scripted_env(
+                ScriptedBackend(
+                    [
+                        {"value": "small"},
+                        {"value": "x" * 500},
+                        {"value": "also small"},
+                    ]
+                )
+            )
+            executor = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
@@ -964,18 +938,13 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
         cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
         try:
             result = df_compile(_board_yaml("cache: true"))
-            adapter = Mock()
-            adapter.project_file_sources.return_value = {}
-            ok = Mock()
-            ok.is_success = True
-            ok.data = [{"value": "x" * 500}, {"value": "small"}]
-            ok.schema = rows_schema(ok.data)
-            ok.resolved_relations = None
-            ok.truncated_reason = None
-            adapter.execute.return_value = ok
-            executor = Executor(
+            adapter_backend = ScriptedBackend(
+                [{"value": "x" * 500}, {"value": "small"}]
+            )
+            adapter = scripted_env(adapter_backend)
+            executor = Run(
                 result.board,
-                adapter_registry=adapter,
+                env=adapter,
                 query_registry=result.query_registry,
                 result_cache=cache,
             )

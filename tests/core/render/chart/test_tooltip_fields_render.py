@@ -10,9 +10,10 @@ import yaml
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
-from dbt_charts.core.execute import Executor
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
+
+from ...._run import Run
 
 EXTRA = "‍"
 _ROWS = [
@@ -34,12 +35,12 @@ def _svg(chart: dict[str, Any]) -> str:
     )
     result = compile_board(board)
     assert result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        env=build_exec_env(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
     )
-    return render(result.board, executor, format="svg").output
+    return render(result.board, executor.ctx, executor.ledger, format="svg").output
 
 
 def test_authored_rows_follow_the_value_row_and_use_the_resolved_label_and_format() -> (
@@ -88,11 +89,11 @@ def test_a_semicolon_in_a_value_is_escaped_for_the_runtime() -> None:
     )
     result = compile_board(board)
     assert result.board is not None, result.errors
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        env=build_exec_env(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
     )
-    svg = render(result.board, executor, format="svg").output
+    svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
     assert f"{EXTRA}Note: Q1\ue000 Q2" in svg
     assert "Q1;" not in svg

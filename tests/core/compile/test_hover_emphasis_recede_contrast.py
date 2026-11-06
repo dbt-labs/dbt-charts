@@ -11,13 +11,10 @@ from pydantic import ValidationError
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
-    migrate_mapping,
 )
-from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
-from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
-    load_yaml_schema_catalog,
-)
+
+from ._engine_migrations import migrate_mapping
 
 
 def _board(hover_emphasis: dict[str, Any]) -> dict[str, Any]:
@@ -30,13 +27,10 @@ def _board(hover_emphasis: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_authored_dimmed_opacity_is_dropped_with_a_notice() -> None:
-    _, registry = _board_migration_context()
 
     with pytest.warns(SchemaMigrationWarning, match="dimmed_opacity"):
         migrated = migrate_mapping(
             _board({"dimmed_opacity": 0.4, "visible": True}),
-            catalog=load_yaml_schema_catalog(),
-            registry=registry,
         )
 
     assert migrated["style"]["charts"]["hover_emphasis"] == {"visible": True}

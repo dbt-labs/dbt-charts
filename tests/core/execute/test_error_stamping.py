@@ -28,22 +28,22 @@ _EXECUTE_ROOT = DBT_CHARTS_PKG_DIR / "core" / "execute"
 # touching this list. Shrinks only.
 ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
     {
-        # adapters/base.py — an adapter returning a malformed result is an
+        # query_result.py — an adapter returning a malformed result is an
         # implementer contract breach; no authored input reaches this raise.
-        ("adapters/base.py", "QueryResult.__init__"),
-        # adapters/databricks_connection_manager.py
+        ("query_result.py", "QueryResult.__init__"),
+        # backends/databricks_connection_manager.py
         (
-            "adapters/databricks_connection_manager.py",
+            "backends/databricks_connection_manager.py",
             "_assert_vendored_methods_unchanged",
         ),
-        # adapters/dbt_profile.py
-        ("adapters/dbt_profile.py", "_read_lakecompute_target"),
-        ("adapters/dbt_profile.py", "_read_profiles_yml"),
-        ("adapters/dbt_profile.py", "_read_target_dict"),
-        ("adapters/dbt_profile.py", "_read_trino_target"),
-        # adapters/dbt_adapter_factory.py
-        ("adapters/dbt_adapter_factory.py", "build_adapter"),
-        ("adapters/dbt_adapter_factory.py", "import_adapter_module"),
+        # backends/dbt_profile.py
+        ("backends/dbt_profile.py", "_read_lakecompute_target"),
+        ("backends/dbt_profile.py", "_read_profiles_yml"),
+        ("backends/dbt_profile.py", "_read_target_dict"),
+        ("backends/dbt_profile.py", "_read_trino_target"),
+        # backends/dbt_adapter_factory.py
+        ("backends/dbt_adapter_factory.py", "build_adapter"),
+        ("backends/dbt_adapter_factory.py", "import_adapter_module"),
         # cache_backend.py — a naive timestamp from a backend is an implementer
         # contract breach, not an authoring mistake: no board YAML, CLI flag, or
         # variable value can produce it, so there is no author-facing diagnostic

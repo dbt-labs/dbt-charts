@@ -30,7 +30,7 @@ use crate::board::{px, translate_group};
 use display_text::case::apply_case;
 use crate::conditions::eval_bool_condition;
 use diagnostic::py_str;
-use crate::time_locale::active_time_locale;
+use ::bind::time_locale::active_time_locale;
 use crate::svg::{num_full};
 use print::{xml_escape, xml_escape_attr};
 
@@ -317,7 +317,7 @@ fn full_iso_date(s: &str) -> Option<(i32, u32, u32)> {
     if s.len() != 10 {
         return None;
     }
-    crate::time_axis::parse_iso_date(s).map(|(y, m, d)| (y, m.into(), d.into()))
+    ::bind::time_axis::parse_iso_date(s).map(|(y, m, d)| (y, m.into(), d.into()))
 }
 
 fn looks_like_booleans(values: &[String]) -> bool {
@@ -1750,7 +1750,7 @@ mod resolve_tests {
 
     #[test]
     fn a_set_date_displays_as_day_month_year_not_raw_iso() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let doc: VariableDoc = serde_json::from_value(serde_json::json!({"visible": true})).unwrap();
         assert_eq!(
             format_variable_display_value(&doc, &serde_json::json!("2026-09-21"), "date").unwrap(),
@@ -1760,7 +1760,7 @@ mod resolve_tests {
 
     #[test]
     fn a_daterange_with_one_open_end_names_the_other() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let doc: VariableDoc =
             serde_json::from_value(serde_json::json!({"visible": true, "placeholder": "Any time"}))
                 .unwrap();
@@ -1894,7 +1894,7 @@ mod resolve_tests {
 
     #[test]
     fn format_daterange_label_same_month_collapses_the_range() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         assert_eq!(
             format_daterange_label("2024-03-05", "2024-03-12").unwrap(),
             "5\u{2013}12 Mar 2024"
@@ -1903,7 +1903,7 @@ mod resolve_tests {
 
     #[test]
     fn format_daterange_label_cross_year_spells_both_dates() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         assert_eq!(
             format_daterange_label("2023-12-30", "2024-01-02").unwrap(),
             "30 Dec 2023 \u{2013} 2 Jan 2024"
@@ -1912,14 +1912,14 @@ mod resolve_tests {
 
     #[test]
     fn format_date_label_spells_the_date_and_passes_a_non_iso_string_through() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         assert_eq!(format_date_label("2026-09-21").unwrap(), "21 Sep 2026");
         assert_eq!(format_date_label("last week").unwrap(), "last week");
     }
 
     #[test]
     fn date_labels_take_their_month_names_from_the_board_time_locale() {
-        crate::time_locale::with_time_locale(&crate::time_locale::de_de(), || {
+        ::bind::time_locale::with_time_locale(&::bind::time_locale::de_de(), || {
             assert_eq!(format_date_label("2024-03-05").unwrap(), "5 Mrz 2024");
             assert_eq!(
                 format_daterange_label("2024-03-05", "2024-03-12").unwrap(),

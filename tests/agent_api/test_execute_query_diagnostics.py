@@ -2,22 +2,24 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 from dbt_charts.core.column_types import literal_schema
+from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.diagnostics.execution import QueryError
-from dbt_charts.core.execute.adapters.base import QueryResult
+from dbt_charts.core.execute.query_result import QueryResult
+
+from .._scripted_env import ScriptedBackend, scripted_env
 
 
 def _registry(rows=None, error=None):
-    registry = MagicMock()
-    registry.resolve_source_config.return_value = {"type": "duckdb", "path": ":memory:"}
-    registry.execute.return_value = QueryResult(
+    result = QueryResult(
         data=rows if rows is not None else [],
         schema=literal_schema(rows or []),
         error=QueryError(error) if error is not None else None,
     )
-    return registry
+    return scripted_env(
+        ScriptedBackend(result),
+        source=DuckDBSourceConfig(type="duckdb", path=":memory:"),
+    )
 
 
 def test_reaggregation_query_warns_but_still_returns_rows() -> None:
@@ -28,7 +30,7 @@ def test_reaggregation_query_warns_but_still_returns_rows() -> None:
     result = execute_query(
         "SELECT AVG(t) AS n FROM (SELECT region, SUM(x) AS t FROM a GROUP BY region) s",
         source="db",
-        adapter_registry=registry,
+        env=registry,
     )
     assert result.success is True  # not blocked
     assert result.data == [{"n": 5}]
@@ -39,7 +41,7 @@ def test_clean_query_has_no_diagnostics() -> None:
     from dbt_charts.agent_api.query import execute_query
 
     registry = _registry(rows=[{"x": 1}])
-    result = execute_query("SELECT x FROM t", source="db", adapter_registry=registry)
+    result = execute_query("SELECT x FROM t", source="db", env=registry)
     assert result.success is True
     assert result.diagnostics == []
 
@@ -51,7 +53,7 @@ def test_diagnostics_attached_on_execution_error() -> None:
     result = execute_query(
         "SELECT AVG(t) FROM (SELECT region, SUM(x) AS t FROM a GROUP BY region) s",
         source="db",
-        adapter_registry=registry,
+        env=registry,
     )
     assert result.success is False
     assert result.errors == ["no such column: foo"]
@@ -67,9 +69,7 @@ def test_validator_failure_degrades_gracefully(monkeypatch) -> None:
 
     monkeypatch.setattr(mod, "validate_query", boom)
     registry = _registry(rows=[{"x": 1}])
-    result = mod.execute_query(
-        "SELECT x FROM t", source="db", adapter_registry=registry
-    )
+    result = mod.execute_query("SELECT x FROM t", source="db", env=registry)
     # A validator crash must never break a real query.
     assert result.success is True
     assert result.data == [{"x": 1}]

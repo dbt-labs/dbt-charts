@@ -38,7 +38,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style_and_context,
 )
 from dbt_charts.core.compile.sizing import WidthMeasurer, layout_intrinsic_width
-from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.sizing import get_chart_content_height
 
 from ._board_utils import (
@@ -2718,7 +2718,8 @@ class TestRenderFirstSizing:
 
     def _compile_bar(self, local_project: Callable[..., FilesystemProject]) -> tuple:
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute.executor import Executor
+
+        from .._run import Run
 
         yaml_content = """
 title: Cache Test
@@ -2740,9 +2741,9 @@ rows:
 """
         result = compile(yaml_content)
         assert result.success
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         return result.board, executor
@@ -2770,8 +2771,9 @@ rows:
         """Table charts use data-driven sizing, not render-first; not in cache."""
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
+
+        from .._run import Run
 
         yaml_content = """
 title: Table Test
@@ -2790,9 +2792,9 @@ rows:
 """
         result = compile(yaml_content)
         assert result.success
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
@@ -2913,8 +2915,9 @@ class TestCardPaddingTitleText:
         """Board title SVG is positioned at x = page_padding + card_padding."""
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.render.renderer import render
+
+        from .._run import Run
 
         yaml_content = """
 title: Phase4 Title Test
@@ -2936,13 +2939,13 @@ rows:
 
         result = compile(yaml_content)
         assert result.success
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
-        svg = render(result.board, executor, format="svg").output
+        svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
 
         page_padding = float(get_theme_style().frame.margin)
         card_padding = float(get_theme_style().frame.card_padding)
@@ -2963,8 +2966,9 @@ rows:
         """Board markdown text should start at page_padding + card_padding."""
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.render.renderer import render
+
+        from .._run import Run
 
         yaml_content = """
 text: |
@@ -2973,13 +2977,13 @@ text: |
 """
         result = compile(yaml_content)
         assert result.success
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
-        svg = render(result.board, executor, format="svg").output
+        svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
 
         page_padding = float(get_theme_style().frame.margin)
         card_padding = float(get_theme_style().frame.card_padding)
@@ -2996,8 +3000,9 @@ text: |
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Nested board text sizing must match the card-padded render width."""
-        from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.render import layout_sizing, sizing as sizing_module
+
+        from .._run import Run
 
         yaml_content = """
 queries:
@@ -3027,9 +3032,9 @@ rows:
 """
         result = compile(yaml_content)
         assert result.success
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
@@ -3107,8 +3112,9 @@ class TestCardGapBehavior:
         """With card_gap=true, page_padding stays at configured value (no compensation hack)."""
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.render.renderer import render
+
+        from .._run import Run
 
         yaml_content = """
 title: CardGap Test
@@ -3130,13 +3136,13 @@ rows:
 """
         result = compile(yaml_content)
         assert result.success
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
-        svg = render(result.board, executor, format="svg").output
+        svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
 
         page_padding = float(get_theme_style().frame.margin)
         # The root SVG <rect> background starts at (0,0) and spans the full width.
@@ -3471,7 +3477,8 @@ rows:
         from unittest.mock import patch
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute.executor import Executor
+
+        from .._run import Run
 
         _layout_sizing = importlib.import_module("dbt_charts.core.render.layout_sizing")
         calculate_data_aware_layout = _layout_sizing.calculate_data_aware_layout
@@ -3495,9 +3502,9 @@ rows:
 """
         result = compile(yaml_content)
         assert result.success, f"Compile failed: {result.errors}"
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
 
@@ -4335,18 +4342,18 @@ class TestEmptyLayoutDoesNotCollapse:
         import re
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
-        from dbt_charts.core.render import render
+        from dbt_charts.core.execute.env import build_exec_env
+
+        from .._run import Run, render_run
 
         result = compile(yaml)
         assert not result.errors, [e.message for e in result.errors]
         assert result.board is not None
-        svg = render(
+        svg = render_run(
             result.board,
-            Executor(
+            Run(
                 result.board,
-                adapter_registry=build_adapter_registry(local_project(Path("/tmp"))),
+                env=build_exec_env(local_project(Path("/tmp"))),
             ),
             format="svg",
         ).output
@@ -4426,15 +4433,16 @@ rows:
     def _table_height(
         self, yaml_content: str, local_project: Callable[..., FilesystemProject]
     ) -> float:
-        from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
+
+        from .._run import Run
 
         result = compile(yaml_content)
         assert result.success, f"Compile failed: {result.errors}"
         assert result.board is not None
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
         sized_board, _ = calculate_data_aware_layout(
@@ -4714,18 +4722,19 @@ rows:
         the leaf header. Reserving a single header band leaves the slot a row
         short, and the renderer paginates rows away that the data has room for.
         """
-        from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.render import render
+
+        from .._run import Run
 
         result = compile(self._PIVOT_MULTI_DIM_YAML)
         assert result.success, f"Compile failed: {result.errors}"
         assert result.board is not None
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            env=build_exec_env(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
-        svg = render(result.board, executor, format="svg").output
+        svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
         assert isinstance(svg, str)
         assert ">r1<" in svg and ">r2<" in svg
 

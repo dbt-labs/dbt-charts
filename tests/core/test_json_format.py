@@ -9,10 +9,9 @@ from unittest.mock import MagicMock
 
 from dbt_charts.core.compile.models.board.normalized import Board, Layout, LayoutItem
 from dbt_charts.core.compile.models.chart.normalized import Chart
-from dbt_charts.core.execute.executor import Executor
-from dbt_charts.core.render.renderer import render
+from dbt_charts.core.execute.query_results import QueryResults
 
-from .._lookup import collect_via_execute_query
+from .._lookup import render_via
 from .._results import rows_result
 from ._board_utils import _default_chart_style_context, _default_resolved_style
 from ._svg_render import PINNED_RENDER_TIME
@@ -25,12 +24,11 @@ def _make_executor(data: list[dict]) -> MagicMock:
     attribute: render() now draws the board for every format (not just svg),
     and the svg footer/timestamp code iterates this attribute directly.
     """
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.render_with_range_filters.return_value = None
     executor.execute_query_result.return_value = rows_result(data)
     executor.cache_hit_ats = []
     executor.rendered_at = PINNED_RENDER_TIME
-    collect_via_execute_query(executor)
     return executor
 
 
@@ -57,7 +55,7 @@ class TestJsonFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="json").output
+        result = render_via(executor, board, format="json").output
 
         parsed = json.loads(result)
         assert parsed["title"] == "Test Board"
@@ -71,7 +69,7 @@ class TestJsonFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="json").output
+        result = render_via(executor, board, format="json").output
 
         parsed = json.loads(result)
         item = parsed["items"][0]
@@ -87,7 +85,7 @@ class TestJsonFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="json").output
+        result = render_via(executor, board, format="json").output
 
         parsed = json.loads(result)
         item = parsed["items"][0]
@@ -127,7 +125,7 @@ class TestJsonFormat:
         )
         executor = _make_executor(data)
 
-        result = render(outer_board, executor, format="json").output
+        result = render_via(executor, outer_board, format="json").output
 
         parsed = json.loads(result)
         assert parsed["title"] == "Outer Board"
@@ -144,7 +142,7 @@ class TestJsonFormat:
         board = _make_board([chart1, chart2])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="json").output
+        result = render_via(executor, board, format="json").output
 
         parsed = json.loads(result)
         assert len(parsed["items"]) == 2
@@ -158,7 +156,7 @@ class TestJsonFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="json").output
+        result = render_via(executor, board, format="json").output
 
         parsed = json.loads(result)
         item = parsed["items"][0]
@@ -174,7 +172,7 @@ class TestJsonFormat:
         board = _make_board([chart])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="json").output
+        result = render_via(executor, board, format="json").output
 
         parsed = json.loads(result)
         item = parsed["items"][0]
@@ -187,7 +185,7 @@ class TestJsonFormat:
         board = _make_board([make_chart("bar", x="month", y="revenue")])
         executor = _make_executor(data)
 
-        result = render(board, executor, format="json", max_rows_per_query=3).output
+        result = render_via(executor, board, format="json", max_rows_per_query=3).output
 
         parsed = json.loads(result)
         item = parsed["items"][0]

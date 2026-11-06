@@ -31,14 +31,15 @@ rows: [t]
 @pytest.fixture
 def compiled_board_and_executor(tmp_path: Path, local_project: Callable[..., Project]):
     from dbt_charts.core.compile import compile
-    from dbt_charts.core.execute import Executor
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.env import build_exec_env
+
+    from ..._run import Run
 
     result = compile(_BOARD_YAML)
     assert result.board is not None
-    executor = Executor(
+    executor = Run(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(tmp_path)),
+        env=build_exec_env(local_project(tmp_path)),
     )
     return result.board, executor
 
@@ -52,7 +53,7 @@ class TestHtmlPageTemplateStructure:
         from dbt_charts.core.render import render
 
         board, executor = compiled_board_and_executor
-        result = render(board, executor, format="html")
+        result = render(board, executor.ctx, executor.ledger, format="html")
         html = result.output
         assert isinstance(html, str)
         assert html.startswith("<!DOCTYPE html>")
@@ -61,7 +62,7 @@ class TestHtmlPageTemplateStructure:
         from dbt_charts.core.render import render
 
         board, executor = compiled_board_and_executor
-        result = render(board, executor, format="html")
+        result = render(board, executor.ctx, executor.ledger, format="html")
         html = result.output
         assert isinstance(html, str)
         assert 'charset="UTF-8"' in html
@@ -70,7 +71,7 @@ class TestHtmlPageTemplateStructure:
         from dbt_charts.core.render import render
 
         board, executor = compiled_board_and_executor
-        result = render(board, executor, format="html")
+        result = render(board, executor.ctx, executor.ledger, format="html")
         html = result.output
         assert isinstance(html, str)
         assert "<title>Test Board</title>" in html
@@ -82,7 +83,7 @@ class TestHtmlPageTemplateStructure:
         from dbt_charts.core.render.converters.html import to_html
 
         board, executor = compiled_board_and_executor
-        svg = render(board, executor, format="svg").output
+        svg = render(board, executor.ctx, executor.ledger, format="svg").output
         assert isinstance(svg, str)
 
         html = to_html(svg)
@@ -133,17 +134,18 @@ class TestHtmlPageTemplateStructure:
         self, tmp_path: Path, local_project: Callable[..., Project]
     ) -> None:
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
+
+        from ..._run import Run
 
         result = compile('title: "A & B <test>"\ntext: hello\n')
         assert result.board is not None
-        executor = Executor(
+        executor = Run(
             result.board,
-            adapter_registry=build_adapter_registry(local_project(tmp_path)),
+            env=build_exec_env(local_project(tmp_path)),
         )
-        rendered = render(result.board, executor, format="html")
+        rendered = render(result.board, executor.ctx, executor.ledger, format="html")
         html = rendered.output
         assert isinstance(html, str)
         assert "<title>A &amp; B &lt;test&gt;</title>" in html
@@ -153,7 +155,7 @@ class TestHtmlPageTemplateStructure:
         from dbt_charts.core.render import render
 
         board, executor = compiled_board_and_executor
-        result = render(board, executor, format="html")
+        result = render(board, executor.ctx, executor.ledger, format="html")
         html = result.output
         assert isinstance(html, str)
         assert "<style>" in html
@@ -162,7 +164,7 @@ class TestHtmlPageTemplateStructure:
         from dbt_charts.core.render import render
 
         board, executor = compiled_board_and_executor
-        result = render(board, executor, format="html")
+        result = render(board, executor.ctx, executor.ledger, format="html")
         html = result.output
         assert isinstance(html, str)
         # The emoji font-face CSS should be present in the style block
@@ -172,7 +174,7 @@ class TestHtmlPageTemplateStructure:
         from dbt_charts.core.render import render
 
         board, executor = compiled_board_and_executor
-        result = render(board, executor, format="html")
+        result = render(board, executor.ctx, executor.ledger, format="html")
         html = result.output
         assert isinstance(html, str)
         assert "box-sizing: border-box" in html
@@ -181,7 +183,7 @@ class TestHtmlPageTemplateStructure:
         from dbt_charts.core.render import render
 
         board, executor = compiled_board_and_executor
-        result = render(board, executor, format="html")
+        result = render(board, executor.ctx, executor.ledger, format="html")
         html = result.output
         assert isinstance(html, str)
         assert "margin: 0" in html
@@ -191,7 +193,7 @@ class TestHtmlPageTemplateStructure:
         from dbt_charts.core.render import render
 
         board, executor = compiled_board_and_executor
-        result = render(board, executor, format="html")
+        result = render(board, executor.ctx, executor.ledger, format="html")
         html = result.output
         assert isinstance(html, str)
         assert 'class="dbt-charts-wrapper"' in html
@@ -200,7 +202,7 @@ class TestHtmlPageTemplateStructure:
         from dbt_charts.core.render import render
 
         board, executor = compiled_board_and_executor
-        result = render(board, executor, format="html")
+        result = render(board, executor.ctx, executor.ledger, format="html")
         html = result.output
         assert isinstance(html, str)
         assert "dbt-charts-svg-container" in html
@@ -220,7 +222,7 @@ class TestHtmlPageTemplateStructure:
         from dbt_charts.core.render import render
 
         board, executor = compiled_board_and_executor
-        result = render(board, executor, format="html")
+        result = render(board, executor.ctx, executor.ledger, format="html")
         html = result.output
         assert isinstance(html, str)
         assert ".dbt-charts-svg-container > svg" in html
@@ -239,7 +241,7 @@ class TestHtmlPageTemplateStructure:
         from dbt_charts.core.render import render
 
         board, executor = compiled_board_and_executor
-        result = render(board, executor, format="html")
+        result = render(board, executor.ctx, executor.ledger, format="html")
         html = result.output
         assert isinstance(html, str)
         rule_start = html.index(".dbt-charts-svg-container > svg")
@@ -252,7 +254,7 @@ class TestHtmlPageTemplateStructure:
         from dbt_charts.core.render import render
 
         board, executor = compiled_board_and_executor
-        result = render(board, executor, format="html")
+        result = render(board, executor.ctx, executor.ledger, format="html")
         html = result.output
         assert isinstance(html, str)
         # With no chrome, the body should open directly to the wrapper div
@@ -278,7 +280,9 @@ class TestChromeSlot:
 
         board, executor = compiled_board_and_executor
         chrome_html = "<div class='dbt-nav'>Nav Here</div>"
-        result = render(board, executor, format="html", chrome=chrome_html)
+        result = render(
+            board, executor.ctx, executor.ledger, format="html", chrome=chrome_html
+        )
         html = result.output
         assert isinstance(html, str)
         assert chrome_html in html
@@ -288,7 +292,9 @@ class TestChromeSlot:
 
         board, executor = compiled_board_and_executor
         chrome_html = "<div class='dbt-nav'>X</div>"
-        result = render(board, executor, format="html", chrome=chrome_html)
+        result = render(
+            board, executor.ctx, executor.ledger, format="html", chrome=chrome_html
+        )
         html = result.output
         assert isinstance(html, str)
         # Must appear as raw HTML, not escaped
@@ -300,7 +306,9 @@ class TestChromeSlot:
 
         board, executor = compiled_board_and_executor
         chrome_html = "<div class='dbt-nav'>Nav</div>"
-        result = render(board, executor, format="html", chrome=chrome_html)
+        result = render(
+            board, executor.ctx, executor.ledger, format="html", chrome=chrome_html
+        )
         html = result.output
         assert isinstance(html, str)
         chrome_pos = html.index(chrome_html)
@@ -312,7 +320,9 @@ class TestChromeSlot:
 
         board, executor = compiled_board_and_executor
         chrome_html = "<div class='dbt-nav'>Nav</div>"
-        result = render(board, executor, format="html", chrome=chrome_html)
+        result = render(
+            board, executor.ctx, executor.ledger, format="html", chrome=chrome_html
+        )
         html = result.output
         assert isinstance(html, str)
         body_pos = html.index("<body>")
@@ -326,7 +336,7 @@ class TestChromeSlot:
 
         board, executor = compiled_board_and_executor
         chrome_html = "<nav>CHROME</nav>"
-        svg = render(board, executor, format="svg").output
+        svg = render(board, executor.ctx, executor.ledger, format="svg").output
         assert isinstance(svg, str)
         html = to_html(svg, chrome=chrome_html)
         assert "<nav>CHROME</nav>" in html
@@ -338,7 +348,7 @@ class TestChromeSlot:
         from dbt_charts.core.render.converters.html import to_html
 
         board, executor = compiled_board_and_executor
-        svg = render(board, executor, format="svg").output
+        svg = render(board, executor.ctx, executor.ledger, format="svg").output
         assert isinstance(svg, str)
         html = to_html(svg)
         body_start = html.index("<body>")
@@ -356,20 +366,19 @@ class TestHtmlPageEscaping:
         import re
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.env import build_exec_env
         from dbt_charts.core.render import render
         from dbt_charts.core.render.converters.html import to_html
+
+        from ..._run import Run
 
         # Title with a quote + ampersand + angle bracket exercises the escaping.
         result = compile("title: 'Sales \"Q3\" & <co>'\ntext: hi\n")
         assert result.board is not None
         board = result.board
-        executor = Executor(
-            board, adapter_registry=build_adapter_registry(local_project(tmp_path))
-        )
+        executor = Run(board, env=build_exec_env(local_project(tmp_path)))
 
-        svg = render(board, executor, format="svg").output
+        svg = render(board, executor.ctx, executor.ledger, format="svg").output
         assert isinstance(svg, str)
         html = to_html(svg, chrome="")
 

@@ -82,13 +82,12 @@ from dbt_charts.core.text.format_d3 import (
     WeekdayName,
     default_sign_placement,
     house_locale,
+    magnitude_words,
     number_locale_definition,
     time_directive_letters,
     time_locale_definition,
-    time_locale_week_start,
     unsupported_time_directives,
 )
-from dbt_charts.core.text.magnitude_words import magnitude_words
 from dbt_charts.core.text.predefined_formats import PREDEFINED_NUMBER_NAMES
 from dbt_charts.core.text.time_zones import TIME_ZONE_NAMES, TimeZoneName
 
@@ -677,7 +676,7 @@ class Regional(BaseModel):
     def week_start(self) -> int:
         locale = self.locale.time
         if isinstance(locale, str):
-            return time_locale_week_start(locale)
+            return _engine.week_start(locale)
         return WEEKDAYS.index(locale.week_start)
 
 

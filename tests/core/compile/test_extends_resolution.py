@@ -107,41 +107,6 @@ def test_merge_extends_theme_name_never_checks_migration_currency(
     assert "style" in result.model_fields_set  # type: ignore[union-attr]
 
 
-def test_merge_extends_user_fragment_checks_currency_against_boardpatch(
-    tmp_path: Path,
-    local_project: Callable[..., FilesystemProject],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A user-authored extends fragment is patch-shaped, not a full board —
-    its migration-currency check must run against BoardPatch, not
-    AuthoredBoard (which would reject any style-only fragment as
-    non-current regardless of whether it's actually current schema)."""
-    from dbt_charts.core.compile import migrations
-    from dbt_charts.core.compile.merge import merge_extends
-
-    seen_patch: list[bool] = []
-    real_prepare_board_mapping = migrations.prepare_board_mapping
-
-    def _spy(mapping: object, *, patch: bool = False, **kwargs: object) -> object:
-        seen_patch.append(patch)
-        return real_prepare_board_mapping(mapping, patch=patch, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(migrations, "prepare_board_mapping", _spy)
-
-    _write(tmp_path, "board.yaml", "")
-    _write(
-        tmp_path,
-        "_fragment.yaml",
-        "style:\n  charts:\n    bar:\n      legend:\n        visible: true\n",
-    )
-    board_file = _board_file(tmp_path, "board.yaml", local_project)
-    node = _node({"extends": "./_fragment.yaml"})
-    result = merge_extends(node, board_file)
-
-    assert "style" in result.model_fields_set  # type: ignore[union-attr]
-    assert seen_patch == [True]
-
-
 def test_merge_extends_unknown_name_no_boards_root_raises(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:

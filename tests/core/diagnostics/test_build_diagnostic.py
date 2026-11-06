@@ -189,7 +189,7 @@ class TestConnectionFailureDetailBoundary:
     def test_connection_failure_message_carries_no_driver_text_only_detail_does(
         self,
     ) -> None:
-        from dbt_charts.core.execute.adapters.base import connection_failure
+        from dbt_charts.core.execute.query_result import connection_failure
 
         raw_driver_text = "FATAL: password authentication failed for user 'brian'"
         result = connection_failure("postgres", RuntimeError(raw_driver_text))

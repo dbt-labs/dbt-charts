@@ -9,9 +9,10 @@ use serde_json::Value;
 
 use crate::common::FormatSlot;
 use crate::contract::{self, SpanRow};
-use crate::families::temporal::{month_abbr, zone_instants, AuthoredTimeFormat, TimeUnit};
+use crate::families::temporal::{month_abbr, zone_instants, AuthoredTimeFormat};
+use ::bind::temporal::{TimeUnit};
 use d3rs::calendar::civil_from_days;
-use crate::time_axis::TimeAxis;
+use ::bind::time_axis::TimeAxis;
 use crate::Payload;
 
 type Row = serde_json::Map<String, Value>;
@@ -65,10 +66,10 @@ impl DurationUnit {
     /// language chosen by the PRINTED number (1.04 weeks prints "1 week").
     fn text(self, days: f64) -> Result<String, String> {
         let scaled = days / self.days();
-        let number = crate::number_locale::d3_format(self.format(), scaled)
+        let number = ::bind::formats::locale::d3_format(self.format(), scaled)
             .map_err(|e| format!("bar: duration format {:?}: {e}", self.format()))?;
         // The word follows the number as printed (0.95 prints "0.9").
-        let printed = crate::number_locale::parse_printed(&number)?;
+        let printed = ::bind::formats::locale::parse_printed(&number)?;
         display_text::language::tr_value(self.message_id(), printed, &[("n", &number)])
     }
 
@@ -136,7 +137,7 @@ impl RangedBars {
         &self,
         tooltip_labels: bool,
         cat: &str,
-        time: &crate::time_axis::TimeAxis,
+        time: &::bind::time_axis::TimeAxis,
         detected_tu: Option<TimeUnit>,
         is_standard_date: bool,
         grain_format: Option<AuthoredTimeFormat>,
@@ -407,7 +408,7 @@ pub(crate) fn date_axis(rows: &[Row], fields: [&str; 2], extra: &[f64], tick_cou
 /// fraction of its day), so the numeric arms draw a date measure unchanged.
 pub(crate) fn with_day_numbers(payload: &Payload, fields: [&str; 2]) -> Result<Payload, String> {
     let mut converted = payload.clone();
-    let mut axis = TimeAxis::new(crate::time_axis::Grain::default(), std::collections::HashMap::new());
+    let mut axis = TimeAxis::new(::bind::time_axis::Grain::default(), std::collections::HashMap::new());
     for (i, row) in converted.rows.iter_mut().enumerate() {
         for field in fields {
             let text = match row.get(field) {
@@ -441,7 +442,7 @@ pub(crate) fn with_layer_day_numbers(
     base_fields: [&str; 2],
     layers: &[Value],
 ) -> Result<Payload, String> {
-    let mut axis = TimeAxis::new(crate::time_axis::Grain::default(), std::collections::HashMap::new());
+    let mut axis = TimeAxis::new(::bind::time_axis::Grain::default(), std::collections::HashMap::new());
     let mut converted = payload.clone();
     // Layers can read one column twice; the second finds day numbers the first wrote.
     let mut written: std::collections::HashSet<(Option<&str>, &str)> = std::collections::HashSet::new();
@@ -495,13 +496,13 @@ mod tests {
 
     #[test]
     fn a_duration_reads_arabic_digits_back_to_pick_its_word() {
-        let mut wire = crate::number_locale::en_us_wire();
+        let mut wire = ::bind::formats::locale::en_us_wire();
         wire["decimal"] = serde_json::json!("\u{66b}");
         wire["numerals"] = serde_json::json!(
             ["\u{660}", "\u{661}", "\u{662}", "\u{663}", "\u{664}", "\u{665}", "\u{666}", "\u{667}", "\u{668}", "\u{669}"]
         );
-        let arabic: crate::number_locale::NumberLocale = serde_json::from_value(wire).unwrap();
-        crate::number_locale::with_number_locale(&arabic, || {
+        let arabic: ::bind::formats::locale::NumberLocale = serde_json::from_value(wire).unwrap();
+        ::bind::formats::locale::with_number_locale(&arabic, || {
             {
                 assert_eq!(DurationUnit::Week.text(18.0).unwrap(), "\u{662}\u{66b}\u{666} weeks");
                 assert_eq!(DurationUnit::Week.text(7.3).unwrap(), "\u{661} week");
@@ -545,7 +546,7 @@ mod tests {
 
     #[test]
     fn tick_labels_name_the_coarsest_boundary() {
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let day = |y, m, d| days_from_civil(y, m, d);
         assert_eq!(date_tick_label(day(2026, 1, 1)).unwrap(), "2026");
         assert_eq!(date_tick_label(day(2026, 2, 1)).unwrap(), "Feb");
@@ -557,11 +558,11 @@ mod tests {
         let rows: Vec<Row> = [("2026-01-05", "2026-01-23"), ("2026-04-20", "2026-05-01")]
             .iter()
             .map(|(s, e)| {
-                let day = |t: &str| Value::from(crate::time_axis::testing::day(t));
+                let day = |t: &str| Value::from(::bind::time_axis::testing::day(t));
                 serde_json::json!({"start": day(s), "end": day(e)}).as_object().unwrap().clone()
             })
             .collect();
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let axis = date_axis(&rows, ["end", "start"], &[], 6).unwrap().unwrap();
         assert_eq!(axis.labels, ["Feb", "Mar", "Apr", "May"]);
         let (y, m, d) = civil_from_days(axis.domain.0 as i64);
@@ -571,7 +572,7 @@ mod tests {
     #[test]
     fn a_layers_dates_widen_the_date_axis_past_the_bars() {
         let rows: Vec<Row> = vec![serde_json::json!({"start": 100.0, "end": 120.0}).as_object().unwrap().clone()];
-        let _locale = crate::time_locale::en_us_scope();
+        let _locale = ::bind::time_locale::en_us_scope();
         let axis = date_axis(&rows, ["end", "start"], &[90.0, 140.0], 6).unwrap().unwrap();
         assert_eq!(axis.domain, (90.0, 140.0));
     }
@@ -591,7 +592,7 @@ mod tests {
 
     fn label(rb: &RangedBars, start: f64, end: f64) -> String {
         let plain = || Ok(Some("plain".to_string()));
-        rb.aria(true, "Region A", &crate::time_axis::testing::axis(&["Region A"]), None, false, None, None, None, ("End", &FormatSlot::from(",.2~f")), (start, end), plain).unwrap().unwrap()
+        rb.aria(true, "Region A", &::bind::time_axis::testing::axis(&["Region A"]), None, false, None, None, None, ("End", &FormatSlot::from(",.2~f")), (start, end), plain).unwrap().unwrap()
     }
 
     /// `floating_bar`'s reference tooltip: every bar rises, so an unsigned
@@ -649,7 +650,7 @@ mod tests {
         };
         let aria = |rb: &RangedBars, fmt: &FormatSlot, start, end| {
             let plain = || Ok(Some("plain".to_string()));
-            rb.aria(true, "Region A", &crate::time_axis::testing::axis(&["Region A"]), None, false, None, None, None, ("End", fmt), (start, end), plain).unwrap().unwrap()
+            rb.aria(true, "Region A", &::bind::time_axis::testing::axis(&["Region A"]), None, false, None, None, None, ("End", fmt), (start, end), plain).unwrap().unwrap()
         };
         let both_ways = bars(&[(100.0, 600.0), (700.0, 200.0)], false);
         assert!(aria(&both_ways, &slot(None), 100.0, 600.0).contains("Δ: +US$500"));

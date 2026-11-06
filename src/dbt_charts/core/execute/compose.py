@@ -13,15 +13,25 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
-from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.compile.models.source import is_file_source
+from dbt_charts.core.compile.models.query.normalized import (
+    AnyQuery,
+    SqlQuery,
+    is_sql_query,
+)
+from dbt_charts.core.compile.models.source import SemanticSourceConfig, is_file_source
 from dbt_charts.core.compile.sql_guard import validate_select_only, validate_setup_sql
 from dbt_charts.core.compile.template.parameterized import (
     render_parameterized_with_queries,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.dialects import SQLDialect, get_dialect
-from dbt_charts.core.execute.adapters.base import (
+from dbt_charts.core.execute.dbt_jinja import dbt_macro_kind, has_dbt_jinja
+from dbt_charts.core.execute.dbt_utils import (
+    DbtRefResolver,
+    source_target_path,
+)
+from dbt_charts.core.execute.metricflow import SemanticLayer
+from dbt_charts.core.execute.query_result import (
     QueryParams,
     QueryResult,
     ResolvedRelation,
@@ -31,11 +41,6 @@ from dbt_charts.core.execute.adapters.base import (
     resolve_effective_row_limit,
     resolve_setup_sql,
 )
-from dbt_charts.core.execute.adapters.dbt_utils import (
-    DbtRefResolver,
-    source_target_path,
-)
-from dbt_charts.core.execute.dbt_jinja import dbt_macro_kind, has_dbt_jinja
 from dbt_charts.core.execute.sql_literals import (
     INLINE_PLACEHOLDERS,
     inline_params_for_dialect,
@@ -49,7 +54,7 @@ from dbt_charts.core.execute.sql_translate import (
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
-    from dbt_charts.core.execute.metricflow import SemanticLayer
+    from dbt_charts.core.project import Project
 
 
 @dataclass(frozen=True)
@@ -227,3 +232,135 @@ def compose(
         return handle_adapter_error(f"{dialect_name} query setup", exc)
 
     return resolved
+
+
+def semantic_layer(
+    project: Project, source_config: ResolvedSourceConfig
+) -> (
+    SemanticLayer | None
+):  # type-state: optional — None is a source that declares no bundle
+    """The source's MetricFlow bundle, loaded; None when it declares none.
+
+    Reloaded when the bundle's files change, reused otherwise.
+
+    Raises:
+        ExecutionError: the library is not installed, or the bundle is
+            invalid.
+    """
+    if (
+        not isinstance(source_config, SemanticSourceConfig)
+        or source_config.metricflow is None
+    ):
+        return None
+    return SemanticLayer.load(project, source_config.metricflow)
+
+
+def compose_sql(
+    query: SqlQuery,
+    variables: VariableValues | None,
+    params: QueryParams,
+    board: Board | None,
+    source_config: ResolvedSourceConfig,
+    render_dialect: SQLDialect,
+    *,
+    refs: DbtRefResolver,
+    project: Project,
+) -> ResolvedQuery | QueryResult:
+    """``compose`` for the source's own dialect, loading its MetricFlow bundle."""
+    try:
+        semantic = semantic_layer(project, source_config)
+    except DbtChartsError as exc:
+        return handle_adapter_error("MetricFlow", exc)
+    return compose(
+        query,
+        variables=variables,
+        params=params,
+        board=board,
+        source_config=source_config,
+        dialect_name=source_config.type,
+        render_dialect=render_dialect,
+        refs=refs,
+        semantic=semantic,
+    )
+
+
+def compose_query(
+    query: AnyQuery,
+    *,
+    board: Board,
+    variables: VariableValues,
+    source_config: ResolvedSourceConfig,
+    refs: DbtRefResolver,
+    project: Project,
+) -> ResolvedQuery | QueryResult:
+    """The query a run would send, composed but not sent.
+
+    Same composition a run does, stopping at the connection, with params in
+    the inline style. This is what a caller needs when the warehouse itself
+    offers a way to inspect a query it never runs, such as a BigQuery dry run.
+    The caller resolves the source, which it has to know anyway to decide that
+    a dry run is the right mechanism.
+    """
+    if not is_sql_query(query):
+        return plain_error(f"Expected SQL query, got {query.query_type}")
+    return compose_sql(
+        query,
+        variables,
+        None,
+        board,
+        source_config,
+        INLINE_PLACEHOLDERS,
+        refs=refs,
+        project=project,
+    )
+
+
+def translate_query(
+    query: SqlQuery,
+    *,
+    board: Board,
+    variables: VariableValues,
+    source_config: ResolvedSourceConfig,
+    refs: DbtRefResolver,
+    project: Project,
+) -> SqlQuery | QueryResult:
+    """The query as its source's engine would receive it, values inlined.
+
+    For a caller that must put text of its own around the SQL, like a
+    ``EXPLAIN`` prefix, and so cannot let a run translate afterwards. The query
+    must carry a ``dialect:``; the result carries none. One already in its
+    source's dialect comes back unchanged. A translation failure comes back as
+    the error a run would have returned.
+    """
+    assert query.dialect is not None
+    try:
+        differs = dialect_differs(query.dialect, source_config)
+    except DbtChartsError as exc:
+        return handle_adapter_error("Dialect translation", exc)
+    if not differs:
+        return query
+    if is_file_source(source_config):
+        return file_source_dialect_refusal(query.dialect)
+    resolved = compose_query(
+        query,
+        board=board,
+        variables=variables,
+        source_config=source_config,
+        refs=refs,
+        project=project,
+    )
+    if isinstance(resolved, QueryResult):
+        return resolved
+    sql = resolved.inline(engine_dialect(query.dialect, source_config))
+    return query.model_copy(update={"sql": sql, "dialect": None})
+
+
+def file_source_dialect_refusal(dialect: str) -> QueryResult:
+    return handle_adapter_error(
+        "File-source execution",
+        dialect_unsupported(
+            dialect,
+            "duckdb",
+            "queries on a file source are not translated, so write the SQL in duckdb",
+        ),
+    )

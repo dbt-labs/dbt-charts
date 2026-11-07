@@ -77,7 +77,7 @@ ALLOWED: dict[tuple[str, int], str] = {
         "isinstance(project, FilesystemProject)-guarded linked_dbt_path computation "
         "(project.dbt_project.exists, same narrow as the line above)"
     ),
-    ("core/execute/plan.py", 661): (
+    ("core/execute/plan.py", 662): (
         "isinstance(project, FilesystemProject)-guarded database_file_stat_version: "
         "roots a relative DuckDB/SQLite path where the adapters root it"
     ),

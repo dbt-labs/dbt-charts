@@ -112,11 +112,13 @@ def _duckdb_session_cache_key(
     source_config: RawSourceConfig,
     path: str,
     schema: str,
+    time_zone: str,
 ) -> str:
     """Stable cache key for the pooled connection this source config produces.
 
     A hash, not the raw config, so the key stays a short string regardless of
-    how large `attach`/`secrets` is.
+    how large `attach`/`secrets` is. The zone is part of the connection's
+    identity: it is set once, at connect.
     """
     identity = {
         field: source_config.get(field) for field in _CONNECTION_IDENTITY_FIELDS
@@ -124,7 +126,7 @@ def _duckdb_session_cache_key(
     digest = hashlib.sha256(
         json.dumps(identity, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()
-    return f"{path}\0{schema}\0{digest}"
+    return f"{path}\0{schema}\0{time_zone}\0{digest}"
 
 
 def _duckdb_ident(value: str, what: str) -> str:
@@ -646,9 +648,9 @@ class DuckDBBackend:
             path = self._resolved_path(raw_config)
             ephemeral = self.read_only and path != ":memory:"
             conn = (
-                self._connect(raw_config, path)
+                self._connect(raw_config, path, query.time_zone)
                 if ephemeral
-                else self._pooled_connection(raw_config, path)
+                else self._pooled_connection(raw_config, path, query.time_zone)
             )
         except DbtChartsError:
             raise
@@ -698,19 +700,20 @@ class DuckDBBackend:
         )
 
     def _pooled_connection(
-        self, source_config: RawSourceConfig, path: str
+        self, source_config: RawSourceConfig, path: str, time_zone: str
     ) -> duckdb.DuckDBPyConnection:
         """This thread's connection for *source_config*, opened on first use.
 
         Keyed by path, schema, and a hash of every other field _connect applies
-        (duckdb_config/extensions/settings/secrets/attach): two named DuckDB
-        sources only share a connection when all of that agrees.
+        (duckdb_config/extensions/settings/secrets/attach) and the session zone:
+        two named DuckDB sources only share a connection when all of that
+        agrees.
         """
         schema = (
             source_config.get("schema")
             or ""  # type-state: silent_fallback — no schema is the empty cache-key part
         )
-        cache_key = _duckdb_session_cache_key(source_config, path, schema)
+        cache_key = _duckdb_session_cache_key(source_config, path, schema, time_zone)
         sources = getattr(
             self._tls,
             "sources",
@@ -719,7 +722,7 @@ class DuckDBBackend:
         if sources is None:
             sources = self._tls.sources = {}
         if cache_key not in sources:
-            conn = self._connect(source_config, path)
+            conn = self._connect(source_config, path, time_zone)
             sources[cache_key] = conn
             with self._all_conns_lock:
                 self._all_conns.append(conn)
@@ -753,7 +756,7 @@ class DuckDBBackend:
         return db_path
 
     def _connect(
-        self, source_config: RawSourceConfig, path: str
+        self, source_config: RawSourceConfig, path: str, time_zone: str
     ) -> duckdb.DuckDBPyConnection:
         """Open a NEW DuckDB connection at ``path`` for a source (no caching).
 
@@ -761,7 +764,8 @@ class DuckDBBackend:
         passed in so it is resolved once (the decision) rather than twice. Shared
         by the pooled getter and the per-query ephemeral path so both apply the
         same security posture and session SETs regardless of who owns the
-        connection's lifetime.
+        connection's lifetime. ``time_zone`` is the session zone, applied after the
+        source's own ``settings`` so the board's zone wins.
         """
         import duckdb
 
@@ -823,6 +827,7 @@ class DuckDBBackend:
                 _apply_duckdb_config_section(
                     "settings", lambda: _apply_duckdb_settings(conn, settings)
                 )
+            conn.execute("SET TimeZone = ?", [time_zone])
             if secrets:
                 _apply_duckdb_config_section(
                     "secrets", lambda: _apply_duckdb_secrets(conn, secrets)

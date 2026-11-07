@@ -55,7 +55,11 @@ from jinja2 import (
     UndefinedError,
 )
 
-from dbt_charts.core.compile.errors import JinjaError, TemplateOutputTooLargeError
+from dbt_charts.core.compile.errors import (
+    CompilationError,
+    JinjaError,
+    TemplateOutputTooLargeError,
+)
 from dbt_charts.core.compile.template._helpers import (
     _LenientUndefined,
     _QueryNamespace,
@@ -70,6 +74,7 @@ from dbt_charts.core.compile.template.output_budget import (
     TemplateOutputBudgetExceeded,
     render_with_budget,
 )
+from dbt_charts.core.diagnostics.codes_compile import ERR_FILTER_DATE_RANGE_TIMESTAMP
 from dbt_charts.core.dialects import VALID_OPERATORS, SQLDialect, get_dialect
 
 # Bare identifiers joined by dots, to any depth: `col`, `table.col`, and
@@ -808,15 +813,17 @@ def make_filter_date_range_helper(
     def filter_date_range_helper(
         column: str,
         date_range: Any,
-        timestamp: bool = False,
+        is_naive_utc: bool = False,
+        **retired: object,  # type-state: object_annotation — only checked by name
     ) -> str:
-        """Date range filter `{{ filter_date_range('col', range_var) }}`. The column may be a date or a timestamp and compares by its calendar date, so pass it bare (no DATE(), CAST or wrapping subquery). The range may be a preset name literal such as 'last_30_days'. Pass `timestamp=true` for a TIMESTAMP column to take its date in the board's `regional.time_zone` instead of UTC.
+        """Date range filter `{{ filter_date_range('col', range_var) }}`. The column may be a date or a timestamp and compares by its calendar date, so pass it bare (no DATE(), CAST or wrapping subquery). The range may be a preset name literal such as 'last_30_days'. Pass `is_naive_utc=true` only for a naive timestamp column that stores UTC, to compare by its date in the board's `regional.time_zone`.
 
         Args:
             column: Date or timestamp column name (must be valid SQL identifier)
             date_range: `[start, end]` dates, or a preset name
-            timestamp: The column is a timestamp: take its calendar date in the
-                board clock's time zone. A DATE column must not pass it.
+            is_naive_utc: The column is a naive timestamp storing UTC: compare
+                its calendar date in the board clock's time zone. Columns with
+                a zone and DATE columns must not pass it.
 
         Returns:
             SQL BETWEEN clause, or a one-sided >= / <= clause when one end is
@@ -824,7 +831,14 @@ def make_filter_date_range_helper(
 
         Raises:
             ValueError: If column name is invalid
+            CompilationError: If the retired `timestamp=` is passed
         """
+        if "timestamp" in retired:
+            raise CompilationError.from_code(ERR_FILTER_DATE_RANGE_TIMESTAMP)
+        if retired:
+            raise TypeError(
+                f"filter_date_range() got unexpected arguments {sorted(retired)}"
+            )
         # Validate column name to prevent SQL injection
         _validate_identifier(column, "column")
 
@@ -832,7 +846,7 @@ def make_filter_date_range_helper(
             return "1=1"
 
         def date_of_column() -> str:
-            if not timestamp:
+            if not is_naive_utc:
                 return dialect.date_expr(column)
             zone = current_board_clock().time_zone
             if zone == "UTC":
@@ -873,11 +887,11 @@ def make_filter_date_range_helper(
         if not start and not end:
             return "1=1"  # Empty dates = no filter (intentional)
 
-        if timestamp and any(isinstance(bound, datetime) for bound in (start, end)):
+        if is_naive_utc and any(isinstance(bound, datetime) for bound in (start, end)):
             raise ValueError(
-                f"filter_date_range(timestamp=true) dates the column in the board "
+                f"filter_date_range(is_naive_utc=true) dates the column in the board "
                 f"time zone, but the bounds carry a time of day ({start!r}, "
-                f"{end!r}) and compare the column as is; drop timestamp=true or "
+                f"{end!r}) and compare the column as is; drop is_naive_utc=true or "
                 f"pass dates"
             )
 

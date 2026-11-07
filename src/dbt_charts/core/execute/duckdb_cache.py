@@ -29,6 +29,7 @@ from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
 from dbt_charts.core.compile.models.source import SourceConfig
 from dbt_charts.core.execute.cache_keys import source_identity
+from dbt_charts.core.text.time_zones import UTC, TimeZoneName
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Hash helpers (public — imported by executor.py)
@@ -110,6 +111,8 @@ def compute_cache_key(
     variables: dict[str, Any] | None = None,
     board_sources: dict[str, dict[str, Any]] | None = None,
     source_version: str = "",
+    *,
+    time_zone: TimeZoneName,
 ) -> tuple[str, str, str]:
     """The content-addressed cache key ``(source_hash, query_hash, variables_hash)``.
 
@@ -134,6 +137,8 @@ def compute_cache_key(
             hash covers only the config (paths), and an edited data file would
             serve stale rows. Empty string (the default) for non-file sources whose
             identity is fully captured by the config.
+        time_zone: The session zone a SQL query runs in: the same SQL buckets
+            differently per zone. A query no board owns passes UTC.
     """
     variables_hash = compute_variables_hash(
         compute_relevant_variables(query, variables)
@@ -153,6 +158,9 @@ def compute_cache_key(
         # Folded only when set so existing entries keep their keys.
         if query.dialect is not None:
             content += f"\n__dialect:{query.dialect}"
+        # Folded only off UTC so existing entries keep their keys.
+        if time_zone != UTC:
+            content += f"\n__time_zone:{time_zone}"
         source_hash = compute_source_hash(query.source, board_sources=board_sources)
         if source_version:
             source_hash = compute_query_hash(f"{source_hash}:{source_version}")

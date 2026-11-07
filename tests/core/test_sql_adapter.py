@@ -761,6 +761,7 @@ class TestDuckDBSchemaSearchPath:
                         "schema": malicious,
                     },
                     str(db_path),
+                    "UTC",
                 )
         finally:
             adapter.close()

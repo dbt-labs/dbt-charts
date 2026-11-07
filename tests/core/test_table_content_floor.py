@@ -58,6 +58,9 @@ _PIPELINE_DATA = [
 
 
 def _make_table_chart(make_chart, style: dict | None = None):
+    # Floors and truncation are what a slot imposes under `fit`; `scroll`
+    # gives the columns their width instead.
+    style = {"column_layout": {"overflow": "fit"}, **(style or {})}
     return make_chart("table", x=None, y=None, style=style)
 
 

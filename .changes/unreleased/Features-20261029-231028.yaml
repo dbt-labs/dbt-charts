@@ -1,0 +1,5 @@
+kind: Features
+body: 'column_layout.freeze pins a table''s leading columns while it scrolls sideways, and pagination.mode: scroll shows rows in a scroll region under a pinned header.'
+time: 2026-10-29T23:10:28.07772-05:00
+custom:
+    DbtChartsIssue: "84"

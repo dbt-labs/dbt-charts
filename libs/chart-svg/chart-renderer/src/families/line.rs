@@ -206,7 +206,7 @@ pub(crate) struct LineResolved {
     pub series_from_measures: bool,
     /// The rows as queried, set where a wide chart folds: a support_table strip reads them.
     #[serde(skip)]
-    pub prefold_rows: Vec<serde_json::Map<String, Value>>,
+    pub prefold_rows: crate::SharedRows,
     /// The series a legend click leaves shown.
     #[serde(skip)]
     pub legend_view: Option<crate::legend_view::LegendView>,
@@ -383,6 +383,8 @@ pub(crate) struct PointMark {
     /// Draw markers only at each series' anchored data (`labels.visible` anchors).
     #[serde(default)]
     pub anchored_only: bool,
+    /// The point area the x edge pad clears, drawn or not (resolve's `bake_edge_size`).
+    pub edge_size: f64,
 }
 
 /// The halo point layer sets no `strokeWidth` of its own
@@ -830,6 +832,8 @@ pub(crate) struct LinePanelGeometry {
     /// captured regardless of `paint_value_axis` — a composer paints these
     /// itself on whichever panel ends up drawing the shared axis.
     pub(crate) val_ticks: Vec<(f64, String)>,
+    /// `facet_compose::PanelGeometry.val_label_ys`.
+    pub(crate) val_label_ys: Vec<f64>,
     /// `facet_compose::PanelGeometry.ghost_labels`.
     pub(crate) ghost_labels: Vec<String>,
     /// The primary value axis's own resolved label paint attributes —
@@ -867,6 +871,8 @@ pub(crate) struct LinePanelGeometry {
 /// own range bakes at construction, never re-derived from a later `plot_w`).
 pub(crate) struct LineXAxis {
     ad: f64,
+    /// The pixels the x range keeps off each plot edge; a label flushes to the range's end, not the plot's.
+    x_inset: f64,
     use_band_positions: bool,
     x_font_size: f64,
     x_tick_len: f64,
@@ -914,6 +920,18 @@ fn tick_snap(pos: f64, ad: f64, band_step: bool) -> f64 {
         pos.floor() + 0.5
     } else {
         pos.round() + ad
+    }
+}
+
+/// The half pixel an axis group shifts by so a 1px rule is crisp.
+pub(crate) const AXIS_CRISP: f64 = 0.5;
+
+/// The x a continuous-axis label at plot position `x` is painted at: its tick's, or, when
+/// flushed to an end, the outer edge of the rule snapped under it. `half` is that rule's half width.
+pub(crate) fn label_x(x: f64, ad: f64, anchor: &str, half: f64) -> f64 {
+    match anchor {
+        "middle" => x + ad,
+        _ => tick_snap(x, ad, false) + edge_nudge(anchor, half),
     }
 }
 
@@ -993,7 +1011,8 @@ impl LineXAxis {
                         let row2_text = t.row2.as_deref().filter(|row| !row.is_empty());
                         let (row1_y, row2_y) = rows_at(label_y, xsz + 2.0);
                         let anchor = flush_anchor_px(t.frac * plot_w, plot_w);
-                        let gx = plot_left + x + self.ad + edge_nudge(anchor, edge_half);
+                        // A flushed label reaches the outer edge of the snapped rule under it, not of the raw tick.
+                        let gx = plot_left + label_x(x, self.ad, anchor, edge_half);
                         items.push(flat_label(Role::Axis, (gx, row1_y), &face(anchor), false, &clip(&t.text)?));
                         if let Some(row2) = row2_text {
                             items.push(flat_label(Role::Axis, (gx, row2_y), &face(anchor), false, &clip(row2)?));
@@ -1017,8 +1036,15 @@ impl LineXAxis {
                 LineXAxisBody::FlatTemporal { labels, xs, anchors } => {
                     for ((tl, &x), &anchor) in labels.iter().zip(xs).zip(anchors) {
                         let (row1_y, row2_y) = rows_at(label_y, xsz + 2.0);
-                        let flush = if flush_anchor_px(x, plot_w) == anchor { edge_nudge(anchor, edge_half) } else { 0.0 };
-                        let gx = plot_left + x + if self.use_band_positions { 0.0 } else { self.ad } + flush;
+                        let flushed = flush_anchor_px(x - self.x_inset, plot_w - 2.0 * self.x_inset) == anchor && anchor != "middle";
+                        // A flushed label reaches the outer edge of the snapped rule under it, not of the raw tick.
+                        let gx = plot_left
+                            + match (flushed, self.use_band_positions) {
+                                (true, false) => label_x(x, self.ad, anchor, edge_half),
+                                (true, true) => x + edge_nudge(anchor, edge_half),
+                                (false, true) => x,
+                                (false, false) => x + self.ad,
+                            };
                         items.push(flat_label(Role::Axis, (gx, row1_y), &face(anchor), false, &clip(&tl.row1)?));
                         if !tl.row2.is_empty() {
                             items.push(flat_label(Role::Axis, (gx, row2_y), &face(anchor), false, &clip(&tl.row2)?));
@@ -1183,6 +1209,41 @@ pub(crate) fn stack_columns(data: &StackData, x_domain: &[String], baseline_orde
 pub(crate) fn stack_extent(columns: &[StackColumn]) -> (f64, f64) {
     let ends = columns.iter().flat_map(|column| column.bounds.iter());
     ends.fold((0.0, 0.0), |(top, floor), &(start, end)| (f64::max(top, end), f64::min(floor, start)))
+}
+
+/// The outline of a drawn stack as runs of `(x, top, bottom)`: at each x the highest top and the
+/// lowest bottom of any series, one run per stretch of x that some series covers. Its edge is the
+/// part of the stack that borders nothing else.
+pub(crate) fn stack_envelope(series: &[(String, Vec<Vec<(f64, f64, f64)>>)]) -> Vec<Vec<(f64, f64, f64)>> {
+    let mut spans: Vec<(f64, f64)> = series
+        .iter()
+        .flat_map(|(_, runs)| runs.iter().filter_map(|run| Some((run.first()?.0, run.last()?.0))))
+        .collect();
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut merged: Vec<(f64, f64)> = Vec::new();
+    for (start, end) in spans {
+        match merged.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    let mut columns: Vec<(f64, f64, f64)> = series
+        .iter()
+        .flat_map(|(_, runs)| runs.iter().flatten())
+        .map(|&(x, top, bottom)| (x, top.min(bottom), top.max(bottom)))
+        .collect();
+    columns.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut by_x: Vec<(f64, f64, f64)> = Vec::new();
+    for (x, top, bottom) in columns {
+        match by_x.last_mut() {
+            Some(last) if last.0 == x => (last.1, last.2) = (last.1.min(top), last.2.max(bottom)),
+            _ => by_x.push((x, top, bottom)),
+        }
+    }
+    merged
+        .iter()
+        .map(|&(start, end)| by_x.iter().filter(|c| start <= c.0 && c.0 <= end).copied().collect())
+        .collect()
 }
 
 /// The stacked value nearest the domain's top end, whose stroke overhang the
@@ -1421,6 +1482,7 @@ fn render_facet(mut bound: bind::Bound, fonts: &FontBook) -> Result<String, Diag
                         val_gutter: geom.val_gutter,
                         val_tick_size: geom.val_tick_size,
                         val_ticks: geom.val_ticks,
+                        val_label_ys: geom.val_label_ys,
                         ghost_labels: geom.ghost_labels,
                         val_tick_marks: Vec::new(),
                         // Built unconditionally off this panel's own
@@ -1698,6 +1760,9 @@ fn description_color_title(fam: &str, color_field: &str, legend: &crate::familie
 
 #[cfg(test)]
 mod tests {
+    /// The baked `point_mark.edge_size` of a 4px stroke's automatic point.
+    const AUTO_EDGE_SIZE: f64 = 46.24;
+
     use super::{render_with_layout, shape, FacetPanelOpts, LineXAxisBody, Shape};
     use diagnostic::Diagnostic;
     use crate::families::cartesian::cascade_rail_anchors;
@@ -1956,7 +2021,7 @@ mod tests {
             "style": {
                 "axis_x": axis_json(titles_visible, None),
                 "axis_y": line_value_axis_json(titles_visible, y_on_right),
-                "line_mark": {"stroke": {"width": 4.0, "cap": "round", "join": "round"}, "halo_multiplier": 1.5},
+                "line_mark": {"stroke": {"width": 4.0, "cap": "round", "join": "round"}, "halo_multiplier": 1.5}, "point_mark": {"edge_size": AUTO_EDGE_SIZE},
                 "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
                 "endpoint_labels": {"visible": false, "label_offset": 6.0},
                 "single_series_fill": "#3164a3",
@@ -2061,7 +2126,7 @@ mod tests {
         ]);
         let at = |needle: &str| svg.find(needle).unwrap_or_else(|| panic!("{needle} missing: {svg}"));
         let halo = at("layer_1_marks");
-        let tint = at("<rect x=\"308\"");
+        let tint = at("<rect x=\"309.51\"");
         let rule = at("<line x1=\"0\" y1=\"65\"");
         let main = at("layer_3_marks");
         let text = at("annotations-text\"><g data");
@@ -2072,7 +2137,7 @@ mod tests {
     fn point_halos_paint_under_a_background_tint() {
         let mut json = make_line_payload(false, false);
         json["resolved"]["style"]["point_mark"] =
-            serde_json::json!({"size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}});
+            serde_json::json!({"size": 100.0, "edge_size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}});
         json["resolved"]["annotations"] = Value::Array(vec![annotation(
             3,
             serde_json::json!({"kind": "range", "from": "2026-01-05", "to": "2026-01-10"}),
@@ -2095,7 +2160,7 @@ mod tests {
         edit(&mut note);
         let mut json = make_line_payload(false, false);
         json["resolved"]["style"]["point_mark"] =
-            serde_json::json!({"size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}});
+            serde_json::json!({"size": 100.0, "edge_size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}});
         json["resolved"]["annotations"] = Value::Array(vec![note]);
         let payload: Payload = serde_json::from_value(json).unwrap();
         render(&payload, &test_fonts()).expect("renders")
@@ -3483,7 +3548,7 @@ mod tests {
                 "labels": {"visible": false}
             },
             "point_mark": {
-                "size": 46.24, "filled": true, "stroke_width": 4.0,
+                "size": 46.24, "edge_size": 46.24, "filled": true, "stroke_width": 4.0,
                 "labels": {"visible": false}
             },
             "axis_y": {"position": null},
@@ -3549,7 +3614,7 @@ mod tests {
         let svg = render(&payload, &test_fonts()).expect("renders");
         let layer = main_line_d(&svg);
         assert_eq!(layer.matches('L').count(), 2, "the NaN row is no vertex of the layer line: {layer}");
-        assert!(layer.starts_with("M0,"), "{layer}");
+        assert!(layer.starts_with("M5.4,"), "{layer}");
     }
 
     /// A colorless chart whose layers all share the base's grouping names the base and
@@ -3673,7 +3738,9 @@ mod tests {
     fn bar_layer_rows_at_years_below_100_stack_into_one_pile() {
         let payload: Payload = serde_json::from_value(year_below_100_bar_layer_payload(&[50, 51, 52, 53])).unwrap();
         let svg = render(&payload, &test_fonts()).expect("renders");
-        let bars: Vec<(f64, f64)> = svg
+        // The bars as drawn, past the halo's undercoat and mask copies of their outlines.
+        let drawn = &svg[svg.find("</mask>").expect("the halo's mask")..];
+        let bars: Vec<(f64, f64)> = drawn
             .split("d=\"M0,")
             .skip(1)
             .map(|rest| {
@@ -3682,8 +3749,6 @@ mod tests {
                 (ys[0], ys[2] - ys[0])
             })
             .collect();
-        // Each bar paints its fill and its outline pass.
-        let bars: Vec<(f64, f64)> = bars.into_iter().step_by(2).collect();
         assert_eq!(bars.len(), 4, "{svg}");
         for pair in bars.windows(2) {
             assert!((pair[1].0 + pair[1].1 - pair[0].0).abs() < 0.02, "each bar rests on the last: {bars:?}");
@@ -3984,7 +4049,7 @@ mod tests {
     fn scatter_layer_json() -> serde_json::Value {
         serde_json::json!({
             "type": "scatter",
-            "point_mark": {"size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}},
+            "point_mark": {"size": 100.0, "edge_size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}},
             "axis_y": {"position": null},
             "x": null, "y": "trend", "label": "Marker", "color": null, "ink": "#608470", "query_name": "trend_query"
         })
@@ -4073,7 +4138,7 @@ mod tests {
                 "halo_multiplier": 2.0,
                 "labels": {"visible": false}
             },
-            "point_mark": {"size": null, "color": null, "filled": true, "fill": null, "stroke_width": 2.0, "labels": {"visible": false}},
+            "point_mark": {"size": null, "edge_size": AUTO_EDGE_SIZE, "color": null, "filled": true, "fill": null, "stroke_width": 2.0, "labels": {"visible": false}},
             "axis_y": {"position": null},
             "x": null, "y": "trend", "label": label, "color": null, "ink": "#779bc9", "query_name": "trend_query"
         })
@@ -4192,7 +4257,7 @@ mod tests {
     fn a_base_line_swatch_follows_its_authored_stroke_color() {
         let svg = render_layered(|p| {
             p["resolved"]["style"]["line_mark"]["stroke"]["color"] = serde_json::json!("#4a9fd4");
-            p["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}});
+            p["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 100.0, "edge_size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}});
             p["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.2~f");
             p["resolved"]["layers"] = serde_json::json!([line_layer_json(Some("trend_query"))]);
         })
@@ -4595,7 +4660,7 @@ mod tests {
             "style": {
                 "axis_x": axis_json(false, None),
                 "axis_y": value_axis_json(false, None),
-                "line_mark": {"stroke": {"width": 4.0, "cap": "round", "join": "round"}, "halo_multiplier": 1.5},
+                "line_mark": {"stroke": {"width": 4.0, "cap": "round", "join": "round"}, "halo_multiplier": 1.5}, "point_mark": {"edge_size": AUTO_EDGE_SIZE},
                 "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
                 "endpoint_labels": {"visible": false, "label_offset": 6.0},
                 "single_series_fill": "#3164a3",
@@ -4623,7 +4688,7 @@ mod tests {
             let mut p = make_line_payload(true, false);
             p["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
             if let Some(sz) = point_size {
-                p["resolved"]["style"]["point_mark"] = json!({"size": sz});
+                p["resolved"]["style"]["point_mark"] = json!({"size": sz, "edge_size": sz});
             }
             let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts())
                 .expect("renders");
@@ -4644,7 +4709,7 @@ mod tests {
             let mut p = make_stacked_area_payload("zero");
             p["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
             if let Some(sz) = point_size {
-                p["resolved"]["style"]["point_mark"] = json!({"size": sz});
+                p["resolved"]["style"]["point_mark"] = json!({"size": sz, "edge_size": sz});
             }
             render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true)
                 .expect("renders")
@@ -4657,7 +4722,7 @@ mod tests {
         // Only the reference rules are hidden.
         assert_eq!(
             svg.matches("aria-hidden").count(),
-            svg.matches("mark-rule role-mark").count() + svg.matches("role-axis-grid").count(),
+            svg.matches("mark-rule role-mark").count() + svg.matches("role-axis-grid").count() + svg.matches("knockout-undercoat").count(),
             "{svg}"
         );
     }
@@ -5029,7 +5094,7 @@ mod tests {
             "style": {
                 "axis_x": axis_json(false, None),
                 "axis_y": value_axis_json(false, None),
-                "line_mark": {"stroke": {"width": 4.0, "cap": "round", "join": "round"}, "halo_multiplier": 1.5},
+                "line_mark": {"stroke": {"width": 4.0, "cap": "round", "join": "round"}, "halo_multiplier": 1.5}, "point_mark": {"edge_size": AUTO_EDGE_SIZE},
                 "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
                 "endpoint_labels": {"visible": true, "label_offset": 6.0},
                 "single_series_fill": "#3164a3",
@@ -5520,6 +5585,7 @@ mod tests {
             "stroke": {"width": 1.0, "color": "#ffffff", "cap": "round", "join": "round"},
             "halo_multiplier": 0.0
         });
+        p["resolved"]["style"]["point_mark"]["edge_size"] = json!(1.7_f64 * 1.7);
         p["resolved"]["style"]["axis_y"]["grid"] =
             json!({"visible": true, "threshold": {"color": "#8A8C8F", "width": 2.0}, "width": 1.5, "color": "#D0D3D9", "opacity": 1.0});
         p
@@ -5550,6 +5616,104 @@ mod tests {
                 (pts[..half].to_vec(), bottom)
             })
             .collect()
+    }
+
+    fn banded_stack(edit: impl FnOnce(&mut Value)) -> String {
+        let mut p = make_stacked_area_payload("zero");
+        p["resolved"]["annotations"] = Value::Array(vec![annotation(
+            3,
+            serde_json::json!({"kind": "range", "from": "2026-01-03", "to": "2026-01-06"}),
+            Value::Null,
+        )]);
+        edit(&mut p);
+        render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true).expect("renders")
+    }
+
+    /// The stack's outline is the only edge that knocks out: an undercoat of it paints before the
+    /// band, a mask cuts it from the areas, and each series keeps its canvas-colored perimeter, so
+    /// the seam between series stays canvas-colored inside a band.
+    #[test]
+    fn a_stacked_areas_envelope_knocks_out_to_the_band_while_its_seams_stay_canvas_colored() {
+        let svg = banded_stack(|_| {});
+        let band = svg.find("annotations-background").expect("a band");
+        let undercoat = svg.find("knockout-undercoat").expect("an undercoat");
+        assert!(undercoat < band, "the undercoat cuts what is under the band: {svg}");
+        let areas = svg.find("layer_2_marks").expect("the areas");
+        let mask = svg.find("<mask ").expect("a mask");
+        assert!(band < mask && mask < areas, "{svg}");
+        let mask_body = &svg[mask..svg.find("</mask>").unwrap()];
+        assert_eq!(mask_body.matches("stroke=\"#000\"").count(), 1, "one outline for the whole stack: {svg}");
+        assert_eq!(svg.matches("mask=\"url(#").count(), 1, "{svg}");
+        assert_eq!(svg[areas..].matches("stroke=\"#ffffff\" stroke-width=\"1\"").count(), 2, "both series keep their perimeter: {svg}");
+    }
+
+    /// The envelope cuts with the areas' own joins: a default miter at a steep drop's inner corner
+    /// spikes into the top series and eats the sliver its stroke left.
+    #[test]
+    fn a_stacked_areas_envelope_cuts_with_the_areas_joins() {
+        let svg = banded_stack(|_| {});
+        let areas = &svg[svg.find("layer_2_marks").unwrap()..];
+        let join = &areas[areas.find("stroke-linejoin=\"").expect("the areas carry a join")..];
+        let join = &join[..join[17..].find('"').unwrap() + 18];
+        for cut in [&svg[svg.find("<mask ").unwrap()..svg.find("</mask>").unwrap()], &svg[svg.find("knockout-undercoat").unwrap()..svg.find("annotations-background").unwrap()]] {
+            assert!(cut.contains(join), "{join} missing from {cut}");
+        }
+    }
+
+    /// A bar layer's canvas-colored border is an undercoat painted before the band and a mask over
+    /// the layer's bars, never a stroke painted over the band.
+    #[test]
+    fn a_bar_layers_halo_knocks_out_to_the_band_under_it() {
+        let mut p = year_below_100_bar_layer_payload(&[2020, 2021, 2022, 2023]);
+        p["resolved"]["annotations"] = Value::Array(vec![annotation(
+            3,
+            serde_json::json!({"kind": "range", "from": "2021-01-01", "to": "2022-01-01"}),
+            Value::Null,
+        )]);
+        let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
+        let band = svg.find("annotations-background").expect("a band");
+        let undercoat = svg.find("knockout-undercoat").expect("an undercoat");
+        assert!(undercoat < band, "the undercoat cuts what is under the band: {svg}");
+        assert!(!svg[band..].contains("stroke=\"#ffffff\" stroke-width=\"1\""), "no canvas stroke paints over the band: {svg}");
+        let mask = &svg[svg.find("<mask ").expect("a mask")..svg.find("</mask>").unwrap()];
+        assert_eq!(mask.matches("stroke=\"#000\"").count(), 8, "two stroke passes per bar: {svg}");
+        assert_eq!(svg.matches("mask=\"url(#").count(), 1, "{svg}");
+    }
+
+    /// The value axis paints over the band and the data's halo; the layer's undercoat, slotted in
+    /// beneath them, does not move it.
+    #[test]
+    fn a_bar_layers_undercoat_leaves_the_value_axis_over_the_band() {
+        let mut p = year_below_100_bar_layer_payload(&[2020, 2021, 2022, 2023]);
+        p["resolved"]["annotations"] = Value::Array(vec![annotation(
+            3,
+            serde_json::json!({"kind": "range", "from": "2021-01-01", "to": "2022-01-01"}),
+            Value::Null,
+        )]);
+        let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
+        let band = svg.find("annotations-background").expect("a band");
+        let axis = svg.find("data-dct-role=\"y-axis\"").expect("a value axis");
+        assert!(band < axis, "the value axis paints over the band: {svg}");
+    }
+
+    #[test]
+    fn a_stacked_area_stroked_in_its_own_ink_paints_no_mask() {
+        let svg = banded_stack(|p| p["resolved"]["style"]["line_mark"]["stroke"]["color"] = serde_json::json!("#336699"));
+        assert!(!svg.contains("<mask") && !svg.contains("knockout-undercoat"), "{svg}");
+    }
+
+    /// The envelope is one outline over every series' columns: the highest top and the lowest
+    /// bottom at each x, one run per stretch of x any series covers.
+    #[test]
+    fn a_stack_envelope_is_the_outline_of_the_union_of_its_series() {
+        let series = vec![
+            ("a".to_string(), vec![vec![(0.0, 50.0, 80.0), (10.0, 40.0, 80.0)]]),
+            ("b".to_string(), vec![vec![(0.0, 20.0, 50.0), (10.0, 10.0, 40.0)], vec![(30.0, 5.0, 40.0)]]),
+        ];
+        assert_eq!(
+            crate::families::line::stack_envelope(&series),
+            vec![vec![(0.0, 20.0, 80.0), (10.0, 10.0, 80.0)], vec![(30.0, 5.0, 40.0)]]
+        );
     }
 
     /// A stacked area's PALETTE index is baseline order too, not the
@@ -5622,7 +5786,8 @@ mod tests {
         }
         // The perimeter stroke lives on the combined fill path — no
         // separate stroke-only top-edge line, unlike the overlap recipe.
-        assert!(!svg.contains("fill=\"none\""), "no separate stroke-only line for a stacked area: {svg}");
+        let (before_mask, after_mask) = (svg.split("<mask ").next().unwrap(), svg.split("</mask>").nth(1).unwrap());
+        assert!(!before_mask.contains("fill=\"none\"") && !after_mask.contains("fill=\"none\""), "no separate stroke-only line for a stacked area: {svg}");
     }
 
     /// `stack: center` floats each column up by `(max_total - this_total) /
@@ -6146,6 +6311,7 @@ mod tests {
         p["resolved"]["style"]["axis_y"]["labels"]["visible"] = json!(false);
         p["resolved"]["style"]["axis_y"]["grid"]["threshold"] = json!(null);
         p["resolved"]["style"]["line_mark"]["stroke"]["width"] = json!(40.0);
+        p["resolved"]["style"]["point_mark"]["edge_size"] = json!(1.7_f64 * 40.0 * 1.7 * 40.0);
         // A raw column total (0.15) well below the `[0, 1]` domain — the
         // shape that distinguishes the two candidates for `own_hi`.
         p["rows"] = json!([
@@ -6160,7 +6326,7 @@ mod tests {
         // domain ceiling pushes the plot's own top margin to 56; using
         // the raw 0.15 total instead under-reserves it to 22.
         assert!(
-            svg.contains("translate(56,56)"),
+            svg.contains("translate(20,56)"),
             "the mark's fit-ink top must reach the domain ceiling, not the raw column total: {svg}"
         );
     }
@@ -7019,7 +7185,7 @@ mod tests {
         let (gx, gy, line_end) = plot_origin_and_line_end(&svg);
         let (box_w, _) = fixture_legend_box(&fonts);
         let title = text_tag(&svg, "Series");
-        assert_eq!(attr(&title, "x"), line_end + 4.0 + 18.0, "legend at ceil(plot + stroke) + 18: {title}");
+        assert_eq!(attr(&title, "x"), line_end + crate::common::x_edge_pad(AUTO_EDGE_SIZE) + 18.0, "legend at the plot edge + 18, the stroke inside the edge pad: {title}");
         assert_eq!(attr(&title, "y"), gy + 9.0, "title at baseline top: {title}");
         let circles: Vec<&str> = svg.match_indices("A5,5,0,1,1,-5,0A5,5,0,1,1,5,0").map(|(i, _)| {
             svg[svg[..i].rfind("<path").unwrap()..i + 40].split("/>").next().unwrap()
@@ -7280,7 +7446,7 @@ mod tests {
         .expect("renders");
         let (gx, gy, _) = plot_origin_and_line_end(&svg);
         let (box_w, _) = fixture_legend_box(&fonts);
-        assert_eq!(gx, 16.0 + 4.0 + crate::families::legend::VEGA_LEGEND_OFFSET + box_w, "plot origin: {svg}");
+        assert_eq!(gx, 16.0 + crate::families::legend::VEGA_LEGEND_OFFSET + box_w, "plot origin: {svg}");
         let title = text_tag(&svg, "Series");
         assert_eq!(attr(&title, "x"), 16.0, "the legend is the view's leftmost ink: {title}");
         assert_eq!(attr(&title, "y"), gy + 9.0, "start-aligned at the plot's top: {title}");
@@ -7388,7 +7554,7 @@ mod tests {
             ["A", "B", "C"].iter().map(|s| fonts.measure(s, TEST_FONT, 11.0).unwrap()).collect();
         let grid = legend_grid(&ws, &[None; 3], false, 11.0, 2, 8.0);
         let (gx, gy, _) = plot_origin_and_line_end(&svg);
-        let legend_x = gx - (4.0 + crate::families::legend::VEGA_LEGEND_OFFSET + grid.width.ceil());
+        let legend_x = gx - (crate::families::legend::VEGA_LEGEND_OFFSET + grid.width.ceil());
         let c = grid.size / 2.0;
         let mid = measure::baseline_shift("middle", 11.0);
         for (label, col, row) in [("A", 0, 0), ("B", 1, 0), ("C", 0, 1)] {
@@ -8195,7 +8361,7 @@ mod tests {
         let cell_w = cells.iter().map(|(_, t)| test_fonts().measure(t, TEST_FONT, 11.0).unwrap()).fold(0.0_f64, f64::max);
         for (end, text) in &cells {
             let (_, _, year) = crate::families::support_table_strip::label_cell_of(&labels, *end, cell_w)
-                .unwrap_or_else(|| panic!("{text} at {end} sits under no label: {cells:?} vs {labels:?}"));
+                .unwrap_or_else(|| panic!("{text} at {end} sits under no label (cell_w {cell_w}): {cells:?} vs {labels:?}"));
             let january = 100 + (year.parse::<i32>().unwrap() - 1986) * 12;
             assert_eq!(text, &january.to_string(), "the cell under {year} prints another month");
         }
@@ -8466,12 +8632,14 @@ mod tests {
         assert!(svg.contains(">210<") && !svg.contains(">$210<"), "every OTHER cell is bare: {svg}");
     }
 
-    /// Pane 0's own plot width — the line's own path spans exactly
-    /// `[0, plot_w]`.
+    /// Pane 0's own plot width — the line's own path spans `[pad, plot_w - pad]`, the edge pad
+    /// on both ends.
     fn rail_strip_plot_w(svg: &str) -> f64 {
-        let pos = svg.find("<path d=\"M0,").expect("a line path is drawn");
+        let pos = svg.find("<path d=\"M").expect("a line path is drawn");
         let d = &svg[pos..].split('"').nth(1).unwrap();
-        d.split('L').nth(1).unwrap().split(',').next().unwrap().parse().unwrap()
+        let x = |segment: &str| segment.split(',').next().unwrap().trim_start_matches('M').parse::<f64>().unwrap();
+        let mut ends = d.split('L');
+        ((x(ends.next().unwrap()) + x(ends.next().unwrap())) * 100.0).round() / 100.0
     }
 
     /// Production's `_apply_support_table_strip` (`vega_lite.py:624`) runs
@@ -8511,11 +8679,11 @@ mod tests {
         thick["resolved"]["style"]["line_mark"]["stroke"]["width"] = serde_json::json!(60.0);
         let payload2: Payload = serde_json::from_value(thick).unwrap();
         let svg2 = render(&payload2, &test_fonts()).expect("renders");
-        assert_eq!(rail_strip_plot_w(&svg2), 441.0, "a thick stroke's own mark reach wins: {svg2}");
+        assert_eq!(rail_strip_plot_w(&svg2), 446.0, "a thick stroke past the edge pad: its own mark reach wins: {svg2}");
         // Pins the real value: an `assert_ne!` alone cannot tell the overhang's
         // presence from its absence.
         assert_eq!(
-            plot_w_with_strip, 497.0,
+            plot_w_with_strip, 501.0,
             "the strip's own cell reach must not narrow plot_w: {svg}"
         );
 
@@ -8805,7 +8973,7 @@ mod tests {
         let rows = [(serde_json::json!(4), 5.0, 40.0), (serde_json::json!(1), 1.0, 10.0), (serde_json::json!(2), 5.0, 20.0), (serde_json::json!(3), 3.0, 30.0)];
         let mut payload_json = connected_payload(&rows, Some("week"));
         payload_json["resolved"]["style"]["point_mark"] =
-            serde_json::json!({"size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}});
+            serde_json::json!({"size": 100.0, "edge_size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}});
         let svg = render_connected(payload_json).expect("renders");
         assert!(!svg.contains('\u{1}'), "a revisit's key never reaches the SVG");
         let xs = path_xs(&main_line_d(&svg));
@@ -8825,7 +8993,7 @@ mod tests {
             payload_json["resolved"]["link"] = serde_json::json!("/p/{{ x }}");
             payload_json["resolved"]["link_open"] = serde_json::json!("page");
             payload_json["resolved"]["style"]["point_mark"] =
-                serde_json::json!({"size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}});
+                serde_json::json!({"size": 100.0, "edge_size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}});
             set_value_labels(&mut payload_json, ",.0f");
             payload_json["resolved"]["style"]["line_mark"]["labels"]["field"] = serde_json::json!("day");
             render_connected(payload_json).expect("renders")
@@ -8970,6 +9138,7 @@ mod tests {
                 "axis_x": axis_x_json,
                 "axis_y": value_axis_json(false, None),
                 "line_mark": line_mark,
+                "point_mark": {"edge_size": AUTO_EDGE_SIZE},
                 "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
                 "endpoint_labels": {"visible": false, "label_offset": 6.0},
                 "single_series_fill": "#3164a3",
@@ -9101,7 +9270,7 @@ mod tests {
     fn band_step_connected_mark_bounds_anchor_at_the_band_edge() {
         let mut json = make_band_step_line_payload(None);
         json["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("right");
-        json["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 900.0});
+        json["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 900.0, "edge_size": 900.0});
         let payload: Payload = serde_json::from_value(json).unwrap();
         let svg = render(&payload, &test_fonts()).expect("renders");
         let point_reach = 900.0_f64.sqrt() / 2.0; // halo_multiplier 0.0 -> bare radius
@@ -9122,7 +9291,7 @@ mod tests {
     fn band_step_disconnected_mark_bounds_anchor_at_the_plateau_inset() {
         let mut json = make_band_step_line_payload(Some(false));
         json["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("right");
-        json["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 900.0});
+        json["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 900.0, "edge_size": 900.0});
         let payload: Payload = serde_json::from_value(json).unwrap();
         let svg = render(&payload, &test_fonts()).expect("renders");
         let point_reach = 900.0_f64.sqrt() / 2.0; // halo_multiplier 0.0 -> bare radius
@@ -10071,7 +10240,7 @@ mod tests {
     #[test]
     fn point_markers_take_vegas_bounding_square_radius() {
         let payload = fit_payload(|j| {
-            j["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 46.24});
+            j["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 46.24, "edge_size": 46.24});
             j["resolved"]["style"]["line_mark"]["halo_multiplier"] = serde_json::json!(2.0);
         });
         let svg = render(&payload, &test_fonts()).expect("renders");
@@ -10104,7 +10273,7 @@ mod tests {
     #[test]
     fn point_halo_fill_reads_the_chart_own_canvas_not_the_background() {
         let payload = fit_payload(|j| {
-            j["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 46.24, "fill": "#FFFFFF"});
+            j["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 46.24, "edge_size": 46.24, "fill": "#FFFFFF"});
             j["resolved"]["style"]["line_mark"]["halo_multiplier"] = serde_json::json!(2.0);
             j["resolved"]["background"] = serde_json::json!("transparent");
             j["resolved"]["canvas"] = serde_json::json!("#d9a45b");
@@ -10132,16 +10301,17 @@ mod tests {
     fn a_right_axis_title_is_anchored_at_the_unrounded_halo_reach() {
         let payload = fit_payload(|j| {
             set_title_and_style(j, None);
-            j["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 46.24});
+            j["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 46.24, "edge_size": 46.24});
             j["resolved"]["style"]["line_mark"]["halo_multiplier"] = serde_json::json!(2.0);
         });
         let svg = render(&payload, &test_fonts()).expect("renders");
-        let reach = (46.24_f64 * 2.0).sqrt() / 2.0 + 2.0;
+        // The x edge pad already holds the point's radius plus a gap, so only the halo past it overhangs.
+        let reach = (46.24_f64 * 2.0).sqrt() / 2.0 + 2.0 - crate::common::x_edge_pad(AUTO_EDGE_SIZE);
         let expected = 16.0 + reach.ceil() - reach;
         assert_eq!(
             plot_group_x(&svg),
             16.0 + reach.ceil(),
-            "the plot clears the WHOLE halo stroke: {svg}"
+            "the plot clears the halo stroke past the edge pad: {svg}"
         );
         assert_eq!(
             attr(&text_tag(&svg, "Revenue"), "x"),
@@ -10169,17 +10339,16 @@ mod tests {
             // UNROUNDED title x, per the right-axis title law above, exposes
             // the fictional halo term.
             j["resolved"]["style"]["line_mark"]["stroke"]["width"] = serde_json::json!(1.0);
-            j["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 9.0});
+            j["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 9.0, "edge_size": 9.0});
             j["resolved"]["style"]["line_mark"]["halo_multiplier"] = serde_json::json!(0.0);
         });
         let svg = render(&payload, &test_fonts()).expect("renders");
-        let reach = 9.0_f64.sqrt() / 2.0; // 1.5 — not max(1.5, 2.0) = 2.0
-        let expected = 16.0 + reach.ceil() - reach;
-        assert_eq!(
-            attr(&text_tag(&svg, "Revenue"), "x"),
-            (expected * 100.0).round() / 100.0,
-            "title anchored at the bare radius reach, not the halo+stroke term: {svg}"
-        );
+        // The edge pad (radius + gap) holds the bare point and the 2.0 halo term alike: no overhang.
+        let mut line_mark = make_line_payload(false, false)["resolved"]["style"]["line_mark"].clone();
+        line_mark["halo_multiplier"] = serde_json::json!(0.0);
+        let mark: super::LineMark = serde_json::from_value(line_mark).unwrap();
+        assert_eq!(super::point_mark_reach(9.0, &mark), 1.5, "no halo term at multiplier 0");
+        assert_eq!(attr(&text_tag(&svg, "Revenue"), "x"), 16.0, "the point sits inside the edge pad: {svg}");
         assert_eq!(svg.matches("<circle").count(), 3, "one foreground point per datum, no halo overlay: {svg}");
         assert!(!svg.contains("stroke-width=\"2\""), "no halo point layer is drawn at multiplier 0: {svg}");
         assert!(!svg.contains("stroke-width=\"0\""), "no halo line path is drawn at multiplier 0 either: {svg}");
@@ -10192,13 +10361,12 @@ mod tests {
         let payload = fit_payload(|j| {
             set_title_and_style(j, None);
             j["resolved"]["style"]["line_mark"]["stroke"]["width"] = serde_json::json!(0.0);
-            j["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 9.0});
+            j["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 9.0, "edge_size": 9.0});
             j["resolved"]["style"]["line_mark"]["halo_multiplier"] = serde_json::json!(2.0);
         });
         let svg = render(&payload, &test_fonts()).expect("renders");
-        let reach = 9.0_f64.sqrt() / 2.0;
-        let expected = 16.0 + reach.ceil() - reach;
-        assert_eq!(attr(&text_tag(&svg, "Revenue"), "x"), (expected * 100.0).round() / 100.0, "{svg}");
+        // The edge pad (radius + gap) holds the bare point: no overhang, so no halo reach either.
+        assert_eq!(attr(&text_tag(&svg, "Revenue"), "x"), 16.0, "{svg}");
         assert_eq!(svg.matches("<circle").count(), 3, "no halo circles: {svg}");
         assert!(!svg.contains("layer_1_marks"), "no halo path: {svg}");
     }
@@ -10210,7 +10378,7 @@ mod tests {
     fn negative_halo_multiplier_paints_the_negative_stroke_and_nan_halo_points() {
         let mut json = make_line_payload(true, false);
         json["resolved"]["style"]["line_mark"]["halo_multiplier"] = serde_json::json!(-1.0);
-        json["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 30.0});
+        json["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 30.0, "edge_size": 30.0});
         let svg = render(&serde_json::from_value(json).unwrap(), &test_fonts()).expect("renders");
         assert!(svg.contains("stroke=\"#ffffff\" stroke-width=\"-4\""), "halo line at -4: {svg}");
         assert_eq!(svg.matches("d=\"MNaN,0\"").count(), 3, "one NaN halo symbol per datum: {svg}");
@@ -10345,7 +10513,7 @@ mod tests {
         let svg0 = render(&unpadded, &fonts).expect("renders");
         let d0 = svg0.find("d=\"M").unwrap();
         let first_x0: f64 = svg0[d0 + 4..].split(',').next().unwrap().parse().unwrap();
-        assert_eq!(first_x0, 0.0, "no padding → range starts at 0: {svg0}");
+        assert_eq!(first_x0, 5.4, "no padding → range starts at the edge pad: {svg0}");
     }
 
     /// Author `style.marks.line.labels` in the shape production compiles a
@@ -10473,11 +10641,11 @@ mod tests {
         }
 
         let first_half = fonts.measure_shaped("100.0", TEST_FONT, 11.0).unwrap() / 2.0;
-        assert_eq!(plot_group_x(&plain), 20.0, "bare left ink is the 4px stroke: {plain}");
+        assert_eq!(plot_group_x(&plain), 16.0, "the 4px stroke sits inside the edge pad: {plain}");
         assert_eq!(
             plot_group_x(&labeled),
-            16.0 + first_half.ceil(),
-            "the first label's half width becomes left margin: {labeled}"
+            16.0 + (first_half - crate::common::x_edge_pad(AUTO_EDGE_SIZE)).ceil(),
+            "the first label's half width past the edge pad becomes left margin: {labeled}"
         );
         assert_eq!(
             group_y(&labeled) - group_y(&plain),
@@ -10488,13 +10656,14 @@ mod tests {
         // Right edge: widen the format until the last label's half outruns
         // the value-axis gutter, and the right margin follows it too.
         let wide =
-            render(&fit_payload(|j| set_value_labels(j, ",.6f")), &fonts).expect("renders");
-        let last_half = fonts.measure_shaped("130.000000", TEST_FONT, 11.0).unwrap() / 2.0;
-        let plot_w = path_vertex_xs(&wide).last().copied().unwrap();
+            render(&fit_payload(|j| set_value_labels(j, ",.8f")), &fonts).expect("renders");
+        let last_half = fonts.measure_shaped("130.00000000", TEST_FONT, 11.0).unwrap() / 2.0;
+        let edge_pad = crate::common::x_edge_pad(AUTO_EDGE_SIZE);
+        let plot_w = path_vertex_xs(&wide).last().copied().unwrap() + edge_pad;
         assert_eq!(
             600.0 - 16.0 - 16.0 - (plot_group_x(&wide) - 16.0) - plot_w,
-            last_half.ceil(),
-            "the last label's half width becomes right margin: {wide}"
+            (last_half - edge_pad).ceil(),
+            "the last label's half width past the edge pad becomes right margin: {wide}"
         );
     }
 
@@ -10906,13 +11075,13 @@ mod tests {
         // The line's own first vertex sits at the floored domain start.
         let d_start = svg.find("d=\"M").unwrap();
         let first_vertex = &svg[d_start + 4..svg[d_start..].find(',').unwrap() + d_start];
-        assert_eq!(first_vertex, "0", "first vertex flush at the floored domain start: {svg}");
+        assert_eq!(first_vertex, "5.4", "first vertex at the floored domain start, the edge pad in: {svg}");
 
         // The label for that same row ("8", the day-of-month) IS flushed —
         // native cadence has no raw-date opener shift to center it off.
         let tag = text_tag(&svg, "8");
         assert!(tag.contains("text-anchor=\"start\""), "native cadence flushes, no raw-date shift: {tag}");
-        assert!(attr(&tag, "x") <= 1.0, "at the plot's left edge: {tag}");
+        assert!(attr(&tag, "x") <= crate::common::x_edge_pad(AUTO_EDGE_SIZE), "at the range start, the edge pad in: {tag}");
 
         // Every bucket gets a label under native cadence — nothing is
         // off-domain (a floored opener's position IS its own vertex).
@@ -10950,7 +11119,7 @@ mod tests {
         let svg = render(&payload, &test_fonts()).expect("renders");
 
         let vertices = path_vertex_xs(&svg);
-        assert_eq!(vertices[0], 0.0, "vertex still flush at the floored domain start: {svg}");
+        assert_eq!(vertices[0], 5.4, "vertex still at the floored domain start: {svg}");
 
         // The first VISIBLE opener ("Oct", domain_idx 4) is NOT flushed —
         // its raw date isn't the domain's own start, so Vega centers it —
@@ -10995,7 +11164,7 @@ mod tests {
         let svg = render(&payload, &test_fonts()).expect("renders");
 
         let vertices = path_vertex_xs(&svg);
-        assert_eq!(vertices[0], 0.0, "vertex still flush at the floored domain start: {svg}");
+        assert_eq!(vertices[0], 5.4, "vertex still at the floored domain start: {svg}");
 
         let tag = text_tag(&svg, "Oct");
         assert!(tag.contains("text-anchor=\"middle\""), "off-start opener centers: {tag}");
@@ -11146,7 +11315,8 @@ mod tests {
             let width = fonts
                 .measure(last_day, &family.replace("&quot;", "\""), attr(&tag, "font-size"))
                 .unwrap();
-            let reach = if align == "center" { width / 2.0 } else { width };
+            let label_reach = if align == "center" { width / 2.0 } else { width };
+            let reach = (label_reach - crate::common::x_edge_pad(AUTO_EDGE_SIZE)).max(0.0);
             let plot_w = rail_plot_w(&svg);
             let (rail_x, _) = rail_x_and_canvas(&svg);
             let rail_rel = rail_x - plot_group_x(&svg);
@@ -11234,7 +11404,7 @@ mod tests {
         let unaligned = serde_json::from_value::<Payload>(p).unwrap();
         let unaligned_svg = render(&unaligned, &test_fonts()).expect("renders");
         let (unaligned_gx, _, unaligned_end) = plot_origin_and_line_end(&unaligned_svg);
-        let baseline_plot_w = baseline_end - baseline_gx;
+        let baseline_plot_w = baseline_end - baseline_gx + crate::common::x_edge_pad(AUTO_EDGE_SIZE);
         let unaligned_plot_w = unaligned_end - unaligned_gx;
         assert!(
             unaligned_plot_w > baseline_plot_w,
@@ -11469,10 +11639,12 @@ mod tests {
             ]);
             p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
             p["resolved"]["style"]["line_mark"]["stroke"]["width"] = json!(stroke_w);
+            // A 4 square-pixel point: a 3px edge pad, so the strokes straddle an integer of ink past it.
+            p["resolved"]["style"]["point_mark"]["edge_size"] = json!(4.0);
             let payload = serde_json::from_value::<Payload>(p).unwrap();
             let svg = render(&payload, &test_fonts()).expect("renders");
             let (gx, _, end_x) = plot_origin_and_line_end(&svg);
-            (end_x - gx).round()
+            (end_x - gx + crate::common::x_edge_pad(4.0)).round()
         };
         let below = plot_w_at(3.9);
         let above = plot_w_at(4.1);
@@ -11617,28 +11789,31 @@ mod tests {
     /// C2's other half: the corrected pane's rail offset CEILS pane 0's own
     /// bound and adds `spacing` raw — the L10(b) law the uncorrected pass
     /// already follows — never `round(pane0 + ink + spacing)`. Discriminating
-    /// at a stroke fraction below a half pixel, where the two disagree.
+    /// at an ink fraction below a half pixel, where the two disagree; the stroke must reach past the x edge pad.
     #[test]
     fn the_corrected_rail_offset_ceils_pane_zero_and_adds_spacing_raw() {
         let fonts = test_fonts();
         let stroke = 3.2;
+        // A 4 square-pixel point: a 3px edge pad, so the stroke reaches 0.2px past it.
+        let overhang = stroke - crate::common::x_edge_pad(4.0);
         let svg = render(
             &rail_ladder_payload(|p| {
                 p["resolved"]["style"]["line_mark"]["stroke"]["width"] = serde_json::json!(stroke);
+                p["resolved"]["style"]["point_mark"]["edge_size"] = serde_json::json!(4.0);
             }),
             &fonts,
         )
         .expect("renders");
         let plot_w = rail_plot_w(&svg);
         let rail_rel = rail_x_and_canvas(&svg).0 - plot_group_x(&svg);
-        let frac = (plot_w + stroke).fract();
+        let frac = (plot_w + overhang).fract();
         assert!(
             frac > 0.0 && frac < 0.5,
             "the fixture's bound must fall below a half pixel, where round and ceil part: {frac}"
         );
         assert_eq!(
             rail_rel,
-            (plot_w + stroke).ceil() + 6.0,
+            (plot_w + overhang).ceil() + 6.0,
             "ceil(plot_w + reach) + spacing, not round(sum): plot_w {plot_w}, got {rail_rel}: {svg}"
         );
     }
@@ -12118,13 +12293,13 @@ mod tests {
         let baseline_svg = render(&baseline, &test_fonts()).expect("baseline renders");
         assert_eq!(text_tags_all(&baseline_svg, "40,000").len(), 1, "no ghost without mirror");
         let (baseline_gx, _, baseline_end) = plot_origin_and_line_end(&baseline_svg);
-        let baseline_plot_w = baseline_end - baseline_gx;
+        let baseline_plot_w = baseline_end - baseline_gx + crate::common::x_edge_pad(AUTO_EDGE_SIZE);
 
         p["resolved"]["style"]["axis_y"]["mirror"] = json!(true);
         let mirrored: Payload = serde_json::from_value(p).unwrap();
         let mirrored_svg = render(&mirrored, &test_fonts()).expect("mirror renders");
         let (mirrored_gx, _, mirrored_end) = plot_origin_and_line_end(&mirrored_svg);
-        let mirrored_plot_w = mirrored_end - mirrored_gx;
+        let mirrored_plot_w = mirrored_end - mirrored_gx + crate::common::x_edge_pad(AUTO_EDGE_SIZE);
 
         let tags = text_tags_all(&mirrored_svg, "40,000");
         assert_eq!(tags.len(), 2, "the ghost repaints the primary's own label: {mirrored_svg}");
@@ -13100,7 +13275,7 @@ mod tests {
         let path = main_line_d(&svg);
         let ys: Vec<&str> = path.split(['M', 'L']).filter(|p| !p.is_empty()).map(|p| p.split(',').nth(1).unwrap()).collect();
         assert_eq!(ys.len(), 3, "{path}");
-        assert!(path.starts_with("M0,"), "the January point sits at the range start: {path}");
+        assert!(path.starts_with("M5.4,"), "the January point sits at the range start: {path}");
     }
 
     /// An authored `labels.values` blanks the label of every tick outside the set; the ticks stay.
@@ -14990,7 +15165,7 @@ mod tests {
         let drawn_widest = fonts.measure("8B", mf, 11.0).unwrap();
         let cover_widest = fonts.measure("7.8B", mf, 11.0).unwrap();
         assert!(cover_widest > drawn_widest, "fixture assumption: {cover_widest} vs {drawn_widest}");
-        assert_eq!(rail_plot_w(&svg), 530.0, "{svg}");
+        assert_eq!(rail_plot_w(&svg), 534.0, "{svg}");
     }
 
     /// A right-orient, ladder-less axis whose `tick_label` carries
@@ -15030,7 +15205,7 @@ mod tests {
         let plain_widest = fonts.measure("1600000", mf, 11.0).unwrap();
         let si_widest = fonts.measure("1.6M", mf, 11.0).unwrap();
         assert!(si_widest < plain_widest, "fixture assumption: {si_widest} vs {plain_widest}");
-        assert_eq!(rail_plot_w(&svg), 526.0, "{svg}");
+        assert_eq!(rail_plot_w(&svg), 530.0, "{svg}");
     }
 
     /// Production's unbaked path (`vl_field_maps.py:387`) measures the
@@ -15087,9 +15262,9 @@ mod tests {
         // "100" (3 chars) is the domain's own widest cover candidate under
         // `.3~s` — far narrower than the data extent's own widest
         // ("87.7G"/"100G") would be. Measuring the data instead of the
-        // domain (the pre-fix bug) gives plot_w 523, 12px narrower than
-        // this — measuring the domain widens the plot to 535.
-        assert_eq!(rail_plot_w(&svg), 535.0, "{svg}");
+        // domain (the pre-fix bug) gives plot_w 527, 12px narrower than
+        // this — measuring the domain widens the plot to 539.
+        assert_eq!(rail_plot_w(&svg), 539.0, "{svg}");
     }
 
     /// Production's `resolve_measure_y_scale` (`_cartesian.py:1564-1575`)
@@ -15261,7 +15436,7 @@ mod tests {
             j["height"] = serde_json::json!(408.0);
             j["resolved"]["style"]["line_mark"]["halo_multiplier"] = serde_json::json!(2.0);
             j["resolved"]["style"]["point_mark"] = serde_json::json!({
-                "size": 46.24, "filled": true, "fill": "#FFFFFF", "stroke_width": 4.0,
+                "size": 46.24, "edge_size": 46.24, "filled": true, "fill": "#FFFFFF", "stroke_width": 4.0,
                 "labels": {"visible": false, "format": ".3~s", "position": "top"}
             });
             j["resolved"]["style"]["axis_y"]["grid"] = serde_json::json!({
@@ -15469,7 +15644,7 @@ mod tests {
             // own overhang small, so the margin is dominated by the
             // marker's own reach at the real datum nearest the top —
             // exactly the term `top_datum` picks.
-            p["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 900.0});
+            p["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 900.0, "edge_size": 900.0});
             p["resolved"]["style"]["axis_y"]["tick_values"] = serde_json::json!([3.0]);
             set_title_and_style(&mut p, None);
             render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts())
@@ -15507,7 +15682,7 @@ mod tests {
         // Identical to `an_unbaked_linear_axis_gutter_also_measures_the_
         // cover_ladder`'s own fixture and result, `ticks.count: 6.0`
         // baked here instead of unset — the gate ignores it either way.
-        assert_eq!(rail_plot_w(&svg), 530.0, "{svg}");
+        assert_eq!(rail_plot_w(&svg), 534.0, "{svg}");
     }
 
     /// The niced domain [1e8, 1e10] (`AxisStyle::log_nice`, floor/ceil of the
@@ -15609,6 +15784,92 @@ mod tests {
             let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
             assert!(svg.contains("layer_1_marks"), "right={right}: {svg}");
         }
+    }
+
+    // ── Continuous x end padding ─────────────────────────────────────────
+
+    /// How far `json`'s first and last vertex sit inside the plot's left and right edges.
+    fn x_end_insets(json: Value) -> (f64, f64) {
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let (svg, plot, _) = render_panel(&payload, &test_fonts(), payload.width, payload.height, None);
+        let xs = path_vertex_xs(&svg);
+        (xs[0], plot.plot_w - xs.last().unwrap())
+    }
+
+    /// Vertices print to two decimals.
+    fn assert_insets(got: (f64, f64), want: f64) {
+        assert!((got.0 - want).abs() < 0.01 && (got.1 - want).abs() < 0.01, "insets {got:?} vs {want}");
+    }
+
+    fn pointed(mut json: Value, size: f64) -> Value {
+        json["resolved"]["style"]["point_mark"] = serde_json::json!({"size": size, "edge_size": size});
+        json
+    }
+
+    fn numeric_x(mut json: Value) -> Value {
+        json["rows"] = serde_json::json!([
+            {"week": 10.0, "signups": 100.0},
+            {"week": 20.0, "signups": 150.0},
+            {"week": 30.0, "signups": 130.0},
+        ]);
+        json
+    }
+
+    /// The first and last point keep the shared edge law's pixels off the plot edge, on a time
+    /// and a number x alike.
+    #[test]
+    fn a_continuous_x_keeps_its_end_points_an_edge_pad_inside_the_plot() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let pad = crate::common::x_edge_pad(60.0);
+        for json in [make_line_payload(false, false), numeric_x(make_line_payload(false, false))] {
+            assert_insets(x_end_insets(pointed(json, 60.0)), pad);
+        }
+    }
+
+    /// Points on or off never move the end points: the pad reads the baked `edge_size`, not the drawn size.
+    #[test]
+    fn toggling_points_does_not_move_the_x_range() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let pad = crate::common::x_edge_pad(AUTO_EDGE_SIZE);
+        for json in [make_line_payload(false, false), numeric_x(make_line_payload(false, false))] {
+            for size in [AUTO_EDGE_SIZE, 0.0] {
+                let mut json = json.clone();
+                json["resolved"]["style"]["point_mark"]["size"] = serde_json::json!(size);
+                assert_insets(x_end_insets(json), pad);
+            }
+        }
+    }
+
+    /// A band is a range: it never widens or narrows the x range.
+    #[test]
+    fn a_band_does_not_change_the_x_range() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let plain = x_end_insets(make_line_payload(false, false));
+        let mut json = make_line_payload(false, false);
+        json["resolved"]["annotations"] =
+            serde_json::json!([annotation(3, serde_json::json!({"kind": "range", "from": "2026-01-08", "to": "2026-01-16"}), Value::Null)]);
+        assert_eq!(x_end_insets(json), plain);
+    }
+
+    /// An area shares the line's layout, so it pads its x range by the same edge law.
+    #[test]
+    fn an_area_keeps_its_end_points_an_edge_pad_inside_the_plot() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let mut json = make_line_payload(false, false);
+        json["resolved"]["chart_type"] = serde_json::json!("area");
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let svg = crate::families::area::render(&payload, &test_fonts()).expect("renders");
+        let xs = path_vertex_xs(&svg);
+        assert!((xs[0] - crate::common::x_edge_pad(AUTO_EDGE_SIZE)).abs() < 0.01, "{xs:?}");
+    }
+
+    /// An authored `scale.padding` replaces the edge law.
+    #[test]
+    fn an_authored_x_scale_padding_replaces_the_edge_pad() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let mut json = pointed(make_line_payload(false, false), 60.0);
+        json["resolved"]["style"]["axis_x"]["scale"] = serde_json::json!({"padding": 20.0});
+        assert_insets(x_end_insets(json), 20.0);
     }
 
     // ── Small multiples: rows-only line facet ────────────────────────────
@@ -15788,7 +16049,7 @@ mod tests {
         /// stroke, bar's crisp-stroke constant); a point mark's `size`-
         /// derived reach usually is not. Rung 06's own default point style
         /// (`point_mark.size: 46.24`, `line_mark.halo_multiplier: 2.0`)
-        /// gives a raw reach of `point_mark_reach(46.24, 2.0) = 6.8083...`
+        /// gives a raw reach of `point_mark_reach` for a point of size 46.24 with halo multiplier 2.0, 6.8083...
         /// — real Vega ceils `plot_w + 6.8083` ONCE (`grid.js:13`'s `agg`,
         /// `:313`); rounding `left_mark_overhang` (`ceil(6.8083) = 7`)
         /// first and ceiling THAT sum instead only agrees when `plot_w`'s
@@ -15807,7 +16068,7 @@ mod tests {
         #[test]
         fn line_facet_row_footer_ceils_the_raw_mark_reach_not_the_rounded_one() {
             let mut payload_json = make_facet_line_payload("shared");
-            payload_json["resolved"]["style"]["point_mark"] = json!({"size": 46.24});
+            payload_json["resolved"]["style"]["point_mark"] = json!({"size": 46.24, "edge_size": 46.24});
             payload_json["resolved"]["style"]["line_mark"]["halo_multiplier"] = json!(2.0);
             payload_json["width"] = json!(600.1);
             let svg = render_facet_payload(payload_json).expect("renders");
@@ -16948,7 +17209,16 @@ mod tests {
                 j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"] =
                     json!({"enabled": true, "amplitude": 4.0, "wavelength": 14.0, "sharpness": 0.0});
                 mutate(j);
+                week_categories(j);
             })
+        }
+
+        /// A category axis keeps its first and last tick on the plot edges, where the tear's rhythm
+        /// is pinned; a date axis insets them by the x edge pad, which the tear's end stretch drops.
+        fn week_categories(j: &mut serde_json::Value) {
+            for (i, row) in j["rows"].as_array_mut().unwrap().iter_mut().enumerate() {
+                row["week"] = json!(format!("w{i:02}"));
+            }
         }
 
         fn tear(svg: &str) -> Option<String> {
@@ -16981,6 +17251,7 @@ mod tests {
         fn positive_data_tears_the_bottom_edge_instead_of_its_gridline() {
             let plain = render(&fit_payload(|j| {
                 j["resolved"]["style"]["axis_y"]["grid"]["visible"] = json!(true);
+                week_categories(j);
             }), &test_fonts()).expect("renders");
             let bottom = gridline_ys(&plain).into_iter().fold(f64::MIN, f64::max);
             let svg = render(&torn_payload(|_| {}), &test_fonts()).expect("renders");

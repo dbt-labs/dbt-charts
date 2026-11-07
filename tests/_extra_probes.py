@@ -40,7 +40,7 @@ EXTRA_PROBES: dict[str, str] = {
     "trino": (
         "from dbt_charts.core.execute.drivers.trino import require_trino_extra\n"
         "require_trino_extra()\n"
-        "import trino.dbapi\n"
+        "import dbt_charts.core.execute.drivers._trino_client\n"
         "print('ok')\n"
     ),
     "streamlit": (

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 from pydantic import TypeAdapter
 
@@ -80,3 +82,18 @@ def test_unstyled_chart_merges_nothing(board_ctx: ChartStyleContext) -> None:
     chart = _chart("kpi", {})
     assert merge_chart_style(board_ctx, chart) == {}
     assert build_chart_style_context(board_ctx, chart) is board_ctx
+
+
+def test_local_pagination_keeps_the_board_mode_unless_it_names_one(
+    board_ctx: ChartStyleContext,
+) -> None:
+    scrolling = dataclasses.replace(
+        board_ctx,
+        pagination=board_ctx.pagination.model_copy(update={"mode": "scroll"}),
+    )
+    local = {"enabled": True, "page_rows": 10}
+    merged = merge_chart_style(scrolling, _chart("table", {"pagination": local}))
+    assert merged["pagination"].mode == "scroll"
+    pages = {**local, "mode": "pages"}
+    merged = merge_chart_style(scrolling, _chart("table", {"pagination": pages}))
+    assert merged["pagination"].mode == "pages"

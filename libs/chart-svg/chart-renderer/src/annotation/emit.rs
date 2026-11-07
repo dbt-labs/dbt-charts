@@ -7,7 +7,7 @@ use scene::{Attrs, Node, PathCommand, PathData, Role, Shape};
 use super::model::{Curve, Stroke, Style};
 use super::place::{Connector, Mark, Placed};
 use super::{rule_gray, text, AnnotationCtx, DataMark, Plane};
-use crate::labels_expr::colors::Color;
+use ::layout::labels_expr::colors::Color;
 use crate::contract::{aria_attrs, ItemRole};
 use diagnostic::Diagnostic;
 use crate::vega_fit::Bounds;

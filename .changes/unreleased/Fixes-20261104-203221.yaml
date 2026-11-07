@@ -1,0 +1,3 @@
+kind: Fixes
+body: Trino sources accept restrict_to_host, which fails a query when the server sends a URL on another host or spooled results.
+time: 2026-11-04T20:32:21.969035-05:00

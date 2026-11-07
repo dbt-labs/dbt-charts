@@ -1259,7 +1259,8 @@ class TrinoSourceConfig(AttributedSourceConfig, DatabaseSourceConfig, Constraine
     Authentication is multi-method: `method` defaults to none (a `user`, no
     password). The fields are the keys of a dbt `type: trino` profile target, so
     a `dbt_profile` source maps onto this model one-to-one; each field
-    description names the method that consumes it.
+    description names the method that consumes it. `restrict_to_host` is dbt
+    Charts-specific, not a dbt-trino profile key.
 
     Read-only posture: no native driver flag. Bind a SELECT-only Trino role
     (or SELECT-only credentials on the backing catalog) at the cluster level.
@@ -1333,7 +1334,7 @@ class TrinoSourceConfig(AttributedSourceConfig, DatabaseSourceConfig, Constraine
     ] = 3
     timezone: Annotated[
         str | None,
-        Field(description="Session time zone."),
+        Field(description="Accepted so a dbt profile target maps over; has no effect."),
     ] = None
     suppress_cert_warning: Annotated[
         bool | None,
@@ -1411,6 +1412,12 @@ class TrinoSourceConfig(AttributedSourceConfig, DatabaseSourceConfig, Constraine
         str | None,
         Field(min_length=1, description="JWT token. Required when method is jwt."),
     ] = None
+    restrict_to_host: Annotated[
+        bool,
+        Field(
+            description="Only follow URLs on this scheme, host and port; refuse spooled results."
+        ),
+    ] = False
 
 
 # dbt-duckdb fields that need its own connection lifecycle (plugin hooks, fsspec

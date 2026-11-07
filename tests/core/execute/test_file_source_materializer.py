@@ -119,10 +119,10 @@ def test_exact_file_version_is_read_once_per_materializer(
     monkeypatch.setattr(project, "read_bytes", counting_read)
 
     assert materializer.materialize_and_run(
-        source, "SELECT SUM(amount) AS total FROM sales", {}, "sales"
+        source, "SELECT SUM(amount) AS total FROM sales", {}, "sales", time_zone="UTC"
     )[0] == [{"total": 3}]
     assert materializer.materialize_and_run(
-        source, "SELECT COUNT(*) AS total FROM sales", {}, "sales"
+        source, "SELECT COUNT(*) AS total FROM sales", {}, "sales", time_zone="UTC"
     )[0] == [{"total": 2}]
     assert reads == ["data/sales.csv"]
 
@@ -138,6 +138,7 @@ def test_duplicate_result_columns_keep_their_registered_code(
             "SELECT amount AS a, amount AS a FROM sales",
             {},
             "sales",
+            time_zone="UTC",
         )
     assert excinfo.value.code is ERR_RESULT_DUPLICATE_COLUMN
 
@@ -150,7 +151,7 @@ def test_changed_file_version_replaces_loaded_table(
     materializer = FileSourceMaterializer(project)
 
     assert materializer.materialize_and_run(
-        source, "SELECT SUM(amount) AS total FROM sales", {}, "sales"
+        source, "SELECT SUM(amount) AS total FROM sales", {}, "sales", time_zone="UTC"
     )[0] == [{"total": 1}]
 
     path = tmp_path / "data/sales.csv"
@@ -159,7 +160,7 @@ def test_changed_file_version_replaces_loaded_table(
     os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
 
     assert materializer.materialize_and_run(
-        source, "SELECT SUM(amount) AS total FROM sales", {}, "sales"
+        source, "SELECT SUM(amount) AS total FROM sales", {}, "sales", time_zone="UTC"
     )[0] == [{"total": 9}]
 
 
@@ -174,7 +175,7 @@ def test_failed_replacement_keeps_new_version_retryable(
     source = _json_source({"rows": "data/rows.json"})
     materializer = FileSourceMaterializer(project)
     assert materializer.materialize_and_run(
-        source, "SELECT value FROM rows", {}, "rows"
+        source, "SELECT value FROM rows", {}, "rows", time_zone="UTC"
     )[0] == [{"value": 1}]
 
     loaded_before = materializer._loaded.copy()
@@ -207,12 +208,14 @@ def test_failed_replacement_keeps_new_version_retryable(
     monkeypatch.setattr(materializer, "_connection", lambda: failing_connection)
 
     with pytest.raises(RuntimeError, match="injected replacement failure"):
-        materializer.materialize_and_run(source, "SELECT value FROM rows", {}, "rows")
+        materializer.materialize_and_run(
+            source, "SELECT value FROM rows", {}, "rows", time_zone="UTC"
+        )
     assert failing_connection.failed
     assert connection.execute(f'SELECT value FROM "{physical}"').fetchall() == [(1,)]
     assert materializer._loaded == loaded_before
     assert materializer.materialize_and_run(
-        source, "SELECT value FROM rows", {}, "rows"
+        source, "SELECT value FROM rows", {}, "rows", time_zone="UTC"
     )[0] == [{"value": 2}]
 
 
@@ -234,7 +237,7 @@ class TestCsvMaterialize:
         mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
-            source, "SELECT * FROM sales ORDER BY amount", {}, "sales"
+            source, "SELECT * FROM sales ORDER BY amount", {}, "sales", time_zone="UTC"
         )[0]
 
         # ORDER BY amount ASC: 100 (North), 150 (North), 200 (South)
@@ -257,6 +260,7 @@ class TestCsvMaterialize:
                 "SELECT amoun FROM sales",
                 {},
                 "sales",
+                time_zone="UTC",
             )
 
         assert 'Did you mean "amount"?' in str(exc_info.value)
@@ -277,6 +281,7 @@ class TestCsvMaterialize:
             "SELECT region, amount FROM sales WHERE region = 'North'",
             {},
             "sales",
+            time_zone="UTC",
         )[0]
         assert len(rows) == 2
         assert all(r["region"] == "North" for r in rows)
@@ -293,7 +298,11 @@ class TestCsvMaterialize:
         mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
-            source, "SELECT city FROM cities ORDER BY city", {}, "cities"
+            source,
+            "SELECT city FROM cities ORDER BY city",
+            {},
+            "cities",
+            time_zone="UTC",
         )[0]
         assert [r["city"] for r in rows] == ["Bergen", "Oslo"]
 
@@ -328,6 +337,7 @@ class TestJsonMaterialize:
             "ORDER BY value",
             {},
             "values",
+            time_zone="UTC",
         )[0]
 
         assert rows == [{"value": 1}, {"value": 2}]
@@ -347,6 +357,7 @@ class TestJsonMaterialize:
             "SELECT v, typeof(v) AS type FROM values ORDER BY v",
             {},
             "values",
+            time_zone="UTC",
         )[0]
 
         assert rows == [
@@ -370,6 +381,7 @@ class TestJsonMaterialize:
             'typeof("array") AS array_type FROM values',
             {},
             "values",
+            time_zone="UTC",
         )[0]
 
         assert rows == [
@@ -392,7 +404,7 @@ class TestJsonMaterialize:
         mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
-            source, "SELECT name FROM users ORDER BY id", {}, "users"
+            source, "SELECT name FROM users ORDER BY id", {}, "users", time_zone="UTC"
         )[0]
         assert [r["name"] for r in rows] == ["Alice", "Bob"]
 
@@ -406,7 +418,7 @@ class TestJsonMaterialize:
         mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
-            source, "SELECT id FROM items ORDER BY id", {}, "items"
+            source, "SELECT id FROM items ORDER BY id", {}, "items", time_zone="UTC"
         )[0]
         assert [r["id"] for r in rows] == [1, 2]
 
@@ -420,7 +432,9 @@ class TestJsonMaterialize:
         mat = FileSourceMaterializer(project)
 
         with pytest.raises(ValueError, match="JSON file is not valid JSON"):
-            mat.materialize_and_run(source, "SELECT * FROM data", {}, "data")
+            mat.materialize_and_run(
+                source, "SELECT * FROM data", {}, "data", time_zone="UTC"
+            )
 
     def test_union_by_name_preserves_numeric_type_when_subset_sorts_first(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -453,6 +467,7 @@ class TestJsonMaterialize:
             "SELECT SUM(score) AS total FROM summaries",
             {},
             "summaries",
+            time_zone="UTC",
         )[0]
         assert rows[0]["total"] == 42
 
@@ -480,6 +495,7 @@ class TestJsonMaterialize:
             "SELECT id, name, extra FROM summaries ORDER BY id",
             {},
             "summaries",
+            time_zone="UTC",
         )[0]
         assert rows[0] == {"id": 1, "name": "Alice", "extra": "x"}
         assert rows[1]["id"] == 2
@@ -517,6 +533,7 @@ class TestMultiTableJoin:
             "SELECT c.name, o.amount FROM orders o JOIN customers c ON o.customer_id = c.customer_id ORDER BY o.order_id",
             {},
             "orders",
+            time_zone="UTC",
         )[0]
         assert len(rows) == 2
         assert rows[0]["name"] == "Alice"
@@ -581,7 +598,7 @@ class TestExternalAccessBlocked:
 
         materializer = FileSourceMaterializer(project)
         assert materializer.materialize_and_run(
-            source, "SELECT SUM(x) AS total FROM sales", {}, "sales"
+            source, "SELECT SUM(x) AS total FROM sales", {}, "sales", time_zone="UTC"
         )[0] == [{"total": 1}]
         assert any("read_csv" in q for q in statements["scratch"])
         assert not any("sum(x)" in q for q in statements["scratch"])
@@ -610,6 +627,7 @@ class TestExternalAccessBlocked:
                 "SELECT * FROM read_csv('http://evil.example.com/data.csv')",
                 {},
                 "sales",
+                time_zone="UTC",
             )
 
 
@@ -632,7 +650,7 @@ def test_parallel_queries_with_same_alias_are_isolated(
 
     def run(source: CsvSourceConfig) -> str:
         return materializer.materialize_and_run(
-            source, "SELECT value FROM shared", {}, "source"
+            source, "SELECT value FROM shared", {}, "source", time_zone="UTC"
         )[0][0]["value"]
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -674,6 +692,7 @@ class TestParquetMaterialize:
             "SELECT product, sales FROM products ORDER BY sales DESC",
             {},
             "products",
+            time_zone="UTC",
         )[0]
         assert len(rows) == 3
         assert rows[0]["product"] == "C"
@@ -841,6 +860,7 @@ class TestVariableSubstitution:
             "SELECT region, amount FROM sales WHERE region = '{{ region }}'",
             {"region": "North"},
             "sales",
+            time_zone="UTC",
         )[0]
 
         # Should return only North rows, not empty (pre-fix) or all rows
@@ -954,7 +974,7 @@ class TestFileTableTypeFidelity:
         mat = FileSourceMaterializer(project)
 
         summed = mat.materialize_and_run(
-            source, "SELECT SUM(amount) AS s FROM orders", {}, "orders"
+            source, "SELECT SUM(amount) AS s FROM orders", {}, "orders", time_zone="UTC"
         )[0]
         assert summed[0]["s"] == Decimal("3.30")
 
@@ -964,13 +984,16 @@ class TestFileTableTypeFidelity:
         """A loaded parsed table retains the source's type for the session."""
         project, source = self._decimal_parquet_project(tmp_path, local_project)
         mat = FileSourceMaterializer(project)
-        mat.materialize_and_run(source, "SELECT * FROM orders", {}, "orders")
+        mat.materialize_and_run(
+            source, "SELECT * FROM orders", {}, "orders", time_zone="UTC"
+        )
         for _ in range(2):
             rows = mat.materialize_and_run(
                 source,
                 "SELECT SUM(amount) AS s, ANY_VALUE(typeof(amount)) AS t FROM orders",
                 {},
                 "orders",
+                time_zone="UTC",
             )[0]
             assert rows[0] == {"s": Decimal("3.30"), "t": "DECIMAL(18,2)"}
 
@@ -993,6 +1016,7 @@ class TestFileTableTypeFidelity:
             "FROM events LIMIT 1",
             {},
             "events",
+            time_zone="UTC",
         )[0]
         assert rows[0] == {"d": "DATE", "a": "BOOLEAN", "n": "BIGINT"}
 
@@ -1013,6 +1037,7 @@ class TestFileTableTypeFidelity:
             "FROM sparse WHERE note IS DISTINCT FROM 'x' ORDER BY region",
             {},
             "sparse",
+            time_zone="UTC",
         )[0]
         assert [r["region"] for r in rows] == ["North", "South"]
         assert all(r["note"] is None for r in rows)
@@ -1041,7 +1066,9 @@ class TestFileTableTypeFidelity:
         mat = FileSourceMaterializer(project)
 
         with pytest.raises(DbtChartsError) as excinfo:
-            mat.materialize_and_run(source, "SELECT * FROM sales", {}, "sales_source")
+            mat.materialize_and_run(
+                source, "SELECT * FROM sales", {}, "sales_source", time_zone="UTC"
+            )
         assert excinfo.value.code is not None
         assert excinfo.value.code.code == "ERR-GLOB-SCHEMA-MISMATCH"
         message = str(excinfo.value)
@@ -1071,6 +1098,7 @@ class TestFileTableTypeFidelity:
             "SELECT region, note, typeof(note) AS t FROM sales ORDER BY region",
             {},
             "sales_source",
+            time_zone="UTC",
         )[0]
         assert [(r["region"], r["note"]) for r in rows] == [
             ("North", None),
@@ -1115,6 +1143,7 @@ class TestFileTableTypeFidelity:
             "SELECT region, amount, typeof(amount) AS t FROM sales ORDER BY region",
             {},
             "sales_source",
+            time_zone="UTC",
         )[0]
         assert [(r["region"], r["amount"]) for r in rows] == [
             ("North", None),
@@ -1143,6 +1172,7 @@ class TestFileTableTypeFidelity:
             "SELECT coalesce(note, '-') AS n, typeof(note) AS t FROM sales",
             {},
             "sales_source",
+            time_zone="UTC",
         )[0]
         assert {r["n"] for r in rows} == {"-"}
         assert rows[0]["t"] == "VARCHAR"
@@ -1211,7 +1241,7 @@ class TestFileTableTypeFidelity:
         mat = FileSourceMaterializer(local_project(tmp_path))
 
         rows = mat.materialize_and_run(
-            source, "SELECT v, typeof(v) AS t FROM t", {}, "t_source"
+            source, "SELECT v, typeof(v) AS t FROM t", {}, "t_source", time_zone="UTC"
         )[0]
         assert len(rows) == 2
         assert {r["t"] for r in rows} == {expected_type}
@@ -1245,6 +1275,7 @@ class TestFileTableTypeFidelity:
             "SELECT valid_to, typeof(valid_to) AS t FROM t ORDER BY 1",
             {},
             "t_source",
+            time_zone="UTC",
         )[0]
         assert [r["valid_to"] for r in rows] == [
             datetime(2025, 1, 1),
@@ -1274,7 +1305,9 @@ class TestFileTableTypeFidelity:
         mat = FileSourceMaterializer(local_project(tmp_path))
 
         with pytest.raises(DbtChartsError) as excinfo:
-            mat.materialize_and_run(source, "SELECT ts FROM t", {}, "t_source")
+            mat.materialize_and_run(
+                source, "SELECT ts FROM t", {}, "t_source", time_zone="UTC"
+            )
         assert excinfo.value.code is not None
         assert excinfo.value.code.code == "ERR-GLOB-SCHEMA-MISMATCH"
         assert "data/2024/t.parquet" in str(excinfo.value)
@@ -1298,7 +1331,11 @@ class TestFileTableTypeFidelity:
         mat = FileSourceMaterializer(project)
 
         rows = mat.materialize_and_run(
-            source, "SELECT region, amount FROM sales ORDER BY amount", {}, "sales"
+            source,
+            "SELECT region, amount FROM sales ORDER BY amount",
+            {},
+            "sales",
+            time_zone="UTC",
         )[0]
         assert rows == [
             {"region": "North", "amount": 100},
@@ -1323,6 +1360,7 @@ class TestReaderParity:
             "SELECT note, blank FROM t ORDER BY id",
             {},
             "t_source",
+            time_zone="UTC",
         )[0]
         assert rows == [{"note": "", "blank": None}, {"note": "ok", "blank": None}]
 
@@ -1341,6 +1379,7 @@ class TestReaderParity:
             "SELECT typeof(x) AS tx, x, s, n, f FROM t",
             {},
             "t_source",
+            time_zone="UTC",
         )[0]
         assert rows == [
             {"tx": "BIGINT", "x": 1, "s": "abc", "n": None, "f": 1.5},
@@ -1361,6 +1400,7 @@ class TestReaderParity:
             "SELECT city FROM t",
             {},
             "t_source",
+            time_zone="UTC",
         )[0]
         assert rows == [{"city": "Zürich"}]
 
@@ -1383,6 +1423,7 @@ class TestReaderParity:
             "SELECT typeof(d) AS d, typeof(n) AS n FROM t",
             {},
             "t_source",
+            time_zone="UTC",
         )[0]
         assert rows == [{"d": "DATE", "n": "VARCHAR"}]
 
@@ -1404,6 +1445,7 @@ class TestReaderParity:
             "SELECT typeof(j) AS t, j->>'a' AS a FROM t",
             {},
             "t_source",
+            time_zone="UTC",
         )[0]
         assert rows == [{"t": "JSON", "a": "1"}]
 
@@ -1442,7 +1484,9 @@ class TestParquetTypesDuckDBRefuses:
         mat = FileSourceMaterializer(local_project(tmp_path))
 
         with pytest.raises(DbtChartsError) as excinfo:
-            mat.materialize_and_run(source, "SELECT * FROM wide", {}, "wide_source")
+            mat.materialize_and_run(
+                source, "SELECT * FROM wide", {}, "wide_source", time_zone="UTC"
+            )
         assert excinfo.value.code is not None
         assert excinfo.value.code.code == "ERR-FILE-SOURCE-DECIMAL-TOO-WIDE"
 
@@ -1453,7 +1497,9 @@ class TestParquetTypesDuckDBRefuses:
         mat = FileSourceMaterializer(local_project(tmp_path))
 
         with pytest.raises(DbtChartsError) as excinfo:
-            mat.materialize_and_run(source, "SELECT * FROM wide", {}, "wide_source")
+            mat.materialize_and_run(
+                source, "SELECT * FROM wide", {}, "wide_source", time_zone="UTC"
+            )
         assert excinfo.value.code is not None
         assert excinfo.value.code.code == "ERR-FILE-SOURCE-DECIMAL-TOO-WIDE"
         message = str(excinfo.value)
@@ -1497,6 +1543,7 @@ class TestParquetTypesDuckDBRefuses:
             "SELECT SUM(v) AS s, ANY_VALUE(typeof(v)) AS t FROM t",
             {},
             "t_source",
+            time_zone="UTC",
         )[0]
         assert rows[0] == {"s": 4.0, "t": "FLOAT"}
 
@@ -1519,7 +1566,9 @@ class TestParquetTypesDuckDBRefuses:
         mat = FileSourceMaterializer(local_project(tmp_path))
 
         with pytest.raises(DbtChartsError) as excinfo:
-            mat.materialize_and_run(source, "SELECT * FROM t", {}, "t_source")
+            mat.materialize_and_run(
+                source, "SELECT * FROM t", {}, "t_source", time_zone="UTC"
+            )
         assert excinfo.value.code is not None
         assert excinfo.value.code.code == "ERR-FILE-SOURCE-DECIMAL-TOO-WIDE"
 
@@ -1542,7 +1591,7 @@ class TestParquetTypesDuckDBRefuses:
         mat = FileSourceMaterializer(local_project(tmp_path))
 
         rows = mat.materialize_and_run(
-            source, "SELECT typeof(v) AS t FROM t", {}, "t_source"
+            source, "SELECT typeof(v) AS t FROM t", {}, "t_source", time_zone="UTC"
         )[0]
         assert rows[0]["t"] == "STRUCT(half FLOAT)"
 
@@ -1560,7 +1609,9 @@ class TestParquetTypesDuckDBRefuses:
         mat = FileSourceMaterializer(local_project(tmp_path))
 
         with pytest.raises(DbtChartsError) as exc:
-            mat.materialize_and_run(source, "SELECT * FROM t", {}, "t_source")
+            mat.materialize_and_run(
+                source, "SELECT * FROM t", {}, "t_source", time_zone="UTC"
+            )
         assert exc.value.code is not None
         assert exc.value.code.code == "ERR-FILE-SOURCE-DUPLICATE-COLUMN"
         assert "'a'" in str(exc.value)
@@ -1577,7 +1628,9 @@ class TestParquetTypesDuckDBRefuses:
         mat = FileSourceMaterializer(project)
 
         with pytest.raises(DbtChartsError) as exc:
-            mat.materialize_and_run(source, "SELECT * FROM dup", {}, "dup")
+            mat.materialize_and_run(
+                source, "SELECT * FROM dup", {}, "dup", time_zone="UTC"
+            )
         assert exc.value.code is not None
         assert exc.value.code.code == "ERR-FILE-SOURCE-DUPLICATE-COLUMN"
         assert "'dup'" in str(exc.value)

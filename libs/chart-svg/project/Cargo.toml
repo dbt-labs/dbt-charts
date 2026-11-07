@@ -1,0 +1,12 @@
+[package]
+name = "project"
+version = "0.0.1"
+edition = "2021"
+publish = false
+description = "The project seam of the typed spine: POSIX project-relative paths. Depends on diagnostic alone, for Python's `repr`."
+
+[dependencies]
+diagnostic = { path = "../diagnostic" }
+
+[dev-dependencies]
+serde_json = "1"

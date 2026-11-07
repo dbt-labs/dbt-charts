@@ -34,6 +34,7 @@ from dbt_charts.core.execute.query_result import (
 )
 from dbt_charts.core.execute.run import execute_resolved, run_query
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
+from dbt_charts.core.text.time_zones import UTC
 
 from ...._fake_driver import FakeDriverConnection, fake_lakecompute_driver
 
@@ -71,6 +72,7 @@ def _resolved(
         params=params,
         setup_sql=setup,
         limit=resolve_effective_row_limit(100),
+        time_zone=UTC,
     )
 
 
@@ -120,7 +122,10 @@ def test_the_driver_backend_inlines_params_and_runs_setup_sql_in_one_session() -
         backend.close()
     assert len(table) == 2
     assert opener.call_count == 1
-    assert connection.session_statements == ["CREATE TEMP TABLE t AS SELECT 1 AS n"]
+    assert connection.session_statements == [
+        "SET TIME ZONE 'UTC'",
+        "CREATE TEMP TABLE t AS SELECT 1 AS n",
+    ]
     assert connection.statements == ["SELECT n FROM t WHERE n > 1 AND s = 'o''k'"]
 
 

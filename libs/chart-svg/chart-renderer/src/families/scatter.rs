@@ -212,7 +212,7 @@ impl LinearX {
                         Some(slot) => ::bind::formats::locale::d3_format(&slot.spec, tv).map_err(|e| format!("scatter x label format: {e}"))?,
                         None => label.clone(),
                     };
-                    crate::labels_expr::speak_value("x", src, tv, &digits, i, values.len())
+                    ::layout::labels_expr::speak_value("x", src, tv, &digits, i, values.len())
                 })
                 .collect::<Result<Vec<String>, String>>()?,
             None => labels,
@@ -1065,18 +1065,11 @@ fn log_x_axis(ax_x: &AxisStyle, x_min: f64, x_max: f64, pw: f64) -> Result<(LogA
     Ok((ladder, labels))
 }
 
-/// The visible gap a continuous x range keeps between its end dots and the plot edge.
-const X_EDGE_GAP_PX: f64 = 2.0;
-
-/// Pixels a continuous x range keeps between its end data and the plot edge: the
-/// dot's radius plus `X_EDGE_GAP_PX`, so the gap holds at every dot size. With a size
-/// channel the radius is the scale's largest (the domain's top), an upper bound on
-/// the dot at either end. Only the range grows, so the scale's ticks and labels still
-/// bound the real data. An authored `scale.padding` replaces it; the theme's `0` is
-/// the unauthored value.
+/// The x edge pad of a scatter: the largest dot it draws. With a size channel that is the
+/// scale's largest (the domain's top), an upper bound on the dot at either end.
 fn x_edge_pad(r: &ScatterResolved, size_domain: Option<(f64, f64)>) -> f64 {
     let area = size_domain.map_or(r.style.point_mark.size, |domain| size_area(domain, domain.1));
-    symbol_radius(area) + X_EDGE_GAP_PX
+    crate::common::x_edge_pad(area)
 }
 
 fn point_x_padding(ax_x: &AxisStyle) -> f64 {
@@ -1146,8 +1139,8 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
     let x_pos = |frac: f64| frac * plot_w;
     let label_crisp = if p.flush { 0.5 } else { p.point_label_crisp };
     // Only a lone chart's axis: a facet's shared footer is laid out by the composer.
-    if crate::labels_expr::view::active() && p.title_key.is_some() {
-        use crate::labels_expr::view::{anchor, register_axis, AxisSpec, Orient};
+    if ::layout::labels_expr::view::active() && p.title_key.is_some() {
+        use ::layout::labels_expr::view::{anchor, register_axis, AxisSpec, Orient};
         let (align, baseline, flush) = if p.angle == 0.0 {
             (None, None, p.flush.then_some(1.0))
         } else {
@@ -1417,7 +1410,7 @@ impl PlainXAxis {
 
     /// Registers the x scale for the `labels.expr`s that read it, over a plot `pw` wide.
     fn register(&self, pw: f64) -> Result<(), String> {
-        use crate::labels_expr::view::{register_band, register_continuous, register_log, register_point_padded, Span};
+        use ::layout::labels_expr::view::{register_band, register_continuous, register_log, register_point_padded, Span};
         match &self.scale {
             PlainXScale::Point { domain, bandwidth: Some(_), padding, .. } => register_band("x", domain, *padding, *padding, Span::Width)?,
             PlainXScale::Point { domain, padding, .. } => register_point_padded("x", domain, *padding, Span::Width)?,
@@ -1852,7 +1845,7 @@ fn date_axis(
         fonts,
     )?;
     if let Some(src) = r.style.axis_x.labels.expr.as_deref() {
-        let expr = crate::labels_expr::Expr::parse(src).map(|e| e.on("x")).map_err(|e| format!("scatter: labels.expr {src:?}: {e:?}"))?;
+        let expr = ::layout::labels_expr::Expr::parse(src).map(|e| e.on("x")).map_err(|e| format!("scatter: labels.expr {src:?}: {e:?}"))?;
         axis.speak(expr, &ladder)?;
     }
     Ok(axis)
@@ -2295,7 +2288,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
     let panel_payloads: Vec<Payload> = panels
         .iter()
         .map(|panel| {
-            let panel_rows = panel
+            let panel_rows: Vec<_> = panel
                 .rows
                 .iter()
                 .map(|row| {
@@ -6710,6 +6703,34 @@ mod tests {
         let mark = svg.find("<path transform=\"translate(").expect("a point mark");
         assert!(background < mark && mark < foreground, "{svg}");
         assert!(svg.contains("<clipPath id=\"c-ann0\">"), "{svg}");
+    }
+
+    /// A bar layer's canvas-colored border is an undercoat painted before the band and a mask over
+    /// the layer's bars, never a stroke painted over the band.
+    #[test]
+    fn a_bar_layers_halo_knocks_out_to_the_band_under_it() {
+        let mut json = annotated_payload(vec![annotation(6, range(20.0, 30.0), serde_json::Value::Null)]);
+        json["resolved"]["background"] = "transparent".into();
+        json["resolved"]["canvas"] = "#ffffff".into();
+        json["resolved"]["layers"] = serde_json::json!([{
+            "type": "bar",
+            "bar_mark": {
+                "border": {"width": 1.0, "color": "#FFFFFF", "radius": 0.0},
+                "band_width": 0.8,
+                "size": 8.0,
+                "labels": {"visible": false, "position": "middle", "field": null, "format": null, "dx": null, "dy": null, "font": null}
+            },
+            "axis_y": {"position": null},
+            "x": null, "y": "pipeline", "label": null, "color": null, "ink": "#779bc9", "query_name": null
+        }]);
+        let svg = render_json(json);
+        let band = svg.find("annotations-background").expect("a band");
+        let undercoat = svg.find("knockout-undercoat").expect("an undercoat");
+        assert!(undercoat < band, "the undercoat cuts what is under the band: {svg}");
+        assert!(!svg[band..].contains("stroke=\"#ffffff\" stroke-width=\"1\""), "no canvas stroke paints over the band: {svg}");
+        let mask = &svg[svg.find("<mask ").expect("a mask")..svg.find("</mask>").unwrap()];
+        assert_eq!(mask.matches("stroke=\"#000\"").count(), 3, "one outline per bar: {svg}");
+        assert_eq!(svg.matches("mask=\"url(#").count(), 1, "{svg}");
     }
 
     #[test]

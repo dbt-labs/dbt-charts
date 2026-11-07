@@ -226,6 +226,7 @@ def test_file_source_result_declares_duckdb_types(
         "select n, label from s order by n",
         {},
         "src",
+        time_zone="UTC",
     )
     assert rows == [{"n": 1, "label": "a"}, {"n": 2, "label": "b"}]
     assert schema == {
@@ -361,7 +362,11 @@ def test_map_json_values_are_decoded_on_the_file_source_and_composition_paths(
     sql = "select map {'a': '{\"x\": 1}'::json} m"
     (tmp_path / "s.csv").write_text("n\n1\n")
     rows, _ = FileSourceMaterializer(local_project(tmp_path)).materialize_and_run(
-        CsvSourceConfig(type="csv", files={"s": "s.csv"}), sql, {}, "src"
+        CsvSourceConfig(type="csv", files={"s": "s.csv"}),
+        sql,
+        {},
+        "src",
+        time_zone="UTC",
     )
     assert rows == [{"m": {"a": {"x": 1}}}]
     assert rows_from_result(duckdb.connect().execute(sql)) == rows

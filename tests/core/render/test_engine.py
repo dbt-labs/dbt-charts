@@ -86,6 +86,7 @@ from dbt_charts.core.render.chart.x_domain_paint_order import (
     collect_x_domain_paint_orders,
 )
 from dbt_charts.core.render.engine import (
+    build_chart_layout,
     build_chart_payload,
     dumps_payload,
     render_native,
@@ -796,12 +797,15 @@ def test_spark_label_truncation_records_one_entry_per_label() -> None:
     ] * 2
 
 
+# These tables probe the squeeze a slot imposes, which only `fit` applies.
+_FIT = {"column_layout": {"overflow": "fit"}}
+
+
 def test_table_text_truncation_records_the_engine_count_per_column() -> None:
-    table = {"type": "table", "query": "q", "style": {"wrap": False}}
+    table = {"type": "table", "query": "q", "style": {**_FIT, "wrap": False}}
     chart = _resolved(table, [_WIDE_ROW])
-    payload = build_chart_payload(
+    layout = build_chart_layout(
         chart,
-        {chart.query_name: rows_result([_WIDE_ROW])},
         width=200.0,
         height=0.0,
         padding=None,
@@ -810,7 +814,12 @@ def test_table_text_truncation_records_the_engine_count_per_column() -> None:
         title_shift=NO_TITLE_SHIFT,
         is_placeholder=False,
     )
-    _, raw, _ = _engine.render_chart(json.dumps(payload))
+    result = rows_result([_WIDE_ROW])
+    _, raw, _ = _engine.render_chart(
+        result.engine_rows,
+        {chart.query_name: result.engine_rows},
+        json.dumps(layout),
+    )
     counts = {
         w["params"]["authored_field"]: w["params"]["truncation_count"]
         for w in raw
@@ -869,7 +878,10 @@ def test_table_columns_overflow_lands_in_its_sink() -> None:
     table = {
         "type": "table",
         "query": "q",
-        "style": {"columns": {"org_id": {"width": 300}, "table_name": {"width": 300}}},
+        "style": {
+            **_FIT,
+            "columns": {"org_id": {"width": 300}, "table_name": {"width": 300}},
+        },
     }
     row = {"org_id": "act_2zGAXPCi8w3MckVTMpVT3OSQ3Ni", "table_name": "weekly"}
     with _sinks() as sinks:
@@ -880,7 +892,7 @@ def test_table_columns_overflow_lands_in_its_sink() -> None:
 
 
 def test_table_overflow_names_the_header_word_that_forced_it() -> None:
-    table = {"type": "table", "query": "q"}
+    table = {"type": "table", "query": "q", "style": _FIT}
     rows = [
         {
             "Incomprehensibilities": f"Renewal expected next quarter pending sign-off {i}",
@@ -966,7 +978,7 @@ def test_no_open_sink_is_a_noop() -> None:
 
 
 def test_an_unmapped_engine_warning_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    def emit(_payload: str) -> tuple[str, list[dict[str, Any]], float | None]:
+    def emit(*_args: Any) -> tuple[str, list[dict[str, Any]], float | None]:
         return "<svg/>", [{"code": "WARN-NOT-MAPPED", "params": {}}], None
 
     monkeypatch.setattr(_engine, "render_chart", emit)
@@ -1057,7 +1069,7 @@ def test_each_endpoint_rail_warning_records_its_own_cause(
 ) -> None:
     params = dict(dict(_CARTESIAN_WARNINGS)[code])
 
-    def emit(_payload: str) -> tuple[str, list[dict[str, Any]], float | None]:
+    def emit(*_args: Any) -> tuple[str, list[dict[str, Any]], float | None]:
         return "<svg/>", [{"code": code, "params": params}], None
 
     monkeypatch.setattr(_engine, "render_chart", emit)
@@ -1073,7 +1085,7 @@ def test_cartesian_engine_warnings_land_in_their_sinks(
         {"code": code, "params": params} for code, params in _CARTESIAN_WARNINGS
     ]
 
-    def emit(_payload: str) -> tuple[str, list[dict[str, Any]], float | None]:
+    def emit(*_args: Any) -> tuple[str, list[dict[str, Any]], float | None]:
         return "<svg/>", warnings, None
 
     monkeypatch.setattr(_engine, "render_chart", emit)
@@ -1369,8 +1381,8 @@ def test_the_width_measure_carries_the_active_time_locale(
 
     sent: list[dict[str, Any]] = []
 
-    def capture(payload_json: str) -> float | None:
-        sent.append(json.loads(payload_json))
+    def capture(rows: Any, layout_json: str) -> float | None:
+        sent.append(json.loads(layout_json))
         return None
 
     monkeypatch.setattr(engine._engine, "measure_table_natural_width", capture)

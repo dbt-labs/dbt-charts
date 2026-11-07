@@ -26,6 +26,7 @@ class BigQueryDialect(SQLDialect):
     """
 
     name = "bigquery"
+    time_zone_per_request = True
     # GoogleSQL quoted literals: backslashes introduce escape sequences (\', \\,
     # \n). Only the raw r'...' form exempts them, and nothing here emits one.
     # https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical
@@ -33,8 +34,8 @@ class BigQueryDialect(SQLDialect):
     uses_named_params = True
 
     def zoned_date_expr(self, column: str, time_zone: str) -> str:
-        """DATE(ts, zone): the TIMESTAMP's date in `time_zone`."""
-        return f"DATE({column}, '{time_zone}')"
+        """Read the DATETIME as UTC, then take its date in `time_zone`."""
+        return f"DATE(TIMESTAMP({column}, 'UTC'), '{time_zone}')"
 
     def param(self, index: int) -> str:
         """Generate BigQuery parameter placeholder.

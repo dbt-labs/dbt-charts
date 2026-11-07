@@ -1303,6 +1303,7 @@ fn prepare_title_text(
     let (lines, truncated) = wrap_label(
         m.fonts,
         measure::stand_in_family(&label.family),
+        &label.weight,
         text,
         limit,
         label.size,
@@ -2646,7 +2647,7 @@ mod render_tests {
             let mut p = with_support(kpi_payload("stacked", 300.0));
             set(&mut p, "/support/format/raw", json!(raw));
             set(&mut p, "/style/kpi/support/tone", json!(tone));
-            p.rows = vec![json!({"revenue": 1234.0, "growth_pct": growth}).as_object().unwrap().clone()];
+            p.rows = vec![json!({"revenue": 1234.0, "growth_pct": growth}).as_object().unwrap().clone()].into();
             svg_of(&p)
         };
         let (good, bad, secondary) = ("#00884d", "#b3261e", "#626366");
@@ -2937,7 +2938,7 @@ mod render_tests {
     fn text_kpi(format: &str, cell: Value) -> Payload {
         let mut p = kpi_payload("stacked", 300.0);
         set(&mut p, "/format", json!({"spec": format, "notation": "narrative", "raw": format}));
-        p.rows = vec![json!({"revenue": cell}).as_object().unwrap().clone()];
+        p.rows = vec![json!({"revenue": cell}).as_object().unwrap().clone()].into();
         p
     }
 
@@ -2992,7 +2993,7 @@ mod render_tests {
     fn a_percent_format_over_a_0_100_value_is_a_coded_error() {
         let mut p = kpi_payload("stacked", 300.0);
         set(&mut p, "/format", json!({"spec": ".1%"}));
-        p.rows = vec![json!({"revenue": 1234.5}).as_object().unwrap().clone()];
+        p.rows = vec![json!({"revenue": 1234.5}).as_object().unwrap().clone()].into();
         let err = render(&p, &test_fonts()).expect_err("refuses");
         assert_eq!(err.code, "ERR-PERCENT-RANGE");
     }
@@ -3004,7 +3005,7 @@ mod render_tests {
         let mut p = kpi_payload("stacked", 300.0);
         let alias = json!({"spec": ",.1f", "prefix": "~", "notation": "narrative", "raw": "mine"});
         set(&mut p, "/format", alias);
-        p.rows = vec![json!({"revenue": 4820.55}).as_object().unwrap().clone()];
+        p.rows = vec![json!({"revenue": 4820.55}).as_object().unwrap().clone()].into();
         let svg = svg_of(&p);
         assert!(svg.contains(">~<") && svg.contains("4,820.6"), "{svg}");
     }
@@ -3015,7 +3016,7 @@ mod render_tests {
     fn a_percent_support_over_a_0_100_value_is_a_coded_error() {
         let mut p = with_support(kpi_payload("stacked", 300.0));
         set(&mut p, "/support/format", json!({"spec": ".1%", "raw": "percent"}));
-        p.rows = vec![json!({"revenue": 1234.0, "growth_pct": 27.6}).as_object().unwrap().clone()];
+        p.rows = vec![json!({"revenue": 1234.0, "growth_pct": 27.6}).as_object().unwrap().clone()].into();
         let err = render(&p, &test_fonts()).expect_err("refuses");
         assert_eq!(err.code, "ERR-PERCENT-RANGE");
         assert_eq!(err.params["value"].to_string(), "27.6");
@@ -3029,7 +3030,7 @@ mod render_tests {
         let quoted = |cell: Value| {
             let mut p = kpi_payload("stacked", 300.0);
             set(&mut p, "/format", json!({"spec": ".1%"}));
-            p.rows = vec![json!({"revenue": cell}).as_object().unwrap().clone()];
+            p.rows = vec![json!({"revenue": cell}).as_object().unwrap().clone()].into();
             render(&p, &test_fonts()).expect_err("refuses").params["value"].to_string()
         };
         assert_eq!(quoted(json!(27)), "27.0");
@@ -3041,7 +3042,7 @@ mod render_tests {
     fn a_numeric_looking_string_cell_prints_unchanged() {
         let mut p = kpi_payload("stacked", 300.0);
         set(&mut p, "/format", json!({"spec": ".1%"}));
-        p.rows = vec![json!({"revenue": "50.82"}).as_object().unwrap().clone()];
+        p.rows = vec![json!({"revenue": "50.82"}).as_object().unwrap().clone()].into();
         p.schema = crate::payload_schema::test_schema_for(&p.rows);
         let svg = render(&p, &test_fonts()).expect("a string is no percent out of range");
         assert!(svg.contains(">50.82<"), "{svg}");

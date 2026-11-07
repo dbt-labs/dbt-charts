@@ -12,7 +12,7 @@ Imports nothing from ``snowflake.*``: the session is duck-typed against
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from datetime import UTC
 from itertools import islice
 from typing import TYPE_CHECKING, Any, Protocol
@@ -56,6 +56,8 @@ class SnowparkDataFrame(Protocol):
     schema: SnowparkSchema
 
     def to_local_iterator(self) -> Iterator[_Cells]: ...
+
+    def collect(self) -> list[Mapping[str, str]]: ...
 
 
 class SnowparkSession(Protocol):
@@ -141,9 +143,10 @@ class SnowparkBackend:
     account, with its role's privileges, on its warehouse, under its own
     statement timeout.
 
-    Database and schema are different, because they decide where an unqualified
-    table name resolves. A query is refused unless the session's current
-    database and schema are the ones the source declares.
+    Database, schema and time zone are different, because they decide where an
+    unqualified table name resolves and which days a date truncation buckets. A
+    query is refused unless the session's current database and schema are the
+    ones the source declares and its TIMEZONE is the board's.
 
     Example:
         >>> routes = {"snowflake": SnowparkBackend(session=active_session)}
@@ -182,6 +185,17 @@ class SnowparkBackend:
                 "names would resolve in the wrong place. Point the session at "
                 "the declared database and schema (session.use_database, "
                 "session.use_schema), or change the source to match."
+            )
+        (parameter,) = self._session.sql(
+            "SHOW PARAMETERS LIKE 'TIMEZONE' IN SESSION"
+        ).collect()
+        if parameter["value"] != query.time_zone:
+            raise DbtChartsError(
+                f"The board runs in time zone {query.time_zone}, but the Snowpark "
+                f"session's TIMEZONE is {parameter['value']}, so date truncation "
+                "would bucket on the wrong days. Set the session's TIMEZONE to "
+                f"{query.time_zone} (ALTER SESSION SET TIMEZONE), or change "
+                "regional.time_zone to match."
             )
         # Streamed and cut off at the fetch limit, so the SQL text is never
         # rewritten (DataFrame.limit() would wrap it in a subquery).

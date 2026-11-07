@@ -669,8 +669,8 @@ pub(super) fn fit(
         // log axis keeps d3's default.
         let y_tick_count = if overlays.is_empty() { 10 } else { ax_y.ticks.count.unwrap_or(6.0) as usize };
         let ladder = LogAxis::new(ax_y, y_lo, y_hi, y_tick_count, None, y_ladder_pass.2)?;
-        if crate::labels_expr::view::active() {
-            crate::labels_expr::view::register_log("y", ladder.lo, ladder.hi, crate::labels_expr::view::Span::Height);
+        if ::layout::labels_expr::view::active() {
+            ::layout::labels_expr::view::register_log("y", ladder.lo, ladder.hi, ::layout::labels_expr::view::Span::Height);
         }
         y_scale_caption = CaptionScale::Numeric { kind: NumericScale::Log, domain: (ladder.lo, ladder.hi), format: vega_axis_format(ax_y, true)? };
         for (i, &tv) in ladder.ticks.iter().enumerate() {
@@ -718,8 +718,8 @@ pub(super) fn fit(
         // has neither ticks nor positions.
         let y_span = y_max - y_min;
         let y_transform = ax_y.transform();
-        if crate::labels_expr::view::active() {
-            crate::labels_expr::view::register_continuous("y", y_transform, y_min, y_max, crate::labels_expr::view::Span::Height);
+        if ::layout::labels_expr::view::active() {
+            ::layout::labels_expr::view::register_continuous("y", y_transform, y_min, y_max, ::layout::labels_expr::view::Span::Height);
         }
         let y_from_top = Continuous::new(y_transform, [y_min, y_max], [1.0, 0.0]);
         let y_frac = move |v: f64| finite_frac(y_from_top.scale(v));
@@ -864,8 +864,17 @@ pub(super) fn fit(
         let off = measured_off()?;
         (off, "right", "end", off)
     };
-    if crate::labels_expr::view::active() && panel.is_none() && ax_y.labels.upright() {
-        use crate::labels_expr::view::{register_axis, AxisSpec, Orient};
+    // Labels above their gridlines sit flush to the gutter's outer edge: a start-anchored right axis ends
+    // there, a left axis authored `labels.align: left` starts there. A band y axis keeps its labels centered.
+    let y_above = ax_y.labels_above();
+    let y_baseline = ax_y.value_label_baseline();
+    let (y_text_off, y_text_align, y_text_anchor) = match (y_above, y_left, y_label_align) {
+        (true, true, _) if ax_y.labels.align.as_deref() == Some("left") => (y_label_edge, "left", "start"),
+        (true, false, "left") => (y_label_edge, "right", "end"),
+        _ => (y_label_off, y_label_align, y_label_anchor),
+    };
+    if ::layout::labels_expr::view::active() && panel.is_none() && ax_y.labels.upright() {
+        use ::layout::labels_expr::view::{register_axis, AxisSpec, Orient};
         let orient = if y_left { Orient::Left } else { Orient::Right };
         register_axis("y", AxisSpec { orient, offset: y_label_off, shift: 0.0, align: Some(y_label_align), baseline: None, angle: 0.0, flush: None, style: ax_y.labels.item_style()? });
     }
@@ -886,8 +895,13 @@ pub(super) fn fit(
     // A left axis authored `labels.align: right` is the ghost's own edge: the
     // ghost copies it and `mirror_axis.py` re-measures its `labelPadding` over
     // the labels, so they end-anchor one label width past the start-anchored spot.
+    let ghost_widest = ghost_ws.iter().fold(0.0_f64, |acc, &w| acc.max(w.min(y_limit)));
     let (ghost_off, ghost_anchor) = if y_left && mirror_active && ax_y.labels.align.as_deref() == Some("right") {
         (measured_off()?, "end")
+    } else if y_above && y_left {
+        (y_label_off + ghost_widest, "end")
+    } else if y_above {
+        (y_label_off + ghost_widest, "start")
     } else {
         (y_label_off, if y_left { "start" } else { "end" })
     };
@@ -897,8 +911,8 @@ pub(super) fn fit(
     // ink, so the edge depends on the plot size.
     // The ink of rung `i`'s label on a plot `pw` wide and `ph` tall.
     let y_label_ink = |pw: f64, ph: f64, i: usize| {
-        let anchor_x = if y_left { -y_label_off } else { pw + y_label_off };
-        vega_fit::text_ink_rows(anchor_x, y_px(ph, y_ticks[i], y_round), y_label_ws[i].min(y_limit), y_font_size, y_label_align, "middle", crate::text::line_count(&y_labels[i]))
+        let anchor_x = if y_left { -y_text_off } else { pw + y_text_off };
+        vega_fit::text_ink_rows(anchor_x, y_px(ph, y_ticks[i], y_round), y_label_ws[i].min(y_limit), y_font_size, y_text_align, y_baseline, crate::text::line_count(&y_labels[i]))
     };
     // Vega's `labelOverlap` thins a measure axis (parity, greedy on a log one); a point scale's
     // categories all draw.
@@ -910,7 +924,7 @@ pub(super) fn fit(
         }
     };
     let y_edge_at = |pw: f64, ph: f64| -> f64 {
-        if !(y_label_align == "left" || y_left) {
+        if y_above || !(y_label_align == "left" || y_left) {
             return y_label_edge;
         }
         let visible = y_thinned(pw, ph);
@@ -1238,7 +1252,7 @@ pub(super) fn fit(
     // axis was placed above.
     let x_frame_unrounded = |pw: f64| -> Result<XFrame, String> {
         if let Some(axis) = &temporal_x {
-            if crate::labels_expr::view::active() {
+            if ::layout::labels_expr::view::active() {
                 axis.register(pw);
             }
             return Ok(XFrame {
@@ -1250,7 +1264,7 @@ pub(super) fn fit(
             });
         }
         if let Some(axis) = plain_x {
-            if crate::labels_expr::view::active() {
+            if ::layout::labels_expr::view::active() {
                 axis.register(pw)?;
             }
             let (mut ticks, labels, rules) = axis.ticks_at(pw)?;
@@ -1263,8 +1277,8 @@ pub(super) fn fit(
         }
         if let Some((lo, hi)) = log_x {
             let (ladder, labels) = log_x_axis(ax_x, lo, hi, pw)?;
-            if crate::labels_expr::view::active() {
-                crate::labels_expr::view::register_log("x", ladder.lo, ladder.hi, crate::labels_expr::view::Span::Width);
+            if ::layout::labels_expr::view::active() {
+                ::layout::labels_expr::view::register_log("x", ladder.lo, ladder.hi, ::layout::labels_expr::view::Span::Width);
             }
             return Ok(XFrame {
                 ticks: ladder.ticks.iter().map(|&tv| ladder.frac_from_left(tv)).collect(),
@@ -1276,8 +1290,8 @@ pub(super) fn fit(
         }
         if let Some(lin) = &linear_x {
             let (ticks, labels, rules, domain) = lin.at(pw)?;
-            if crate::labels_expr::view::active() {
-                crate::labels_expr::view::register_continuous("x", lin.transform, domain.0, domain.1, crate::labels_expr::view::Span::Width);
+            if ::layout::labels_expr::view::active() {
+                ::layout::labels_expr::view::register_continuous("x", lin.transform, domain.0, domain.1, ::layout::labels_expr::view::Span::Width);
             }
             return Ok(XFrame {
                 ticks,
@@ -1290,8 +1304,8 @@ pub(super) fn fit(
         // A band axis sits half a pixel left of its band centers (Vega places a
         // band tick at `scale(d) + bandwidth / 2` under the axis's own +0.5 shift).
         let band_shift = if x_bandwidth.is_some() { 0.5 / pw } else { 0.0 };
-        if crate::labels_expr::view::active() && x_nominal {
-            use crate::labels_expr::view::{register_band, register_point_padded, Span};
+        if ::layout::labels_expr::view::active() && x_nominal {
+            use ::layout::labels_expr::view::{register_band, register_point_padded, Span};
             let padding = if mirror_wants_band && x_bandwidth.is_none() { 0.5 } else { point_x_padding(ax_x) };
             if x_bandwidth.is_some() {
                 register_band("x", &x_labels, padding, padding, Span::Width)?;
@@ -1521,8 +1535,9 @@ pub(super) fn fit(
                     }
                     b.union(&label);
                     if mirror_active {
-                        let (x, align) = if y_left { (pw + ghost_off, if ghost_anchor == "end" { "right" } else { "left" }) } else { (-y_label_off, "right") };
-                        b.union(&vega_fit::text_ink(x, y_px(ph, frac, y_round), ghost_ws[i].min(y_limit), y_font_size, align, "middle"));
+                        let x = if y_left { pw + ghost_off } else { -ghost_off };
+                        let align = if ghost_anchor == "end" { "right" } else { "left" };
+                        b.union(&vega_fit::text_ink(x, y_px(ph, frac, y_round), ghost_ws[i].min(y_limit), y_font_size, align, y_baseline));
                     }
                 }
                 // X labels: flush anchors at the plot edges on a continuous
@@ -1806,7 +1821,20 @@ pub(super) fn fit(
     } else {
         Vec::new()
     };
-    let (rx1, rx2) = crate::common::join_rule_to_edges(floor_span, &y_edges);
+    // Outer edges of the value-label gutters, where above-gridline labels sit flush and the rules run out to;
+    // a panel that paints no value axis keeps its rules in.
+    let y_label_edges: Vec<f64> = if y_above && paint_value_axis {
+        let primary = if y_left { 0.5 - y_label_edge } else { plot_w + value_axis_dx + 0.5 + y_label_edge };
+        let ghost_edge = mirror_active.then(|| if y_left { plot_w + 0.5 + ghost_off } else { 0.5 - ghost_off });
+        std::iter::once(primary).chain(ghost_edge).collect()
+    } else {
+        Vec::new()
+    };
+    let y_plot_edge_x = if y_left { 0.5 } else { plot_w + 0.5 };
+    let (rx1, rx2) = {
+        let joined = crate::common::join_rule_to_edges(floor_span, &y_edges);
+        if crate::common::rule_reaches(floor_span, y_plot_edge_x) { crate::common::reach_label_edges(joined, &y_label_edges) } else { joined }
+    };
 
     // Gridlines — grid/tick positions round to whole pixels (Vega
     // tickRound), then take the axis group's +0.5 crispness shift; labels
@@ -1834,14 +1862,19 @@ pub(super) fn fit(
         let gc = crate::common::required_ink(ax_y.grid.color.as_deref(), "scatter", "axis_y.grid.color")?;
         let gw = ax_y.grid.width.unwrap_or(1.0);
         let go = ax_y.grid.opacity.unwrap_or(1.0);
+        let reach = crate::common::reach_label_edges((0.5, plot_w + 0.5), &y_label_edges);
+        let labeled = y_thinned(plot_w, plot_h);
         let lines = y_ticks
             .iter()
-            .map(|&frac| {
+            .enumerate()
+            .map(|(i, &frac)| {
                 let gy = crate::common::tick_round(y_pos(frac));
+                // A rule whose label thinned away has nothing to carry in the gutter.
+                let (gx1, gx2) = if labeled[i] { reach } else { (0.5, plot_w + 0.5) };
                 Node::line(
                     Role::Grid,
-                    (0.5, gy),
-                    (plot_w + 0.5, gy),
+                    (gx1, gy),
+                    (gx2, gy),
                     ax_y.grid.stroke(gc, gw).num("opacity", go),
                 )
             })
@@ -1851,6 +1884,7 @@ pub(super) fn fit(
 
     plot.extend(crate::families::layers::layer_grids(&layer_axes, ax_y, (plot_w, plot_h), "scatter")?);
     let annotations = (!r.annotations.is_empty()).then(|| annotation_ctx(plot_w, plot_h)).transpose()?;
+    let under_annotations = plot.len();
     if let Some(ctx) = &annotations {
         plot.extend(crate::annotation::nodes(ctx, crate::annotation::Plane::Background)?);
     }
@@ -2171,6 +2205,13 @@ pub(super) fn fit(
         crate::common::value_axis_rules(0.0, baseline_rule_fracs.iter().flatten().map(|&frac| y_pos(frac)), zl.stroke(), zl.width.unwrap_or(2.0))
     });
     let y_threshold_rules: Vec<_> = crate::common::thresholds(&y_rules);
+    let y_label_at = |frac: f64| {
+        if y_above {
+            crate::common::above_label_y(&y_threshold_rules, crate::common::tick_round(y_pos(frac)), ax_y.grid.width.unwrap_or(1.0), y_font_size)
+        } else {
+            y_pos(frac) + 0.5 + measure::baseline_shift(y_baseline, y_font_size)
+        }
+    };
     // The value axis: drawn by the panel that owns it (a facet's last
     // column), anchored `value_axis_dx` past the plot edge.
     // The axis group's origin and the direction its ticks, labels and title run.
@@ -2182,7 +2223,7 @@ pub(super) fn fit(
     let value_axis_nodes: Vec<Node> = if paint_value_axis {
         let mut items = Vec::new();
         // Y tick marks: 6px lines between the plot edge and the label gutter.
-        if y_tick_eff > 0.0 {
+        if y_tick_eff > 0.0 && !y_above {
             let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "scatter", "axis_y.ticks.color")?;
             let tw = ax_y.ticks.width.unwrap_or(1.0);
             for &frac in &y_ticks {
@@ -2196,17 +2237,17 @@ pub(super) fn fit(
             }
         }
         // Y labels: right-aligned at the gutter's outer edge, middle baseline.
-        let y_label_x = y_axis_x + y_outward * y_label_off;
+        let y_label_x = y_axis_x + y_outward * y_text_off;
         for (i, (&frac, lbl)) in y_ticks.iter().zip(y_labels.iter()).enumerate() {
             if y_labels_hidden || log_visible.as_ref().is_some_and(|v| !v[i]) {
                 continue;
             }
-            let gy = y_pos(frac) + 0.5 + measure::baseline_shift("middle", y_font_size);
+            let gy = y_label_at(frac);
             items.push(crate::text::label(
                 Role::Axis,
                 (y_label_x, gy),
                 Attrs::new()
-                    .set("text-anchor", y_label_anchor)
+                    .set("text-anchor", y_text_anchor)
                     .vega("font-family", y_family)
                     .num("font-size", y_font_size)
                     .quick_some("font-style", ax_y.labels.font.style.as_deref())
@@ -2445,6 +2486,16 @@ pub(super) fn fit(
                         crate::families::layers::layer_link(datum_link.as_ref(), (bl.query_name.as_deref(), r.query_name.as_deref())),
                     )?);
                 }
+                let knocked = crate::knockout::knock_out(
+                    bars,
+                    &r.canvas,
+                    &format!("ko{}-layer{index}", panel.map_or(0, |o| o.panel_ordinal)),
+                    &crate::contract::scoped_id(&r.id),
+                    (0.0, 0.0, plot_w, plot_h),
+                );
+                let undercoat = if clip { clips.wrap((plot_w, plot_h), knocked.undercoat) } else { knocked.undercoat };
+                plot.splice(under_annotations..under_annotations, undercoat);
+                let mut bars = knocked.marks;
                 let (sited, label_centers) = bar_label_sites(bl, rows, marks, plot_w)?;
                 let label_marks: Vec<_> = sited.iter().map(|&i| marks[i]).collect();
                 bars.extend(crate::families::bar::marks::layer_bar_labels(
@@ -2476,7 +2527,8 @@ pub(super) fn fit(
             let zc = zl.stroke();
             let gy = la.scale(plot_h).scale(0.0);
             let layer_edge = if la.side == LayerSide::Right { plot_w + 0.5 } else { 0.5 };
-            let (lx1, lx2) = crate::common::join_rule_to_edges(floor_span, &[layer_edge]);
+            let joined = crate::common::join_rule_to_edges(floor_span, &[layer_edge]);
+            let (lx1, lx2) = if paint_value_axis { crate::common::reach_label_edges(joined, la.label_edge(plot_w, 0.0).as_slice()) } else { joined };
             plot.push(crate::contract::item_group(
                 "rule",
                 &format!("layer_{}_marks", 1 + overlays.len() + index),
@@ -2595,6 +2647,7 @@ pub(super) fn fit(
                 font_style: ax_y.labels.font.style.as_deref(),
                 font_color: y_label_color,
                 tick_size: y_tick_eff,
+                grid_width: ax_y.grid.width.unwrap_or(1.0),
                 ticks: &ax_y.ticks,
                 title_style: layer_title_style,
                 zero_rule: zero_width.zip(ax_y.grid.threshold.as_ref()).filter(|_| crate::common::rule_reaches(floor_span, edge_x)).map(|(width, zl)| (zl.stroke(), width)),
@@ -2609,7 +2662,7 @@ pub(super) fn fit(
         // that edge's own 0.5 crisp frame.
         let (ghost_x, ghost_out) = if y_left { (plot_w + 0.5, 1.0) } else { (0.5, -1.0) };
         let mut items = Vec::new();
-        if y_tick_eff > 0.0 {
+        if y_tick_eff > 0.0 && !y_above {
             let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "scatter", "axis_y.ticks.color")?;
             let tw = ax_y.ticks.width.unwrap_or(1.0);
             for &frac in &y_ticks {
@@ -2626,7 +2679,7 @@ pub(super) fn fit(
             if y_labels_hidden || log_visible.as_ref().is_some_and(|v| !v[i]) {
                 continue;
             }
-            let gy = y_pos(frac) + 0.5 + measure::baseline_shift("middle", y_font_size);
+            let gy = y_label_at(frac);
             items.push(crate::text::label(
                 Role::Chrome,
                 (ghost_x + ghost_out * ghost_off, gy),
@@ -2842,11 +2895,12 @@ pub(super) fn fit(
                     &mut ink,
                     plot_top + y_pos(frac),
                     y_font_size,
+                    y_baseline,
                     (plot_left, plot_top, plot_right, plot_bottom),
                 );
             }
         }
-        let label_shift = measure::baseline_shift("middle", y_font_size) + 0.5;
+        let label_shift = measure::baseline_shift(y_baseline, y_font_size) + 0.5;
         PanelGeometry {
             content: cuts.content.clone(),
             ink,
@@ -2881,6 +2935,12 @@ pub(super) fn fit(
                 .zip(&y_drawn)
                 .filter(|(_, &drawn)| drawn && !y_labels_hidden)
                 .map(|((&frac, label), _)| (plot_top + y_pos(frac) + label_shift, label.clone()))
+                .collect(),
+            val_label_ys: y_ticks
+                .iter()
+                .zip(&y_drawn)
+                .filter(|(_, &drawn)| drawn && !y_labels_hidden)
+                .map(|(&frac, _)| if y_above { plot_top + y_label_at(frac) } else { plot_top + y_pos(frac) + label_shift })
                 .collect(),
             ghost_labels: if ghost.is_some() {
                 ghost_texts.iter().zip(&y_drawn).filter(|(_, &drawn)| drawn && !y_labels_hidden).map(|(label, _)| label.clone()).collect()

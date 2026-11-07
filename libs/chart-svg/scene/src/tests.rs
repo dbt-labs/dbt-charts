@@ -182,7 +182,8 @@ fn a_poly_is_a_mark_with_the_box_of_its_points() {
 fn walk_does_not_descend_into_what_is_not_drawn() {
     let clip = Node::new(Role::Chrome, Attrs::new(), Shape::ClipPath(vec![rect(mark(0), 0.0, 0.0, 9.0, 9.0)]));
     let defs = Node::new(Role::Chrome, Attrs::new(), Shape::Defs(vec![rect(mark(1), 0.0, 0.0, 9.0, 9.0)]));
-    assert!(marks(&[clip, defs]).is_empty());
+    let mask = Node::new(Role::Chrome, Attrs::new(), Shape::Mask { region: (0.0, 0.0, 9.0, 9.0), children: vec![rect(mark(2), 0.0, 0.0, 9.0, 9.0)] });
+    assert!(marks(&[clip, defs, mask]).is_empty());
 }
 
 #[test]

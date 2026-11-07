@@ -20,6 +20,7 @@ from dbt_charts.core.execute.duckdb_cache import (
     compute_variables_hash,
 )
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+from dbt_charts.core.text.time_zones import UTC
 
 from ..._run import Run
 from ..._scripted_env import backend_of
@@ -28,7 +29,7 @@ from .test_cache_policy_enforcement import _board_yaml, _ok_adapter
 
 def test_the_version_never_reaches_the_recording_key() -> None:
     query = SqlQuery(sql="SELECT 1", source="dw")
-    assert compute_cache_key(query) == (
+    assert compute_cache_key(query, time_zone=UTC) == (
         compute_source_hash("dw", board_sources=None),
         compute_query_hash("SELECT 1"),
         compute_variables_hash({}),

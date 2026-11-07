@@ -1,0 +1,5 @@
+kind: Features
+body: 'A table wider than its slot scrolls sideways inside it instead of squeezing its columns; set column_layout.overflow: fit for the old behavior.'
+time: 2026-10-29T23:10:34.906197-05:00
+custom:
+    DbtChartsIssue: "83"

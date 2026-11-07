@@ -180,6 +180,7 @@ def _validate_resolved(
     from dbt_charts.core.dbt_model_columns import check_model_columns
     from dbt_charts.core.dbt_ref_check import check_manifest_refs
     from dbt_charts.core.link_targets import check_link_targets
+    from dbt_charts.core.session_time_zone_check import check_session_time_zones
 
     if not resolved.exists():
         return ValidateResult(
@@ -250,6 +251,7 @@ def _validate_resolved(
 
     validate_compiled_queries(result)
     check_manifest_refs(result, project)
+    check_session_time_zones(result, project)
     check_model_columns(result, project)
     check_link_targets(result, project, resolved.relpath)
 

@@ -601,14 +601,29 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         }
     };
     let layered = bound.choropleth.is_some();
-    let group = |name: &str, clip: Option<&str>, described: bool, children: Vec<Node>| -> Result<Node, Diagnostic> {
+    let group = |layer: usize, name: &str, clip: Option<&str>, described: bool, children: Vec<Node>| -> Result<Node, Diagnostic> {
+        // Regions sit on the canvas, so only the mask matters: the undercoat has nothing to cut.
+        let knocked = crate::knockout::knock_out(
+            children,
+            &r.canvas,
+            &format!("ko{layer}"),
+            &contract::scoped_id(&r.id),
+            (0.0, 0.0, plot_w, plot_h),
+        );
         let mut attrs = Attrs::new().set("class", format!("mark-shape role-mark {name}"));
+        let mut marks = knocked.marks;
         if let Some(id) = clip.filter(|_| !fit) {
-            attrs = attrs.set("clip-path", format!("url(#{id})"));
+            let url = format!("url(#{id})");
+            // A masked layer carries the clip on its masked group (`knockout::clip`).
+            if marks.iter().any(|node| node.attrs.get("mask").is_some()) {
+                marks = crate::knockout::clip(marks, &url);
+            } else {
+                attrs = attrs.set("clip-path", url);
+            }
         }
         let role = if described { "graphics-object" } else { "graphics-symbol" };
         let container = display_text::language::tr("aria.container_shape", None, &[])?;
-        Ok(Node::group(Role::Chrome, attrs.set("role", role).set("aria-roledescription", container), children))
+        Ok(Node::group(Role::Chrome, attrs.set("role", role).set("aria-roledescription", container), marks))
     };
     let background = bound
         .decoded
@@ -618,7 +633,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         .enumerate()
         .filter_map(|(i, (_, d))| d.as_ref().map(|d| shape(0, i, d, None, mark.fill.as_deref())))
         .collect();
-    let mut layers = vec![group(if layered { "layer_0_marks" } else { "marks" }, Some(&clip_ids[0]), false, background)?];
+    let mut layers = vec![group(0, if layered { "layer_0_marks" } else { "marks" }, Some(&clip_ids[0]), false, background)?];
     if let Some(choropleth) = &bound.choropleth {
         let overlay = choropleth
             .overlay
@@ -627,7 +642,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
                 paths[o.feature].as_ref().map(|d| shape(1, o.feature, d, Some(&o.label), o.fill.as_deref()))
             })
             .collect();
-        layers.push(group("layer_1_marks", Some(&clip_ids[1]), true, overlay)?);
+        layers.push(group(1, "layer_1_marks", Some(&clip_ids[1]), true, overlay)?);
     }
     let mut nodes = vec![Node::group(Role::Chrome, Attrs::new(), layers).translate(plot_left, plot_top)];
 

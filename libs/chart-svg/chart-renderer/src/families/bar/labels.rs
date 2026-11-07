@@ -220,6 +220,8 @@ pub(super) struct LabelSite {
     /// The row's own measure, which the datum's description names.
     pub(super) raw: f64,
     pub(super) span: Option<SpanLabel>,
+    /// A stacked segment's `(start, end)` in measure units, which its label must fit inside.
+    pub(super) segment: Option<(f64, f64)>,
     pub(super) text: String,
     /// The mark exists but prints nothing: `labels.field` is null here, or a
     /// genuine-zero label on a nonzero row.
@@ -289,6 +291,7 @@ pub(super) fn plain_sites<'a>(
             value,
             raw: val,
             span,
+            segment: None,
             text,
             blank,
             key: (cat.to_string(), String::new()),
@@ -340,6 +343,7 @@ pub(super) fn segment_sites(
             value,
             raw: row_value,
             span: label_span,
+            segment: (!ranged).then_some((span.start, span.end)),
             text,
             blank,
             key,
@@ -377,7 +381,7 @@ pub(super) fn total_sites(
             .copied()
             .ok_or_else(|| format!("bar: internal error — no stacked total for category {cat:?}"))?;
         let (text, blank) = spec.text(Some(row), total, None)?;
-        Ok(Some(LabelSite { cat: cat.to_string(), at: total, slot: span.slot, value: total, raw: total, span: None, text, blank, key, href: None }))
+        Ok(Some(LabelSite { cat: cat.to_string(), at: total, slot: span.slot, value: total, raw: total, span: None, segment: None, text, blank, key, href: None }))
     })
 }
 
@@ -741,8 +745,10 @@ impl LabelLayer {
     }
 
     /// Where a site's label sits, or `None` where its category has no band. A
-    /// plain bar follows `plain_label_place`; a stacked or ranged segment keeps
-    /// the `hide` fit test (no flip), and a stack total never hides.
+    /// plain bar follows `plain_label_place`; a stacked segment's `top` or
+    /// `middle` label blanks where the segment is drawn shorter than the room
+    /// the label needs, a ranged segment keeps the `hide` fit test (no flip), and
+    /// a stack total never hides.
     pub(super) fn place(&self, site: &LabelSite, width: f64, geom: &LabelGeometry, hide: Option<FitHide>) -> Option<LabelPlace> {
         let band_x = geom.band.position(&site.cat)?;
         let center = (geom.center)(&site.cat, band_x, site.slot);
@@ -751,10 +757,14 @@ impl LabelLayer {
         if site.blank {
             return blank_at(true);
         }
+        let inside = matches!(self.spec.position.as_str(), "top" | "middle");
+        if let (true, Some((start, end))) = (self.stacked && !self.total && inside, site.segment) {
+            let drawn = (geom.linear.scale(end) - geom.linear.scale(start)).abs();
+            return blank_at(drawn < label_need(self.horizontal, width, self.font.size));
+        }
         if self.stacked || self.ranged || self.total {
-            let hidden = hide.is_some_and(|h| {
-                fit_hides_label(&self.spec.position, site.value, h.plot_h, h.span, h.font_size, self.ranged)
-            });
+            let hidden = self.ranged
+                && hide.is_some_and(|h| fit_hides_label(&self.spec.position, site.value, h.plot_h, h.span, h.font_size));
             return blank_at(hidden);
         }
         let linear = geom.linear;
@@ -898,35 +908,14 @@ pub(super) fn label_fit_span(
     (span > 0.0).then_some(span)
 }
 
-/// `_fit_hide_test` (`features/value_labels.py`) for a stacked or ranged
-/// vertical segment: a `top`/`middle` label whose segment is shorter than one
-/// label line — `v * plot_h / span` pixels against
-/// `label_fit_line_height_multiplier` times the label's font size — is blanked,
-/// and Vega writes the empty mark as a self-closed `<text/>`. An exact zero is
-/// exempt, and a span's extent is its change whichever way it runs. A plain
-/// bar's label never hides: `plain_label_place` flips it outside instead
-/// (`middle_aligned`, which floats free of its bar, is the exception).
-pub(super) fn fit_hides_label(
-    position: &str,
-    value: f64,
-    plot_h: f64,
-    span: f64,
-    font_size: f64,
-    ranged: bool,
-) -> bool {
-    let short = |v: f64| v * plot_h / span < LABEL_FIT_LINE_HEIGHT_MULTIPLIER * font_size;
-    if ranged {
-        // A span's extent is its change, whichever way it runs, and a zero
-        // change is no exception (`_fit_hide_test`); `above` sits in open space.
-        return position != "above" && short(value.abs());
-    }
-    match position {
-        // `bottom` anchors at the baseline, so a stacked one says nothing
-        // about its segment (`_fit_measures_the_label`).
-        "top" => value > 0.0 && short(value),
-        "middle" => value != 0.0 && short(value.abs()),
-        _ => false,
-    }
+/// `_fit_hide_test` (`features/value_labels.py`) for a ranged vertical
+/// segment: a label whose span is shorter than one label line —
+/// `v * plot_h / span` pixels against `label_fit_line_height_multiplier` times
+/// the label's font size — is blanked, and Vega writes the empty mark as a
+/// self-closed `<text/>`. A span's extent is its change whichever way it runs,
+/// and a zero change has no room either; `above` sits in open space.
+pub(super) fn fit_hides_label(position: &str, value: f64, plot_h: f64, span: f64, font_size: f64) -> bool {
+    position != "above" && value.abs() * plot_h / span < LABEL_FIT_LINE_HEIGHT_MULTIPLIER * font_size
 }
 
 /// The band x's step geometry a layer's captions anchor against.
@@ -1237,17 +1226,15 @@ mod span_label_tests {
     }
 
     /// `_fit_hide_test` on a span measures `abs(end - start)` whichever way it
-    /// runs, and an empty change is no exception: unlike a plain `top` label
-    /// (positive values only, a zero exempt), a span's zero and negative
+    /// runs, and an empty change is no exception: a span's zero and negative
     /// extents both blank.
     #[test]
     fn a_span_is_fit_tested_by_the_size_of_its_change() {
         // 340px over a 173.88 span: 12.65px is 6.5 units.
-        let hides = |value, ranged| fit_hides_label("top", value, 340.0, 173.88, 11.0, ranged);
-        assert!(hides(6.0, true) && !hides(7.0, true));
-        assert!(hides(0.0, true), "a zero change has no room");
-        assert!(hides(-6.0, true), "the size of a fall");
-        assert!(!hides(0.0, false), "a segment's zero keeps its label");
-        assert!(!hides(-6.0, false), "a negative segment's `top` label sits outside the bar");
+        let hides = |value| fit_hides_label("top", value, 340.0, 173.88, 11.0);
+        assert!(hides(6.0) && !hides(7.0));
+        assert!(hides(0.0), "a zero change has no room");
+        assert!(hides(-6.0), "the size of a fall");
+        assert!(!fit_hides_label("above", 0.0, 340.0, 173.88, 11.0), "an `above` label sits in open space");
     }
 }

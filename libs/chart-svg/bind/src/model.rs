@@ -5,7 +5,9 @@
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 
+use board_model::ids::ChartId;
 use diagnostic::Diagnostic;
+use indexmap::IndexMap;
 
 use crate::temporal::TimeUnit;
 use crate::time_axis::{Instant, TimeAxis};
@@ -25,6 +27,39 @@ pub enum Invalid {
     /// A grid's panel ids are not `0, 1, 2, …` in cell order.
     GridPanels,
     NoMeasureScale,
+    /// A failed chart's failure names another chart than the one it is bound under.
+    FailureChart { key: ChartId, chart: ChartId },
+}
+
+/// A board's bound charts and its data diagnostics.
+#[derive(Debug)]
+pub struct BoundBoard {
+    charts: IndexMap<ChartId, BoundChart>,
+    /// Data WARNs; layout appends its own.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+impl BoundBoard {
+    /// `charts` holds the drawn charts only, in board order; a failure must name its own key.
+    pub fn new(charts: IndexMap<ChartId, BoundChart>, diagnostics: Vec<Diagnostic>) -> Result<Self, Invalid> {
+        for (key, bound) in &charts {
+            if let Body::Failed(failure) = &bound.body {
+                if &failure.chart != key {
+                    return Err(Invalid::FailureChart { key: key.clone(), chart: failure.chart.clone() });
+                }
+            }
+        }
+        Ok(Self { charts, diagnostics })
+    }
+
+    pub fn charts(&self) -> &IndexMap<ChartId, BoundChart> {
+        &self.charts
+    }
+}
+
+#[derive(Debug)]
+pub struct BoundChart {
+    pub body: Body,
 }
 
 /// A chart's body: what its family bound, or the error card it draws instead.
@@ -32,8 +67,15 @@ pub enum Invalid {
 pub enum Body {
     /// bar, line, area, scatter, histogram, heatmap.
     Plot(Box<Plot>),
-    /// Execute error, bind refusal or no data: the card's text is the diagnostic's message.
-    Failed(Diagnostic),
+    Failed(Failure),
+}
+
+/// Execute error, bind refusal or no data: the card's text is the diagnostic's message.
+#[derive(Debug)]
+pub struct Failure {
+    /// The chart the error belongs to.
+    pub chart: ChartId,
+    pub diagnostic: Diagnostic,
 }
 
 /// The bar orientation law's verdict (RL §1d); every other family is vertical.

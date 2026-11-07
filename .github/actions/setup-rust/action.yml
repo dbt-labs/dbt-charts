@@ -6,11 +6,14 @@ inputs:
     description: The cargo target directory to cache
     required: false
     default: libs/chart-svg/python/target
-  profile:
+  cache-name:
     description: >-
-      Names what the job builds in `target` (ext, release, dev). One cache per
-      profile, so a job restores only the artifacts it uses. `ext` is the
-      dbt_charts._engine build, which is also keyed on the Python version.
+      Names what the job builds in `target` (ext, workspace, equivalence); a
+      cache key label, not a cargo profile. One cache per name, so a job restores
+      only the artifacts it uses. Jobs that share a name must build the same
+      crates: an exact hit backdates the sources, so a narrower build's entry
+      hands a wider build stale crates. `ext` is the dbt_charts._engine build,
+      also keyed on the Python version.
     required: false
     default: ext
   key-suffix:
@@ -37,7 +40,7 @@ runs:
     # of keying on "".
     - name: Resolve the build interpreter
       id: python
-      if: inputs.profile == 'ext'
+      if: inputs.cache-name == 'ext'
       run: |
         version="$(uv run --no-project python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
         echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -47,6 +50,12 @@ runs:
     # this action is nested (setup-python); env survives, so paths read it.
     - name: Pin the cached target dir
       run: echo "SETUP_RUST_TARGET=${{ inputs.target }}" >> "$GITHUB_ENV"
+      shell: bash
+
+    # The repo's .cargo/config.toml moves build intermediates under
+    # $CARGO_HOME/build; the cache below holds only the target dir.
+    - name: Keep build intermediates in the cached target dir
+      run: echo "CARGO_BUILD_BUILD_DIR=$GITHUB_WORKSPACE/$SETUP_RUST_TARGET" >> "$GITHUB_ENV"
       shell: bash
 
     # Only main saves (a PR's or merge group's entries are unreadable elsewhere
@@ -65,8 +74,8 @@ runs:
           ~/.cargo/git
           ${{ env.SETUP_RUST_TARGET }}
           !${{ env.SETUP_RUST_TARGET }}/**/incremental
-        key: cargo-${{ runner.os }}-${{ inputs.profile }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-${{ hashFiles('.github/actions/setup-rust/action.yml', 'libs/chart-svg/**', 'dbt-charts/src/dbt_charts/core/defaults/palettes/tone/*.yml') }}
-        restore-keys: cargo-${{ runner.os }}-${{ inputs.profile }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-
+        key: cargo-${{ runner.os }}-${{ inputs.cache-name }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-${{ hashFiles('.github/actions/setup-rust/action.yml', 'libs/chart-svg/**', 'dbt-charts/src/dbt_charts/core/defaults/palettes/tone/*.yml') }}
+        restore-keys: cargo-${{ runner.os }}-${{ inputs.cache-name }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-
 
     - name: Cache cargo registry and target
       id: cargo-cache
@@ -79,8 +88,8 @@ runs:
           ~/.cargo/git
           ${{ env.SETUP_RUST_TARGET }}
           !${{ env.SETUP_RUST_TARGET }}/**/incremental
-        key: cargo-${{ runner.os }}-${{ inputs.profile }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-${{ hashFiles('.github/actions/setup-rust/action.yml', 'libs/chart-svg/**', 'dbt-charts/src/dbt_charts/core/defaults/palettes/tone/*.yml') }}
-        restore-keys: cargo-${{ runner.os }}-${{ inputs.profile }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-
+        key: cargo-${{ runner.os }}-${{ inputs.cache-name }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-${{ hashFiles('.github/actions/setup-rust/action.yml', 'libs/chart-svg/**', 'dbt-charts/src/dbt_charts/core/defaults/palettes/tone/*.yml') }}
+        restore-keys: cargo-${{ runner.os }}-${{ inputs.cache-name }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-
 
     # Cargo decides freshness of local crates by mtime, and checkout stamps
     # every file new, so without this an exact hit still recompiles and

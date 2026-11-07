@@ -10,16 +10,12 @@ warning sinks the Python renderers write for a warning. An engine refusal
 
 from __future__ import annotations
 
-import datetime
-import decimal
 import json
-import math
 from collections.abc import Callable
 from dataclasses import asdict
-from typing import Any, Literal
+from typing import Literal
 
 from dbt_charts import _engine
-from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.compile.format import (
     format_fields,
     sub_unit_spec,
@@ -67,6 +63,12 @@ from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_CUSTOM_RENDER
 from dbt_charts.core.diagnostics.registry import ErrorCode, build_doc_url
 from dbt_charts.core.execute.cache_backend import ResultRows
+from dbt_charts.core.execute.rows_wire import (
+    JsonDict,
+    encode_cells,
+    json_default,
+    schema_wire,
+)
 from dbt_charts.core.fonts import get_fonts_dir
 from dbt_charts.core.render.board_links import get_link_context, resolve_href
 from dbt_charts.core.render.board_variables import (
@@ -129,7 +131,7 @@ from dbt_charts.core.render.chart.x_domain_paint_order import (
     XDomainPaintOrder,
     record_x_domain_paint_order,
 )
-from dbt_charts.core.render.controls import controls_are_interactive
+from dbt_charts.core.render.controls import controls_are_interactive, is_flat_export
 from dbt_charts.core.render.geo.loader import load_geometry_text
 from dbt_charts.core.render.sizing import TABLE_PAGINATION_CONTROL_HEIGHT
 from dbt_charts.core.render.svg_utils import css_color
@@ -147,57 +149,35 @@ from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_SPECS,
     PREDEFINED_SUB_UNIT_FALLBACK,
 )
-from dbt_charts.core.utils import CellValue
-
-JsonDict = dict[str, Any]  # type-state: explicit_any — JSON payload and engine params
 
 
-def json_default(obj: CellValue) -> str | float:
-    """JSON hook for query cells: ISO dates, numeric Decimals as numbers (a
-    str()'d Decimal would reach the engine as a string cell and flip its
-    numeric-type verdicts), str() for anything else."""
-    if isinstance(obj, (datetime.date, datetime.datetime)):
-        return obj.isoformat()
-    if isinstance(obj, decimal.Decimal):
-        return float(obj)
-    return str(obj)
-
-
-_JsonValue = Any  # type-state: explicit_any — a query cell or a JSON container of them
-
-
-def _encode_cells(value: _JsonValue) -> _JsonValue:
-    if isinstance(value, float | decimal.Decimal):
-        if not math.isfinite(value):
-            kind = "nan" if math.isnan(value) else ("inf" if value > 0 else "-inf")
-            return {"non_finite": kind, "text": str(value)}
-        if isinstance(value, decimal.Decimal):
-            return {"decimal": str(value)}
-    if isinstance(value, dict):
-        return {k: _encode_cells(v) for k, v in value.items()}
-    if isinstance(value, list | tuple):
-        return [_encode_cells(v) for v in value]
-    return value
-
-
-def schema_wire(schema: dict[str, ColumnType]) -> JsonDict:
-    """Each column's declared type as the engine reads it."""
-    return {name: declared.model_dump(mode="json") for name, declared in schema.items()}
+def dumps_layout(layout: JsonDict) -> str:
+    """The layout as JSON text; it holds no query cells."""
+    return json.dumps(layout, default=json_default, allow_nan=False)
 
 
 def dumps_payload(payload: JsonDict) -> str:
-    """The payload as JSON text.
+    """The payload with its rows inline, as the `chart-renderer payload.json`
+    CLI reads it."""
+    cells = {k: encode_cells(payload[k]) for k in ("rows", "datasets") if k in payload}
+    return dumps_layout({**payload, **cells})
 
-    JSON has no `NaN`/`Infinity` and no exact Decimal, so a query cell that is
-    one is tagged: a finite Decimal as `{"decimal": str(value)}`, a non-finite
-    float or Decimal as `{"non_finite": "nan" | "inf" | "-inf", "text":
-    str(value)}`. The engine decodes both once, when it parses the payload;
-    `text` labels a pivot dimension. Only `rows` and `datasets` hold query
-    cells: a non-finite value anywhere else is a bug, and `allow_nan=False`
-    raises on it.
-    """
-    cells = {k: _encode_cells(payload[k]) for k in ("rows", "datasets") if k in payload}
-    return json.dumps({**payload, **cells}, default=json_default, allow_nan=False)
+
+def inline_payload(
+    layout: JsonDict, result: ResultRows, datasets: dict[str | None, ResultRows]
+) -> JsonDict:
+    """`layout` with its rows inline: the payload the CLI reads."""
+    return {
+        **layout,
+        "rows": result.rows,
+        "datasets": {name: sent.rows for name, sent in datasets.items()},
+        "schema": {
+            "rows": schema_wire(result.schema),
+            "datasets": {
+                name: schema_wire(sent.schema) for name, sent in datasets.items()
+            },
+        },
+    }
 
 
 def board_formats(board_style: ResolvedStyle) -> JsonDict | None:
@@ -370,9 +350,19 @@ def chart_geometries(chart: ResolvedChart) -> dict[str, str] | None:
     return {url: load_geometry_text(url)}
 
 
-def build_chart_payload(
+def engine_datasets(
+    chart: ResolvedChart, datasets: dict[str | None, ResultRows]
+) -> dict[str | None, ResultRows]:
+    """`datasets` as the engine draws from them. A spark_bar's label prints
+    `str(cell)`, and a datetime's differs from the ISO form every other cell
+    travels in, so its datetimes are text."""
+    if not isinstance(chart, ResolvedSparkBarChart):
+        return datasets
+    return {name: result.datetimes_as_text for name, result in datasets.items()}
+
+
+def build_chart_layout(
     chart: ResolvedChart,
-    datasets: dict[str | None, ResultRows],
     *,
     width: float,
     height: float,
@@ -385,16 +375,13 @@ def build_chart_payload(
     authored_height: float | None = None,
     pie_mode: PieMode | None = None,
 ) -> JsonDict:
-    """The engine payload for one chart.
+    """The engine payload for one chart, without its rows: `resolved`, the box
+    and the board's envelope. The rows go beside it as `ResultRows.engine_rows`.
 
     `pie_mode` is a pie's sized mode; absent, the engine decides from the box
-    the payload carries.
-
-    `datasets` is `layout_sizing.build_chart_datasets`'s full result, forwarded
-    unreshaped: `rows` is `datasets[chart.query_name]` and a layer with its own
-    `query_name` reads its rows from the map. `variables` are the board's
-    variable values (a table reads `{chart_id}_page`). `measuring` marks a sizing
-    probe; `authored_height` is the literal slot height an ancestor authored.
+    the payload carries. `variables` are the board's variable values (a table
+    reads `{chart_id}_page`). `measuring` marks a sizing probe;
+    `authored_height` is the literal slot height an ancestor authored.
     """
     link_context = get_link_context()
     resolved = chart.model_dump(mode="json")
@@ -405,28 +392,12 @@ def build_chart_payload(
         # A spark_bar has never drawn a link, authored or auto-linked, so the
         # engine never receives one.
         resolved["link"] = None
-        # The bar's label prints `str(cell)`, and a datetime's differs from the
-        # ISO form every other cell travels in.
-        datasets = {
-            name: ResultRows(
-                [
-                    {
-                        k: str(v) if isinstance(v, datetime.datetime) else v
-                        for k, v in row.items()
-                    }
-                    for row in result.rows
-                ],
-                {
-                    column: ColumnType(kind="string")
-                    if declared.kind in ("datetime", "datetime_tz")
-                    else declared
-                    for column, declared in result.schema.items()
-                },
-            )
-            for name, result in datasets.items()
-        }
     if isinstance(chart, ResolvedTableChart):
         check_table_link_colors(chart)
+        if is_flat_export():
+            column_layout = resolved["style"]["table"]["column_layout"]
+            column_layout["overflow"] = "fit"
+            column_layout["freeze"] = 0
     if isinstance(chart, ResolvedCalloutChart):
         check_callout_css(chart.style)
         # The engine reads no project files: it gets every image already resolved.
@@ -439,15 +410,7 @@ def build_chart_payload(
             )
     return {
         "resolved": resolved,
-        "rows": datasets[chart.query_name].rows,
-        "datasets": {name: result.rows for name, result in datasets.items()},
         "geometries": chart_geometries(chart),
-        "schema": {
-            "rows": schema_wire(datasets[chart.query_name].schema),
-            "datasets": {
-                name: schema_wire(result.schema) for name, result in datasets.items()
-            },
-        },
         "variables": variables,
         "variable_options": dict(current_variable_options()),
         "title_shift": title_shift.model_dump(mode="json"),
@@ -481,6 +444,87 @@ def build_chart_payload(
     }
 
 
+def engine_inputs(
+    chart: ResolvedChart,
+    datasets: dict[str | None, ResultRows],
+    *,
+    width: float,
+    height: float,
+    padding: dict[str, float] | None,
+    board_style: ResolvedStyle,
+    variables: VariableValues,
+    title_shift: TitleShift,
+    is_placeholder: bool,
+    measuring: bool = False,
+    authored_height: float | None = None,
+    pie_mode: PieMode | None = None,
+) -> tuple[JsonDict, dict[str | None, ResultRows]]:
+    """The layout and the results the engine draws `chart` from. `datasets` is
+    `layout_sizing.build_chart_datasets`'s full result: `rows` is
+    `datasets[chart.query_name]` and a layer with its own `query_name` reads its
+    rows from the map."""
+    layout = build_chart_layout(
+        chart,
+        width=width,
+        height=height,
+        padding=padding,
+        board_style=board_style,
+        variables=variables,
+        title_shift=title_shift,
+        is_placeholder=is_placeholder,
+        measuring=measuring,
+        authored_height=authored_height,
+        pie_mode=pie_mode,
+    )
+    return layout, engine_datasets(chart, datasets)
+
+
+def build_chart_payload(
+    chart: ResolvedChart,
+    datasets: dict[str | None, ResultRows],
+    *,
+    width: float,
+    height: float,
+    padding: dict[str, float] | None,
+    board_style: ResolvedStyle,
+    variables: VariableValues,
+    title_shift: TitleShift,
+    is_placeholder: bool,
+    measuring: bool = False,
+    authored_height: float | None = None,
+    pie_mode: PieMode | None = None,
+) -> JsonDict:
+    """The chart's layout with its rows inline: the payload the
+    `chart-renderer payload.json` CLI reads."""
+    layout, sent = engine_inputs(
+        chart,
+        datasets,
+        width=width,
+        height=height,
+        padding=padding,
+        board_style=board_style,
+        variables=variables,
+        title_shift=title_shift,
+        is_placeholder=is_placeholder,
+        measuring=measuring,
+        authored_height=authored_height,
+        pie_mode=pie_mode,
+    )
+    return inline_payload(layout, sent[chart.query_name], sent)
+
+
+def _dataset_handles(
+    datasets: dict[str | None, ResultRows],
+) -> dict[str, _engine.Rows]:
+    """The engine's handle for each named result; a chart with no query has an
+    unnamed placeholder entry no layer can read."""
+    return {
+        name: result.engine_rows
+        for name, result in datasets.items()
+        if name is not None
+    }
+
+
 def _chart_data_error(exc: _engine.RenderDiagnosticError) -> ChartDataError:
     registered = REGISTRY.get(exc.code)
     if not isinstance(registered, ErrorCode):
@@ -496,10 +540,8 @@ def measure_table_natural_width(
     """The width a table needs to show every column (columns and outer
     padding), or `None` with nothing to hug. Raises `ChartDataError` for a
     table the engine cannot measure."""
-    payload = {
+    layout = {
         "resolved": chart.model_dump(mode="json"),
-        "rows": result.rows,
-        "schema": schema_wire(result.schema),
         "fonts_dir": str(get_fonts_dir()),
         "numeral_family": board_style.numeral_family,
         "format_locale": format_locale_wire(active_format_locale()),
@@ -510,7 +552,9 @@ def measure_table_natural_width(
         "formats": board_formats(board_style),
     }
     try:
-        return _engine.measure_table_natural_width(dumps_payload(payload))
+        return _engine.measure_table_natural_width(
+            result.engine_rows, dumps_layout(layout)
+        )
     except _engine.RenderDiagnosticError as exc:
         raise _chart_data_error(exc) from exc
 
@@ -522,14 +566,14 @@ def table_title_geometry(
     distance below the card's inset top, and the height from that baseline down
     to the header. Raises `ChartDataError` for a table the engine cannot lay
     out."""
-    payload = {
+    layout = {
         "resolved": chart.model_dump(mode="json"),
         "width": slot_width,
         "fonts_dir": str(get_fonts_dir()),
         "language": active_language(),
     }
     try:
-        return _engine.table_title_geometry(dumps_payload(payload))
+        return _engine.table_title_geometry(dumps_layout(layout))
     except _engine.RenderDiagnosticError as exc:
         raise _chart_data_error(exc) from exc
 
@@ -578,6 +622,7 @@ _GEOMETRY_WARNINGS = (
     "WARN-POINT-MAP-OUT-OF-PROJECTION",
     "WARN-TABLE-CONTENT-TALLER-THAN-WIDE",
     "WARN-TABLE-HEADER-EXTRA-WRAP",
+    "WARN-TABLE-SCROLL-ROWS-CAPPED",
     "WARN-VALUE-LABELS-CROWD-WIDTH",
     "WARN-VALUE-LABELS-NO-MARKERS",
     "WARN-VALUE-LABELS-THINNED",
@@ -760,7 +805,7 @@ def render_native(
     if variables is None:
         scoped = current_board_variables()
         variables = {} if scoped is None else scoped
-    payload = build_chart_payload(
+    layout, sent = engine_inputs(
         chart,
         {chart.query_name: data} if datasets is None else datasets,
         width=width,
@@ -780,7 +825,12 @@ def render_native(
         else None
     )
     svg, natural_height = _render_payload(
-        payload, authored, record_warnings=record_warnings, measuring=measuring
+        layout,
+        sent[chart.query_name],
+        sent,
+        authored,
+        record_warnings=record_warnings,
+        measuring=measuring,
     )
     if isinstance(chart, ResolvedCustomChart):
         # The engine refused the template's own output past the budget; the
@@ -815,9 +865,8 @@ def decide_pie_mode(
     (`pie_layout`), the same one the render draws with. Raises
     `ChartDataError` for a pie the engine cannot fit even bare."""
     scoped = current_board_variables()
-    payload = build_chart_payload(
+    layout = build_chart_layout(
         chart,
-        {chart.query_name: data},
         width=width,
         height=height,
         padding=padding,
@@ -828,7 +877,9 @@ def decide_pie_mode(
     )
     try:
         mode, _radius, _free_radius, _min_radius = _engine.pie_layout(
-            dumps_payload(payload)
+            data.engine_rows,
+            _dataset_handles({chart.query_name: data}),
+            dumps_layout(layout),
         )
     except _engine.RenderDiagnosticError as exc:
         raise _chart_data_error(exc) from exc
@@ -836,25 +887,32 @@ def decide_pie_mode(
 
 
 def _render_payload(
-    payload: JsonDict,
+    layout: JsonDict,
+    result: ResultRows,
+    datasets: dict[str | None, ResultRows],
     authored: dict[str, str | None] | None = None,
     *,
     record_warnings: bool = True,
     measuring: bool = False,
 ) -> tuple[str, float | None]:
-    """Render `payload`; `authored` maps a callout field to its text as written,
-    which a truncation warning reports in place of the resolved image URLs."""
+    """Render `layout` over `result` and `datasets`; `authored` maps a callout
+    field to its text as written, which a truncation warning reports in place of
+    the resolved image URLs."""
     try:
-        svg, warnings, natural_height = _engine.render_chart(dumps_payload(payload))
+        svg, warnings, natural_height = _engine.render_chart(
+            result.engine_rows,
+            _dataset_handles(datasets),
+            dumps_layout(layout),
+        )
     except _engine.RenderDiagnosticError as exc:
         raise _chart_data_error(exc) from exc
     # Placement warnings come from painted renders only, at the chart's narrowest
     # placement; a sizing probe's geometry was never painted.
     speaks_for_placement = False
     if record_warnings:
-        chart_id = payload["resolved"]["id"]
+        chart_id = layout["resolved"]["id"]
         speaks_for_placement = not measuring and claim_placement(
-            chart_id, payload["width"]
+            chart_id, layout["width"]
         )
         if speaks_for_placement:
             reset_geometry_warnings(chart_id)
@@ -904,15 +962,15 @@ def render_callout_card(
                 "style": style.model_dump(mode="json"),
                 "placard": placard,
             },
-            "rows": [],
-            "schema": {"rows": {}, "datasets": {}},
             "width": width,
             "height": height,
             "background": None,
             "fonts_dir": str(get_fonts_dir()),
             "padding": None,
             "language": active_language(),
-        }
+        },
+        ResultRows([], {}),
+        {},
     )
     return svg
 

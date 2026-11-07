@@ -3,7 +3,8 @@
 //! (`time_unit_detect.py`'s `default_subday_label_expr_for`, `default_subday_tick_interval`,
 //! `subday_header_for`).
 
-use super::temporal::{end_labels_fit, every_instants, interval_axis, AuthoredTickCadence, BareMark, BareTick, LabelPeriods};
+use super::temporal::{end_labels_fit, interval_axis, BareMark, BareTick, LabelPeriods};
+use layout::time_ladder::{every_instants, AuthoredTickCadence};
 
 use ::bind::temporal::{TimeUnit};
 use d3rs::calendar::civil_from_days;

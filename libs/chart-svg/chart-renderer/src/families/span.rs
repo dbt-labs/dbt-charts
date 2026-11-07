@@ -9,7 +9,8 @@ use serde_json::Value;
 
 use crate::common::FormatSlot;
 use crate::contract::{self, SpanRow};
-use crate::families::temporal::{month_abbr, zone_instants, AuthoredTimeFormat};
+use crate::families::temporal::{month_abbr, AuthoredTimeFormat};
+use ::layout::time_ladder::zone_instants;
 use ::bind::temporal::{TimeUnit};
 use d3rs::calendar::civil_from_days;
 use ::bind::time_axis::TimeAxis;
@@ -454,6 +455,7 @@ pub(crate) fn with_layer_day_numbers(
                 .datasets
                 .as_mut()
                 .and_then(|datasets| datasets.get_mut(name))
+                .map(|rows| &mut **rows)
                 .ok_or_else(|| format!("bar: a layer reads query {name:?}, which has no dataset available"))?,
         };
         for field in layer_date_fields(layer) {

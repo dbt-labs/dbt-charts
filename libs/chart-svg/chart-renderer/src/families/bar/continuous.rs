@@ -25,7 +25,7 @@ use super::axes::ContinuousXAxis;
 use super::bind::zero_label;
 use super::domain::nice_shared_scale;
 use super::labels::{LabelPoint, LabelSpec, label_font, label_spot, mark_labels, zero_label_at};
-use super::layout::Drawn;
+use super::layout::{Drawn, clipped_if};
 use super::legend::{grouped_legend_domain, numeric_legends_of, scatter_legend_entries};
 use super::marks::{Rounded, bar_passes, base_mark, baseline_rule_layers, baseline_rules, collapsed_bars, datum_by_key, hover_band_for, layer_bar, layer_bar_labels, link_hrefs, unity_rule};
 use super::tooltip::{NativeTitles, bar_datum_aria};
@@ -411,6 +411,10 @@ pub(super) fn render_vertical_continuous_x_panel(
     let val_away = val_on_right && ax_y.labels.align_kept("right").is_none();
     let y_label_gutter = if val_away { 0.0 } else { y_gutter };
     let ghost_pad = if val_away { y_label_pad } else { y_gutter };
+    // Labels above their gridlines sit flush to the gutter's outer edge; the tick marks go unpainted but their length stays reserved.
+    let y_above = ax_y.labels_above();
+    let y_baseline = ax_y.value_label_baseline();
+    let y_start_outer = y_above && !val_on_right && ax_y.labels.align.as_deref() == Some("left");
     // `axis_y.mirror`: a ghost axis on the left edge repeating the labels at
     // the primary's own offset (a facet's composer paints its own).
     let ghost = ax_y.mirror_ghost("bar")?;
@@ -422,9 +426,15 @@ pub(super) fn render_vertical_continuous_x_panel(
         .map_or(Ok(Vec::new()), |g| g.widths(&y_ticks, &y_labels, &y_label_ws, |label| fonts.measure_shaped(label, y_family, y_font_size)))?;
     // The labels the right-hand axis paints and their widths.
     let (right_texts, right_ws) = if left_flip { (&ghost_texts, &ghost_ws) } else { (&y_labels, &y_label_ws) };
+    let widest = |ws: &[f64]| ws.iter().map(|w| w.min(y_limit)).fold(0.0_f64, f64::max);
+    let (right_widest, ghost_widest) = (widest(right_ws), widest(&ghost_ws));
     let y_label_y_anchor = |pw: f64| -> (f64, &'static str) {
-        if !val_on_right {
+        if y_start_outer {
+            (-(y_tick_eff + y_gutter), "left")
+        } else if !val_on_right {
             (-(y_tick_eff + y_label_pad), "right")
+        } else if val_away && y_above {
+            (pw + y_tick_eff + y_label_pad + right_widest, "right")
         } else if val_away {
             (pw + y_tick_eff + y_label_pad, "left")
         } else {
@@ -695,7 +705,7 @@ pub(super) fn render_vertical_continuous_x_panel(
                         lw.min(y_limit),
                         y_font_size,
                         label_align,
-                        "middle",
+                        y_baseline,
                     );
                     // A facet panel's value axis is real Vega's `row_footer`
                     // — a role structurally separate from `cell` that never
@@ -715,7 +725,9 @@ pub(super) fn render_vertical_continuous_x_panel(
                         b.union(&label_ink);
                     }
                     if mirror_active {
-                        b.union(&vega_fit::text_ink(-(y_tick_eff + ghost_pad), y, ghost_ws[ghost_i].min(y_limit), y_font_size, "right", "middle"));
+                        let (ghost_x, ghost_align) =
+                            if y_above { (-(y_tick_eff + ghost_pad + ghost_widest), "left") } else { (-(y_tick_eff + ghost_pad), "right") };
+                        b.union(&vega_fit::text_ink(ghost_x, y, ghost_ws[ghost_i].min(y_limit), y_font_size, ghost_align, y_baseline));
                     }
                 }
                 // A facet panel that suppresses its own x-axis (every row
@@ -932,15 +944,28 @@ pub(super) fn render_vertical_continuous_x_panel(
     let y_scale = Continuous::linear([y_min, y_max], [plot_h, 0.0]);
     let y_pos = |tv: f64| y_scale.scale(tv);
 
+    // The outer edges of the value-label gutters: gridlines and threshold rules run out to them. A panel that
+    // paints no value axis keeps its rules in.
+    let val_label_edges: Vec<f64> = if y_above && paint_value_axis {
+        let primary = if val_on_right {
+            plot_w + value_axis_right_overhang + 0.5 + y_tick_eff + if val_away { y_label_pad + right_widest } else { y_gutter }
+        } else {
+            0.5 - y_tick_eff - y_gutter
+        };
+        std::iter::once(primary).chain(mirror_active.then_some(0.5 - y_tick_eff - ghost_pad - ghost_widest)).collect()
+    } else {
+        Vec::new()
+    };
     if ax_y.grid.visible.unwrap_or(false) {
         let gc = crate::common::required_ink(ax_y.grid.color.as_deref(), "bar", "axis_y.grid.color")?;
+        let (grid_x1, grid_x2) = crate::common::reach_label_edges((0.5, plot_w + 0.5), &val_label_edges);
         let gw = ax_y.grid.width.unwrap_or(1.0);
         let go = ax_y.grid.opacity.unwrap_or(1.0);
         let lines: Vec<Node> = y_ticks
             .iter()
             .map(|&tv| {
                 let gy = crate::common::tick_round(y_pos(tv));
-                Node::line(Role::Grid, (0.5, gy), (plot_w + 0.5, gy), ax_y.grid.stroke(gc, gw).num("opacity", go))
+                Node::line(Role::Grid, (grid_x1, gy), (grid_x2, gy), ax_y.grid.stroke(gc, gw).num("opacity", go))
             })
             .collect();
         plot.push(crate::contract::grid_group(lines));
@@ -948,6 +973,7 @@ pub(super) fn render_vertical_continuous_x_panel(
     plot.extend(crate::families::layers::layer_grids(&layer_axes, ax_y, (plot_w, plot_h), "bar")?);
 
     let annotations = annotation_ctx(plot_w, plot_h);
+    let under_annotations = plot.len();
     plot.extend(crate::annotation::nodes(&annotations, crate::annotation::Plane::Background)?);
 
     // Bars. A facet panel's marks carry Vega's default description instead
@@ -963,7 +989,12 @@ pub(super) fn render_vertical_continuous_x_panel(
     } else {
         Vec::new()
     };
-    let (rx1, rx2) = crate::common::join_rule_to_edges(floor_span, &val_edges);
+    let joined_span = crate::common::join_rule_to_edges(floor_span, &val_edges);
+    let (rx1, rx2) = if crate::common::rule_reaches(floor_span, if val_on_right { plot_w + 0.5 } else { 0.5 }) {
+        crate::common::reach_label_edges(joined_span, &val_label_edges)
+    } else {
+        joined_span
+    };
     // A value tick at a painted baseline rule's value is that rule continued.
     let val_rules = match (rules, threshold.filter(|_| crate::common::rule_reaches(floor_span, val_edge_x))) {
         (Some(rules), Some(zl)) => crate::common::value_axis_rules(
@@ -973,6 +1004,13 @@ pub(super) fn render_vertical_continuous_x_panel(
             rules.width,
         ),
         _ => Vec::new(),
+    };
+    let y_label_at = |tv: f64| {
+        if y_above {
+            crate::common::above_label_y(&crate::common::thresholds(&val_rules), crate::common::tick_row(0.0, y_pos(tv)), ax_y.grid.width.unwrap_or(1.0), y_font_size)
+        } else {
+            y_pos(tv) + 0.5 + measure::baseline_shift(y_baseline, y_font_size)
+        }
     };
     let floor_rule = threshold.and_then(|zl| {
         let base = rules.into_iter().flat_map(|rules| [rules.zero.then_some(y_rule), rules.unity.then(|| y_pos(1.0))]).flatten();
@@ -1017,6 +1055,7 @@ pub(super) fn render_vertical_continuous_x_panel(
     } else {
         String::new()
     };
+    let bars_from = plot.len();
     for ((((&(_, yv), x_text), cat), p), extra) in bars_data.iter().zip(&bar_x_text).zip(&bar_cat).zip(&placed).zip(&bar_extra) {
         let yt = y_pos(yv);
         let (top, h) = if yt <= y0 { (yt, y0 - yt) } else { (y0, yt - y0) };
@@ -1046,6 +1085,15 @@ pub(super) fn render_vertical_continuous_x_panel(
             aria.as_deref(),
             r.selection.mark(r.link_open.anchor(hrefs.get(&key).map(String::as_str))))?);
     }
+    let knocked = crate::knockout::knock_out(
+        plot.split_off(bars_from),
+        &r.canvas,
+        &format!("ko{}", panel.map_or(0, |(_, ordinal)| ordinal)),
+        &crate::contract::scoped_id(&r.id),
+        (0.0, 0.0, plot_w, plot_h),
+    );
+    plot.extend(knocked.marks);
+    plot.splice(under_annotations..under_annotations, knocked.undercoat);
     if ghosts_on {
         let rules: Vec<crate::contract::GhostRule> = ghost_points
             .iter()
@@ -1078,6 +1126,7 @@ pub(super) fn render_vertical_continuous_x_panel(
             crate::contract::native_label(&[(x_field, row_str(row, x_field)), (name, val.to_string())])
         })
     };
+    let layer_undercoat = std::cell::RefCell::new(Vec::new());
     let paint_layer = |out: &mut Vec<Node>, i: usize, scale: &Continuous| -> Result<(), Diagnostic> {
         let layer = &layers.all[i];
         let layer_rows = layer_rows[i];
@@ -1105,11 +1154,15 @@ pub(super) fn render_vertical_continuous_x_panel(
                     let cx = x_pos(row_num(mark.row, x_field).expect("marks keep rows with an x"));
                     layer_rects.extend(layer_bar(1 + i, &|v| scale.scale(v), plot_h, clip, bl, mark, (cx - bw / 2.0, bw), &fill, aria.as_deref(), crate::families::layers::layer_link(link.as_ref(), (bl.query_name.as_deref(), r.query_name.as_deref())))?);
                 }
-                if clip {
-                    out.extend(clips.wrap((plot_w, plot_h), layer_rects));
-                } else {
-                    out.extend(layer_rects);
-                }
+                let knocked = crate::knockout::knock_out(
+                    layer_rects,
+                    &r.canvas,
+                    &format!("ko{}-layer{i}", panel.map_or(0, |(_, ordinal)| ordinal)),
+                    &crate::contract::scoped_id(&r.id),
+                    (0.0, 0.0, plot_w, plot_h),
+                );
+                layer_undercoat.borrow_mut().extend(clipped_if(clip, &clips, (plot_w, plot_h), knocked.undercoat));
+                out.extend(clipped_if(clip, &clips, (plot_w, plot_h), knocked.marks));
                 out.extend(layer_bar_labels(
                     bl,
                     layer_rows,
@@ -1235,12 +1288,14 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
         if let (Some(width), Some(zl)) = (rule_width, threshold) {
             let zc = zl.stroke();
             let layer_edge = if la.side == LayerSide::Right { plot_w + 0.5 } else { 0.5 };
-            let (lx1, lx2) = crate::common::join_rule_to_edges(floor_span, &[layer_edge]);
+            let joined = crate::common::join_rule_to_edges(floor_span, &[layer_edge]);
+            let (lx1, lx2) = if paint_value_axis { crate::common::reach_label_edges(joined, la.label_edge(plot_w, 0.0).as_slice()) } else { joined };
             plot.extend(baseline_rule_layers(painted_layers + 1 + i, &[scale.scale(0.0)], |y, aria| {
                 Node::line(Role::Rule, (lx1, y), (lx2, y), Attrs::new().set("stroke", zc).num("stroke-width", *width).extend(aria))
             })?);
         }
     }
+    plot.splice(under_annotations..under_annotations, layer_undercoat.into_inner());
     if let (Some(ml), Some(font)) = (&zero_text, &zero_label_font) {
         let linear = Continuous::linear([y_min, y_max], [plot_h, 0.0]);
         let spec = LabelSpec::new(ml, false, false, rows, &r.y);
@@ -1292,27 +1347,29 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
     let (edge_x, outward) = if val_on_right { (plot_w + value_axis_right_overhang + 0.5, 1.0) } else { (0.5, -1.0) };
     let mut y_items = crate::common::value_ticks(
         &ax_y.ticks,
-        crate::common::value_tick_rows(0.0, plot_h, y_tick_eff, y_ticks.iter().map(|&tv| y_pos(tv))),
+        crate::common::value_tick_rows(0.0, plot_h, y_tick_eff, y_ticks.iter().map(|&tv| y_pos(tv)).filter(|_| !y_above)),
         edge_x,
         outward,
         y_tick_eff,
         &crate::common::thresholds(&val_rules),
     )?;
     let y_label_x = match (val_on_right, val_away) {
+        (true, true) if y_above => edge_x + y_tick_eff + y_label_pad + right_widest,
         (true, true) => edge_x + y_tick_eff + y_label_pad,
         (true, false) => edge_x + y_tick_eff + y_gutter,
+        (false, _) if y_start_outer => edge_x - y_tick_eff - y_gutter,
         (false, _) => edge_x - y_tick_eff - y_label_pad,
     };
-    let y_label_anchor = if val_away { "start" } else { "end" };
+    let y_label_anchor = if val_away && !y_above || y_start_outer { "start" } else { "end" };
     for (&tv, lbl) in y_ticks.iter().zip(right_texts.iter()) {
-        let gy = y_pos(tv) + 0.5 + measure::baseline_shift("middle", y_font_size);
+        let gy = y_label_at(tv);
         y_items.push(crate::text::label(Role::Axis, (y_label_x, gy), Attrs::new().set("text-anchor", y_label_anchor).vega("font-family", y_family).num("font-size", y_font_size).quick_some("font-style", ax_y.labels.font.style.as_deref()).set("font-weight", y_label_weight.as_str()).set("fill", y_label_color), lbl.as_str()));
     }
 
     y_items.extend(crate::common::axis_title_rotated(
         &y_title_paint,
         val_title_style,
-        if val_on_right { y_label_x } else { y_label_x - y_label_ws.iter().copied().fold(0.0, f64::max) },
+        if val_on_right || y_start_outer { y_label_x } else { y_label_x - y_label_ws.iter().copied().fold(0.0, f64::max) },
         plot_h / 2.0,
         outward,
         (!suppress_x_axis).then_some(crate::contract::LabelKey::Y),
@@ -1323,15 +1380,15 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
     if mirror_active {
         let mut ghost_items = crate::common::value_ticks(
             &ax_y.ticks,
-            crate::common::value_tick_rows(0.0, plot_h, y_tick_eff, y_ticks.iter().map(|&tv| y_pos(tv))),
+            crate::common::value_tick_rows(0.0, plot_h, y_tick_eff, y_ticks.iter().map(|&tv| y_pos(tv)).filter(|_| !y_above)),
             0.5,
             -1.0,
             y_tick_eff,
             &crate::common::thresholds(&val_rules),
         )?;
         for (&tv, lbl) in y_ticks.iter().zip(ghost_texts.iter()) {
-            let gy = y_pos(tv) + 0.5 + measure::baseline_shift("middle", y_font_size);
-            ghost_items.push(crate::text::label(Role::Chrome, (0.5 - y_tick_eff - ghost_pad, gy), Attrs::new().set("text-anchor", "end").vega("font-family", y_family).num("font-size", y_font_size).quick_some("font-style", ax_y.labels.font.style.as_deref()).set("font-weight", y_label_weight.as_str()).set("fill", y_label_color), lbl.as_str()));
+            let gy = y_label_at(tv);
+            ghost_items.push(crate::text::label(Role::Chrome, (0.5 - y_tick_eff - ghost_pad - if y_above { ghost_widest } else { 0.0 }, gy), Attrs::new().set("text-anchor", if y_above { "start" } else { "end" }).vega("font-family", y_family).num("font-size", y_font_size).quick_some("font-style", ax_y.labels.font.style.as_deref()).set("font-weight", y_label_weight.as_str()).set("fill", y_label_color), lbl.as_str()));
         }
         plot.extend(crate::contract::axis_group(crate::contract::AxisChannel::Y, &y_caption.untitled(), (0.5, 0.0), ghost_items)?);
     }
@@ -1355,6 +1412,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
                 font_style: ax_y.labels.font.style.as_deref(),
                 font_color: y_label_color,
                 tick_size: y_tick_eff,
+                grid_width: ax_y.grid.width.unwrap_or(1.0),
                 ticks: &ax_y.ticks,
                 title_style: layer_title_style,
                 zero_rule: zero_width.zip(threshold).filter(|_| crate::common::rule_reaches(floor_span, edge_x)).map(|(width, zl)| (zl.stroke(), width)),
@@ -1445,9 +1503,10 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
                 .iter()
                 .zip(y_labels.iter())
                 .map(|(&tv, lbl)| {
-                    (group_y + y_pos(tv) + 0.5 + measure::baseline_shift("middle", y_font_size), lbl.clone())
+                    (group_y + y_pos(tv) + 0.5 + measure::baseline_shift(y_baseline, y_font_size), lbl.clone())
                 })
                 .collect(),
+            val_label_ys: y_ticks.iter().map(|&tv| if y_above { group_y + y_label_at(tv) } else { group_y + y_pos(tv) + 0.5 + measure::baseline_shift(y_baseline, y_font_size) }).collect(),
             val_tick_marks: crate::common::value_tick_rows(
                 plot_top,
                 plot_h,

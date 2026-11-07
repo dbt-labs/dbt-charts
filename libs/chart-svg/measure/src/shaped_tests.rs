@@ -254,3 +254,34 @@ fn the_served_faces_are_the_font_face_rules() {
     table.sort();
     assert_eq!(table, rules);
 }
+
+#[test]
+fn a_verdict_resolves_the_face_as_the_measurer_production_sums_in() {
+    // `FontBook::face_for` (`lib.rs`) reads only the stack's first entry and matches it against
+    // the shipped stems (exact, then a prefix with "regular" or "variable", then any prefix, then
+    // containment), else the body face: an unserved first entry measures in Inter whatever
+    // follows it, and a stem prefix reaches the served family.
+    let book = book();
+    let advance = |family: &str| {
+        book.raw_advance("Wednesday 18", &font(family, 10.0, 400.0))
+            .unwrap()
+    };
+    let inter = advance("Inter Variable");
+    let serif = advance("Source Serif 4");
+    assert_ne!(inter, serif);
+    assert_eq!(advance("Georgia, 'Source Serif 4'"), inter);
+    assert_eq!(advance("sans-serif, 'Source Serif 4'"), inter);
+    assert_eq!(advance("Inter"), inter);
+    assert_eq!(advance("'Source Serif 4', Georgia, serif"), serif);
+    assert_eq!(advance("Source Serif"), serif);
+    // The ranks: a stem prefix followed by "regular" or "variable" beats any other prefix, and a
+    // generic keyword is no family while a fragment of a stem is (containment).
+    assert_eq!(
+        advance("DBT Sans Tabular"),
+        advance("DBTSansTabular-Regular")
+    );
+    assert_eq!(advance("Source Serif 4"), advance("SourceSerif4Variable"));
+    assert_eq!(advance("serif4"), advance("SourceSerif4-Italic"));
+    assert_eq!(advance("serif"), inter);
+    assert_eq!(advance("system-ui"), inter);
+}

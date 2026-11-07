@@ -101,7 +101,9 @@ def test_a_band_before_the_data_is_clipped_not_widened_on_a_line(
     assert "2024" in labels, labels
 
 
-def test_a_one_day_band_on_the_last_day_of_a_daily_line_shows_its_left_half() -> None:
+def test_a_one_day_band_on_the_last_day_of_a_daily_line_shows_its_left_half_and_the_edge_pad() -> (
+    None
+):
     days = [{"month": f"2024-06-{d:02d}", "revenue": 10.0 + d} for d in range(1, 11)]
     _, svg = _labels(
         "line",
@@ -120,8 +122,10 @@ def test_a_one_day_band_on_the_last_day_of_a_daily_line_shows_its_left_half() ->
     )
     assert band is not None
     x, width = float(band.group(1)), float(band.group(2))
+    # The last mark sits one edge pad (a 4px stroke's point radius plus 2px) inside the plot edge.
+    edge_pad = 1.7 * 4 / 2 + 2
     assert x == pytest.approx(xs[-1] - step / 2, abs=0.05)
-    assert width == pytest.approx(step / 2, abs=0.05)
+    assert width == pytest.approx(step / 2 + edge_pad, abs=0.05)
 
 
 @pytest.mark.parametrize("family", ["line", "area", "bar"])

@@ -2287,10 +2287,10 @@ fn render_error_card_svg(
         },
     });
     let placard = crate::Payload {
-        cell_text: Vec::new(),
+        cell_text: Default::default(),
         max_template_output_bytes: None,
         resolved,
-        rows: Vec::new(),
+        rows: Default::default(),
         width,
         height,
         background: None,
@@ -2515,7 +2515,7 @@ fn render_chart_item(
     // datasets lookup below entirely rather than forwarding an empty
     // placeholder into `payload.chart_datasets`.
     let (rows, datasets, schema) = if chart_type == "callout" {
-        (Vec::new(), None, crate::payload_schema::PayloadSchema::default())
+        (crate::SharedRows::default(), None, crate::payload_schema::PayloadSchema::default())
     } else {
         let query_name = chart_json
             .get("query_name")
@@ -2593,11 +2593,11 @@ fn render_chart_item(
         _ => None,
     };
     let chart_payload = Payload {
-        cell_text: Vec::new(),
+        cell_text: Default::default(),
         // The composer sizes no custom chart (`sizing`), so no template runs here.
         max_template_output_bytes: None,
         resolved: chart_json.clone(),
-        rows,
+        rows: rows.into(),
         width: slot_w,
         height: slot_h,
         background: Some(chart_bg.to_string()),
@@ -6030,7 +6030,7 @@ mod nested_box_sidecar_tests {
             serde_json::from_str(rows_json).unwrap();
         let schema = crate::payload_schema::test_schema_of(&rows);
         let mut inner = HashMap::new();
-        inner.insert(query_name.to_string(), column_types::Dataset { rows, schema });
+        inner.insert(query_name.to_string(), column_types::Dataset { rows: rows.into(), schema });
         (chart_id.to_string(), inner)
     }
 

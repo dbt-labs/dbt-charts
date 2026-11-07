@@ -17,6 +17,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from dbt_charts.core.compile.models.primitives import resolved_as
+from dbt_charts.core.compile.models.style.resolved._marks import ResolvedPointMarkStyle
 from dbt_charts.core.compile.resolve.chart._chart_rows import PanelRows, reduce_panels
 from dbt_charts.core.constants.estimates import FACET_CHROME_PX, FACET_MIRROR_AXIS_PX
 from dbt_charts.core.constants.marks import (
@@ -341,3 +343,18 @@ def bake_point_companions(
         )
         point_mark = point_mark.model_copy(update={"size": auto_size})
     return point_mark
+
+
+def bake_edge_size(
+    point_mark: ResolvedPointMarkStyle, stroke: float
+) -> ResolvedPointMarkStyle:
+    """Bake ``edge_size``, the point area the x edge pad clears.
+
+    The size the point is drawn at, else the size an automatic point takes on
+    ``stroke``, so a chart pads the same with its points on or off.
+    """
+    size = point_mark.size
+    edge = (
+        size if size is not None and size > 0 else (POINT_DIAMETER_RATIO * stroke) ** 2
+    )
+    return resolved_as(ResolvedPointMarkStyle, point_mark, edge_size=edge)

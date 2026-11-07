@@ -119,6 +119,16 @@ class _FakeResultSet:
             yield row
 
 
+class _FakeParameter:
+    """The result of ``SHOW PARAMETERS``: one TIMEZONE row."""
+
+    def __init__(self, timezone: str) -> None:
+        self._timezone = timezone
+
+    def collect(self) -> list[dict[str, str]]:
+        return [{"value": self._timezone}]
+
+
 class _FakeSession:
     """Duck-typed stand-in for a Snowpark ``Session`` that records every SQL
     string it was asked to run."""
@@ -132,7 +142,9 @@ class _FakeSession:
         schema: str | None = '"PUBLIC"',
         columns: list[str] | None = None,
         datatypes: list[Any] | None = None,
+        timezone: str = "UTC",
     ) -> None:
+        self._timezone = timezone
         self._datatypes = datatypes
         self._rows = [_FakeRow(r) for r in (rows or [])]
         self._columns = columns or list((rows or [{}])[0])
@@ -148,7 +160,9 @@ class _FakeSession:
     def get_current_schema(self) -> str | None:
         return self._schema
 
-    def sql(self, sql: str) -> _FakeResultSet:
+    def sql(self, sql: str) -> _FakeResultSet | _FakeParameter:
+        if sql.startswith("SHOW PARAMETERS"):
+            return _FakeParameter(self._timezone)
         self.received_sql.append(sql)
         if self._raises is not None:
             raise self._raises
@@ -304,6 +318,9 @@ class _MidStreamFailure:
     def sql(self, sql: str) -> _MidStreamFailure:
         return self
 
+    def collect(self) -> list[dict[str, str]]:
+        return [{"value": "UTC"}]
+
     def get_current_database(self) -> str | None:
         return '"ANALYTICS"'
 
@@ -343,6 +360,9 @@ def test_stream_is_closed_when_the_ceiling_stops_the_fetch_early(
 
         def sql(self, sql: str) -> _Stream:
             return self
+
+        def collect(self) -> list[dict[str, str]]:
+            return [{"value": "UTC"}]
 
         def get_current_database(self) -> str | None:
             return '"ANALYTICS"'
@@ -573,6 +593,30 @@ class TestSessionContext:
 
         assert same.is_success, same.error
         assert folded.error is not None
+
+    def test_a_session_in_another_time_zone_is_refused_before_any_query(
+        self, tmp_path: Any
+    ) -> None:
+        """The host's session is never altered to match the board, so a mismatch
+        would otherwise bucket dates on the wrong days."""
+        session = _FakeSession(rows=[{"ID": 1}], timezone="America/Los_Angeles")
+
+        result = self._run(tmp_path, session, _snowflake_source())
+
+        assert result.error is not None
+        assert "America/Los_Angeles" in str(result.error)
+        assert "UTC" in str(result.error)
+        assert session.received_sql == []
+
+    def test_a_session_in_the_boards_time_zone_runs_and_is_never_altered(
+        self, tmp_path: Any
+    ) -> None:
+        session = _FakeSession(rows=[{"ID": 1}], timezone="UTC")
+
+        result = self._run(tmp_path, session, _snowflake_source())
+
+        assert result.is_success, result.error
+        assert session.received_sql == ["SELECT id FROM orders"]
 
     def test_declared_role_and_warehouse_do_not_gate(self, tmp_path: Any) -> None:
         source = SnowflakeSourceConfig(

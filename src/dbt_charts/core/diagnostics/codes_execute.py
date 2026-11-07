@@ -629,6 +629,32 @@ WARN_DBT_MANIFEST_MISSING = REGISTRY.register(
     )
 )
 
+WARN_SESSION_TIME_ZONE_UNSUPPORTED = REGISTRY.register(
+    WarningCode(
+        code="WARN-SESSION-TIME-ZONE-UNSUPPORTED",
+        domain="execute",
+        title="Source cannot run queries in the board time zone",
+        message_template="Source {source!r} ({adapter_type}) has no session time zone, so its queries run in the warehouse's own zone, not the board's {time_zone}.",
+        fix_template="Convert in the SQL where the board's zone matters, or set regional.time_zone to UTC.",
+        doc="Fired when a board sets a `regional.time_zone` other than UTC and a query's source is on a warehouse with no session time zone to set (SQLite, SQL Server, Fabric, MySQL, MariaDB, Athena, Presto). Every other warehouse runs its queries in the board's zone, so date truncation and casts agree with the printed times; on this one they follow the warehouse's own zone and the query runs as written.",
+        summary="Fired when a source's warehouse cannot be told the board's time zone.",
+        docs_topic="queries",
+    )
+)
+
+WARN_SOURCE_TIME_ZONE_OVERRIDDEN = REGISTRY.register(
+    WarningCode(
+        code="WARN-SOURCE-TIME-ZONE-OVERRIDDEN",
+        domain="execute",
+        title="Source time zone is overridden by the board",
+        message_template="Source {source!r} sets time zone {source_zone!r}, but its queries run in the board's {time_zone}.",
+        fix_template="Remove the source's time zone, or set regional.time_zone to match it.",
+        doc="Fired when a Trino source's `timezone` or a DuckDB source's `settings.TimeZone` differs from the board's `regional.time_zone`. Queries always run in the board's zone, so the source's own zone has no effect; it still loads so a dbt profile target maps over.",
+        summary="Fired when a source's own time zone disagrees with the board's, which wins.",
+        docs_topic="queries",
+    )
+)
+
 ERR_DBT_CALL_UNSUPPORTED = REGISTRY.register(
     ErrorCode(
         code="ERR-DBT-CALL-UNSUPPORTED",

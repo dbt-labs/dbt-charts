@@ -60,6 +60,13 @@ pub fn active_time_locale() -> Result<Rc<Locale>, String> {
         })
 }
 
+/// The board language's word for each quarter of a year ("Q1" .. "Q4"): size-free text the time
+/// axis places.
+pub fn quarter_words() -> Result<[String; 4], String> {
+    let word = |n: u8| display_text::language::tr("time.quarter", None, &[("n", &n.to_string())]);
+    Ok([word(1)?, word(2)?, word(3)?, word(4)?])
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub fn en_us() -> Locale {
     serde_json::from_str(display_text::locale::time_locale("en-US").unwrap())

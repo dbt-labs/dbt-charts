@@ -1200,6 +1200,18 @@ WARN_TABLE_COLUMNS_OVERFLOW = REGISTRY.register(
     )
 )
 
+WARN_TABLE_SCROLL_ROWS_CAPPED = REGISTRY.register(
+    WarningCode(
+        code="WARN-TABLE-SCROLL-ROWS-CAPPED",
+        domain="render",
+        title="Table has too many rows to scroll, so it pages",
+        message_template="Table {chart_id!r}: {total_rows} rows is more than the {max_rows} a scrolling table draws, so it pages instead.",
+        fix_template="Aggregate or limit the query to at most {max_rows} rows, or set `style.pagination.mode: pages`.",
+        doc="Fires when a table set to scroll its rows has more rows than a scroll region draws. The table falls back to the pager, which reaches every row, instead of dropping the rows past the cap.",
+        docs_topic="charts",
+    )
+)
+
 WARN_TABLE_PAGE_SQUEEZED = REGISTRY.register(
     WarningCode(
         code="WARN-TABLE-PAGE-SQUEEZED",
@@ -1718,6 +1730,17 @@ ERR_TABLE_SPANNER_UNKNOWN_COLUMN = REGISTRY.register(
         title="a table spanner names a column not in the query result",
         message_template="table {chart_id!r}: spanner {label!r} names {unknown}, which are not query columns (columns: {columns}).",
         doc="Fired when a table `spanners:` entry lists a column that the query does not return; usually a typo or a column renamed in the query.",
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_FREEZE_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-FREEZE-INVALID",
+        domain="render",
+        title="column_layout.freeze cannot pin the columns it names",
+        message_template="table {chart_id!r}: column_layout.freeze {reason}",
+        doc="Fired when a table's freeze count cannot be honored. It is larger than the number of columns the table draws, the table squeezes its columns instead of scrolling them, or the pinned columns take more than half the table's width. Clamping or ignoring it would silently pin something other than what the author asked for.",
         docs_topic="charts",
     )
 )

@@ -60,6 +60,11 @@ use super::ANTI_DANGLE_MAX_OVERFLOW;
 use super::ANTI_DANGLE_MAX_SQUEEZE;
 use super::ANTI_DANGLE_MIN_ROW_H;
 use super::COMPACT_DEMAND_CEILING;
+use super::width;
+use super::{
+    ColumnOverflow, PaginationMode, ScrollbarTheme, FREEZE_MAX_SHARE, SCROLL_MAX_ROWS,
+    SCROLL_MIN_THUMB, SCROLL_SHADOW,
+};
 use super::HEADER_RULE_GAP;
 use super::PAGINATION_GROW_CAP;
 use super::PAGINATOR_AUX_SLOT_RATIO;
@@ -91,6 +96,7 @@ use crate::layout::Insets;
 use crate::layout::IntrinsicWidth;
 use crate::layout::Layout;
 use crate::layout::Rect;
+use crate::svg::num_full;
 use crate::tree::Open;
 use crate::tree::Span;
 use crate::tree::Tree;
@@ -102,6 +108,7 @@ use scene::Attrs;
 use scene::Extent;
 use scene::Node;
 use scene::Role;
+use scene::Shape;
 use scene::Transform;
 use serde::Deserialize;
 use serde_json::json;
@@ -914,6 +921,329 @@ pub(super) fn strip_js_comments(source: &str) -> String {
 /// rather than read from `dbt-charts/src/` at build or run time.
 pub(super) fn embed_table_pagination_script(tree: &mut Tree) {
     let stripped = strip_js_comments(include_str!("../../../assets/table_pagination.js"));
+    tree.script(Attrs::new().quick("type", "text/javascript"), &stripped);
+}
+
+/// A scrolling table's geometry and pre-rendered content, split into panes
+/// by `emit_scroll_panes`.
+pub(super) struct ScrollPanes<'a> {
+    pub chart_id: &'a str,
+    /// The slot's horizontal extent the table is seen through.
+    pub view_left: f64,
+    pub view_right: f64,
+    /// Right edge of the frozen columns; `view_left` when none are frozen.
+    pub frozen_right: f64,
+    /// The header band: group-header rows through the leaf header row.
+    pub header_top: f64,
+    pub body_top: f64,
+    /// First row's top, below the header/body gap.
+    pub rows_top: f64,
+    /// Bottom of the rows the viewport shows.
+    pub body_bottom: f64,
+    pub svg_w: f64,
+    /// How far the content scrolls on each axis; zero for an axis that fits.
+    pub max_x: f64,
+    pub max_y: f64,
+    pub scrollbar: &'a ScrollbarTheme,
+    pub header: Vec<Node>,
+    /// The header again with only the frozen columns' labels.
+    pub corner: Option<Vec<Node>>,
+    pub rows: Vec<Node>,
+    /// The frozen columns' rows, painted a second time into their own pane.
+    pub frozen: Option<Vec<Node>>,
+    /// No host binds the panes (a static export), so the board carries
+    /// `table_scroll.js` itself.
+    pub standalone: bool,
+    /// The frozen edge's colors, set when columns are frozen.
+    pub edge: Option<FreezeEdge<'a>>,
+}
+
+/// How the edge between frozen and scrolling columns is drawn: a light
+/// hairline (`scrollbar.edge_color`), and a shade in the header rule's color that
+/// fades out to the right once content scrolls beneath it.
+pub(super) struct FreezeEdge<'a> {
+    pub line_color: &'a str,
+    pub shade_color: &'a str,
+}
+
+/// Opacity of the shade at the frozen edge, fading to none over
+/// `SCROLL_SHADOW` pixels.
+const EDGE_SHADE_OPACITY: f64 = 0.12;
+
+/// The structural rules among `nodes` (header, summary and total rules,
+/// row dividers), with the groups that hold them, so a copy painted over the
+/// frozen edge pages and hides with the original.
+fn rules_only(nodes: &[Node]) -> Vec<Node> {
+    nodes
+        .iter()
+        .filter_map(|node| match &node.shape {
+            Shape::Group(children) | Shape::Link(children) => {
+                let kept = rules_only(children);
+                (!kept.is_empty()).then(|| Node {
+                    shape: Shape::Group(kept),
+                    ..node.clone()
+                })
+            }
+            _ => (node.role == Role::Grid).then(|| node.clone()),
+        })
+        .collect()
+}
+
+/// Marks the rules among `nodes` so the scroll runtime can rebuild their
+/// copy over the frozen edge after the table runtime sorts or filters rows.
+fn mark_rules(nodes: Vec<Node>) -> Vec<Node> {
+    nodes
+        .into_iter()
+        .map(|mut node| {
+            node.shape = match node.shape {
+                Shape::Group(children) => Shape::Group(mark_rules(children)),
+                Shape::Link(children) => Shape::Link(mark_rules(children)),
+                shape => shape,
+            };
+            if node.role == Role::Grid {
+                node.attrs = node.attrs.quick("data-dbt-rule", "");
+            }
+            node
+        })
+        .collect()
+}
+
+/// The pane layout of a scrolling table. Each pane clips one region and
+/// moves on the axes it scrolls:
+///
+/// ```text
+/// corner (fixed)   | header (x)
+/// frozen rows (y)  | rows (x, y)
+/// ```
+///
+/// Panes never overlap, so none needs a fill to hide another. A
+/// `data-dbt-scroll` group is what `table_scroll.js` translates; the rows
+/// pane is `data-dbt-rows`, where the table runtime finds the rows it sorts.
+/// Scrollbars and edge shadows are drawn in place so a static export shows
+/// how much is out of view. The board only publishes these hooks; a host
+/// binds them from `controls_runtime_source()`.
+pub(super) fn emit_scroll_panes(tree: &mut Tree, p: ScrollPanes) {
+    let (scroll_x, scroll_y) = (p.max_x > 0.0, p.max_y > 0.0);
+    // Clip ids carry the chart id and the geometry: a chart id repeats across
+    // a board tree, and two clips sharing an id must share a shape.
+    let geometry = format!(
+        "{}-{}-{}-{}",
+        num_full(p.view_left),
+        num_full(p.header_top),
+        num_full(p.view_right),
+        num_full(p.body_bottom)
+    );
+    let id = |pane: &str| format!("table-scroll-{}-{pane}-{geometry}", p.chart_id);
+    // An axis that does not scroll clips nothing on it.
+    let (rows_left, rows_right) = if scroll_x {
+        (p.frozen_right, p.view_right)
+    } else {
+        (0.0, p.svg_w)
+    };
+    let frozen = p.frozen.is_some();
+    let rects = [
+        ("rows", rows_left, p.body_top, rows_right, p.body_bottom, true),
+        ("frozen", p.view_left, p.body_top, p.frozen_right, p.body_bottom, frozen),
+        ("header", p.frozen_right, p.header_top, p.view_right, p.body_top, scroll_x),
+        ("corner", p.view_left, p.header_top, p.frozen_right, p.body_top, frozen),
+        ("edge-head", p.frozen_right - 1.0, p.header_top, p.frozen_right + SCROLL_SHADOW, p.body_top, frozen),
+        ("edge-body", p.frozen_right - 1.0, p.body_top, p.frozen_right + SCROLL_SHADOW, p.body_bottom, frozen),
+    ];
+    tree.open(
+        Open::Group,
+        Role::Chrome,
+        Attrs::new()
+            .quick("class", "dbt-table-scroll")
+            .quick("data-dbt-table-scroll", p.chart_id)
+            .quick("data-max-x", num_full(p.max_x))
+            .quick("data-max-y", num_full(p.max_y))
+            .quick("data-rows-top", num_full(p.rows_top))
+            .quick("data-rows-bottom", num_full(p.body_bottom)),
+    );
+    tree.open(Open::Defs, Role::Chrome, Attrs::new());
+    for (pane, x1, y1, x2, y2, used) in rects {
+        if !used {
+            continue;
+        }
+        tree.open(Open::ClipPath, Role::Chrome, Attrs::new().quick("id", id(pane)));
+        tree.rect(
+            Role::Chrome,
+            (x1, y1, (x2 - x1).max(0.0), (y2 - y1).max(0.0)),
+            Attrs::new(),
+        );
+        tree.close(Open::ClipPath);
+    }
+    tree.close(Open::Defs);
+    // Wheel and drag land on the whole viewport, gaps between cells included.
+    tree.rect(
+        Role::Chrome,
+        (p.view_left, p.header_top, p.view_right - p.view_left, p.body_bottom - p.header_top),
+        Attrs::new().quick("class", "dbt-table-scroll-hit").quick("fill", "transparent"),
+    );
+    let axes = match (scroll_x, scroll_y) {
+        (true, true) => "xy",
+        (true, false) => "x",
+        _ => "y",
+    };
+    let pane = |tree: &mut Tree, name: &str, attrs: Attrs, content: Vec<Node>| {
+        tree.open(Open::Group, Role::Chrome, Attrs::new().quick("clip-path", format!("url(#{})", id(name))));
+        tree.open(Open::Group, Role::Chrome, attrs);
+        tree.extend(content);
+        tree.close(Open::Group);
+        tree.close(Open::Group);
+    };
+    // The rules that cross the frozen edge, painted again above it.
+    let edge_rules = p.edge.as_ref().map(|_| (rules_only(&p.header), rules_only(&p.rows)));
+    // Header before rows, the document order an unscrolled table has.
+    if scroll_x {
+        pane(tree, "header", Attrs::new().quick("data-dbt-scroll", "x"), p.header);
+    } else {
+        tree.extend(p.header);
+    }
+    if let Some(corner) = p.corner {
+        pane(tree, "corner", Attrs::new(), corner);
+    }
+    pane(
+        tree,
+        "rows",
+        Attrs::new().quick("data-dbt-scroll", axes).quick("data-dbt-rows", "true"),
+        p.rows,
+    );
+    if let Some(frozen_rows) = p.frozen {
+        pane(
+            tree,
+            "frozen",
+            Attrs::new()
+                .set_if(scroll_y, "data-dbt-scroll", "y")
+                .quick("data-dbt-rows-frozen", "true"),
+            frozen_rows,
+        );
+    }
+    // The shadow under the header, shown once rows scroll beneath it.
+    if scroll_y {
+        tree.rect(
+            Role::Chrome,
+            (p.view_left, p.body_top, p.view_right - p.view_left, SCROLL_SHADOW),
+            Attrs::new()
+                .quick("data-dbt-scroll-shadow", "y")
+                .quick("fill", "#000000")
+                .quick("fill-opacity", "0.06")
+                .quick("opacity", "0")
+                .quick("pointer-events", "none"),
+        );
+    }
+    // The frozen edge, the full table height so scrolled header text fades
+    // under it too: a hairline flush with the pinned columns, then a shade
+    // stepped a pixel at a time (a gradient a static export also draws),
+    // shown once content scrolls beneath it.
+    if let (Some(edge), Some((head_rules, body_rules))) = (&p.edge, edge_rules) {
+        let height = p.body_bottom - p.header_top;
+        tree.rect(
+            Role::Chrome,
+            (p.frozen_right - 1.0, p.header_top, 1.0, height),
+            Attrs::new()
+                .quick("fill", edge.line_color)
+                .quick("shape-rendering", "crispEdges")
+                .quick("pointer-events", "none"),
+        );
+        tree.open(
+            Open::Group,
+            Role::Chrome,
+            Attrs::new()
+                .quick("data-dbt-scroll-shadow", "x")
+                .quick("opacity", "0")
+                .quick("pointer-events", "none"),
+        );
+        let steps = SCROLL_SHADOW as usize;
+        for i in 0..steps {
+            tree.rect(
+                Role::Chrome,
+                (p.frozen_right + i as f64, p.header_top, 1.0, height),
+                Attrs::new()
+                    .quick("fill", edge.shade_color)
+                    .num("fill-opacity", EDGE_SHADE_OPACITY * (steps - i) as f64 / steps as f64)
+                    .quick("shape-rendering", "crispEdges"),
+            );
+        }
+        tree.close(Open::Group);
+        // The black rules cross the edge unbroken: their copy over it moves
+        // with the pane it came from.
+        pane(tree, "edge-head", Attrs::new().quick("data-dbt-scroll", "x"), head_rules);
+        pane(
+            tree,
+            "edge-body",
+            Attrs::new().quick("data-dbt-scroll", axes).quick("data-dbt-rules-edge", "true"),
+            body_rules,
+        );
+    }
+    let bar = p.scrollbar;
+    let thumb = |tree: &mut Tree, axis: &str, (start, len, cross): (f64, f64, f64), visible: f64, max: f64| {
+        let thumb_len = (len * visible / (visible + max))
+            .max(SCROLL_MIN_THUMB)
+            .min(len);
+        let (x, y, w, h) = if axis == "x" {
+            (start, cross, len, bar.size)
+        } else {
+            (cross, start, bar.size, len)
+        };
+        if let Some(track) = bar.track_color.as_deref() {
+            tree.rounded(
+                Role::Chrome,
+                (x, y, w, h),
+                bar.size / 2.0,
+                Attrs::new().quick("fill", track),
+            );
+        }
+        let (tw, th) = if axis == "x" {
+            (thumb_len, bar.size)
+        } else {
+            (bar.size, thumb_len)
+        };
+        tree.rounded(
+            Role::Chrome,
+            (x, y, tw, th),
+            bar.size / 2.0,
+            Attrs::new()
+                .quick("class", "dbt-table-scroll-thumb")
+                .quick("data-dbt-scroll-thumb", axis)
+                .quick("data-track-start", num_full(start))
+                .quick("data-track-len", num_full(len))
+                .quick("fill", bar.thumb_color.as_str()),
+        );
+    };
+    let rows_h = p.body_bottom - p.rows_top;
+    if scroll_x {
+        // Under the rows, in the band the layout reserved for it.
+        let end = p.view_right - bar.inset;
+        let start = p.frozen_right + bar.inset;
+        thumb(
+            tree,
+            "x",
+            (start, end - start, p.body_bottom + bar.inset),
+            p.view_right - p.frozen_right,
+            p.max_x,
+        );
+    }
+    if scroll_y {
+        // Right of the rows, in the band the layout reserved for it.
+        thumb(
+            tree,
+            "y",
+            (p.rows_top + bar.inset, rows_h - 2.0 * bar.inset, p.view_right + bar.inset),
+            rows_h,
+            p.max_y,
+        );
+    }
+    tree.close(Open::Group);
+    if p.standalone {
+        embed_table_scroll_script(tree);
+    }
+}
+
+/// The scroll runtime for a static export, which no host binds. Vendored
+/// like `table_pagination.js`, pinned byte-equal to production's copy.
+pub(super) fn embed_table_scroll_script(tree: &mut Tree) {
+    let stripped = strip_js_comments(include_str!("../../../assets/table_scroll.js"));
     tree.script(Attrs::new().quick("type", "text/javascript"), &stripped);
 }
 
@@ -1800,6 +2130,17 @@ impl TableBody<'_> {
         Ok(cut)
     }
 
+    /// Whether `text` (after the glyph run) is wider than column `ci`'s
+    /// content area.
+    fn overruns(&self, ci: usize, text: &str, glyph: Option<&str>) -> Result<bool, Diagnostic> {
+        let width = self.fonts.measure(
+            &format!("{}{text}", glyph_run(glyph)),
+            self.measure_family,
+            self.font_size,
+        )?;
+        Ok(width > self.col_ws[ci] - 2.0 * self.pad)
+    }
+
     /// Paint one page's worth of data rows (and their deferred row rules)
     /// into `svg`, called once per page.
     /// `cell_data` is sized to THIS CALL's own page (`page_n_shown`, indexed
@@ -1820,6 +2161,25 @@ impl TableBody<'_> {
         page_offset: usize,
         page_n_shown: usize,
         cell_data: &[Vec<Cell>],
+        only_leading: Option<usize>,
+    ) -> Result<(), Diagnostic> {
+        // A frozen-pane pass (`only_leading`: the first N columns) repaints
+        // cells the full pass already counted as cut.
+        let counted = only_leading.map(|_| self.truncations.borrow().clone());
+        let painted = self.paint_data_rows(tree, page_offset, page_n_shown, cell_data, only_leading);
+        if let Some(counted) = counted {
+            *self.truncations.borrow_mut() = counted;
+        }
+        painted
+    }
+
+    fn paint_data_rows(
+        &self,
+        tree: &mut Tree,
+        page_offset: usize,
+        page_n_shown: usize,
+        cell_data: &[Vec<Cell>],
+        only_leading: Option<usize>,
     ) -> Result<(), Diagnostic> {
         let Self {
             rows,
@@ -2202,6 +2562,9 @@ impl TableBody<'_> {
                 );
             }
             for (ci, col) in cols.iter().enumerate() {
+                if only_leading.is_some_and(|n| ci >= n) {
+                    break;
+                }
                 let cx = col_x[ci];
                 let cell = &cell_data[ci][local_ri];
                 // The index in the drawn column list, the row-number column first.
@@ -2646,8 +3009,12 @@ impl TableBody<'_> {
                             // The non-wrapping cell branch: a
                             // numeric/date-like cell, or any cell of a `wrap: false`
                             // table, is cut to its content area less the glyph.
-                            let text = if !th.wrap || tabular_text {
-                                self.cut_cell(ci, &cell.text, cell_style.glyph.as_deref())?
+                            // A wrapping table's single-line cell is cut too when
+                            // it still overruns its column, so no cell ever
+                            // paints into its neighbor.
+                            let glyph = cell_style.glyph.as_deref();
+                            let text = if !th.wrap || tabular_text || self.overruns(ci, &cell.text, glyph)? {
+                                self.cut_cell(ci, &cell.text, glyph)?
                             } else {
                                 cell.text.clone()
                             };
@@ -3375,6 +3742,28 @@ pub(crate) fn lay_out(
     let cols = &chart.cols;
     let n_rows = rows.len();
     let chart_id = r.id.as_deref().unwrap_or_default();
+    let freeze_n = th.column_layout.freeze;
+    let freeze_refusal = if freeze_n > cols.len() {
+        Some(format!(
+            "is {freeze_n} but the table shows {} column(s); lower it to at most {}, or show more columns.",
+            cols.len(),
+            cols.len()
+        ))
+    } else if freeze_n > 0 && th.column_layout.overflow != ColumnOverflow::Scroll {
+        Some(
+            "pins columns while the table scrolls sideways, so it needs column_layout.overflow: scroll; \
+             remove overflow: fit or the freeze."
+                .to_string(),
+        )
+    } else {
+        None
+    };
+    if let Some(reason) = freeze_refusal {
+        return Err(Diagnostic::new(
+            &codes::ERR_TABLE_FREEZE_INVALID,
+            [("chart_id", json!(chart_id)), ("reason", json!(reason))],
+        ));
+    }
     let header_visible = th.header.visible;
     let look = &drawn.look;
     let mut font_size = look.font_size;
@@ -3419,7 +3808,7 @@ pub(crate) fn lay_out(
     // under-measure kpi.rs mirrors) at body size; demand = p95 + 2*pad,
     // floor = widest token across cells AND the header label (header at
     // header size) + 2*pad, applied to every column, numerics included.
-    let table_w = width - 2.0 * outer;
+    let table_w = width - 2.0 * outer - th.row_scrollbar_band(n_rows);
     // Degenerate slot (the harness's unsized nested-board items arrive as
     // 0×0): refuse with a named error rather than allocating every column
     // to zero and emitting an invalid-size SVG.
@@ -3432,6 +3821,11 @@ pub(crate) fn lay_out(
     let measure_family = measure::stand_in_family(&body_family);
     let header_measure_family = measure::stand_in_family(&header_family);
     let tab_measure_family = look.numeral_family.as_str();
+    let measure_fonts = MeasureFonts {
+        body: measure_family,
+        header: header_measure_family,
+        numeral: tab_measure_family,
+    };
 
     // The row-number column takes its width off the top; the data columns
     // allocate into what is left.
@@ -3458,7 +3852,8 @@ pub(crate) fn lay_out(
     let allocate = |font_now: f64,
                     header_now: f64,
                     pad_now: f64,
-                    budget: f64|
+                    budget: f64,
+                    scroll_pins: &BTreeMap<String, f64>|
      -> Result<
         (
             ColumnInputs,
@@ -3473,11 +3868,7 @@ pub(crate) fn lay_out(
             &cell_data,
             rows,
             fonts,
-            &MeasureFonts {
-                body: measure_family,
-                header: header_measure_family,
-                numeral: tab_measure_family,
-            },
+            &measure_fonts,
             font_now,
             header_now,
             th.header.visible,
@@ -3487,6 +3878,8 @@ pub(crate) fn lay_out(
         let mut caps: BTreeMap<String, Option<f64>> = BTreeMap::new();
         for col in cols {
             if let Some(w) = parse_column_width(col.cfg.width.as_ref(), budget)? {
+                pins.insert(col.name.to_string(), w);
+            } else if let Some(&w) = scroll_pins.get(col.name.as_str()) {
                 pins.insert(col.name.to_string(), w);
             }
             caps.insert(
@@ -3514,8 +3907,59 @@ pub(crate) fn lay_out(
         let col_ws = column_names.iter().map(|n| width_map[n]).collect();
         Ok((inputs, pins, caps, col_ws))
     };
+    // `column_layout.overflow: scroll`: a slot narrower than the columns
+    // allocates them the width they need instead, and the table scrolls
+    // inside its slot rather than squeezing. A table that fits keeps the
+    // usual allocation. One that does not pins its compact columns at their
+    // natural width, header included; a wrapping text column stays elastic
+    // down to the compact ceiling (or its longest word), so the budget grows
+    // past the slot only once the text columns are down to that floor.
+    let scroll_x_mode = th.column_layout.overflow == ColumnOverflow::Scroll;
+    let no_pins = BTreeMap::new();
+    let scroll_plan = |inputs: &ColumnInputs,
+                       slot_budget: f64,
+                       pad_now: f64|
+     -> Result<(f64, BTreeMap<String, f64>), String> {
+        if !scroll_x_mode {
+            return Ok((slot_budget, BTreeMap::new()));
+        }
+        let headroom = th.column_layout.content_headroom;
+        let mut natural: Vec<width::NaturalColumn> = cols
+            .iter()
+            .map(|c| width::natural_column(c, inputs))
+            .collect::<Result<_, _>>()?;
+        if width::natural_content_width(&natural, headroom, pad_now)
+            .is_none_or(|n| n <= slot_budget)
+        {
+            return Ok((slot_budget, BTreeMap::new()));
+        }
+        let mut pins = BTreeMap::new();
+        for (col, layout) in cols.iter().zip(width::natural_auto_layout(&natural, headroom, pad_now)) {
+            if let Some((w, true)) = layout {
+                pins.insert(col.name.to_string(), w);
+            }
+        }
+        if th.wrap {
+            for column in natural.iter_mut().filter(|c| c.pin.is_none()) {
+                let demand = auto_column_demand(column.demand, column.word_floor, column.max_width);
+                if !is_compact_column(demand, column.spark) {
+                    let elastic = COMPACT_DEMAND_CEILING.max(column.word_floor);
+                    column.max_width =
+                        Some(column.max_width.map_or(elastic, |cap| cap.min(elastic)));
+                }
+            }
+        }
+        let budget = width::natural_content_width(&natural, headroom, pad_now)
+            .map_or(slot_budget, |n| n.max(slot_budget));
+        Ok((budget, pins))
+    };
     let (mut inputs, mut pins, mut caps, mut col_ws) =
-        allocate(font_size, header_size, pad, table_w - rn_w)?;
+        allocate(font_size, header_size, pad, table_w - rn_w, &no_pins)?;
+    let (scroll_alloc, scroll_pins) = scroll_plan(&inputs, table_w - rn_w, pad)?;
+    if !scroll_pins.is_empty() {
+        (inputs, pins, caps, col_ws) =
+            allocate(font_size, header_size, pad, scroll_alloc, &scroll_pins)?;
+    }
     // The padding the widths were allocated at: the fit cascade steps `pad`
     // down without re-allocating, so only the row-number re-allocation below
     // allocates at the stepped one.
@@ -3527,8 +3971,8 @@ pub(crate) fn lay_out(
     // padding steps down to max(pad/2, 6), then the body font to 11px (row
     // height −4, floored at 16; header follows the body when it inherits
     // it). Overflow is measured against `measured_cell_text` — the same
-    // string the demand pass measures — with the Inter stand-in, minus the
-    // 4px breathing room.
+    // string the demand pass measures — in the face each cell paints in
+    // (`cell_measure_family`), minus the 4px breathing room.
     // A glyph-possible column
     // composes `glyph_run + rendered` before measuring, same as the demand
     // pass.
@@ -3557,7 +4001,7 @@ pub(crate) fn lay_out(
                 let raw_value = rows[ri].get(col.name.as_str()).filter(|v| !v.is_null());
                 let w = fonts.measure(
                     &cell_text_with_glyph(col, raw_value, &rendered)?,
-                    measure_family,
+                    cell_measure_family(col, &rows[ri], &measure_fonts),
                     font_now,
                 )?;
                 if w > content_area {
@@ -3587,7 +4031,13 @@ pub(crate) fn lay_out(
     // budget.
     if rn.visible && font_size < initial_font_size {
         rn_w = row_number_width(font_size)?;
-        (inputs, pins, caps, col_ws) = allocate(font_size, header_size, pad, table_w - rn_w)?;
+        (inputs, pins, caps, col_ws) =
+            allocate(font_size, header_size, pad, table_w - rn_w, &no_pins)?;
+        let (scroll_alloc, scroll_pins) = scroll_plan(&inputs, table_w - rn_w, pad)?;
+        if !scroll_pins.is_empty() {
+            (inputs, pins, caps, col_ws) =
+                allocate(font_size, header_size, pad, scroll_alloc, &scroll_pins)?;
+        }
         alloc_pad = pad;
     }
     let ColumnInputs {
@@ -3626,7 +4076,29 @@ pub(crate) fn lay_out(
     // alone; the `==` boundary must still count as "fits".
     const OVERFLOW_EPSILON: f64 = 1e-6;
     let content_overflows = content_w > table_w + OVERFLOW_EPSILON;
-    if content_overflows {
+    // Under `overflow: scroll` the overflow is the scroll region, not a defect.
+    let scroll_x = content_overflows && scroll_x_mode;
+    // `column_layout.freeze`: the pinned columns' width, row numbers
+    // included. Past half the slot too little is left to scroll past them.
+    let frozen_cols = (scroll_x && freeze_n > 0).then_some(freeze_n);
+    let frozen_w = match frozen_cols {
+        Some(n) => rn_w + col_ws[..n].iter().sum::<f64>(),
+        None => 0.0,
+    };
+    if frozen_w > table_w * FREEZE_MAX_SHARE {
+        let reason = format!(
+            "pins {:.0}px of columns, more than {:.0}% of the table's {:.0}px; \
+             freeze fewer columns or give the table more width.",
+            frozen_w,
+            FREEZE_MAX_SHARE * 100.0,
+            table_w
+        );
+        return Err(Diagnostic::new(
+            &codes::ERR_TABLE_FREEZE_INVALID,
+            [("chart_id", json!(chart_id)), ("reason", json!(reason))],
+        ));
+    }
+    if content_overflows && !scroll_x {
         // A word floor is the cause only when the columns fit with the floors
         // lifted; otherwise pins, numeric lanes or the row-number column
         // overflow on their own and no word is to blame. Of the columns a
@@ -4069,6 +4541,27 @@ pub(crate) fn lay_out(
     let mut slot_pinned = false;
     // uniform row-height squeeze fired: rebuild the row-height-derived state
     let mut squeezed: Option<f64> = None;
+    // `pagination.mode: scroll`: rows past the viewport scroll instead of
+    // paging; `n_shown` is then the viewport's row count.
+    let scroll_y_mode = th.pagination.scrolls_rows(n_rows);
+    if th.pagination.enabled && th.pagination.mode == PaginationMode::Scroll && !scroll_y_mode {
+        diagnostics.push(Diagnostic::new(
+            &codes::WARN_TABLE_SCROLL_ROWS_CAPPED,
+            [
+                ("chart_id", json!(chart_id)),
+                ("total_rows", json!(n_rows)),
+                ("max_rows", json!(SCROLL_MAX_ROWS)),
+            ],
+        ));
+    }
+    let mut scroll_y = false;
+    // A horizontally scrolling table reserves a band under its rows for the
+    // scrollbar, so the bar never covers a row.
+    let hbar_band = if scroll_x {
+        th.scrollbar.size + 2.0 * th.scrollbar.inset
+    } else {
+        0.0
+    };
 
     // Row pool: an interactive flat table with an id and summary rows only at
     // the end draws every row once and lets the host runtime sort, filter, and
@@ -4093,8 +4586,13 @@ pub(crate) fn lay_out(
         // where this renderer starts at y=0. Latent: every
         // shipped theme sets `table.outer_padding: 0.0`, so the budget and
         // the paint agree on the corpus; don't "fix" one side alone.
-        let available =
-            slot_h - title_area_h - header_total_h - header_body_gap - outer - th.bottom_padding;
+        let available = slot_h
+            - title_area_h
+            - header_total_h
+            - header_body_gap
+            - outer
+            - th.bottom_padding
+            - hbar_band;
         // A pooled page may hold the summary gap and any rows a sort gathers.
         let pool_gap = if pool_eligible && has_summary_transition {
             (row_h * 0.4) as i64 as f64
@@ -4117,6 +4615,13 @@ pub(crate) fn lay_out(
         if total_data_h <= available && n_rows <= page_rows + PAGINATION_GROW_CAP {
             // Grow-by-2 short-circuit: every row fits at natural height and
             // the overflow is within the cap — one page, content height.
+        } else if scroll_y_mode {
+            slot_pinned = true;
+            let viewport_rows = safe_page_rows(available);
+            if n_rows > viewport_rows {
+                scroll_y = true;
+                n_shown = viewport_rows;
+            }
         } else {
             slot_pinned = true;
             let probe = safe_page_rows(available);
@@ -4162,8 +4667,14 @@ pub(crate) fn lay_out(
         }
     } else if th.pagination.enabled && n_rows > page_rows + PAGINATION_GROW_CAP {
         n_shown = page_rows;
-        true_total_pages = n_rows.div_ceil(page_rows);
+        if scroll_y_mode {
+            scroll_y = true;
+        } else {
+            true_total_pages = n_rows.div_ceil(page_rows);
+        }
     }
+    // A scrolling body draws every row; `scrolls_rows` capped how many.
+    let scroll_drawn = if scroll_y { n_rows } else { n_shown };
 
     if let Some(sq) = squeezed {
         // Production returns the squeezed height as `effective_row_height`
@@ -4186,7 +4697,7 @@ pub(crate) fn lay_out(
     let paginated = true_total_pages > 1;
     let static_multi_page = paginated && !chart_id.is_empty() && !drawn.interactive_controls;
     let total_pages = true_total_pages.min(STATIC_MULTI_PAGE_MAX_PAGES);
-    let pool_page_rows = pool_eligible.then_some(n_shown);
+    let pool_page_rows = pool_eligible.then_some(if scroll_y { scroll_drawn } else { n_shown });
 
     // Extra breathing room before the first summary/total row
     // (`int(row_height * 0.4)`) so the double rule doesn't
@@ -4236,7 +4747,7 @@ pub(crate) fn lay_out(
     // The pager sits off the page actually drawn; the canvas is sized for the
     // tallest page so the card does not resize between pages.
     let shown_rows_h: f64 = row_heights[live_rows.clone()].iter().sum();
-    let indicator_y = rows_start_y + shown_rows_h + last_gap + th.bottom_padding;
+    let indicator_y = rows_start_y + shown_rows_h + last_gap + th.bottom_padding + hbar_band;
     // A zero-row table holds one row of body for its "No data" label, so the
     // label sits below the header instead of over it.
     let canvas_rows_h: f64 = if n_rows == 0 {
@@ -4277,7 +4788,7 @@ pub(crate) fn lay_out(
     } else {
         last_gap
     };
-    let canvas_y = rows_start_y + canvas_rows_h + canvas_gap + th.bottom_padding;
+    let canvas_y = rows_start_y + canvas_rows_h + canvas_gap + th.bottom_padding + hbar_band;
     // Slot-pinned (bounded pagination): the canvas is exactly the slot —
     // production echoes `height` back as table_height and never re-adds the
     // control band. Otherwise the canvas derives from
@@ -4355,6 +4866,10 @@ pub(crate) fn lay_out(
     }
     emit_title_band(&mut tree, &band, outer);
 
+    // The header draws into buffers of its own: a scrolling table places it
+    // in panes, an unscrolled one right here.
+    let svg_tree = tree;
+    let mut tree = Tree::new();
     let header_fill = sanitize_color(th.header.background.as_deref())?
         .filter(|b| !b.eq_ignore_ascii_case("transparent"));
 
@@ -4487,81 +5002,95 @@ pub(crate) fn lay_out(
             &rn.header,
         );
     }
-    for ((ci, col), header) in cols.iter().enumerate().zip(&header_lines) {
-        let cx = col_x[ci];
-        let cw = col_ws[ci];
-        // Center-on-midpoint invariant: a lane column and
-        // an `align: center` column center their header on the cell midpoint;
-        // every other header, a right-aligned text column included, stays left.
-        let align = col.cfg.align.as_deref();
-        let left_numeric = col.is_numeric && align == Some("left");
-        let (x, anchor) =
-            if !left_numeric && (col.is_numeric || col.is_date || align == Some("center")) {
-                (cx + cw / 2.0, "middle")
-            } else {
-                (cx + pad, "start")
-            };
-        let sortable = pool_page_rows.is_some()
-            && col.cfg.spark.is_none()
-            && !is_swatch(col)
-            && col.cfg.header_link.is_none();
-        let header_attrs = || {
-            Attrs::new()
-                .set_if(
-                    pool_page_rows.is_some(),
-                    "data-col",
-                    (ci + usize::from(rn.visible)).to_string(),
-                )
-                .set_if(sortable, "data-dbt-sortable", "true")
-                .set_if(
-                    sortable,
-                    "data-dbt-sort-type",
-                    if col.is_numeric {
-                        "number"
-                    } else if col.is_day {
-                        "date"
-                    } else {
-                        "text"
-                    },
-                )
-                .quick("font-size", header_size.to_string())
-                .quick("font-weight", header_weight.as_str())
-                .quick("fill", header_color)
-                .quick("text-anchor", anchor)
-                .quick("font-family", header_family.as_str())
-        };
-        if let Some(link) = &col.cfg.header_link {
-            tree.open(
-                Open::Link,
-                Role::Chrome,
+    let header_chrome = tree.finish();
+    // Header labels for the columns in `range`: the frozen ones go to the
+    // corner pane, so each label is drawn (and focusable) once.
+    let emit_header_labels = |tree: &mut Tree, range: std::ops::Range<usize>| -> Result<(), Diagnostic> {
+        for ((ci, col), header) in cols.iter().enumerate().zip(&header_lines) {
+            if !range.contains(&ci) {
+                continue;
+            }
+            let cx = col_x[ci];
+            let cw = col_ws[ci];
+            // Center-on-midpoint invariant: a lane column and
+            // an `align: center` column center their header on the cell midpoint;
+            // every other header, a right-aligned text column included, stays left.
+            let align = col.cfg.align.as_deref();
+            let left_numeric = col.is_numeric && align == Some("left");
+            let (x, anchor) =
+                if !left_numeric && (col.is_numeric || col.is_date || align == Some("center")) {
+                    (cx + cw / 2.0, "middle")
+                } else {
+                    (cx + pad, "start")
+                };
+            let sortable = pool_page_rows.is_some()
+                && col.cfg.spark.is_none()
+                && !is_swatch(col)
+                && col.cfg.header_link.is_none();
+            let header_attrs = || {
                 Attrs::new()
-                    .quick("href", crate::href::checked_href_diagnostic(link)?)
-                    .quick_some("data-dbt-link-open", col.cfg.header_link_open.open_attr())
-                    .quick_some("target", col.cfg.header_link_open.target()),
-            );
-        }
-        if header.lines.len() > 1 {
-            let start_y = header_text_y - (header.lines.len() - 1) as f64 * header_line_h;
-            tree.open_text(Role::Label, (x, start_y), header_attrs());
-            if header.truncated {
-                tree.title(&col.header);
+                    .set_if(
+                        pool_page_rows.is_some(),
+                        "data-col",
+                        (ci + usize::from(rn.visible)).to_string(),
+                    )
+                    .set_if(sortable, "data-dbt-sortable", "true")
+                    .set_if(
+                        sortable,
+                        "data-dbt-sort-type",
+                        if col.is_numeric {
+                            "number"
+                        } else if col.is_day {
+                            "date"
+                        } else {
+                            "text"
+                        },
+                    )
+                    .quick("font-size", header_size.to_string())
+                    .quick("font-weight", header_weight.as_str())
+                    .quick("fill", header_color)
+                    .quick("text-anchor", anchor)
+                    .quick("font-family", header_family.as_str())
+            };
+            if let Some(link) = &col.cfg.header_link {
+                tree.open(
+                    Open::Link,
+                    Role::Chrome,
+                    Attrs::new()
+                        .quick("href", crate::href::checked_href_diagnostic(link)?)
+                        .quick_some("data-dbt-link-open", col.cfg.header_link_open.open_attr())
+                        .quick_some("target", col.cfg.header_link_open.target()),
+                );
             }
-            for (li, line) in header.lines.iter().enumerate() {
-                tree.tspan(Span::at(x, start_y + li as f64 * header_line_h), Attrs::new(), line);
+            if header.lines.len() > 1 {
+                let start_y = header_text_y - (header.lines.len() - 1) as f64 * header_line_h;
+                tree.open_text(Role::Label, (x, start_y), header_attrs());
+                if header.truncated {
+                    tree.title(&col.header);
+                }
+                for (li, line) in header.lines.iter().enumerate() {
+                    tree.tspan(Span::at(x, start_y + li as f64 * header_line_h), Attrs::new(), line);
+                }
+                tree.close(Open::Text);
+            } else {
+                tree.open_text(Role::Label, (x, header_text_y), header_attrs());
+                if header.truncated {
+                    tree.title(&col.header);
+                }
+                tree.text(&header.lines[0]);
+                tree.close(Open::Text);
             }
-            tree.close(Open::Text);
-        } else {
-            tree.open_text(Role::Label, (x, header_text_y), header_attrs());
-            if header.truncated {
-                tree.title(&col.header);
+            if col.cfg.header_link.is_some() {
+                tree.close(Open::Link);
             }
-            tree.text(&header.lines[0]);
-            tree.close(Open::Text);
         }
-        if col.cfg.header_link.is_some() {
-            tree.close(Open::Link);
-        }
-    }
+        Ok(())
+    };
+    let mut tree = Tree::new();
+    tree.extend(header_chrome.clone());
+    emit_header_labels(&mut tree, frozen_cols.unwrap_or(0)..cols.len())?;
+    let header_nodes = tree.finish();
+    let mut tree = svg_tree;
 
     let body = TableBody {
         rows,
@@ -4615,6 +5144,21 @@ pub(crate) fn lay_out(
         pool_first_page: current_page,
         truncations: &truncations,
     };
+    // Rows go into `rows_tree`, the part a scrolling table moves; the pager or
+    // "+N" note into `tail`, which never scrolls. A static page wraps its rows
+    // and its pager each in a toggle group of its own when the table scrolls,
+    // so `table_pagination.js` still flips both together.
+    let scrolling = scroll_x || scroll_y;
+    let mut rows_tree = Tree::new();
+    let mut frozen_tree = Tree::new();
+    let mut tail = Tree::new();
+    let page_group = |page_n: usize, display: &str| {
+        Attrs::new()
+            .quick("class", "dbt-table-page")
+            .quick("data-dbt-table-page", chart_id)
+            .quick("data-page", page_n.to_string())
+            .quick("style", format!("display:{display}"))
+    };
     if static_multi_page {
         // Every page's rows and paginator are pre-rendered into their own
         // `<g data-dbt-table-page>` toggle group; `table_pagination.js`
@@ -4638,7 +5182,7 @@ pub(crate) fn lay_out(
             let page_rows_h: f64 = row_heights[page_offset..page_offset + page_n_shown]
                 .iter()
                 .sum();
-            let page_indicator_y = rows_start_y + page_rows_h + th.bottom_padding;
+            let page_indicator_y = rows_start_y + page_rows_h + th.bottom_padding + hbar_band;
 
             // Recomputed per page, over THIS page's own row slice — never
             // sliced out of the global `cell_data` above, which anchors
@@ -4653,18 +5197,11 @@ pub(crate) fn lay_out(
                 &row_roles[page_offset..page_offset + page_n_shown],
             )?;
             let display = if page_n == initial_page { "" } else { "none" };
-            tree.open(
-                Open::Group,
-                Role::Chrome,
-                Attrs::new()
-                    .quick("class", "dbt-table-page")
-                    .quick("data-dbt-table-page", chart_id)
-                    .quick("data-page", page_n.to_string())
-                    .quick("style", format!("display:{display}")),
-            );
-            body.render_data_rows(&mut tree, page_offset, page_n_shown, &page_cell_data)?;
+            let mut page_rows = Tree::new();
+            body.render_data_rows(&mut page_rows, page_offset, page_n_shown, &page_cell_data, None)?;
+            let mut pager = Tree::new();
             render_pagination_controls(
-                &mut tree,
+                &mut pager,
                 &th.paginator,
                 &body_family,
                 page_n as i64,
@@ -4681,7 +5218,26 @@ pub(crate) fn lay_out(
                 false,
                 fonts,
             )?;
-            tree.close(Open::Group);
+            if scrolling {
+                rows_tree.open(Open::Group, Role::Chrome, page_group(page_n, display));
+                rows_tree.extend(page_rows.finish());
+                rows_tree.close(Open::Group);
+                if let Some(n) = frozen_cols {
+                    let mut frozen = Tree::new();
+                    body.render_data_rows(&mut frozen, page_offset, page_n_shown, &page_cell_data, Some(n))?;
+                    frozen_tree.open(Open::Group, Role::Chrome, page_group(page_n, display));
+                    frozen_tree.extend(frozen.finish());
+                    frozen_tree.close(Open::Group);
+                }
+                tail.open(Open::Group, Role::Chrome, page_group(page_n, display));
+                tail.extend(pager.finish());
+                tail.close(Open::Group);
+            } else {
+                tail.open(Open::Group, Role::Chrome, page_group(page_n, display));
+                tail.extend(page_rows.finish());
+                tail.extend(pager.finish());
+                tail.close(Open::Group);
+            }
         }
         // Every static multi-page render reports how it paginated. The pager
         // itself shows the true page count, so the file never needs a cap
@@ -4699,11 +5255,15 @@ pub(crate) fn lay_out(
             )
             .with_sink_param("cap_note_dropped", json!(false)),
         );
-        embed_table_pagination_script(&mut tree);
+        embed_table_pagination_script(&mut tail);
     } else if pool_page_rows.is_some() {
         // Every row once, in query order; the runtime lays out the page. The
         // symbol anchors and the color-scale domain are the whole table's.
-        body.render_data_rows(&mut tree, 0, n_rows, &cell_data)?;
+        let drawn_rows = if scroll_y { scroll_drawn } else { n_rows };
+        body.render_data_rows(&mut rows_tree, 0, drawn_rows, &cell_data, None)?;
+        if let Some(n) = frozen_cols {
+            body.render_data_rows(&mut frozen_tree, 0, drawn_rows, &cell_data, Some(n))?;
+        }
         if paginated {
             let page_var_name = format!("{chart_id}_page");
             // Past the cap only the compact pager is drawn, and it shows from the start.
@@ -4711,7 +5271,7 @@ pub(crate) fn lay_out(
             for page in (1..=true_total_pages).filter(|_| per_page) {
                 let first = (page - 1) * n_shown;
                 let last = (first + n_shown).min(n_rows);
-                tree.open(
+                tail.open(
                     Open::Group,
                     Role::Chrome,
                     Attrs::new()
@@ -4719,7 +5279,7 @@ pub(crate) fn lay_out(
                         .set_if(page != current_page, "display", "none"),
                 );
                 render_pagination_controls(
-                    &mut tree,
+                    &mut tail,
                     &th.paginator,
                     &body_family,
                     page as i64,
@@ -4736,11 +5296,11 @@ pub(crate) fn lay_out(
                     false,
                     fonts,
                 )?;
-                tree.close(Open::Group);
+                tail.close(Open::Group);
             }
             // Filtered, the page count changes: one prev/label/next the
             // runtime relabels and retargets.
-            tree.open(
+            tail.open(
                 Open::Group,
                 Role::Chrome,
                 Attrs::new()
@@ -4748,7 +5308,7 @@ pub(crate) fn lay_out(
                     .set_if(per_page, "display", "none"),
             );
             render_pagination_controls(
-                &mut tree,
+                &mut tail,
                 &th.paginator,
                 &body_family,
                 current_page as i64,
@@ -4765,7 +5325,7 @@ pub(crate) fn lay_out(
                 true,
                 fonts,
             )?;
-            tree.close(Open::Group);
+            tail.close(Open::Group);
         }
     } else {
         // The page this render shows: every anchor (`symbol_mode: anchors`,
@@ -4782,12 +5342,18 @@ pub(crate) fn lay_out(
             )?;
             &page_cell_data
         };
-        body.render_data_rows(&mut tree, live_offset, live_shown, page_cells)?;
+        // A vertically scrolling body draws past its viewport; the scroll
+        // region shows `live_shown` rows of it at a time.
+        let drawn_rows = if scroll_y { scroll_drawn } else { live_shown };
+        body.render_data_rows(&mut rows_tree, live_offset, drawn_rows, page_cells, None)?;
+        if let Some(n) = frozen_cols {
+            body.render_data_rows(&mut frozen_tree, live_offset, drawn_rows, page_cells, Some(n))?;
+        }
 
-        if n_rows > live_shown {
+        if n_rows > drawn_rows {
             if paginated && !chart_id.is_empty() {
                 render_pagination_controls(
-                    &mut tree,
+                    &mut tail,
                     &th.paginator,
                     &body_family,
                     current_page as i64,
@@ -4821,7 +5387,7 @@ pub(crate) fn lay_out(
                     .style
                     .as_deref()
                     .ok_or("table: truncated rows need style.table.more_rows.font.style")?;
-                tree.text_el(
+                tail.text_el(
                     Role::Label,
                     (svg_w / 2.0, indicator_y),
                     Attrs::new()
@@ -4830,11 +5396,74 @@ pub(crate) fn lay_out(
                         .quick("text-anchor", "middle")
                         .quick("font-style", more_style)
                         .quick("font-family", body_family.as_str()),
-                    &format!("+{}", n_rows - live_shown),
+                    &format!("+{}", n_rows - drawn_rows),
                 );
             }
         }
     }
+
+    if scrolling {
+        // The scrolled content's full height: every drawn row and the
+        // summary gaps between them.
+        let drawn_rows = if scroll_y { scroll_drawn } else { live_shown };
+        let content_rows_h: f64 = row_heights[live_offset..live_offset + drawn_rows]
+            .iter()
+            .sum::<f64>()
+            + if drawn_rows > 0 {
+                summary_gap_at[live_offset + drawn_rows - 1] - summary_gap_at[live_offset]
+            } else {
+                0.0
+            };
+        let body_bottom = rows_start_y
+            + if scroll_y {
+                shown_rows_h + last_gap
+            } else {
+                canvas_rows_h + canvas_gap
+            };
+        let mut corner = Tree::new();
+        if frozen_cols.is_some() {
+            corner.extend(header_chrome);
+            emit_header_labels(&mut corner, 0..frozen_cols.unwrap_or(0))?;
+        }
+        emit_scroll_panes(
+            &mut tree,
+            ScrollPanes {
+                chart_id,
+                view_left: outer,
+                view_right: outer + table_w,
+                frozen_right: outer + frozen_w,
+                header_top: header_y,
+                body_top: leaf_header_y + header_h,
+                rows_top: rows_start_y,
+                body_bottom,
+                svg_w,
+                max_x: if scroll_x { content_w - table_w } else { 0.0 },
+                max_y: if scroll_y {
+                    (content_rows_h - (body_bottom - rows_start_y)).max(0.0)
+                } else {
+                    0.0
+                },
+                scrollbar: &th.scrollbar,
+                header: header_nodes,
+                corner: frozen_cols.map(|_| corner.finish()),
+                rows: if frozen_cols.is_some() {
+                    mark_rules(rows_tree.finish())
+                } else {
+                    rows_tree.finish()
+                },
+                frozen: frozen_cols.map(|_| frozen_tree.finish()),
+                standalone: !drawn.interactive_controls,
+                edge: frozen_cols.map(|_| FreezeEdge {
+                    line_color: th.scrollbar.edge_color.as_str(),
+                    shade_color: th.header.divider.line.color.as_str(),
+                }),
+            },
+        );
+    } else {
+        tree.extend(header_nodes);
+        tree.extend(rows_tree.finish());
+    }
+    tree.extend(tail.finish());
 
     let truncations = truncations.into_inner();
     if !truncations.is_empty() {

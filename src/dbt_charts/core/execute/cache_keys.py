@@ -27,7 +27,7 @@ from dbt_charts.core.compile.models.source import BaseSourceConfig
 # ``compute_cache_key``: recordings are keyed by the latter and must survive a
 # bump. Bump it when the cells a query returns change shape for unchanged SQL, so
 # every cache holding the old shape (local and Cloud) misses instead of serving it.
-RESULT_FORMAT_VERSION = 2
+RESULT_FORMAT_VERSION = 3
 
 
 def stored_query_hash(query_hash: str) -> str:

@@ -71,7 +71,7 @@ pub(crate) struct ContinuousColor {
     pub(crate) lo: f64,
     pub(crate) hi: f64,
     dates: bool,
-    /// A date scale over instants the board zone reads ([`ladder_zone`](super::temporal::ladder_zone)).
+    /// A date scale over instants the board zone reads ([`ladder_zone`](layout::time_ladder::ladder_zone)).
     aware: bool,
     /// The diverging scale's pivot; Vega labels it on the legend beside the ticks.
     pub(crate) pivot: Option<f64>,
@@ -253,8 +253,8 @@ impl ContinuousColor {
     /// ends: the scale's own ticks at `GRADIENT_STOP_TICKS`.
     pub(crate) fn stop_ticks(&self) -> Result<Vec<f64>, String> {
         if self.dates {
-            let zone = crate::families::temporal::ladder_zone(self.aware);
-            return crate::families::temporal::zone_instants(self.lo, self.hi, GRADIENT_STOP_TICKS, zone.as_ref());
+            let zone = ::layout::time_ladder::ladder_zone(self.aware);
+            return ::layout::time_ladder::zone_instants(self.lo, self.hi, GRADIENT_STOP_TICKS, zone.as_ref());
         }
         Ok(d3rs::ticks::d3_ticks(self.lo, self.hi, GRADIENT_STOP_TICKS))
     }

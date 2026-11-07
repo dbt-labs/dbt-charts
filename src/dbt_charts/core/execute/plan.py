@@ -489,6 +489,7 @@ def cache_key(
         + manifest_version(ctx, expanded, resolve_source_thunk)
         + semantic_version(ctx, query)
         + "".join(f"|{ref_key}" for ref_key in upstream_keys),
+        time_zone=ctx.board.regional.time_zone,
     )
 
 

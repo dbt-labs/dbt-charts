@@ -1,0 +1,22 @@
+[package]
+name = "layout"
+version = "0.0.1"
+edition = "2021"
+publish = false
+description = "The layout stage: a bound board and fonts to scene nodes. Every pixel decision of the render; bind decides data facts, print decides nothing."
+
+[dependencies]
+diagnostic = { path = "../diagnostic" }
+measure = { path = "../measure" }
+bind = { path = "../bind" }
+d3rs = { path = "../d3rs" }
+fancy-regex = "0.19.2"
+jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bundle-always"] }
+libm = "0.2.16"
+regex = "1"
+scene = { path = "../scene" }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+
+[dev-dependencies]
+bind = { path = "../bind", features = ["test-support"] }
+diagnostic = { path = "../diagnostic", features = ["test-support"] }

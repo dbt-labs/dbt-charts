@@ -32,8 +32,11 @@ class DuckDBDialect(SQLDialect):
     escapes_backslashes = False
 
     def zoned_date_expr(self, column: str, time_zone: str) -> str:
-        """Cast to TIMESTAMPTZ (a naive value reads in the session zone, UTC), then `AT TIME ZONE`."""
-        return f"CAST(CAST({column} AS TIMESTAMPTZ) AT TIME ZONE '{time_zone}' AS DATE)"
+        """Read the naive value as UTC, then take its date in `time_zone`."""
+        return f"CAST(({column} AT TIME ZONE 'UTC') AT TIME ZONE '{time_zone}' AS DATE)"
+
+    def session_time_zone_sql(self, zone: str) -> str:
+        return f"SET TIME ZONE {self.string_literal(zone)}"
 
     def param(self, index: int) -> str:
         """Generate DuckDB parameter placeholder.

@@ -621,6 +621,54 @@ def test_a_preset_dates_on_the_board_zone_clock(
     assert "hit" in svg
 
 
+# 03:00 UTC on Oct 21 is Oct 20 in New York, so the SQL's own truncation must
+# run on the board clock or the printed day is off by one.
+_TRUNC = """
+regional:
+  time_zone: {zone}
+queries:
+  q:
+    source: db
+    sql: SELECT date_trunc('day', TIMESTAMPTZ '2026-10-21 03:00:00+00')::DATE AS d
+charts:
+  c:
+    query: q
+    type: table
+rows:
+  - c
+"""
+
+
+@pytest.mark.parametrize(
+    ("zone", "machine_zone", "day"),
+    [
+        # Each connection starts in a machine zone on the other side of midnight
+        # from the board's, so a session left in it prints the wrong day.
+        ("America/New_York", "Asia/Tokyo", "20 Oct 2026"),
+        ("UTC", "America/Los_Angeles", "21 Oct 2026"),
+    ],
+)
+def test_sql_date_truncation_runs_in_the_board_time_zone(
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    monkeypatch: pytest.MonkeyPatch,
+    zone: str,
+    machine_zone: str,
+    day: str,
+) -> None:
+    open_connection = duckdb.connect
+
+    def connect_in_machine_zone(*args: Any, **kwargs: Any) -> Any:
+        connection = open_connection(*args, **kwargs)
+        connection.execute("SET TimeZone = ?", [machine_zone])
+        return connection
+
+    monkeypatch.setattr(duckdb, "connect", connect_in_machine_zone)
+    svg = _render_with_duckdb(tmp_path, local_project, _TRUNC.format(zone=zone), {})
+
+    assert day in svg
+
+
 def test_an_unknown_preset_in_a_template_raises_naming_the_presets(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:

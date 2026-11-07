@@ -603,11 +603,34 @@ pub(crate) fn arrange(items: &mut [Placed], ctx: &AnnotationCtx, occupied: &[Bou
         let at = |x: f64, y: f64| Bounds::new(x, y, x + w, y + h);
         // (group, box, anchor and edge) per candidate; `None` keeps the text's own.
         let mut candidates: Vec<(u8, Bounds, Option<(TextAnchor, Edge)>)> = vec![(0, start, None)];
+        // Text inside a band keeps its place across the band and moves only along its long
+        // side, down a column or across a row: a column's label stays centered, never pinned to
+        // a side. Its first move is to the band's middle, where it cannot be read as the label
+        // of a line at the band's end.
+        let band_axis = match (items[i].mark.as_ref(), items[i].spot) {
+            (Some(Mark::Rect { .. }), Some(spot)) if spot.pos.overlay => match spot.geom {
+                Geom::Rect { x0, y0, x1, y1 } => Some(if y1 - y0 >= x1 - x0 { Slide::Y } else { Slide::X }),
+                _ => None,
+            },
+            _ => None,
+        };
+        let in_band = band_axis.is_some();
         let band_label = matches!((items[i].mark.as_ref(), items[i].spot.map(|s| s.geom)), (Some(Mark::Rect { .. }), Some(Geom::Rect { .. })));
         if let Some(spot) = items[i].spot.filter(|s| s.pos.auto_edge || s.pos.auto_align) {
+            if let (Some(axis), Geom::Rect { x0, y0, x1, y1 }) = (band_axis, spot.geom) {
+                let (x, y, anchor) = put(&spot, spot.pos, 0.0, ctx);
+                let middle = match axis {
+                    Slide::Y => at(x, (y0 + y1 - h) / 2.0),
+                    Slide::X => at((x0 + x1 - w) / 2.0, y),
+                };
+                candidates.push((1, middle, Some((anchor, spot.pos.edge))));
+            }
             for (group, extra) in [(1, 0.0), (2, GAP)] {
                 for (edge, align) in COMPASS {
                     if (!spot.pos.auto_edge && edge != spot.pos.edge) || (!spot.pos.auto_align && align != spot.pos.align) {
+                        continue;
+                    }
+                    if in_band && (along_edge(edge) != along_edge(spot.pos.edge) || align != spot.pos.align) {
                         continue;
                     }
                     // A band's label stays on the band's own axis: flipping to its other end, never beside it.
@@ -619,8 +642,9 @@ pub(crate) fn arrange(items: &mut [Placed], ctx: &AnnotationCtx, occupied: &[Bou
                 }
             }
         }
-        // Along the edge the text sits on, so it never crosses what it labels.
-        let slide = items[i].spot.map_or(items[i].slide, |s| along_edge(s.pos.edge));
+        // Along the edge the text sits on, so it never crosses what it labels; along the band
+        // for text inside one.
+        let slide = band_axis.or(items[i].spot.map(|s| along_edge(s.pos.edge))).unwrap_or(items[i].slide);
         let (lo, size, c0, c1) = match slide {
             Slide::X => (start.x1, w, start.y1, start.y2),
             Slide::Y => (start.y1, h, start.x1, start.x2),
@@ -1731,9 +1755,13 @@ mod tests {
     }
 
     fn resolved_over(anns: Vec<Annotation>, occupied: Vec<DataMark>) -> Vec<Placed<'static>> {
+        resolved_over_in(anns, occupied, Orientation::Vertical)
+    }
+
+    fn resolved_over_in(anns: Vec<Annotation>, occupied: Vec<DataMark>, orientation: Orientation) -> Vec<Placed<'static>> {
         let anns: &'static [Annotation] = Box::leak(anns.into_boxed_slice());
         let fonts: &'static FontBook = Box::leak(Box::new(fonts()));
-        let mut c = ctx(anns, fonts, Orientation::Vertical);
+        let mut c = ctx(anns, fonts, orientation);
         c.occupied = occupied;
         let c: &'static AnnotationCtx = Box::leak(Box::new(c));
         super::super::resolve(c).unwrap()
@@ -1808,6 +1836,53 @@ mod tests {
         let items = resolved_over(copies(3, &[&auto]), vec![mark.clone()]);
         assert!(!hits(&items[0], &mark), "{:?}", text_of(&items[0]));
         assert_eq!(items[0].mark, alone[0].mark);
+    }
+
+    #[test]
+    fn a_blocked_band_text_moves_to_the_middle_of_its_column_and_stays_centered() {
+        let current = |a: &mut Annotation| {
+            a.x = Some(Anchor::Range { from: date_value("2024-05-01"), to: date_value("2024-09-01") });
+            a.text = Some("Current".into());
+            a.style.text.position.auto_edge = true;
+            a.style.text.position.auto_align = true;
+        };
+        let alone = resolved(copies(3, &[&current]), Reach::default());
+        let own = text_of(&alone[0]).clone();
+        let Some(Mark::Rect { x, w, .. }) = alone[0].mark else { panic!("a band draws a rect") };
+        assert!(close(own.x + own.w / 2.0, x + w / 2.0), "{own:?}");
+        // A target line across the top of the band, and a short bar at its foot.
+        let line = DataMark::rect(x - 10.0, own.y + own.h / 2.0 - 1.5, w + 20.0, 3.0);
+        let bar = DataMark::rect(x + 4.0, 80.0, w - 8.0, 20.0);
+        let items = resolved_over(copies(3, &[&current]), vec![line.clone(), bar.clone()]);
+        let moved = text_of(&items[0]);
+        assert!(!hits(&items[0], &line) && !hits(&items[0], &bar), "{moved:?}");
+        assert!(close(moved.y + moved.h / 2.0, 50.0) && close(moved.x, own.x) && moved.anchor == own.anchor, "{moved:?} {own:?}");
+    }
+
+    /// A blocked band label slides along the band's long side, whichever edge it sits on: down a
+    /// column, across a row.
+    #[test]
+    fn a_blocked_band_text_slides_along_its_band_on_any_edge() {
+        for (orientation, edge) in [
+            (Orientation::Vertical, Edge::Right),
+            (Orientation::Horizontal, Edge::Top),
+            (Orientation::Horizontal, Edge::Right),
+        ] {
+            let band = |a: &mut Annotation| {
+                a.x = Some(Anchor::Range { from: date_value("2024-05-01"), to: date_value("2024-09-01") });
+                a.text = Some("Current".into());
+                a.style.text.position = Position { edge, align: Align::Center, overlay: true, auto_edge: false, auto_align: false };
+            };
+            let alone = resolved_over_in(copies(3, &[&band]), Vec::new(), orientation);
+            let own = text_of(&alone[0]).clone();
+            let Some(Mark::Rect { x, y, w, h }) = alone[0].mark else { panic!("a band draws a rect") };
+            let blocker = DataMark::rect(own.x - 1.0, own.y - 1.0, own.w + 2.0, own.h + 2.0);
+            let items = resolved_over_in(copies(3, &[&band]), vec![blocker.clone()], orientation);
+            let moved = text_of(&items[0]);
+            let (cx, cy) = (moved.x + moved.w / 2.0, moved.y + moved.h / 2.0);
+            assert!(!hits(&items[0], &blocker), "{orientation:?} {edge:?}: {moved:?}");
+            assert!((x..=x + w).contains(&cx) && (y..=y + h).contains(&cy), "{orientation:?} {edge:?} stays in its band: {moved:?}");
+        }
     }
 
     #[test]

@@ -414,23 +414,24 @@ def merge_chart_style(
 
     # --- Pagination (table charts expose this via TableChartStyle.pagination) ---
     # Chart-local pagination layers on top of the board default. ``enabled``
-    # is required on the authored Patch so it always sets; ``page_rows`` is
-    # optional — when omitted the cascade falls back to the board-level
-    # page_rows. An explicit ``page_rows: null`` means unlimited and is kept.
+    # is required on the authored Patch so it always sets; ``page_rows`` and
+    # ``mode`` are optional — when omitted the cascade falls back to the
+    # board-level value. An explicit ``page_rows: null`` means unlimited and is kept.
     _pagination = getattr(
         primary, "pagination", None
     )  # type-state: silent_fallback — the patch is a per-family union; families without the slot legitimately lack the attribute
     if _pagination is not None:
         board = base_charts.pagination
         merged_pagination = _pagination
-        if (
-            "page_rows" not in merged_pagination.model_fields_set
-            and board is not None
-            and board.page_rows is not None
-        ):
-            merged_pagination = merged_pagination.model_copy(
-                update={"page_rows": board.page_rows}
-            )
+        if board is not None:
+            inherited = {
+                name: getattr(board, name)
+                for name in ("page_rows", "mode")
+                if name not in merged_pagination.model_fields_set
+                and getattr(board, name) is not None
+            }
+            if inherited:
+                merged_pagination = merged_pagination.model_copy(update=inherited)
         overrides["pagination"] = merged_pagination
 
     return overrides

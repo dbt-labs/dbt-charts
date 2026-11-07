@@ -446,6 +446,7 @@ class TestCacheRefIsolation:
             {"base": []},
             [],
             schemas={"base": {"n": ColumnType(kind="integer")}},
+            time_zone="UTC",
         )
 
         assert rows == []
@@ -798,6 +799,7 @@ class TestCacheRefMaxRowsEnforcement:
             params=[],
             schemas={"t": {"n": ColumnType(kind="integer")}},
             limit=4,
+            time_zone="UTC",
         )
 
         assert len(rows) == 4

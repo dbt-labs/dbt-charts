@@ -6,10 +6,13 @@ description = "The bind stage: a normalized board plus its datasets to a bound b
 
 [dependencies]
 board-types = { path = "../board-types" }
+board-model = { path = "../board-model" }
 column-types = { path = "../column-types" }
 d3rs = { path = "../d3rs" }
 diagnostic = { path = "../diagnostic" }
 display-text = { path = "../display-text" }
+minijinja = "=2.24.0"
+template = { path = "../template" }
 jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bundle-always"] }
 indexmap = { version = "2", features = ["serde"] }
 regex = "1"

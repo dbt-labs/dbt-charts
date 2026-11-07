@@ -88,6 +88,7 @@ from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
 from dbt_charts.core.render.dir_context import lazy_dir_context
 from dbt_charts.core.render.renderer import prefetch_tab_queries
 from dbt_charts.core.render_format import RenderFormat
+from dbt_charts.core.session_time_zone_check import check_session_time_zones
 
 # "failed" — no output produced (board_error, or validation_errors from a failed
 #   compile).
@@ -414,6 +415,7 @@ def render_dashboard(
             return _compile_failed(result, ignore_codes, _warnings_ignore)
         validate_compiled_queries(result)
         check_manifest_refs(result, project)
+        check_session_time_zones(result, project)
         check_link_targets(result, project, board.path.relpath)
         if result.errors:
             # Ref/source errors land here: this arm has no execution layer to
@@ -491,6 +493,7 @@ def render_dashboard(
     # execution, which contains them to the failing chart instead of failing the
     # whole board; only WARN-DBT-MANIFEST-MISSING needs the board-level call.
     check_manifest_refs(result, project)
+    check_session_time_zones(result, project)
     if file_path is not None:
         check_link_targets(result, project, file_path.relpath)
     compiled_board = result.board

@@ -39,6 +39,13 @@ const PAINTED_FACES: &[(&str, bool, &str)] = &[
 /// What a stack naming no served face measures in.
 const DEFAULT_SANS: &str = "Inter Variable";
 
+fn normalize(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
 const ELLIPSIS: &str = "…";
 
 /// Where a long word may break before falling back to a character break.
@@ -74,6 +81,10 @@ pub struct Wrapped {
 pub struct FontBook {
     /// Indexed like `PAINTED_FACES`.
     data: Vec<Vec<u8>>,
+    /// Every `.ttf` of the fonts directory as production's measurer loads them, by
+    /// normalized stem (sorted) and file name: the faces [`Self::raw_advance`] resolves among.
+    shipped: Vec<(String, String)>,
+    dir: std::path::PathBuf,
 }
 
 impl FontBook {
@@ -91,7 +102,75 @@ impl FontBook {
                 Ok(bytes)
             })
             .collect::<Result<_, String>>()?;
-        Ok(FontBook { data })
+        let mut shipped = Vec::new();
+        for entry in std::fs::read_dir(dir)
+            .map_err(|e| format!("font {}: {e}", dir.display()))?
+            .flatten()
+        {
+            let path = entry.path();
+            let (Some(stem), Some("ttf")) = (
+                path.file_stem().and_then(|s| s.to_str()),
+                path.extension().and_then(|e| e.to_str()),
+            ) else {
+                continue;
+            };
+            shipped.push((normalize(stem), format!("{stem}.ttf")));
+        }
+        shipped.sort();
+        Ok(FontBook {
+            data,
+            shipped,
+            dir: dir.to_path_buf(),
+        })
+    }
+
+    /// The bytes of the face production's `FontBook::face_for` picks for a CSS family list: only
+    /// the first entry names the face, matched against the shipped stems (exact, then a prefix
+    /// with "regular" or "variable" after it, then any prefix, then containment, the first of
+    /// the sorted stems winning a tie), else the body face. Only [`Self::raw_advance`] reads it.
+    fn production_face(&self, family_list: &str) -> Result<std::borrow::Cow<'_, [u8]>, String> {
+        let primary = family_list.split(',').next().unwrap_or_default();
+        let found = self
+            .match_shipped(primary)
+            .or_else(|| self.match_shipped(DEFAULT_SANS))
+            .expect("the body face is a shipped file");
+        let file = &self.shipped[found].1;
+        match PAINTED_FACES.iter().position(|(_, _, f)| f == file) {
+            Some(i) => Ok(std::borrow::Cow::Borrowed(&self.data[i])),
+            None => {
+                let path = self.dir.join(file);
+                std::fs::read(&path)
+                    .map(std::borrow::Cow::Owned)
+                    .map_err(|e| format!("font {}: {e}", path.display()))
+            }
+        }
+    }
+
+    fn match_shipped(&self, family: &str) -> Option<usize> {
+        let f = normalize(family);
+        if f.is_empty() || f == "systemui" || f == "sansserif" || f == "serif" {
+            return None;
+        }
+        let mut best: Option<(u8, usize)> = None;
+        for (i, (n, _)) in self.shipped.iter().enumerate() {
+            let score = if *n == f {
+                0
+            } else if n.starts_with(&f)
+                && (n[f.len()..].contains("regular") || n[f.len()..].contains("variable"))
+            {
+                1
+            } else if n.starts_with(&f) {
+                2
+            } else if n.contains(f.as_str()) || f.contains(n.as_str()) {
+                3
+            } else {
+                continue;
+            };
+            if best.is_none_or(|(s, _)| score < s) {
+                best = Some((score, i));
+            }
+        }
+        best.map(|(_, i)| i)
     }
 
     /// The served faces `font.family` lists, in order; an entry the book does
@@ -146,6 +225,45 @@ impl FontBook {
             run = vertical(f, font.size, Some(run));
         }
         Ok(run)
+    }
+
+    /// The advance of `text` summed as production's axis-label measurer sums it
+    /// (`FontBook::measure_at_weight` in this crate): each cluster's `hmtx` advance at the
+    /// face's default instance plus its `HVAR` delta at `font.weight`, no kerning, no
+    /// shaping. A face with no `wght` axis books no delta. The face is the one production's
+    /// `face_for` resolves ([`Self::production_face`]: the stack's first entry only, matched
+    /// fuzzily, else Inter); production first maps the family to its stand-in
+    /// ([`crate::stand_in_family`]), which the caller applies. Only a verdict that production
+    /// takes on these sums may read it.
+    pub fn raw_advance(&self, text: &str, font: &Font) -> Result<f64, String> {
+        let bytes = self.production_face(font.family)?;
+        let face = ttf_parser::Face::parse(&bytes, 0).map_err(|e| e.to_string())?;
+        let wght = ttf_parser::Tag::from_bytes(b"wght");
+        let deltas = if face.variation_axes().into_iter().any(|a| a.tag == wght) {
+            let glyphs = text
+                .chars()
+                .filter_map(|c| face.glyph_index(c))
+                .map(|g| g.0);
+            Some(crate::fonts::weighted_advance_deltas(
+                &face,
+                font.weight,
+                glyphs,
+            )?)
+        } else {
+            None
+        };
+        let codepoints: Vec<u32> = text.chars().map(|c| c as u32).collect();
+        let (mut units, mut at) = (0.0_f64, 0);
+        while at < codepoints.len() {
+            let (advance, glyph, len) = crate::cluster_advance(&face, &codepoints, at);
+            // Two adds, not one: production sums them as two statements.
+            units += advance;
+            if let (Some(deltas), Some(g)) = (&deltas, glyph) {
+                units += deltas.get(&g).copied().unwrap_or(0.0);
+            }
+            at += len;
+        }
+        Ok(units / face.units_per_em() as f64 * font.size)
     }
 
     fn advance(&self, text: &str, font: &Font) -> Result<f64, String> {

@@ -115,7 +115,7 @@ def test_a_fetched_basemap_that_is_not_json_names_the_authored_source() -> None:
         "latitude": "lat",
         "longitude": "lon",
         "projection": "mercator",
-        "basemap": {"source": "nyc-neighborhoods"},
+        "basemap": {"source": "chicago-neighborhoods"},
     }
     rows = [{"lat": 40.7, "lon": -74.0}]
     flat = normalize_chart("c1", chart_def, {"q": ValuesQuery(rows=rows)}, sources={})
@@ -136,5 +136,5 @@ def test_a_fetched_basemap_that_is_not_json_names_the_authored_source() -> None:
             board_style=style,
         )
 
-    assert "nyc-neighborhoods" in str(raised.value)
+    assert "chicago-neighborhoods" in str(raised.value)
     assert "https://" not in str(raised.value)

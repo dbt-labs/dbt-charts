@@ -4071,6 +4071,792 @@ impl ::std::convert::TryFrom<::std::string::String> for AxisXStyleType {
         value.parse()
     }
 }
+/**AxisLabelStyle + y-axis-only label fields.
+
+Used only by AxisYStyle.labels; structurally absent on AxisXStyle.labels.*/
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct AxisYLabelStyle {
+    ///Horizontal text alignment of labels. 'left'/'right'/'center' are absolute. 'inward' hugs the plot (own-side: left on a left axis, right on a right axis); 'outward' hugs away from the plot (Vega-Lite's default growth direction). inward/outward are a no-op on an axis with no left/right edge. 'auto' uses Vega-Lite's default, except that a right-edge quantitative axis with a number format and a tabular label font decimal-aligns its labels; a house format alias does so even over an align set here.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub align: ::std::option::Option<AxisYLabelStyleAlign>,
+    ///Label rotation angle in degrees; 'auto' uses Vega-Lite's default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub angle: ::std::option::Option<f64>,
+    ///Hide labels that overflow the axis range; 'auto' uses Vega-Lite's default.
+    #[serde(default = "defaults::axis_y_label_style_bound")]
+    pub bound: AxisYLabelStyleBound,
+    ///Custom Vega expression for label text; None uses smart temporal defaults when applicable.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub expr: ::std::option::Option<::std::string::String>,
+    ///Align first/last label flush with the scale range; 'auto' uses Vega-Lite's default.
+    #[serde(default = "defaults::axis_y_label_style_flush")]
+    pub flush: AxisYLabelStyleFlush,
+    ///Axis element font style overrides.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub font: ::std::option::Option<FontStyle>,
+    ///Tick value format string; None uses auto-format.
+    #[serde(default = "defaults::axis_y_label_style_format")]
+    pub format: AxisYLabelStyleFormat,
+    ///Maximum label width in pixels; 'auto' uses Vega-Lite's default (180px).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_width: ::std::option::Option<f64>,
+    ///Minimum pixel gap between labels; None uses Vega-Lite's default (0px).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub min_gap: ::std::option::Option<f64>,
+    ///Pixel offset of the label from its tick anchor; 'auto' uses Vega-Lite's default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub offset: ::std::option::Option<f64>,
+    ///Label overlap strategy enablement. None inherits from the theme cascade. Set individual bools to enable/disable; they are applied in fixed order skip→tilt. On bucketed temporal axes, skip thins label visibility to a coarser calendar period without changing the axis or label time unit.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub overlap: ::std::option::Option<AxisLabelOverlapConfig>,
+    ///Padding between axis labels and ticks in pixels; None inherits from parent axis.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub padding: ::std::option::Option<f64>,
+    ///Where y-axis labels sit against their gridlines: `beside_gridline` centers each label on the end of its gridline; `above_gridline` sets it just above the gridline, with the gridline running under it. Applies only where value gridlines are horizontal: no effect on a band y axis, a horizontal bar, rotated labels, or when gridlines are hidden.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub position: ::std::option::Option<AxisYLabelStylePosition>,
+    ///Show axis labels; 'auto' uses Vega-Lite's default (labels shown).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub visible: ::std::option::Option<bool>,
+}
+impl ::std::default::Default for AxisYLabelStyle {
+    fn default() -> Self {
+        Self {
+            align: Default::default(),
+            angle: Default::default(),
+            bound: defaults::axis_y_label_style_bound(),
+            expr: Default::default(),
+            flush: defaults::axis_y_label_style_flush(),
+            font: Default::default(),
+            format: defaults::axis_y_label_style_format(),
+            max_width: Default::default(),
+            min_gap: Default::default(),
+            offset: Default::default(),
+            overlap: Default::default(),
+            padding: Default::default(),
+            position: Default::default(),
+            visible: Default::default(),
+        }
+    }
+}
+///`AxisYLabelStyleAlign`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum AxisYLabelStyleAlign {
+    #[serde(rename = "center")]
+    Center,
+    #[serde(rename = "inward")]
+    Inward,
+    #[serde(rename = "left")]
+    Left,
+    #[serde(rename = "outward")]
+    Outward,
+    #[serde(rename = "right")]
+    Right,
+}
+impl ::std::fmt::Display for AxisYLabelStyleAlign {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Center => f.write_str("center"),
+            Self::Inward => f.write_str("inward"),
+            Self::Left => f.write_str("left"),
+            Self::Outward => f.write_str("outward"),
+            Self::Right => f.write_str("right"),
+        }
+    }
+}
+impl ::std::str::FromStr for AxisYLabelStyleAlign {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "center" => Ok(Self::Center),
+            "inward" => Ok(Self::Inward),
+            "left" => Ok(Self::Left),
+            "outward" => Ok(Self::Outward),
+            "right" => Ok(Self::Right),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AxisYLabelStyleAlign {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AxisYLabelStyleAlign {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///Hide labels that overflow the axis range; 'auto' uses Vega-Lite's default.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum AxisYLabelStyleBound {
+    Boolean(bool),
+    Number(f64),
+    Null,
+}
+impl ::std::default::Default for AxisYLabelStyleBound {
+    fn default() -> Self {
+        AxisYLabelStyleBound::Null
+    }
+}
+impl ::std::convert::From<bool> for AxisYLabelStyleBound {
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
+    }
+}
+impl ::std::convert::From<f64> for AxisYLabelStyleBound {
+    fn from(value: f64) -> Self {
+        Self::Number(value)
+    }
+}
+///Align first/last label flush with the scale range; 'auto' uses Vega-Lite's default.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum AxisYLabelStyleFlush {
+    Boolean(bool),
+    Number(f64),
+    Null,
+}
+impl ::std::default::Default for AxisYLabelStyleFlush {
+    fn default() -> Self {
+        AxisYLabelStyleFlush::Null
+    }
+}
+impl ::std::convert::From<bool> for AxisYLabelStyleFlush {
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
+    }
+}
+impl ::std::convert::From<f64> for AxisYLabelStyleFlush {
+    fn from(value: f64) -> Self {
+        Self::Number(value)
+    }
+}
+///Tick value format string; None uses auto-format.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum AxisYLabelStyleFormat {
+    Variant0(AxisYLabelStyleFormatVariant0),
+    Variant1(::std::string::String),
+    Variant2(FormatConfig),
+    Variant3,
+}
+impl ::std::default::Default for AxisYLabelStyleFormat {
+    fn default() -> Self {
+        AxisYLabelStyleFormat::Variant3
+    }
+}
+impl ::std::convert::From<AxisYLabelStyleFormatVariant0> for AxisYLabelStyleFormat {
+    fn from(value: AxisYLabelStyleFormatVariant0) -> Self {
+        Self::Variant0(value)
+    }
+}
+impl ::std::convert::From<FormatConfig> for AxisYLabelStyleFormat {
+    fn from(value: FormatConfig) -> Self {
+        Self::Variant2(value)
+    }
+}
+///`AxisYLabelStyleFormatVariant0`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum AxisYLabelStyleFormatVariant0 {
+    #[serde(rename = "compact")]
+    Compact,
+    #[serde(rename = "currency")]
+    Currency,
+    #[serde(rename = "currency_compact")]
+    CurrencyCompact,
+    #[serde(rename = "currency_full")]
+    CurrencyFull,
+    #[serde(rename = "currency_whole")]
+    CurrencyWhole,
+    #[serde(rename = "date_short")]
+    DateShort,
+    #[serde(rename = "delta")]
+    Delta,
+    #[serde(rename = "email")]
+    Email,
+    #[serde(rename = "id")]
+    Id,
+    #[serde(rename = "integer")]
+    Integer,
+    #[serde(rename = "latitude")]
+    Latitude,
+    #[serde(rename = "longitude")]
+    Longitude,
+    #[serde(rename = "number")]
+    Number,
+    #[serde(rename = "number_full")]
+    NumberFull,
+    #[serde(rename = "percent")]
+    Percent,
+    #[serde(rename = "percent_delta")]
+    PercentDelta,
+    #[serde(rename = "percent_whole")]
+    PercentWhole,
+    #[serde(rename = "rating")]
+    Rating,
+    #[serde(rename = "time_short")]
+    TimeShort,
+    #[serde(rename = "url")]
+    Url,
+    #[serde(rename = "year")]
+    Year,
+}
+impl ::std::fmt::Display for AxisYLabelStyleFormatVariant0 {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Compact => f.write_str("compact"),
+            Self::Currency => f.write_str("currency"),
+            Self::CurrencyCompact => f.write_str("currency_compact"),
+            Self::CurrencyFull => f.write_str("currency_full"),
+            Self::CurrencyWhole => f.write_str("currency_whole"),
+            Self::DateShort => f.write_str("date_short"),
+            Self::Delta => f.write_str("delta"),
+            Self::Email => f.write_str("email"),
+            Self::Id => f.write_str("id"),
+            Self::Integer => f.write_str("integer"),
+            Self::Latitude => f.write_str("latitude"),
+            Self::Longitude => f.write_str("longitude"),
+            Self::Number => f.write_str("number"),
+            Self::NumberFull => f.write_str("number_full"),
+            Self::Percent => f.write_str("percent"),
+            Self::PercentDelta => f.write_str("percent_delta"),
+            Self::PercentWhole => f.write_str("percent_whole"),
+            Self::Rating => f.write_str("rating"),
+            Self::TimeShort => f.write_str("time_short"),
+            Self::Url => f.write_str("url"),
+            Self::Year => f.write_str("year"),
+        }
+    }
+}
+impl ::std::str::FromStr for AxisYLabelStyleFormatVariant0 {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "compact" => Ok(Self::Compact),
+            "currency" => Ok(Self::Currency),
+            "currency_compact" => Ok(Self::CurrencyCompact),
+            "currency_full" => Ok(Self::CurrencyFull),
+            "currency_whole" => Ok(Self::CurrencyWhole),
+            "date_short" => Ok(Self::DateShort),
+            "delta" => Ok(Self::Delta),
+            "email" => Ok(Self::Email),
+            "id" => Ok(Self::Id),
+            "integer" => Ok(Self::Integer),
+            "latitude" => Ok(Self::Latitude),
+            "longitude" => Ok(Self::Longitude),
+            "number" => Ok(Self::Number),
+            "number_full" => Ok(Self::NumberFull),
+            "percent" => Ok(Self::Percent),
+            "percent_delta" => Ok(Self::PercentDelta),
+            "percent_whole" => Ok(Self::PercentWhole),
+            "rating" => Ok(Self::Rating),
+            "time_short" => Ok(Self::TimeShort),
+            "url" => Ok(Self::Url),
+            "year" => Ok(Self::Year),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AxisYLabelStyleFormatVariant0 {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AxisYLabelStyleFormatVariant0 {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+/**Authored overlay for AxisYLabelStyle. AxisLabelStyle + y-axis-only label fields.
+
+Used only by AxisYStyle.labels; structurally absent on AxisXStyle.labels.*/
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct AxisYLabelStylePatch {
+    ///Horizontal text alignment of labels. 'left'/'right'/'center' are absolute. 'inward' hugs the plot (own-side: left on a left axis, right on a right axis); 'outward' hugs away from the plot (Vega-Lite's default growth direction). inward/outward are a no-op on an axis with no left/right edge. 'auto' uses Vega-Lite's default, except that a right-edge quantitative axis with a number format and a tabular label font decimal-aligns its labels; a house format alias does so even over an align set here.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub align: ::std::option::Option<AxisYLabelStylePatchAlign>,
+    ///Label rotation angle in degrees; 'auto' uses Vega-Lite's default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub angle: ::std::option::Option<f64>,
+    ///Hide labels that overflow the axis range; 'auto' uses Vega-Lite's default.
+    #[serde(default = "defaults::axis_y_label_style_patch_bound")]
+    pub bound: AxisYLabelStylePatchBound,
+    ///Custom Vega expression for label text; None uses smart temporal defaults when applicable.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub expr: ::std::option::Option<::std::string::String>,
+    ///Align first/last label flush with the scale range; 'auto' uses Vega-Lite's default.
+    #[serde(default = "defaults::axis_y_label_style_patch_flush")]
+    pub flush: AxisYLabelStylePatchFlush,
+    ///Axis element font style overrides.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub font: ::std::option::Option<FontStyle>,
+    ///Tick value format string; None uses auto-format.
+    #[serde(default = "defaults::axis_y_label_style_patch_format")]
+    pub format: AxisYLabelStylePatchFormat,
+    ///Maximum label width in pixels; 'auto' uses Vega-Lite's default (180px).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_width: ::std::option::Option<f64>,
+    ///Minimum pixel gap between labels; None uses Vega-Lite's default (0px).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub min_gap: ::std::option::Option<f64>,
+    ///Pixel offset of the label from its tick anchor; 'auto' uses Vega-Lite's default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub offset: ::std::option::Option<f64>,
+    ///Label overlap strategy enablement. None inherits from the theme cascade. Set individual bools to enable/disable; they are applied in fixed order skip→tilt. On bucketed temporal axes, skip thins label visibility to a coarser calendar period without changing the axis or label time unit.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub overlap: ::std::option::Option<AxisLabelOverlapConfigPatch>,
+    ///Padding between axis labels and ticks in pixels; None inherits from parent axis.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub padding: ::std::option::Option<f64>,
+    ///Where y-axis labels sit against their gridlines: `beside_gridline` centers each label on the end of its gridline; `above_gridline` sets it just above the gridline, with the gridline running under it. Applies only where value gridlines are horizontal: no effect on a band y axis, a horizontal bar, rotated labels, or when gridlines are hidden.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub position: ::std::option::Option<AxisYLabelStylePatchPosition>,
+    ///Show axis labels; 'auto' uses Vega-Lite's default (labels shown).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub visible: ::std::option::Option<bool>,
+}
+impl ::std::default::Default for AxisYLabelStylePatch {
+    fn default() -> Self {
+        Self {
+            align: Default::default(),
+            angle: Default::default(),
+            bound: defaults::axis_y_label_style_patch_bound(),
+            expr: Default::default(),
+            flush: defaults::axis_y_label_style_patch_flush(),
+            font: Default::default(),
+            format: defaults::axis_y_label_style_patch_format(),
+            max_width: Default::default(),
+            min_gap: Default::default(),
+            offset: Default::default(),
+            overlap: Default::default(),
+            padding: Default::default(),
+            position: Default::default(),
+            visible: Default::default(),
+        }
+    }
+}
+///`AxisYLabelStylePatchAlign`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum AxisYLabelStylePatchAlign {
+    #[serde(rename = "center")]
+    Center,
+    #[serde(rename = "inward")]
+    Inward,
+    #[serde(rename = "left")]
+    Left,
+    #[serde(rename = "outward")]
+    Outward,
+    #[serde(rename = "right")]
+    Right,
+}
+impl ::std::fmt::Display for AxisYLabelStylePatchAlign {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Center => f.write_str("center"),
+            Self::Inward => f.write_str("inward"),
+            Self::Left => f.write_str("left"),
+            Self::Outward => f.write_str("outward"),
+            Self::Right => f.write_str("right"),
+        }
+    }
+}
+impl ::std::str::FromStr for AxisYLabelStylePatchAlign {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "center" => Ok(Self::Center),
+            "inward" => Ok(Self::Inward),
+            "left" => Ok(Self::Left),
+            "outward" => Ok(Self::Outward),
+            "right" => Ok(Self::Right),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AxisYLabelStylePatchAlign {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AxisYLabelStylePatchAlign {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///Hide labels that overflow the axis range; 'auto' uses Vega-Lite's default.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum AxisYLabelStylePatchBound {
+    Boolean(bool),
+    Number(f64),
+    Null,
+}
+impl ::std::default::Default for AxisYLabelStylePatchBound {
+    fn default() -> Self {
+        AxisYLabelStylePatchBound::Null
+    }
+}
+impl ::std::convert::From<bool> for AxisYLabelStylePatchBound {
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
+    }
+}
+impl ::std::convert::From<f64> for AxisYLabelStylePatchBound {
+    fn from(value: f64) -> Self {
+        Self::Number(value)
+    }
+}
+///Align first/last label flush with the scale range; 'auto' uses Vega-Lite's default.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum AxisYLabelStylePatchFlush {
+    Boolean(bool),
+    Number(f64),
+    Null,
+}
+impl ::std::default::Default for AxisYLabelStylePatchFlush {
+    fn default() -> Self {
+        AxisYLabelStylePatchFlush::Null
+    }
+}
+impl ::std::convert::From<bool> for AxisYLabelStylePatchFlush {
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
+    }
+}
+impl ::std::convert::From<f64> for AxisYLabelStylePatchFlush {
+    fn from(value: f64) -> Self {
+        Self::Number(value)
+    }
+}
+///Tick value format string; None uses auto-format.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum AxisYLabelStylePatchFormat {
+    Variant0(AxisYLabelStylePatchFormatVariant0),
+    Variant1(::std::string::String),
+    Variant2(FormatConfig),
+    Variant3,
+}
+impl ::std::default::Default for AxisYLabelStylePatchFormat {
+    fn default() -> Self {
+        AxisYLabelStylePatchFormat::Variant3
+    }
+}
+impl ::std::convert::From<AxisYLabelStylePatchFormatVariant0>
+for AxisYLabelStylePatchFormat {
+    fn from(value: AxisYLabelStylePatchFormatVariant0) -> Self {
+        Self::Variant0(value)
+    }
+}
+impl ::std::convert::From<FormatConfig> for AxisYLabelStylePatchFormat {
+    fn from(value: FormatConfig) -> Self {
+        Self::Variant2(value)
+    }
+}
+///`AxisYLabelStylePatchFormatVariant0`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum AxisYLabelStylePatchFormatVariant0 {
+    #[serde(rename = "compact")]
+    Compact,
+    #[serde(rename = "currency")]
+    Currency,
+    #[serde(rename = "currency_compact")]
+    CurrencyCompact,
+    #[serde(rename = "currency_full")]
+    CurrencyFull,
+    #[serde(rename = "currency_whole")]
+    CurrencyWhole,
+    #[serde(rename = "date_short")]
+    DateShort,
+    #[serde(rename = "delta")]
+    Delta,
+    #[serde(rename = "email")]
+    Email,
+    #[serde(rename = "id")]
+    Id,
+    #[serde(rename = "integer")]
+    Integer,
+    #[serde(rename = "latitude")]
+    Latitude,
+    #[serde(rename = "longitude")]
+    Longitude,
+    #[serde(rename = "number")]
+    Number,
+    #[serde(rename = "number_full")]
+    NumberFull,
+    #[serde(rename = "percent")]
+    Percent,
+    #[serde(rename = "percent_delta")]
+    PercentDelta,
+    #[serde(rename = "percent_whole")]
+    PercentWhole,
+    #[serde(rename = "rating")]
+    Rating,
+    #[serde(rename = "time_short")]
+    TimeShort,
+    #[serde(rename = "url")]
+    Url,
+    #[serde(rename = "year")]
+    Year,
+}
+impl ::std::fmt::Display for AxisYLabelStylePatchFormatVariant0 {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Compact => f.write_str("compact"),
+            Self::Currency => f.write_str("currency"),
+            Self::CurrencyCompact => f.write_str("currency_compact"),
+            Self::CurrencyFull => f.write_str("currency_full"),
+            Self::CurrencyWhole => f.write_str("currency_whole"),
+            Self::DateShort => f.write_str("date_short"),
+            Self::Delta => f.write_str("delta"),
+            Self::Email => f.write_str("email"),
+            Self::Id => f.write_str("id"),
+            Self::Integer => f.write_str("integer"),
+            Self::Latitude => f.write_str("latitude"),
+            Self::Longitude => f.write_str("longitude"),
+            Self::Number => f.write_str("number"),
+            Self::NumberFull => f.write_str("number_full"),
+            Self::Percent => f.write_str("percent"),
+            Self::PercentDelta => f.write_str("percent_delta"),
+            Self::PercentWhole => f.write_str("percent_whole"),
+            Self::Rating => f.write_str("rating"),
+            Self::TimeShort => f.write_str("time_short"),
+            Self::Url => f.write_str("url"),
+            Self::Year => f.write_str("year"),
+        }
+    }
+}
+impl ::std::str::FromStr for AxisYLabelStylePatchFormatVariant0 {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "compact" => Ok(Self::Compact),
+            "currency" => Ok(Self::Currency),
+            "currency_compact" => Ok(Self::CurrencyCompact),
+            "currency_full" => Ok(Self::CurrencyFull),
+            "currency_whole" => Ok(Self::CurrencyWhole),
+            "date_short" => Ok(Self::DateShort),
+            "delta" => Ok(Self::Delta),
+            "email" => Ok(Self::Email),
+            "id" => Ok(Self::Id),
+            "integer" => Ok(Self::Integer),
+            "latitude" => Ok(Self::Latitude),
+            "longitude" => Ok(Self::Longitude),
+            "number" => Ok(Self::Number),
+            "number_full" => Ok(Self::NumberFull),
+            "percent" => Ok(Self::Percent),
+            "percent_delta" => Ok(Self::PercentDelta),
+            "percent_whole" => Ok(Self::PercentWhole),
+            "rating" => Ok(Self::Rating),
+            "time_short" => Ok(Self::TimeShort),
+            "url" => Ok(Self::Url),
+            "year" => Ok(Self::Year),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AxisYLabelStylePatchFormatVariant0 {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String>
+for AxisYLabelStylePatchFormatVariant0 {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`AxisYLabelStylePatchPosition`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum AxisYLabelStylePatchPosition {
+    #[serde(rename = "above_gridline")]
+    AboveGridline,
+    #[serde(rename = "beside_gridline")]
+    BesideGridline,
+}
+impl ::std::fmt::Display for AxisYLabelStylePatchPosition {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::AboveGridline => f.write_str("above_gridline"),
+            Self::BesideGridline => f.write_str("beside_gridline"),
+        }
+    }
+}
+impl ::std::str::FromStr for AxisYLabelStylePatchPosition {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "above_gridline" => Ok(Self::AboveGridline),
+            "beside_gridline" => Ok(Self::BesideGridline),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AxisYLabelStylePatchPosition {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AxisYLabelStylePatchPosition {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`AxisYLabelStylePosition`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum AxisYLabelStylePosition {
+    #[serde(rename = "above_gridline")]
+    AboveGridline,
+    #[serde(rename = "beside_gridline")]
+    BesideGridline,
+}
+impl ::std::fmt::Display for AxisYLabelStylePosition {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::AboveGridline => f.write_str("above_gridline"),
+            Self::BesideGridline => f.write_str("beside_gridline"),
+        }
+    }
+}
+impl ::std::str::FromStr for AxisYLabelStylePosition {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "above_gridline" => Ok(Self::AboveGridline),
+            "beside_gridline" => Ok(Self::BesideGridline),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AxisYLabelStylePosition {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AxisYLabelStylePosition {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 /**Measure axis style. Theme slot: axis_y.
 
 Adds measure-only fields: mirror, color. Grid style is the shared
@@ -4091,9 +4877,9 @@ pub struct AxisYStyle {
     ///Grid line style for this axis.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub grid: ::std::option::Option<BaseAxisGridStyle>,
-    ///Axis label style.
+    ///Value axis label style.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub labels: ::std::option::Option<AxisLabelStyle>,
+    pub labels: ::std::option::Option<AxisYLabelStyle>,
     ///Domain line style for this axis.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub line: ::std::option::Option<AxisLineStyle>,
@@ -4171,9 +4957,9 @@ pub struct AxisYStylePatch {
     ///Grid line style for this axis.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub grid: ::std::option::Option<BaseAxisGridStylePatch>,
-    ///Axis label style.
+    ///Value axis label style.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub labels: ::std::option::Option<AxisLabelStylePatch>,
+    pub labels: ::std::option::Option<AxisYLabelStylePatch>,
     ///Domain line style for this axis.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub line: ::std::option::Option<AxisLineStylePatch>,
@@ -23474,6 +24260,9 @@ pub struct PaginationConfig {
     ///Enable client-side pagination for table charts.
     #[serde(default = "defaults::default_bool::<true>")]
     pub enabled: bool,
+    ///Page rows with a pager, or scroll them under a pinned header.
+    #[serde(default = "defaults::pagination_config_mode")]
+    pub mode: PaginationConfigMode,
     ///Rows per page, a ceiling bounded by the tile height. The theme defaults it to 20; null means unlimited (the tile height alone sizes the page).
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub page_rows: ::std::option::Option<::std::num::NonZeroU64>,
@@ -23482,8 +24271,69 @@ impl ::std::default::Default for PaginationConfig {
     fn default() -> Self {
         Self {
             enabled: defaults::default_bool::<true>(),
+            mode: defaults::pagination_config_mode(),
             page_rows: Default::default(),
         }
+    }
+}
+///Page rows with a pager, or scroll them under a pinned header.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum PaginationConfigMode {
+    #[serde(rename = "pages")]
+    Pages,
+    #[serde(rename = "scroll")]
+    Scroll,
+}
+impl ::std::fmt::Display for PaginationConfigMode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Pages => f.write_str("pages"),
+            Self::Scroll => f.write_str("scroll"),
+        }
+    }
+}
+impl ::std::str::FromStr for PaginationConfigMode {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "pages" => Ok(Self::Pages),
+            "scroll" => Ok(Self::Scroll),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for PaginationConfigMode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for PaginationConfigMode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::default::Default for PaginationConfigMode {
+    fn default() -> Self {
+        PaginationConfigMode::Pages
     }
 }
 /**Visual style for the paginator control (chevrons + page numbers).
@@ -26411,7 +27261,7 @@ pub struct Regional {
     ///The number and time locales.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub locale: ::std::option::Option<RegionalLocale>,
-    ///IANA time zone of the board's clock: the date daterange presets resolve on, the zone of the data-freshness stamp, and the zone a query timestamp carrying a zone or offset prints, buckets and ticks in.
+    ///IANA time zone of the board's clock: the date daterange presets resolve on, the zone of the data-freshness stamp, and the zone a query timestamp carrying a zone or offset prints, buckets and ticks in. Warehouse queries run in this zone too, so SQL date truncation and casts agree with the printed times.
     #[serde(default = "defaults::regional_time_zone")]
     pub time_zone: TimeZoneName,
 }
@@ -34725,6 +35575,8 @@ pub struct TableChartStyle {
     ///Leading row-number column configuration.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub row_numbers: ::std::option::Option<TableRowNumbersStyle>,
+    ///Visual style for the scrollbars of a table that scrolls.
+    pub scrollbar: TableScrollbarStyle,
     ///Inline sparkline defaults for table cells.
     pub spark: SparkStyle,
     ///Where to show currency-prefix and magnitude/unit suffix symbols in a numeric column. 'all' shows the full formatted value on every row; 'anchors' shows it only on the first data row and summary/total rows, stripping prefix and suffix from plain middle rows so the anchors guide the reader at the top and bottom of the value field.
@@ -35734,8 +36586,67 @@ pub struct TableColumnsStyle {
     pub content_headroom: f64,
     ///Default column width in pixels.
     pub default_width: f64,
+    ///Number of leading columns pinned while the table scrolls sideways.
+    pub freeze: u64,
+    ///Whether columns past the slot scroll sideways or squeeze to fit.
+    pub overflow: TableColumnsStyleOverflow,
     ///Auto-width columns whose min/max ratio >= this threshold are snapped to a shared width before budget allocation. 1.0 disables clustering; 0.0 forces all auto-columns to equal width.
     pub width_similarity_threshold: f64,
+}
+///Whether columns past the slot scroll sideways or squeeze to fit.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum TableColumnsStyleOverflow {
+    #[serde(rename = "fit")]
+    Fit,
+    #[serde(rename = "scroll")]
+    Scroll,
+}
+impl ::std::fmt::Display for TableColumnsStyleOverflow {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Fit => f.write_str("fit"),
+            Self::Scroll => f.write_str("scroll"),
+        }
+    }
+}
+impl ::std::str::FromStr for TableColumnsStyleOverflow {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "fit" => Ok(Self::Fit),
+            "scroll" => Ok(Self::Scroll),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for TableColumnsStyleOverflow {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for TableColumnsStyleOverflow {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///A table divider that also chooses how far the line runs.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -35983,6 +36894,25 @@ pub struct TableRowStyle {
     ///Alternating row stripe style; None means no stripe.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub stripe: ::std::option::Option<TableRowStripeStyle>,
+}
+/**Look of the scrollbars a scrolling table draws over its body.
+
+Drawn inside the SVG, so a static export shows how much of the table is
+out of view.*/
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct TableScrollbarStyle {
+    ///Hairline between frozen and scrolling columns.
+    pub edge_color: ::std::string::String,
+    ///Gap between the scrollbar and the table edge in pixels.
+    pub inset: f64,
+    ///Scrollbar thickness in pixels.
+    pub size: f64,
+    ///Scrollbar thumb color.
+    pub thumb_color: ::std::string::String,
+    ///Scrollbar track color; None draws the thumb alone.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub track_color: ::std::option::Option<::std::string::String>,
 }
 ///One authored spanner: a label drawn over a run of adjacent columns.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -39236,6 +40166,24 @@ pub mod defaults {
     pub(super) fn axis_title_style_patch_visible() -> super::AxisTitleStylePatchVisible {
         super::AxisTitleStylePatchVisible::Null
     }
+    pub(super) fn axis_y_label_style_bound() -> super::AxisYLabelStyleBound {
+        super::AxisYLabelStyleBound::Null
+    }
+    pub(super) fn axis_y_label_style_flush() -> super::AxisYLabelStyleFlush {
+        super::AxisYLabelStyleFlush::Null
+    }
+    pub(super) fn axis_y_label_style_format() -> super::AxisYLabelStyleFormat {
+        super::AxisYLabelStyleFormat::Variant3
+    }
+    pub(super) fn axis_y_label_style_patch_bound() -> super::AxisYLabelStylePatchBound {
+        super::AxisYLabelStylePatchBound::Null
+    }
+    pub(super) fn axis_y_label_style_patch_flush() -> super::AxisYLabelStylePatchFlush {
+        super::AxisYLabelStylePatchFlush::Null
+    }
+    pub(super) fn axis_y_label_style_patch_format() -> super::AxisYLabelStylePatchFormat {
+        super::AxisYLabelStylePatchFormat::Variant3
+    }
     pub(super) fn axis_y_style_mirror() -> super::AxisYStyleMirror {
         super::AxisYStyleMirror::Null
     }
@@ -39627,6 +40575,9 @@ pub mod defaults {
     }
     pub(super) fn number_locale_percent() -> ::std::string::String {
         "%".to_string()
+    }
+    pub(super) fn pagination_config_mode() -> super::PaginationConfigMode {
+        super::PaginationConfigMode::Pages
     }
     pub(super) fn pie_chart_authored_fields() -> ::std::vec::Vec<::std::string::String> {
         [].into_iter().collect()

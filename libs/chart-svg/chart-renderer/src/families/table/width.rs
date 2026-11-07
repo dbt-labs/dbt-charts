@@ -40,7 +40,7 @@ use measure::Measure;
 #[serde(remote = "Self")]
 pub struct MeasurePayload {
     pub resolved: Value,
-    pub rows: Vec<serde_json::Map<String, Value>>,
+    pub rows: crate::SharedRows,
     /// The declared type of each column of `rows`.
     pub schema: column_types::ColumnTypes,
     pub fonts_dir: Option<String>,
@@ -64,14 +64,15 @@ pub struct MeasurePayload {
     pub sub_unit_specs: Option<std::collections::BTreeMap<String, String>>,
     /// The `str()` text of each tagged cell in `rows`; filled when parsed.
     #[serde(skip)]
-    pub cell_text: ::bind::rows::CellText,
+    pub cell_text: std::sync::Arc<::bind::rows::CellText>,
 }
 
 impl<'de> Deserialize<'de> for MeasurePayload {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let mut payload = MeasurePayload::deserialize(deserializer)?;
-        payload.cell_text =
-            ::bind::rows::decode_cells(&mut payload.rows).map_err(serde::de::Error::custom)?;
+        payload.cell_text = std::sync::Arc::new(
+            ::bind::rows::decode_cells(&mut payload.rows).map_err(serde::de::Error::custom)?,
+        );
         Ok(payload)
     }
 }
@@ -108,6 +109,35 @@ pub fn natural_content_width(
     cell_pad: f64,
 ) -> Option<f64> {
     hug_width(columns, |auto| {
+        natural_auto_widths(auto, content_headroom, cell_pad)
+            .into_iter()
+            .map(|(width, _)| width)
+            .collect()
+    })
+}
+
+/// Each auto column's natural width (`natural_auto_width`) and whether it is
+/// compact, in column order; `None` for a pinned column.
+pub fn natural_auto_layout(
+    columns: &[NaturalColumn],
+    content_headroom: f64,
+    cell_pad: f64,
+) -> Vec<Option<(f64, bool)>> {
+    let auto: Vec<&NaturalColumn> = columns.iter().filter(|c| c.pin.is_none()).collect();
+    let mut widths = natural_auto_widths(&auto, content_headroom, cell_pad).into_iter();
+    columns
+        .iter()
+        .map(|c| if c.pin.is_none() { widths.next() } else { None })
+        .collect()
+}
+
+/// The auto columns' natural widths, each with whether it is compact.
+fn natural_auto_widths(
+    auto: &[&NaturalColumn],
+    content_headroom: f64,
+    cell_pad: f64,
+) -> Vec<(f64, bool)> {
+    {
         let base: Vec<f64> = auto
             .iter()
             .map(|c| auto_column_demand(c.demand, c.word_floor, c.max_width))
@@ -121,18 +151,21 @@ pub fn natural_content_width(
         auto.iter()
             .zip(base.iter().zip(&is_text))
             .map(|(c, (&d, &text))| {
-                natural_auto_width(
-                    d,
-                    text,
-                    text_columns_exist,
-                    c.header_demand,
-                    c.max_width,
-                    content_headroom,
-                    cell_pad,
+                (
+                    natural_auto_width(
+                        d,
+                        text,
+                        text_columns_exist,
+                        c.header_demand,
+                        c.max_width,
+                        content_headroom,
+                        cell_pad,
+                    ),
+                    !text,
                 )
             })
             .collect()
-    })
+    }
 }
 
 /// The data-column budget below which a column would have to break a word: px
@@ -238,7 +271,7 @@ pub fn paginator_band_width(
 }
 
 /// A column's `width:`/`max_width:` as `natural_content_width` reads them.
-fn natural_column(col: &super::ColMeta, inputs: &ColumnInputs) -> Result<NaturalColumn, String> {
+pub(super) fn natural_column(col: &super::ColMeta, inputs: &ColumnInputs) -> Result<NaturalColumn, String> {
     let width = col.cfg.width.as_ref();
     let pin = match parse_column_width(width, 1.0)? {
         Some(fraction) if is_percent(width) => Some(Pin::Percent(fraction)),
@@ -381,12 +414,13 @@ pub(super) fn natural_width(
     } else {
         0.0
     };
-    let columns_width = content_width + row_number_width + 2.0 * outer_padding;
-    let min_width = min_content_width + row_number_width + 2.0 * outer_padding;
+    let edges = 2.0 * outer_padding + th.row_scrollbar_band(rows.len());
+    let columns_width = content_width + row_number_width + edges;
+    let min_width = min_content_width + row_number_width + edges;
 
     // Only the page size can paginate an unbounded table; a slot short enough
     // to paginate is not known here.
-    let page_rows = if th.pagination.enabled {
+    let page_rows = if th.pagination.enabled && !th.pagination.scrolls_rows(rows.len()) {
         th.pagination.page_rows
     } else {
         None

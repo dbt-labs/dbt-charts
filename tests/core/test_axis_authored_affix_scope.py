@@ -13,8 +13,8 @@ from dbt_charts.core.compile.config import (
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.style.authored import (
-    AxisLabelStylePatch,
     AxisXStylePatch,
+    AxisYLabelStylePatch,
     AxisYStylePatch,
     DimensionLabelStylePatch,
 )
@@ -36,7 +36,9 @@ from .conftest import fixture_chart_for_type
 def _bake_ay_with_format(chart_type: str, y_channel_type: str, fmt: FormatConfig):
     ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
     chart = fixture_chart_for_type(chart_type)
-    overrides = AxisOverrides(y=AxisYStylePatch(labels=AxisLabelStylePatch(format=fmt)))
+    overrides = AxisOverrides(
+        y=AxisYStylePatch(labels=AxisYLabelStylePatch(format=fmt))
+    )
     return _bake_cartesian_axes(
         ctx, chart, chart_type, "nominal", y_channel_type, overrides
     )
@@ -46,7 +48,7 @@ def _bake_ay_with_format_and_expr(chart_type: str, fmt: str | FormatConfig, expr
     ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
     chart = fixture_chart_for_type(chart_type)
     overrides = AxisOverrides(
-        y=AxisYStylePatch(labels=AxisLabelStylePatch(format=fmt, expr=expr))
+        y=AxisYStylePatch(labels=AxisYLabelStylePatch(format=fmt, expr=expr))
     )
     return _bake_cartesian_axes(
         ctx, chart, chart_type, "nominal", "quantitative", overrides
@@ -112,7 +114,7 @@ def test_house_alias_ruler_suppresses_the_authored_affix_override():
     chart = fixture_chart_for_type("bar")
     overrides = AxisOverrides(
         y=AxisYStylePatch(
-            labels=AxisLabelStylePatch(
+            labels=AxisYLabelStylePatch(
                 format=FormatConfig(spec="currency", prefix="€", notation="narrative")
             )
         )
@@ -151,7 +153,7 @@ def test_authored_affix_persists_on_labels_format_alongside_a_ladder():
     chart = fixture_chart_for_type("bar")
     overrides = AxisOverrides(
         y=AxisYStylePatch(
-            labels=AxisLabelStylePatch(
+            labels=AxisYLabelStylePatch(
                 format=FormatConfig(spec=".3~s", prefix="€", notation="narrative")
             )
         )
@@ -209,7 +211,9 @@ def _resolved_ay_axis(
     ctx, chart_type: str, fmt: str | FormatConfig, tick_values: tuple[float, ...]
 ):
     chart = fixture_chart_for_type(chart_type)
-    overrides = AxisOverrides(y=AxisYStylePatch(labels=AxisLabelStylePatch(format=fmt)))
+    overrides = AxisOverrides(
+        y=AxisYStylePatch(labels=AxisYLabelStylePatch(format=fmt))
+    )
     baked = _bake_cartesian_axes(
         ctx, chart, chart_type, "nominal", "quantitative", overrides
     )

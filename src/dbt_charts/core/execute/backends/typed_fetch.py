@@ -16,9 +16,10 @@ import re
 import time
 import uuid
 from collections.abc import Callable, Sequence
-from datetime import UTC
-from functools import cache
+from datetime import UTC, datetime
+from functools import cache, partial
 from typing import Any, NamedTuple
+from zoneinfo import ZoneInfo
 
 import nanoarrow as na
 
@@ -48,6 +49,10 @@ def _utc(cell: Cell) -> Cell:
     return cell.astimezone(UTC) if cell.tzinfo else cell
 
 
+def _naive_utc(cell: Cell) -> Cell:
+    return cell.replace(tzinfo=UTC)
+
+
 def _slot(kind: ColumnKind) -> _Slot:
     """An instant column's cells are normalized by its declared type."""
     return ColumnType(kind=kind), _utc if kind == "datetime_tz" else None
@@ -58,7 +63,7 @@ def _no_reader(reason: str) -> ExecutionError:
 
 
 class _Family(NamedTuple):
-    resolve: _Resolve
+    resolve: Callable[..., _Slot]
     # dbt-snowflake comments inside add_query; every other adapter comments in
     # its execute(), which this bypasses.
     comment_here: bool
@@ -79,6 +84,8 @@ class _Family(NamedTuple):
     ) = None
     # The adapter's own execute() retried; this keeps that behavior.
     retry: Callable[[Driver, Callable[[], TypedRows]], TypedRows] | None = None
+    # The cursor returns TIMESTAMP as the naive wall clock of the session zone.
+    session_zone: bool = False
 
 
 def fetch_typed(
@@ -86,29 +93,35 @@ def fetch_typed(
     dialect: str,
     sql: str,
     limit: int | None,
+    time_zone: str,
 ) -> TypedRows:
     """Run *sql* and return its rows with the declared type of every column.
 
     ``limit`` bounds the driver's own fetch; None reads everything (Spark
-    cursors have no ``fetchmany``).
+    cursors have no ``fetchmany``). ``time_zone`` is the session zone the query
+    runs in, for the drivers that report an instant as the session's wall clock
+    or take the zone per query.
 
     Raises:
         ExecutionError: ERR-RESULT-COLUMN-TYPE for a type the warehouse reports
             that has no mapping, or a dialect with no type reader.
     """
     if dialect in _CLIENTS:
-        return _CLIENTS[dialect](adapter.connections, sql, limit)
+        return _CLIENTS[dialect](adapter.connections, sql, limit, time_zone)
     if dialect not in _FAMILIES:
         raise _no_reader(f"the {dialect} dbt adapter has no reader for column types")
     family = _FAMILIES[dialect]
     connections = adapter.connections
+    zone = ZoneInfo(time_zone)
     if family.retry is not None:
-        return family.retry(connections, lambda: _read(family, connections, sql, limit))
-    return _read(family, connections, sql, limit)
+        return family.retry(
+            connections, lambda: _read(family, connections, sql, limit, zone)
+        )
+    return _read(family, connections, sql, limit, zone)
 
 
 def _read(
-    family: _Family, connections: Driver, sql: str, limit: int | None
+    family: _Family, connections: Driver, sql: str, limit: int | None, zone: ZoneInfo
 ) -> TypedRows:
     if family.comment_here:
         sql = connections._add_query_comment(sql)  # noqa: SLF001 — dbt's own hook
@@ -123,8 +136,13 @@ def _read(
         if description is None:
             return TypedRows([], [], [])
         declared = family.declare(connections, description) if family.declare else {}
+        resolve = (
+            partial(family.resolve, zone=zone)
+            if family.session_zone
+            else family.resolve
+        )
         slots = [
-            declared[column[1]] if column[1] in declared else family.resolve(column)
+            declared[column[1]] if column[1] in declared else resolve(column)
             for column in description
         ]
         if described is not None:
@@ -334,8 +352,20 @@ _HIVE_KINDS: dict[str, ColumnKind] = {
     "date": "date",
     "timestamp_ntz": "datetime",
 }
-# Spark's thrift and ODBC cursors return TIMESTAMP as the session's wall clock.
-_SPARK_KINDS: dict[str, ColumnKind] = {**_HIVE_KINDS, "timestamp": "datetime"}
+# Spark's thrift cursor returns TIMESTAMP as the session's wall clock, an instant
+# once the zone is known.
+_SPARK_KINDS: dict[str, ColumnKind] = {**_HIVE_KINDS, "timestamp": "datetime_tz"}
+
+
+def _wall_clock_in(zone: ZoneInfo) -> Decoder:
+    return lambda cell: cell.replace(tzinfo=zone).astimezone(UTC)
+
+
+def _process_wall_clock(cell: datetime) -> datetime:
+    # A naive datetime's astimezone reads it in the process zone.
+    return cell.astimezone(UTC)
+
+
 _HIVE_NESTED = frozenset({"array", "map", "struct"})
 
 
@@ -356,14 +386,16 @@ def _each(decode: Decoder | None) -> Decoder:
     ]
 
 
-def _hive_named(name: str, text: str, kinds: dict[str, ColumnKind]) -> _Slot:
+def _hive_named(
+    name: str, text: str, kinds: dict[str, ColumnKind], timestamp: Decoder
+) -> _Slot:
     """A type spelled as Spark's ``simpleString`` (the session method):
     ``array<int>``, ``struct<a:int,b:string>``, ``decimal(10,2)``."""
     text = text.strip()
     base = re.split(r"[<(]", text, maxsplit=1)[0].lower()
     inner = text[text.find("<") + 1 : -1]
     if base == "array" and "<" in text:
-        element, decode = _hive_named(name, inner, kinds)
+        element, decode = _hive_named(name, inner, kinds, timestamp)
         return ColumnType(kind="list", element=element), (
             None if decode is None else _each(decode)
         )
@@ -371,7 +403,7 @@ def _hive_named(name: str, text: str, kinds: dict[str, ColumnKind]) -> _Slot:
         fields = [
             (
                 field.partition(":")[0].strip("` "),
-                _hive_named(name, field.partition(":")[2], kinds),
+                _hive_named(name, field.partition(":")[2], kinds, timestamp),
             )
             for field in _split_top_level(inner)
         ]
@@ -390,22 +422,29 @@ def _hive_named(name: str, text: str, kinds: dict[str, ColumnKind]) -> _Slot:
         return ColumnType(kind="string"), None
     if base == "variant":
         return ColumnType(kind="json"), json.loads
+    if base == "timestamp":
+        return ColumnType(kind="datetime_tz"), timestamp
     if base in kinds:
         return _slot(kinds[base])
     raise column_type_error(name, f"the hive type {text!r} has no declared mapping")
 
 
-def _spark(column: Description) -> _Slot:
-    """Thrift names a nested column ``array``, ``map`` or ``struct`` with no
+def _spark(column: Description, zone: ZoneInfo) -> _Slot:
+    """Thrift codes end in ``_TYPE``; any other code is the session method's
+    ``simpleString``.
+
+    Thrift names a nested column ``array``, ``map`` or ``struct`` with no
     element type, so it is declared ``json``; a NULL column has no value to type
     and reads as ``string``."""
     name, code = column[0], column[1]
     if not isinstance(code, str):
         return _pyodbc(column)  # dbt-spark's ODBC wrapper
+    # PySpark builds the session method's timestamps in the process zone.
+    timestamp = _wall_clock_in(zone) if code.endswith("_TYPE") else _process_wall_clock
     key = code.lower().removesuffix("_type")
     if key in _HIVE_NESTED:
         return ColumnType(kind="json"), _hive_json(name)
-    return _hive_named(name, code if "<" in code else key, _SPARK_KINDS)
+    return _hive_named(name, code if "<" in code else key, _SPARK_KINDS, timestamp)
 
 
 # pyodbc reports the Python type class of the column's cells, which dbt-sqlserver
@@ -561,7 +600,7 @@ _FAMILIES: dict[str, _Family] = {
         _by_code("redshift", _redshift_slots), True, retry=_redshift_retries
     ),
     "snowflake": _Family(_snowflake, False),
-    "spark": _Family(_spark, True),
+    "spark": _Family(_spark, True, session_zone=True),
 }
 
 
@@ -634,8 +673,7 @@ def _clickhouse_type(column: str, declared: Driver) -> ColumnType:
             ),
         )
     if base in ("DateTime", "DateTime64"):
-        # A zone on the type makes the column an instant.
-        return ColumnType(kind="datetime_tz" if declared.tzinfo else "datetime")
+        return ColumnType(kind="datetime_tz")
     if re.fullmatch(r"U?Int\d+", base):
         return ColumnType(kind="integer")
     if re.fullmatch(r"Decimal\d*", base):
@@ -649,10 +687,10 @@ def _clickhouse_type(column: str, declared: Driver) -> ColumnType:
 
 def _clickhouse_decoder(column: str, declared: Driver) -> Decoder | None:
     """A Map cell, at any depth, becomes the JSON object map_to_json builds; a
-    zoned DateTime the UTC instant."""
+    DateTime the UTC instant (a bare one arrives as naive UTC)."""
     base = declared.base_type
-    if base in ("DateTime", "DateTime64") and declared.tzinfo:
-        return _utc
+    if base in ("DateTime", "DateTime64"):
+        return _utc if declared.tzinfo else _naive_utc
     if base == "Map":
         value = _clickhouse_decoder(column, declared.value_type)
         return lambda cell: map_to_json(
@@ -678,14 +716,19 @@ def _clickhouse_decoder(column: str, declared: Driver) -> Decoder | None:
     return None
 
 
-def _fetch_clickhouse(connections: Driver, sql: str, limit: int | None) -> TypedRows:
+def _fetch_clickhouse(
+    connections: Driver, sql: str, limit: int | None, time_zone: str
+) -> TypedRows:
     client = connections.get_thread_connection().handle
     result = client.query(
         connections._add_query_comment(sql),  # noqa: SLF001 — dbt's own hook
         query_id=str(uuid.uuid4()),
         # "schema": a zone on the column type gives aware cells, a bare DateTime
-        # naive ones; the default would hand a bare column back in the server zone.
+        # naive UTC ones; the default would hand a bare column back in the server zone.
         tz_mode="schema",
+        # A UTC board sends nothing, so a read-only user or a pre-23.6 server
+        # that rejects the setting still works.
+        settings=None if time_zone == "UTC" else {"session_timezone": time_zone},
     )
     if not hasattr(result, "column_types"):
         raise _no_reader(
@@ -709,7 +752,9 @@ def _fetch_clickhouse(connections: Driver, sql: str, limit: int | None) -> Typed
     return TypedRows(list(result.column_names), rows, types)
 
 
-def _fetch_bigquery(connections: Driver, sql: str, limit: int | None) -> TypedRows:
+def _fetch_bigquery(
+    connections: Driver, sql: str, limit: int | None, time_zone: str
+) -> TypedRows:
     _, iterator = connections.raw_execute_with_comment(sql, limit=limit)
     fields = list(iterator.schema)
     types = [_bigquery_type(field.name, field) for field in fields]
@@ -717,7 +762,9 @@ def _fetch_bigquery(connections: Driver, sql: str, limit: int | None) -> TypedRo
     return TypedRows([field.name for field in fields], rows, types)
 
 
-def _fetch_databricks(connections: Driver, sql: str, limit: int | None) -> TypedRows:
+def _fetch_databricks(
+    connections: Driver, sql: str, limit: int | None, time_zone: str
+) -> TypedRows:
     """databricks-sql's ``cursor.description`` cannot tell TIMESTAMP from
     TIMESTAMP_NTZ or type a nested column, so the result is read as Arrow and
     typed by the same policy as every other Arrow driver."""
@@ -736,7 +783,7 @@ def _fetch_databricks(connections: Driver, sql: str, limit: int | None) -> Typed
     return TypedRows(names, list(zip(*columns, strict=True)), list(types.values()))
 
 
-_CLIENTS: dict[str, Callable[[Driver, str, int | None], TypedRows]] = {
+_CLIENTS: dict[str, Callable[[Driver, str, int | None, str], TypedRows]] = {
     "databricks": _fetch_databricks,
     "bigquery": _fetch_bigquery,
     "clickhouse": _fetch_clickhouse,

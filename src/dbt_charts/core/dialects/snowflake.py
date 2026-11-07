@@ -28,8 +28,11 @@ class SnowflakeDialect(SQLDialect):
     escapes_backslashes = True
 
     def zoned_date_expr(self, column: str, time_zone: str) -> str:
-        """CONVERT_TIMEZONE from UTC (a naive value is read as UTC) to `time_zone`."""
+        """CONVERT_TIMEZONE reads the NTZ value as UTC."""
         return f"CAST(CONVERT_TIMEZONE('UTC', '{time_zone}', {column}) AS DATE)"
+
+    def session_time_zone_sql(self, zone: str) -> str:
+        return f"ALTER SESSION SET TIMEZONE = {self.string_literal(zone)}"
 
     def param(self, index: int) -> str:
         """Generate Snowflake parameter placeholder.

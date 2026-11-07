@@ -48,6 +48,7 @@ def _render(width: float, sink_open: bool) -> dict[str, TableOverflow]:
             query=SqlQuery(sql="SELECT 1", source="test"),
             query_name="q",
             type="table",
+            style=TableChartStylePatch(column_layout={"overflow": "fit"}),
         ),
         _data(),
         chart_style_context=_BOARD_CTX,

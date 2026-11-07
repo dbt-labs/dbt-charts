@@ -150,7 +150,11 @@ class _SourcePool:
         )
 
     def execute(
-        self, inlined_sql: str, setup_sql: str | None, limit: int | None = None
+        self,
+        inlined_sql: str,
+        setup_sql: str | None,
+        time_zone: str,
+        limit: int | None = None,
     ) -> TypedRows:
         """Run SQL on a persistent worker thread, reconnecting once on failure.
 
@@ -176,6 +180,7 @@ class _SourcePool:
                 self._execute_on_worker,
                 inlined_sql,
                 setup_sql,
+                time_zone,
                 limit,
             ).result()
         except Exception as exc:  # noqa: BLE001 — re-raised unless interrupted
@@ -186,7 +191,11 @@ class _SourcePool:
             raise
 
     def _execute_on_worker(
-        self, inlined_sql: str, setup_sql: str | None, limit: int | None
+        self,
+        inlined_sql: str,
+        setup_sql: str | None,
+        time_zone: str,
+        limit: int | None,
     ) -> TypedRows:
         adapter = self._replace_if_released(self._ensure_connected())
         dirty = self._tls.session_dirty
@@ -195,7 +204,7 @@ class _SourcePool:
             # than on the query, and that is still a dead connection.
             if dirty:
                 adapter = self._clean_session(adapter)
-            return self._run(adapter, inlined_sql, setup_sql, limit)
+            return self._run(adapter, inlined_sql, setup_sql, time_zone, limit)
         except QueryDurationExceeded:
             # The warehouse cancelled the statement, not the connection —
             # retrying would just burn the same timeout window again.
@@ -213,7 +222,7 @@ class _SourcePool:
                 raise
             self._drop_connection()
             adapter = self._ensure_connected()
-            return self._run(adapter, inlined_sql, setup_sql, limit)
+            return self._run(adapter, inlined_sql, setup_sql, time_zone, limit)
 
     def _replace_if_released(
         self,
@@ -285,11 +294,16 @@ class _SourcePool:
         adapter: _DbtAdapter,
         inlined_sql: str,
         setup_sql: str | None,
+        time_zone: str,
         limit: int | None,
     ) -> TypedRows:
+        self._apply_time_zone(adapter, time_zone)
         # Single owner of the flag, and set before the send: a setup_sql that fails
         # partway still leaves whatever it created on the connection.
         self._tls.session_dirty = bool(setup_sql)
+        if setup_sql:
+            # It may change the session zone.
+            self._tls.session_zone = None
         sql = (
             setup_sql.rstrip().rstrip(";") + ";\n" + inlined_sql
             if setup_sql
@@ -300,11 +314,49 @@ class _SourcePool:
         # slice in apply_row_limit_truncation.
         driver_limit = limit if self._dialect.cursor_supports_driver_limit else None
         try:
-            return fetch_typed(adapter, self._dialect.name, sql, driver_limit)
+            return fetch_typed(
+                adapter, self._dialect.name, sql, driver_limit, time_zone
+            )
         except Exception as exc:  # noqa: BLE001 — classify statement timeout before retry
             if self._dialect.is_statement_timeout_error(exc):
                 raise QueryDurationExceeded(self._timeout_seconds) from exc
             raise
+
+    def _apply_time_zone(self, adapter: _DbtAdapter, time_zone: str) -> None:
+        """Run this connection's session in *time_zone*, sending only a change.
+
+        The connection is pooled across boards, so the zone it last ran in is
+        tracked per worker thread, with the client handle it was set on: dbt-bigquery
+        swaps the handle on a retry. ClickHouse takes the zone per
+        query instead (see ``fetch_typed``).
+        """
+        handle = adapter.connections.get_thread_connection().handle
+        if self._tls.session_zone == (handle, time_zone):
+            return
+        if self._source_config.get("type") == "bigquery":
+            from google.cloud.bigquery import ConnectionProperty
+
+            if handle.default_query_job_config is None:
+                handle.default_query_job_config = self._bigquery_job_config()
+            handle.default_query_job_config.connection_properties = [
+                ConnectionProperty("time_zone", time_zone)
+            ]
+        elif statement := self._dialect.session_time_zone_sql(time_zone):
+            adapter.execute(statement, auto_begin=False, fetch=False)
+        self._tls.session_zone = (handle, time_zone)
+
+    def _bigquery_job_config(
+        self,
+    ) -> Any:  # type-state: explicit_any — optional google import
+        from google.cloud import bigquery
+
+        return bigquery.QueryJobConfig(
+            default_dataset=bigquery_default_dataset(self._source_config),
+            # BigQuery has no session-level statement_timeout SQL — the cap
+            # is a job-level setting instead of the dialect SQL mechanism
+            # every other network warehouse uses.
+            job_timeout_ms=self._timeout_seconds * 1000,
+        )
 
     def _ensure_connected(
         self,
@@ -361,15 +413,7 @@ class _SourcePool:
             # handle — same structural reason the DuckDB SET search_path follows
             # conn.execute.
             if self._source_config.get("type") == "bigquery":
-                from google.cloud import bigquery
-
-                handle.default_query_job_config = bigquery.QueryJobConfig(
-                    default_dataset=bigquery_default_dataset(self._source_config),
-                    # BigQuery has no session-level statement_timeout SQL — the cap
-                    # is a job-level setting instead of the dialect SQL mechanism
-                    # every other network warehouse uses.
-                    job_timeout_ms=self._timeout_seconds * 1000,
-                )
+                handle.default_query_job_config = self._bigquery_job_config()
 
             # For dialects that have a session-level timeout SQL (Postgres, Snowflake,
             # Redshift), send it once at connection setup. Session-scoped SET commands
@@ -387,6 +431,7 @@ class _SourcePool:
         self._tls.adapter = adapter
         self._tls.ctx = ctx
         self._tls.session_dirty = False
+        self._tls.session_zone = None
         with self._adapters_lock:
             self._adapters.append(adapter)
         return adapter
@@ -406,6 +451,7 @@ class _SourcePool:
         self._tls.ctx = None
         # The session state went with the connection.
         self._tls.session_dirty = False
+        self._tls.session_zone = None
         if adapter is None:
             return
         with self._adapters_lock:
@@ -467,6 +513,7 @@ class DbtBackend:
         typed = self._get_source_pool(source.model_dump(by_alias=True)).execute(
             query.inline(source.type),
             ";\n".join(s.rstrip().rstrip(";") for s in query.setup_sql) or None,
+            query.time_zone,
             limit=query.limit.fetch_limit,
         )
         return TypedRows(

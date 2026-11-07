@@ -405,9 +405,12 @@ def board_slug(relpath: str) -> str:
     Raises ValueError if relpath is not under any board root.
     """
     namespace, tail_parts = _split_board_root(relpath)
-    suffix = PurePosixPath(relpath).suffix
-    if suffix in BOARD_CANDIDATE_SUFFIXES and tail_parts:
-        tail_parts = (*tail_parts[:-1], PurePosixPath(tail_parts[-1]).stem)
+    # Lexical, not PurePath.suffix: Python 3.14 reads no suffix on `..yml`.
+    name = tail_parts[-1] if tail_parts else ""
+    for suffix in BOARD_CANDIDATE_SUFFIXES:
+        if name.endswith(suffix) and name != suffix:
+            tail_parts = (*tail_parts[:-1], name.removesuffix(suffix))
+            break
     parts = ((namespace,) if namespace else ()) + tail_parts
     return "/".join(parts)
 

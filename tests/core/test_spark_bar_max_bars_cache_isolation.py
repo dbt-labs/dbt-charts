@@ -35,6 +35,8 @@ from dbt_charts.core.render.layout_sizing import (
 )
 from dbt_charts.core.render.sizing import calculate_layout_height
 
+from .._results import rows_result
+
 _TEST_QUERY = SqlQuery(sql="SELECT 1", source="test")
 
 # First 10 rows NULL, last 5 numeric: at the theme-default max_bars (10) the
@@ -107,7 +109,7 @@ def test_second_placement_not_poisoned_by_first_placements_max_bars_failure() ->
 
     executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
     executor.rendered_at = None
-    executor.execute_query.return_value = _ROWS
+    executor.execute_query_result.return_value = rows_result(_ROWS)
     render_ctx = SizingRenderCtx(
         results=executor,
         resolved_style=low_rs,

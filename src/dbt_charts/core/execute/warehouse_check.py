@@ -762,7 +762,8 @@ def _check_bigquery(
 
     # Through the same helper the rest of the BigQuery surface uses, so a
     # missing extra names itself instead of surfacing a bare ModuleNotFoundError.
-    QueryJobConfig = import_bigquery("google.cloud.bigquery").QueryJobConfig
+    bigquery = import_bigquery("google.cloud.bigquery")
+    QueryJobConfig = bigquery.QueryJobConfig
     BadRequest = import_bigquery("google.api_core.exceptions").BadRequest
 
     composed = compose_query(
@@ -840,6 +841,9 @@ def _check_bigquery(
                 # `FROM orders` — the normal spelling once the source names the
                 # dataset — dry-runs as "missing dataset" on a healthy board.
                 default_dataset=bigquery_default_dataset(config),
+                connection_properties=[
+                    bigquery.ConnectionProperty("time_zone", composed.time_zone)
+                ],
             ),
             # A dataset outside the default region is invisible without it.
             location=config.get("location"),

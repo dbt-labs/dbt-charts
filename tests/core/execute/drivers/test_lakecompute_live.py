@@ -31,7 +31,7 @@ def _source() -> LakeComputeTokenSource:
 
 
 def test_select_one() -> None:
-    connection = open_driver(_source(), None)
+    connection = open_driver(_source(), None, "UTC")
     try:
         table = connection.execute("SELECT 1 AS one", resolve_effective_row_limit(10))
     finally:
@@ -43,7 +43,7 @@ def test_select_one() -> None:
 
 def test_a_ten_thousand_row_fetch() -> None:
     limit = resolve_effective_row_limit(None)
-    connection = open_driver(_source(), None)
+    connection = open_driver(_source(), None, "UTC")
     try:
         table = connection.execute("SELECT * FROM range(10000) t(n)", limit)
     finally:

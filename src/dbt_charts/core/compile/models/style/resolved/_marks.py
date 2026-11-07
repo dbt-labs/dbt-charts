@@ -76,6 +76,13 @@ class ResolvedPointMarkStyle(PointMarkStyle):
         default=False,
         description="Draw point markers only at each series' anchored points.",
     )
+    edge_size: float | None = Field(
+        default=None,
+        description=(
+            "Area in square pixels of the point the x edge pad clears: the drawn "
+            "size, else the size an automatic point takes on the line stroke."
+        ),
+    )
 
 
 class ResolvedStrokeStyle(BaseModel):

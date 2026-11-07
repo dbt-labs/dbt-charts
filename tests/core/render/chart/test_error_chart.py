@@ -9,6 +9,7 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -479,9 +480,11 @@ def test_vl_chart_error_tile_renders_through_engine_with_code_hint_and_error_lin
     engine_calls: list[str] = []
     real_render = _engine.render_chart
 
-    def spy(payload: str) -> tuple[str, list[dict[str, object]], float | None]:
-        engine_calls.append(payload)
-        return real_render(payload)
+    def spy(
+        rows: Any, datasets: Any, layout_json: str
+    ) -> tuple[str, list[dict[str, object]], float | None]:
+        engine_calls.append(layout_json)
+        return real_render(rows, datasets, layout_json)
 
     monkeypatch.setattr(_engine, "render_chart", spy)
     chart = make_chart("bar", x="region", y="revenue")

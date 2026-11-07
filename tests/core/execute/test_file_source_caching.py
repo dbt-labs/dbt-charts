@@ -305,8 +305,12 @@ class TestMaterializerReadsOnlyOnMiss:
         source = CsvSourceConfig(type="csv", files={"sales": "data/sales.csv"})
         mat = FileSourceMaterializer(project)
 
-        mat.materialize_and_run(source, "SELECT * FROM sales", {}, "sales")
-        mat.materialize_and_run(source, "SELECT COUNT(*) FROM sales", {}, "sales")
+        mat.materialize_and_run(
+            source, "SELECT * FROM sales", {}, "sales", time_zone="UTC"
+        )
+        mat.materialize_and_run(
+            source, "SELECT COUNT(*) FROM sales", {}, "sales", time_zone="UTC"
+        )
 
         # Bytes read exactly once — the second call hits the version cache.
         assert reads == ["data/sales.csv"]
@@ -335,7 +339,9 @@ class TestConcurrentMaterialize:
 
         def _run() -> None:
             barrier.wait()
-            mat.materialize_and_run(source, "SELECT * FROM sales", {}, "sales")
+            mat.materialize_and_run(
+                source, "SELECT * FROM sales", {}, "sales", time_zone="UTC"
+            )
 
         threads = [threading.Thread(target=_run) for _ in range(8)]
         for t in threads:

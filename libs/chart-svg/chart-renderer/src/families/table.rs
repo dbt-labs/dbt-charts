@@ -229,6 +229,9 @@ struct TableTheme {
     #[serde(default)]
     bottom_padding: f64,
     paginator: PaginatorTheme,
+    /// `table.scrollbar`; every theme ships it, hand-built payloads may omit it.
+    #[serde(default)]
+    scrollbar: ScrollbarTheme,
     // Floor for the title+subtitle band, but only when a subtitle is
     // present
     // ("the floor only applies when a subtitle is present; without one the
@@ -546,12 +549,79 @@ struct ColLayout {
     width_similarity_threshold: f64,
     #[serde(default)]
     content_headroom: f64,
+    /// `column_layout.overflow`: columns past the slot scroll (`scroll`) or
+    /// squeeze (`fit`). Every theme sets it; a hand-built payload without it
+    /// squeezes.
+    #[serde(default)]
+    overflow: ColumnOverflow,
+    /// `column_layout.freeze`: leading visible columns pinned while the
+    /// table scrolls horizontally.
+    #[serde(default)]
+    freeze: usize,
+}
+
+#[derive(Deserialize, Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+enum ColumnOverflow {
+    #[default]
+    Fit,
+    Scroll,
 }
 
 #[derive(Deserialize)]
 struct PaginationCfg {
     enabled: bool,
     page_rows: Option<usize>,
+    /// `pagination.mode`: a pager (`pages`) or a vertical scroll viewport.
+    #[serde(default)]
+    mode: PaginationMode,
+}
+
+impl TableTheme {
+    /// The band a table that scrolls its rows reserves at its right edge for
+    /// the scrollbar, so the bar never sits against the last column's text.
+    fn row_scrollbar_band(&self, n_rows: usize) -> f64 {
+        let scrolls = self.pagination.scrolls_rows(n_rows)
+            && self.pagination.page_rows.is_none_or(|page| n_rows > page);
+        if scrolls {
+            self.scrollbar.size + 2.0 * self.scrollbar.inset
+        } else {
+            0.0
+        }
+    }
+}
+
+impl PaginationCfg {
+    /// Whether rows past a page scroll instead of paging. A table longer than
+    /// `SCROLL_MAX_ROWS` pages, so every row stays reachable.
+    fn scrolls_rows(&self, n_rows: usize) -> bool {
+        self.enabled && self.mode == PaginationMode::Scroll && n_rows <= SCROLL_MAX_ROWS
+    }
+}
+
+#[derive(Deserialize, Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+enum PaginationMode {
+    #[default]
+    Pages,
+    Scroll,
+}
+
+/// `table.scrollbar`: the overlay bars a scrolling table draws.
+#[derive(Deserialize, Clone)]
+struct ScrollbarTheme {
+    size: f64,
+    inset: f64,
+    thumb_color: String,
+    edge_color: String,
+    #[serde(default)]
+    track_color: Option<String>,
+}
+
+impl Default for ScrollbarTheme {
+    fn default() -> Self {
+        Self { size: 6.0, inset: 2.0, thumb_color: "#b0b2b8".into(), edge_color: "#e1e2e5".into(), track_color: None }
+    }
 }
 
 /// The most rows an interactive table draws into the page for in-page sort
@@ -577,6 +647,14 @@ const ANTI_DANGLE_MIN_ROW_H: f64 = 20.0;
 // A static export never draws a "… 30 ›"
 // tail past this, even when the row count implies more pages.
 const STATIC_MULTI_PAGE_MAX_PAGES: usize = 20;
+// Most rows a vertically scrolling table draws; a longer one pages instead.
+const SCROLL_MAX_ROWS: usize = ROW_POOL_CAP;
+// The widest share of its slot a table's frozen columns may take.
+const FREEZE_MAX_SHARE: f64 = 0.5;
+// Shortest a scrollbar thumb is drawn, so a long table's thumb stays grabbable.
+const SCROLL_MIN_THUMB: f64 = 24.0;
+// Width of the shadow along a frozen edge once content scrolls under it.
+const SCROLL_SHADOW: f64 = 6.0;
 // MUI-style sibling/boundary window sizing
 // `_paginator_window` defaults.
 const PAGINATOR_SIBLING_COUNT: i64 = 1;
@@ -9020,7 +9098,7 @@ mod floor_source_tests {
                     "pivot_columns": null,
                     "conditional_formatting": null,
                 }),
-                rows: maps.clone(),
+                rows: maps.clone().into(),
                 schema: crate::payload_schema::test_schema_of(&maps),
                 fonts_dir: None,
                 numeral_family: "Inter".into(),
@@ -9030,7 +9108,7 @@ mod floor_source_tests {
                 language: Default::default(),
                 formats: None,
                 sub_unit_specs: Some(super::tests::en_us_siblings()),
-                cell_text: Vec::new(),
+                cell_text: Default::default(),
             };
             width::measure_natural_width(&payload, &fonts).unwrap().unwrap() - 2.0 * outer
         };
@@ -10587,7 +10665,7 @@ mod background_and_font_family_tests {
     #[test]
     fn a_declared_filter_variable_column_links_its_cells() {
         let mut payload = payload_with(json!({}));
-        payload.rows = vec![json!({"a": "x y"}).as_object().unwrap().clone()];
+        payload.rows = vec![json!({"a": "x y"}).as_object().unwrap().clone()].into();
         payload.filter_variables = vec!["a".to_string()];
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(svg.contains("<a href=\"?a=x+y\">"), "filter link missing:\n{svg}");
@@ -10622,7 +10700,7 @@ mod background_and_font_family_tests {
     fn table_numerals_follow_the_board_numeral_family_not_the_body() {
         let render_with = |numeral: Option<&str>| {
             let mut payload = payload_with(json!({}));
-            payload.rows = vec![json!({"a": "x", "b": 95}).as_object().unwrap().clone()];
+            payload.rows = vec![json!({"a": "x", "b": 95}).as_object().unwrap().clone()].into();
             payload.schema = crate::payload_schema::test_schema_for(&payload.rows);
             payload.resolved["columns"] = json!({"a": {"label": "A", "link_open": "page", "header_link_open": "page"}, "b": {"label": "B", "link_open": "page", "header_link_open": "page"}});
             let table = &mut payload.resolved["style"]["table"];
@@ -10667,7 +10745,7 @@ mod background_and_font_family_tests {
     #[test]
     fn an_empty_result_keeps_the_header_and_paints_an_em_dash() {
         let mut payload = payload_with(json!({}));
-        payload.rows = vec![];
+        payload.rows = vec![].into();
         payload.resolved["style"]["table"]["empty_state"] =
             json!({"font": {"size": 14.0, "color": "#626366"}});
         let svg = crate::families::empty::render("table", &payload, &test_fonts()).unwrap();
@@ -10689,7 +10767,7 @@ mod background_and_font_family_tests {
     #[test]
     fn the_empty_mark_sits_below_the_header_band_inside_the_canvas() {
         let mut payload = payload_with(json!({}));
-        payload.rows = vec![];
+        payload.rows = vec![].into();
         payload.resolved["style"]["table"]["empty_state"] =
             json!({"font": {"size": 14.0, "color": "#626366"}});
         let svg = crate::families::empty::render("table", &payload, &test_fonts()).unwrap();
@@ -10736,7 +10814,7 @@ mod background_and_font_family_tests {
         assert!(err.contains("style.table.row_numbers.font.color"), "{err}");
 
         let mut payload = payload_with(json!({}));
-        payload.rows = vec![];
+        payload.rows = vec![].into();
         payload.resolved["style"]["table"]["empty_state"] = json!({"font": {"size": 14.0}});
         let err = crate::families::empty::render("table", &payload, &test_fonts()).unwrap_err().to_string();
         assert!(err.contains("style.table.empty_state.font.color"), "{err}");
@@ -10780,13 +10858,14 @@ mod background_and_font_family_tests {
         payload.height = 400.0;
         payload.resolved["style"]["table"]["transpose"] = json!(true);
         payload.resolved["columns"] = json!({"col_a": {"label": "Alpha", "link_open": "page", "header_link_open": "page"}, "col_b": {"link_open": "page", "header_link_open": "page"}});
-        payload.rows = vec![json!({"col_a": 10, "col_b": 20}).as_object().unwrap().clone()];
+        payload.rows = vec![json!({"col_a": 10, "col_b": 20}).as_object().unwrap().clone()].into();
         payload.schema = crate::payload_schema::test_schema_for(&payload.rows);
         let svg = render(&payload, &test_fonts()).unwrap();
         for text in [">Metric</text>", ">Value</text>", ">Alpha</text>", ">Col b</text>"] {
             assert!(svg.contains(text), "{text} missing:\n{svg}");
         }
-        payload.rows.push(payload.rows[0].clone());
+        let first = payload.rows[0].clone();
+        payload.rows.push(first);
         let err = render(&payload, &test_fonts()).unwrap_err();
         assert_eq!(err.code, "ERR-TABLE-TRANSPOSE-ROW-COUNT");
     }
@@ -10800,7 +10879,7 @@ mod background_and_font_family_tests {
         payload.resolved["style"]["table"]["transpose"] = json!(true);
         payload.resolved["row_role"] = json!("kind");
         payload.resolved["columns"] = json!({"col_a": {"label": "Alpha", "link_open": "page", "header_link_open": "page"}});
-        payload.rows = vec![json!({"col_a": 10, "kind": "total"}).as_object().unwrap().clone()];
+        payload.rows = vec![json!({"col_a": 10, "kind": "total"}).as_object().unwrap().clone()].into();
         payload.schema = crate::payload_schema::test_schema_for(&payload.rows);
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(svg.contains(">Alpha</text>"), "{svg}");
@@ -10821,7 +10900,7 @@ mod background_and_font_family_tests {
             json!({"a": 10}).as_object().unwrap().clone(),
             json!({"a": "N/A"}).as_object().unwrap().clone(),
             json!({"a": 2500}).as_object().unwrap().clone(),
-        ];
+        ].into();
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(svg.contains(">2.5</tspan><tspan x=") && svg.contains(">K</tspan>"), "{svg}");
         assert!(svg.contains("data-col=\"0\">N/A</text>"), "{svg}");
@@ -10864,7 +10943,7 @@ mod background_and_font_family_tests {
         payload.rows = vec![
             json!({"a": 1000.0}).as_object().unwrap().clone(),
             json!({"a": 0.5}).as_object().unwrap().clone(),
-        ];
+        ].into();
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(svg.contains("1,000\u{2007}\u{200b}\u{2008}\u{200b}</tspan>"), "{svg}");
     }

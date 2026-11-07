@@ -18,6 +18,7 @@ def test_list_column_composes_as_a_list_with_its_declared_type() -> None:
                 "vals": ColumnType(kind="list", element=_FLOAT),
             }
         },
+        time_zone="UTC",
     )
 
     assert rows == [{"id": 1, "vals": [1.5, 2.5]}, {"id": 2, "vals": []}]
@@ -30,6 +31,7 @@ def test_all_null_column_keeps_its_declared_type() -> None:
         {"up": [{"d": None, "n": None}]},
         [],
         schemas={"up": {"d": ColumnType(kind="date"), "n": ColumnType(kind="decimal")}},
+        time_zone="UTC",
     )
 
     assert [schema["d"].kind, schema["n"].kind] == ["date", "decimal"]
@@ -60,6 +62,7 @@ def test_struct_json_and_timestamps_round_trip() -> None:
                 "ts": ColumnType(kind="datetime"),
             }
         },
+        time_zone="UTC",
     )
 
     assert rows == [cells]
@@ -73,6 +76,7 @@ def _round_trip(column: ColumnType, cell: object) -> object:
         {"up": [{"c": cell}]},
         [],
         schemas={"up": {"c": column}},
+        time_zone="UTC",
     )
     return rows[0]["c"]
 
@@ -123,6 +127,7 @@ def test_scalar_and_nested_columns_stay_aligned_in_schema_order() -> None:
                 ),
             }
         },
+        time_zone="UTC",
     )
 
     assert rows == up

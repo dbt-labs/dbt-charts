@@ -130,7 +130,7 @@ def _desc(*cols: tuple[str, Any]) -> list[tuple[Any, ...]]:
 def test_postgres_array_column_is_a_list_of_its_element_type() -> None:
     cursor = _Cursor(_desc(("id", 23), ("tags", 1009)), [(1, ["a", "b"])])
     adapter = _adapter(cursor)
-    typed = fetch_typed(adapter, "postgres", "SELECT 1", None)
+    typed = fetch_typed(adapter, "postgres", "SELECT 1", None, time_zone="UTC")
     assert typed.columns == ["id", "tags"]
     assert typed.rows == [(1, ["a", "b"])]
     assert typed.types == [INTEGER, ColumnType(kind="list", element=STRING)]
@@ -139,7 +139,7 @@ def test_postgres_array_column_is_a_list_of_its_element_type() -> None:
 
 def test_postgres_limit_bounds_the_fetch() -> None:
     cursor = _Cursor(_desc(("id", 23)), [(1,), (2,), (3,)])
-    typed = fetch_typed(_adapter(cursor), "postgres", "SELECT 1", 2)
+    typed = fetch_typed(_adapter(cursor), "postgres", "SELECT 1", 2, time_zone="UTC")
     assert typed.rows == [(1,), (2,)]
     assert cursor.fetchmany_sizes == [2]
 
@@ -147,7 +147,7 @@ def test_postgres_limit_bounds_the_fetch() -> None:
 def test_postgres_unmapped_type_names_the_column_and_the_code() -> None:
     cursor = _Cursor(_desc(("gap", 1186)), [])  # interval
     with pytest.raises(ExecutionError) as excinfo:
-        fetch_typed(_adapter(cursor), "postgres", "SELECT 1", None)
+        fetch_typed(_adapter(cursor), "postgres", "SELECT 1", None, time_zone="UTC")
     assert excinfo.value.code is ERR_RESULT_COLUMN_TYPE
     assert "'gap'" in str(excinfo.value)
     assert "1186" in str(excinfo.value)
@@ -158,7 +158,9 @@ def test_snowflake_decodes_exactly_the_declared_semi_structured_columns() -> Non
     cursor = _Cursor(
         _desc(("txt", 2), ("arr", 10)), [("[1, 2]", '["a", 1, {"k": null}]')]
     )
-    typed = fetch_typed(_adapter(cursor), "snowflake", "SELECT 1", None)
+    typed = fetch_typed(
+        _adapter(cursor), "snowflake", "SELECT 1", None, time_zone="UTC"
+    )
     assert typed.rows == [("[1, 2]", ["a", 1, {"k": None}])]
     assert typed.types == [STRING, JSON]
 
@@ -166,13 +168,13 @@ def test_snowflake_decodes_exactly_the_declared_semi_structured_columns() -> Non
 def test_snowflake_does_not_comment_twice() -> None:
     # dbt-snowflake's add_query applies the query comment itself
     adapter = _adapter(_Cursor(_desc(("n", 2)), []))
-    fetch_typed(adapter, "snowflake", "SELECT 1", None)
+    fetch_typed(adapter, "snowflake", "SELECT 1", None, time_zone="UTC")
     assert adapter.connections.sent == ["SELECT 1"]
 
 
 def test_redshift_super_is_decoded_by_its_declared_type() -> None:
     cursor = _Cursor(_desc(("s", 4000), ("xs", 1007)), [('{"a": [1]}', [1, 2])])
-    typed = fetch_typed(_adapter(cursor), "redshift", "SELECT 1", None)
+    typed = fetch_typed(_adapter(cursor), "redshift", "SELECT 1", None, time_zone="UTC")
     assert typed.rows == [({"a": [1]}, [1, 2])]
     assert typed.types == [JSON, ColumnType(kind="list", element=INTEGER)]
 
@@ -188,7 +190,9 @@ def test_duckdb_reads_nested_types_from_the_cursor() -> None:
         def add_query(self, sql: str, auto_begin: bool = True) -> tuple[None, Any]:
             return None, cursor
 
-    typed = fetch_typed(SimpleNamespace(connections=Connections()), "duckdb", "", None)
+    typed = fetch_typed(
+        SimpleNamespace(connections=Connections()), "duckdb", "", None, time_zone="UTC"
+    )
     assert typed.rows == [([1, 2], {"a": "x"})]
     assert typed.types == [
         ColumnType(kind="list", element=INTEGER),
@@ -231,7 +235,11 @@ def test_databricks_arrow_declares_timestamp_ntz_and_arrays_by_arrow_type() -> N
     handle = pytest.importorskip("dbt.adapters.databricks.handle")
     cursor = _ArrowCursor(table)
     typed = fetch_typed(
-        _adapter(handle.CursorWrapper(cursor), []), "databricks", "SELECT 1", 5
+        _adapter(handle.CursorWrapper(cursor), []),
+        "databricks",
+        "SELECT 1",
+        5,
+        time_zone="UTC",
     )
     assert typed.types == [
         ColumnType(kind="datetime_tz"),
@@ -248,7 +256,7 @@ def test_spark_reads_with_fetchall_and_decodes_hive_json_text() -> None:
     cursor = _AllOnlyCursor(
         _desc(("a", "ARRAY_TYPE"), ("s", "STRING_TYPE")), [('["x", "y"]', "[1]")]
     )
-    typed = fetch_typed(_adapter(cursor), "spark", "SELECT 1", None)
+    typed = fetch_typed(_adapter(cursor), "spark", "SELECT 1", None, time_zone="UTC")
     assert typed.rows == [(["x", "y"], "[1]")]
     assert typed.types == [JSON, STRING]
 
@@ -285,7 +293,7 @@ def test_bigquery_repeated_and_record_fields() -> None:
     adapter = SimpleNamespace(
         connections=SimpleNamespace(raw_execute_with_comment=raw_execute_with_comment)
     )
-    typed = fetch_typed(adapter, "bigquery", "SELECT 1", 7)
+    typed = fetch_typed(adapter, "bigquery", "SELECT 1", 7, time_zone="UTC")
     assert seen == [("SELECT 1", 7)]
     assert typed.rows == [(1, ["a"], {"x": 1.5, "ys": [2]})]
     assert typed.types == [
@@ -309,7 +317,7 @@ def test_bigquery_unmapped_field_type_names_the_column() -> None:
         )
     )
     with pytest.raises(ExecutionError) as excinfo:
-        fetch_typed(adapter, "bigquery", "SELECT 1", None)
+        fetch_typed(adapter, "bigquery", "SELECT 1", None, time_zone="UTC")
     assert excinfo.value.code is ERR_RESULT_COLUMN_TYPE
     assert "'span'" in str(excinfo.value)
     assert "INTERVAL" in str(excinfo.value)
@@ -318,7 +326,7 @@ def test_bigquery_unmapped_field_type_names_the_column() -> None:
 def test_a_dialect_without_a_type_reader_raises_before_running_the_query() -> None:
     adapter = _adapter(_Cursor([], []))
     with pytest.raises(ExecutionError) as excinfo:
-        fetch_typed(adapter, "oracle", "SELECT 1", None)
+        fetch_typed(adapter, "oracle", "SELECT 1", None, time_zone="UTC")
     assert excinfo.value.code is ERR_RESULT_NO_TYPE_READER
     assert "oracle" in str(excinfo.value)
     assert adapter.connections.sent == []
@@ -329,7 +337,7 @@ def test_mysql_scalars_and_json_by_declared_type() -> None:
     cursor = _Cursor(
         _desc(("n", 3), ("s", 253), ("j", 245)), [(1, "[1]", '{"a": [1, 2]}')]
     )
-    typed = fetch_typed(_adapter(cursor), "mysql", "SELECT 1", None)
+    typed = fetch_typed(_adapter(cursor), "mysql", "SELECT 1", None, time_zone="UTC")
     assert typed.rows == [(1, "[1]", {"a": [1, 2]})]
     assert typed.types == [INTEGER, STRING, JSON]
 
@@ -339,14 +347,14 @@ def test_mysql_blob_code_is_split_by_the_binary_flag() -> None:
         return (name, 252, None, None, None, None, True, flags)
 
     cursor = _Cursor([flagged("txt", 16), flagged("blob", 144)], [("a", b"b")])
-    typed = fetch_typed(_adapter(cursor), "mysql", "SELECT 1", None)
+    typed = fetch_typed(_adapter(cursor), "mysql", "SELECT 1", None, time_zone="UTC")
     assert typed.types == [STRING, ColumnType(kind="bytes")]
 
 
 def test_mysql_blob_without_reported_flags_raises() -> None:
     cursor = _Cursor(_desc(("body", 252)), [])
     with pytest.raises(ExecutionError, match="'body'"):
-        fetch_typed(_adapter(cursor), "mysql", "SELECT 1", None)
+        fetch_typed(_adapter(cursor), "mysql", "SELECT 1", None, time_zone="UTC")
 
 
 def test_athena_scalars_and_driver_parsed_json() -> None:
@@ -354,7 +362,7 @@ def test_athena_scalars_and_driver_parsed_json() -> None:
         _desc(("n", "bigint"), ("t", "timestamp"), ("j", "json")),
         [(1, datetime.datetime(2020, 1, 1), {"a": 1})],
     )
-    typed = fetch_typed(_adapter(cursor), "athena", "SELECT 1", 10)
+    typed = fetch_typed(_adapter(cursor), "athena", "SELECT 1", 10, time_zone="UTC")
     assert typed.types == [INTEGER, ColumnType(kind="datetime"), JSON]
     assert typed.rows == [(1, datetime.datetime(2020, 1, 1), {"a": 1})]
 
@@ -362,12 +370,12 @@ def test_athena_scalars_and_driver_parsed_json() -> None:
 def test_athena_array_must_be_cast_to_json() -> None:
     cursor = _Cursor(_desc(("tags", "array")), [])
     with pytest.raises(ExecutionError, match=r"'tags'.*array.*CAST\(tags AS JSON\)"):
-        fetch_typed(_adapter(cursor), "athena", "SELECT 1", None)
+        fetch_typed(_adapter(cursor), "athena", "SELECT 1", None, time_zone="UTC")
 
 
 def test_athena_json_column_passes_through_parsed() -> None:
     cursor = _Cursor(_desc(("j", "json")), [({"a": [1]},)])
-    typed = fetch_typed(_adapter(cursor), "athena", "SELECT 1", None)
+    typed = fetch_typed(_adapter(cursor), "athena", "SELECT 1", None, time_zone="UTC")
     assert typed.types == [JSON]
     assert typed.rows == [({"a": [1]},)]
 
@@ -381,12 +389,16 @@ def test_null_typed_columns_are_declared_string() -> None:
         ("athena", athena),
         ("snowflake", snowflake_geo),
     ):
-        assert fetch_typed(_adapter(cursor), dialect, "SELECT 1", None).types == [
-            STRING
-        ]
+        assert fetch_typed(
+            _adapter(cursor), dialect, "SELECT 1", None, time_zone="UTC"
+        ).types == [STRING]
     nothing = _ChResult(["n", "m"], ["Nothing", "Nullable(Nothing)"], [(None, None)])
     typed = fetch_typed(
-        _clickhouse_adapter(nothing, []), "clickhouse", "SELECT 1", None
+        _clickhouse_adapter(nothing, []),
+        "clickhouse",
+        "SELECT 1",
+        None,
+        time_zone="UTC",
     )
     assert typed.types == [STRING, STRING]
 
@@ -398,14 +410,20 @@ def test_sqlserver_drains_trailing_result_sets() -> None:
 
     cursor = Failing(_desc(("n", int)), [(1,)])
     with pytest.raises(RuntimeError, match="later"):
-        fetch_typed(_adapter(cursor), "sqlserver", "SELECT 1; SELECT later", None)
+        fetch_typed(
+            _adapter(cursor),
+            "sqlserver",
+            "SELECT 1; SELECT later",
+            None,
+            time_zone="UTC",
+        )
 
 
 def test_sqlserver_reads_pyodbc_type_classes() -> None:
     cursor = _Cursor(
         _desc(("n", int), ("amt", decimal.Decimal), ("at", datetime.datetime)), []
     )
-    typed = fetch_typed(_adapter(cursor), "sqlserver", "SELECT 1", 3)
+    typed = fetch_typed(_adapter(cursor), "sqlserver", "SELECT 1", 3, time_zone="UTC")
     assert typed.types == [
         INTEGER,
         ColumnType(kind="decimal"),
@@ -417,7 +435,7 @@ def test_sqlserver_reads_pyodbc_type_classes() -> None:
 def test_sqlserver_unmapped_type_class_raises() -> None:
     cursor = _Cursor(_desc(("u", complex)), [])
     with pytest.raises(ExecutionError, match="'u'.*complex"):
-        fetch_typed(_adapter(cursor), "sqlserver", "SELECT 1", None)
+        fetch_typed(_adapter(cursor), "sqlserver", "SELECT 1", None, time_zone="UTC")
 
 
 class _ChResult:
@@ -427,12 +445,23 @@ class _ChResult:
         self.result_set = rows
 
 
-def _clickhouse_adapter(result: Any, sent: list[str]) -> SimpleNamespace:
-    def query(sql: str, query_id: str, tz_mode: str) -> Any:
+def _clickhouse_adapter(
+    result: Any, sent: list[str], settings: list[dict[str, str] | None] | None = None
+) -> SimpleNamespace:
+    def query(
+        sql: str,
+        query_id: str,
+        tz_mode: str,
+        settings: dict[str, str] | None = None,
+    ) -> Any:
         assert query_id
         assert tz_mode == "schema"
         sent.append(sql)
+        if sent_settings is not None:
+            sent_settings.append(settings)
         return result
+
+    sent_settings = settings
 
     handle = SimpleNamespace(query=query)
     return SimpleNamespace(
@@ -455,7 +484,11 @@ def test_clickhouse_nested_types_come_from_the_client_result() -> None:
     )
     sent: list[str] = []
     typed = fetch_typed(
-        _clickhouse_adapter(result, sent), "clickhouse", "SELECT 1", None
+        _clickhouse_adapter(result, sent),
+        "clickhouse",
+        "SELECT 1",
+        None,
+        time_zone="UTC",
     )
     assert sent == ["/*c*/SELECT 1"]
     assert typed.rows == [(1, ["a"], {"x": 1.5, "y": 2})]
@@ -469,15 +502,51 @@ def test_clickhouse_nested_types_come_from_the_client_result() -> None:
     ]
 
 
+def test_clickhouse_utc_query_sends_no_settings() -> None:
+    settings: list[dict[str, str] | None] = []
+    result = _ChResult(["n"], ["Int32"], [(1,)])
+    fetch_typed(
+        _clickhouse_adapter(result, [], settings),
+        "clickhouse",
+        "SELECT 1",
+        None,
+        time_zone="UTC",
+    )
+    assert settings == [None]
+
+
+def test_clickhouse_query_runs_in_the_session_zone_it_is_given() -> None:
+    settings: list[dict[str, str] | None] = []
+    result = _ChResult(["n"], ["Int32"], [(1,)])
+    fetch_typed(
+        _clickhouse_adapter(result, [], settings),
+        "clickhouse",
+        "SELECT 1",
+        None,
+        time_zone="America/New_York",
+    )
+    assert settings == [{"session_timezone": "America/New_York"}]
+
+
 def test_clickhouse_unmapped_type_and_native_client_raise() -> None:
     uuid_result = _ChResult(["id"], ["UUID"], [])
     with pytest.raises(ExecutionError, match="'id'.*UUID"):
         fetch_typed(
-            _clickhouse_adapter(uuid_result, []), "clickhouse", "SELECT 1", None
+            _clickhouse_adapter(uuid_result, []),
+            "clickhouse",
+            "SELECT 1",
+            None,
+            time_zone="UTC",
         )
     native = SimpleNamespace(column_names=["a"], result_set=[])
     with pytest.raises(ExecutionError, match="native protocol") as native_error:
-        fetch_typed(_clickhouse_adapter(native, []), "clickhouse", "SELECT 1", None)
+        fetch_typed(
+            _clickhouse_adapter(native, []),
+            "clickhouse",
+            "SELECT 1",
+            None,
+            time_zone="UTC",
+        )
     assert native_error.value.code is ERR_RESULT_NO_TYPE_READER
 
 
@@ -504,7 +573,13 @@ def test_dbts_query_comment_hook_reaches_the_sent_sql() -> None:
         manager = object.__new__(manager_class)
         assert isinstance(manager, BaseConnectionManager)
         manager.query_header = header
-        fetch_typed(SimpleNamespace(connections=manager), dialect, "SELECT 1", None)
+        fetch_typed(
+            SimpleNamespace(connections=manager),
+            dialect,
+            "SELECT 1",
+            None,
+            time_zone="UTC",
+        )
     assert sent == ["/* attribution */ SELECT 1"] * 2
 
 
@@ -522,7 +597,7 @@ def test_spark_cursor_is_not_closed_because_it_is_the_connection() -> None:
             self.handle_open = False
 
     cursor = Wrapper(_desc(("s", "STRING_TYPE")), [("x",)])
-    fetch_typed(_adapter(cursor), "spark", "SELECT 1", None)
+    fetch_typed(_adapter(cursor), "spark", "SELECT 1", None, time_zone="UTC")
     assert cursor.handle_open
 
 
@@ -531,7 +606,9 @@ def test_snowflake_fixed_splits_on_scale() -> None:
         [("whole", 0, None, None, 38, 0, True), ("money", 0, None, None, 10, 2, True)],
         [],
     )
-    typed = fetch_typed(_adapter(cursor), "snowflake", "SELECT 1", None)
+    typed = fetch_typed(
+        _adapter(cursor), "snowflake", "SELECT 1", None, time_zone="UTC"
+    )
     assert typed.types == [INTEGER, ColumnType(kind="decimal")]
 
 
@@ -548,7 +625,11 @@ def test_sqlserver_skips_leading_statements_without_rows() -> None:
             return True
 
     typed = fetch_typed(
-        _adapter(TwoSets(), ["int"]), "sqlserver", "SET NOCOUNT ON", None
+        _adapter(TwoSets(), ["int"]),
+        "sqlserver",
+        "SET NOCOUNT ON",
+        None,
+        time_zone="UTC",
     )
     assert typed.columns == ["n"]
     assert typed.rows == [(1,)]
@@ -556,17 +637,19 @@ def test_sqlserver_skips_leading_statements_without_rows() -> None:
 
 def test_spark_odbc_wrapper_reports_python_type_classes() -> None:
     cursor = _AllOnlyCursor(_desc(("s", str), ("n", int)), [("a", 1)])
-    typed = fetch_typed(_adapter(cursor), "spark", "SELECT 1", None)
+    typed = fetch_typed(_adapter(cursor), "spark", "SELECT 1", None, time_zone="UTC")
     assert typed.types == [STRING, INTEGER]
 
 
 def test_hive_null_and_variant_columns_are_declared() -> None:
     cursor = _Cursor(_desc(("x", "null"), ("v", "variant")), [(None, '{"a": 1}')])
-    typed = fetch_typed(_adapter(cursor), "spark", "SELECT 1", None)
+    typed = fetch_typed(_adapter(cursor), "spark", "SELECT 1", None, time_zone="UTC")
     assert typed.types == [STRING, JSON]
     assert typed.rows == [(None, {"a": 1})]
     void = _AllOnlyCursor(_desc(("x", "void")), [])
-    assert fetch_typed(_adapter(void), "spark", "SELECT 1", None).types == [STRING]
+    assert fetch_typed(
+        _adapter(void), "spark", "SELECT 1", None, time_zone="UTC"
+    ).types == [STRING]
 
 
 def test_spark_session_simple_string_types_are_parsed() -> None:
@@ -574,7 +657,7 @@ def test_spark_session_simple_string_types_are_parsed() -> None:
         _desc(("xs", "array<int>"), ("s", "struct<Id:int,tags:array<string>>")),
         [([1, 2], ((7, ["a"])))],
     )
-    typed = fetch_typed(_adapter(cursor), "spark", "SELECT 1", None)
+    typed = fetch_typed(_adapter(cursor), "spark", "SELECT 1", None, time_zone="UTC")
     assert typed.types == [
         ColumnType(kind="list", element=INTEGER),
         ColumnType(
@@ -605,14 +688,14 @@ def test_postgres_enum_oids_are_declared_string_by_pg_type() -> None:
     adapter.connections.get_thread_connection = lambda: SimpleNamespace(
         handle=SimpleNamespace(cursor=PgCursor)
     )
-    typed = fetch_typed(adapter, "postgres", "SELECT 1", None)
+    typed = fetch_typed(adapter, "postgres", "SELECT 1", None, time_zone="UTC")
     assert typed.types == [STRING, INTEGER]
     assert asked == [([90001],)]
 
     other = _adapter(_Cursor(_desc(("x", 90002)), []))
     other.connections.get_thread_connection = adapter.connections.get_thread_connection
     with pytest.raises(ExecutionError, match="'x'.*90002"):
-        fetch_typed(other, "postgres", "SELECT 1", None)
+        fetch_typed(other, "postgres", "SELECT 1", None, time_zone="UTC")
 
 
 def test_redshift_retries_what_its_execute_retried(
@@ -639,7 +722,7 @@ def test_redshift_retries_what_its_execute_retried(
         return add_query(sql, auto_begin)
 
     connections.add_query = flaky
-    typed = fetch_typed(adapter, "redshift", "SELECT 1", None)
+    typed = fetch_typed(adapter, "redshift", "SELECT 1", None, time_zone="UTC")
     assert typed.rows == [(1,)]
     assert len(calls) == 2
     assert reopened == ["close", "open"]
@@ -649,7 +732,7 @@ def test_redshift_retries_what_its_execute_retried(
         RuntimeError("syntax error")
     )
     with pytest.raises(RuntimeError, match="syntax error"):
-        fetch_typed(adapter, "redshift", "SELECT 1", None)
+        fetch_typed(adapter, "redshift", "SELECT 1", None, time_zone="UTC")
 
 
 def test_duckdb_cells_match_their_declarations() -> None:
@@ -666,7 +749,9 @@ def test_duckdb_cells_match_their_declarations() -> None:
         def add_query(self, sql: str, auto_begin: bool = True) -> tuple[None, Any]:
             return None, cursor
 
-    typed = fetch_typed(SimpleNamespace(connections=Connections()), "duckdb", "", None)
+    typed = fetch_typed(
+        SimpleNamespace(connections=Connections()), "duckdb", "", None, time_zone="UTC"
+    )
     row = typed.rows[0]
     assert row[0] == {"a": [1]}
     assert isinstance(row[1], str)
@@ -681,7 +766,9 @@ def test_clickhouse_map_cells_become_json_objects_at_any_depth() -> None:
         ["Map(UInt8, Date)", "Array(Map(String, Decimal(5, 2)))"],
         [({1: datetime.date(2020, 1, 2)}, [{"a": decimal.Decimal("1.5")}])],
     )
-    typed = fetch_typed(_clickhouse_adapter(result, []), "clickhouse", "SELECT 1", None)
+    typed = fetch_typed(
+        _clickhouse_adapter(result, []), "clickhouse", "SELECT 1", None, time_zone="UTC"
+    )
     assert typed.rows == [({"1": "2020-01-02"}, [{"a": 1.5}])]
     assert typed.types[0] == JSON
 
@@ -689,7 +776,7 @@ def test_clickhouse_map_cells_become_json_objects_at_any_depth() -> None:
 def test_spark_nested_text_that_is_not_json_names_the_column() -> None:
     cursor = _AllOnlyCursor(_desc(("tags", "ARRAY_TYPE")), [("[a, b]",)])
     with pytest.raises(ExecutionError, match="'tags'.*to_json") as raised:
-        fetch_typed(_adapter(cursor), "spark", "SELECT 1", None)
+        fetch_typed(_adapter(cursor), "spark", "SELECT 1", None, time_zone="UTC")
     assert raised.value.code is ERR_RESULT_COLUMN_TYPE
 
 
@@ -698,7 +785,7 @@ def test_mysql_blob_code_uses_the_binary_charset_when_reported() -> None:
         return (name, 252, None, None, None, None, True, 0, charset)
 
     cursor = _Cursor([column("txt", 255), column("blob", 63)], [])
-    typed = fetch_typed(_adapter(cursor), "mysql", "SELECT 1", None)
+    typed = fetch_typed(_adapter(cursor), "mysql", "SELECT 1", None, time_zone="UTC")
     assert typed.types == [STRING, ColumnType(kind="bytes")]
 
 
@@ -716,11 +803,26 @@ def test_snowflake_zoned_timestamps_are_utc_instants_and_ntz_stays_naive() -> No
         _desc(("ltz", 6), ("tz", 7), ("ntz", 8)),
         [(_NOON_PLUS_TWO, _NOON_PLUS_TWO, _NOON_NAIVE)],
     )
-    typed = fetch_typed(_adapter(cursor), "snowflake", "SELECT 1", None)
+    typed = fetch_typed(
+        _adapter(cursor), "snowflake", "SELECT 1", None, time_zone="UTC"
+    )
     assert typed.types == [DATETIME_TZ, DATETIME_TZ, DATETIME]
     assert typed.rows == [(_NOON_UTC, _NOON_UTC, _NOON_NAIVE)]
     assert typed.rows[0][0].utcoffset() == datetime.timedelta(0)
     assert typed.rows[0][2].tzinfo is None
+
+
+def test_clickhouse_bare_datetime_is_a_utc_instant_in_a_non_utc_board_zone() -> None:
+    result = _ChResult(["bare"], ["DateTime"], [(_NOON_NAIVE,)])
+    typed = fetch_typed(
+        _clickhouse_adapter(result, []),
+        "clickhouse",
+        "SELECT 1",
+        None,
+        time_zone="Asia/Tokyo",
+    )
+    assert typed.types == [DATETIME_TZ]
+    assert typed.rows == [(_NOON_UTC,)]
 
 
 def test_postgres_timestamptz_is_a_utc_instant_scalar_and_array() -> None:
@@ -729,7 +831,7 @@ def test_postgres_timestamptz_is_a_utc_instant_scalar_and_array() -> None:
         _desc(("naive", 1114), ("zoned", 1184), ("zs", 1185)),
         [(_NOON_NAIVE, _NOON_PLUS_TWO, [_NOON_PLUS_TWO, None])],
     )
-    typed = fetch_typed(_adapter(cursor), "postgres", "SELECT 1", None)
+    typed = fetch_typed(_adapter(cursor), "postgres", "SELECT 1", None, time_zone="UTC")
     assert typed.types == [
         DATETIME,
         DATETIME_TZ,
@@ -755,7 +857,7 @@ def test_bigquery_timestamp_is_an_instant_and_datetime_is_naive_at_any_depth() -
             raw_execute_with_comment=lambda sql, limit=None: (None, iterator)
         )
     )
-    typed = fetch_typed(adapter, "bigquery", "SELECT 1", None)
+    typed = fetch_typed(adapter, "bigquery", "SELECT 1", None, time_zone="UTC")
     assert typed.types == [
         DATETIME_TZ,
         DATETIME,
@@ -765,15 +867,17 @@ def test_bigquery_timestamp_is_an_instant_and_datetime_is_naive_at_any_depth() -
     assert typed.rows == [(_NOON_UTC, _NOON_NAIVE, [_NOON_UTC], {"at": _NOON_UTC})]
 
 
-def test_clickhouse_zoned_datetime_is_a_utc_instant_and_bare_stays_naive() -> None:
+def test_clickhouse_datetime_is_a_utc_instant_zoned_or_bare() -> None:
     result = _ChResult(
         ["utc", "berlin", "bare"],
         ["DateTime('UTC')", "DateTime64(3, 'Europe/Berlin')", "DateTime"],
         [(_NOON_UTC, _NOON_PLUS_TWO, _NOON_NAIVE)],
     )
-    typed = fetch_typed(_clickhouse_adapter(result, []), "clickhouse", "SELECT 1", None)
-    assert typed.types == [DATETIME_TZ, DATETIME_TZ, DATETIME]
-    assert typed.rows == [(_NOON_UTC, _NOON_UTC, _NOON_NAIVE)]
+    typed = fetch_typed(
+        _clickhouse_adapter(result, []), "clickhouse", "SELECT 1", None, time_zone="UTC"
+    )
+    assert typed.types == [DATETIME_TZ, DATETIME_TZ, DATETIME_TZ]
+    assert typed.rows == [(_NOON_UTC, _NOON_UTC, _NOON_UTC)]
 
 
 def test_spark_session_timestamp_is_wall_clock_datetime() -> None:
@@ -781,9 +885,31 @@ def test_spark_session_timestamp_is_wall_clock_datetime() -> None:
         _desc(("t", "TIMESTAMP_TYPE"), ("n", "TIMESTAMP_NTZ_TYPE")),
         [(_NOON_NAIVE, _NOON_NAIVE)],
     )
-    typed = fetch_typed(_adapter(cursor), "spark", "SELECT 1", None)
-    assert typed.types == [DATETIME, DATETIME]
-    assert typed.rows == [(_NOON_NAIVE, _NOON_NAIVE)]
+    typed = fetch_typed(_adapter(cursor), "spark", "SELECT 1", None, time_zone="UTC")
+    assert typed.types == [DATETIME_TZ, DATETIME]
+    assert typed.rows == [(_NOON_UTC, _NOON_NAIVE)]
+
+
+def test_spark_session_timestamp_is_read_in_the_session_zone() -> None:
+    """The thrift cursor hands back the wall clock of the zone the query ran in."""
+    cursor = _AllOnlyCursor(_desc(("t", "TIMESTAMP_TYPE")), [(_NOON_NAIVE,)])
+    typed = fetch_typed(
+        _adapter(cursor), "spark", "SELECT 1", None, time_zone="America/New_York"
+    )
+    assert typed.rows == [(datetime.datetime(2024, 1, 1, 17, tzinfo=datetime.UTC),)]
+
+
+@pytest.mark.usefixtures("non_utc_tz")
+@pytest.mark.parametrize("board_zone", ["UTC", "Asia/Tokyo"])
+def test_spark_session_method_reads_timestamps_in_the_process_zone(
+    board_zone: str,
+) -> None:
+    """PySpark builds TimestampType cells in the process zone, not the session's."""
+    cursor = _AllOnlyCursor(_desc(("t", "array<timestamp>")), [([_NOON_NAIVE],)])
+    typed = fetch_typed(
+        _adapter(cursor), "spark", "SELECT 1", None, time_zone=board_zone
+    )
+    assert typed.rows == [([datetime.datetime(2024, 1, 1, 19, tzinfo=datetime.UTC)],)]
 
 
 def test_sqlserver_datetimeoffset_is_an_instant_by_the_servers_description() -> None:
@@ -792,6 +918,6 @@ def test_sqlserver_datetimeoffset_is_an_instant_by_the_servers_description() -> 
         [(_NOON_PLUS_TWO, _NOON_NAIVE)],
     )
     adapter = _adapter(cursor, ["datetimeoffset(7)", "datetime2(7)"])
-    typed = fetch_typed(adapter, "sqlserver", "SELECT 1", None)
+    typed = fetch_typed(adapter, "sqlserver", "SELECT 1", None, time_zone="UTC")
     assert typed.types == [DATETIME_TZ, DATETIME]
     assert typed.rows == [(_NOON_UTC, _NOON_NAIVE)]

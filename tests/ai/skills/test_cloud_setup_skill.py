@@ -277,13 +277,13 @@ def test_proves_a_change_is_live_by_commit_not_by_status(body: str) -> None:
 
 def test_liveness_is_not_equality_with_the_local_head(body: str) -> None:
     """The check is "these two values moved", never "COMMIT equals your
-    `git rev-parse HEAD`". Cloud commits board edits to a work branch and
-    merges the upstream branch into it on every sync, so on a project ever
+    `git rev-parse HEAD`". Cloud commits board edits to the dbtcharts.com branch and
+    merges the repository branch into it on every sync, so on a project ever
     edited in Cloud that equality is unreachable and an agent waiting on it
     never stops."""
     step = body[body.index("## Step 8") :]
     assert "not to your `git rev-parse HEAD`" in step
-    assert "work branch" in step
+    assert "dbtcharts.com branch" in step
     assert "does not terminate" in step
 
 

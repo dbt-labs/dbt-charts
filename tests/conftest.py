@@ -162,6 +162,12 @@ pg_cluster = factories.postgresql_proc(
 )
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    for item in items:
+        if isinstance(item, pytest.Function) and "pg_cluster" in item.fixturenames:
+            item.add_marker(pytest.mark.postgres)
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--snapshot-update",

@@ -28,6 +28,11 @@ _SIZE = 11.0
 
 _BOARD = """\
 width: {width}
+style:
+  charts:
+    table:
+      column_layout:
+        overflow: fit
 queries:
   rev:
     type: values

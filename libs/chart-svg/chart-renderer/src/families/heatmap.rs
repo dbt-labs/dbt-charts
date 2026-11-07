@@ -842,7 +842,7 @@ const MS_PER_DAY: f64 = 86_400_000.0;
 /// grid: null, or an invalid date. A number is epoch milliseconds, as `new Date(n)` reads it.
 pub(crate) fn date_cell_day(cell: &Value) -> Option<f64> {
     match cell {
-        Value::String(text) => ::bind::js_date::parse_days(text),
+        Value::String(text) => ::layout::labels_expr::js_date::parse_days(text),
         Value::Number(ms) => ms.as_f64().filter(|ms| ms.abs() <= 8.64e15).map(|ms| ms / MS_PER_DAY),
         _ => None,
     }
@@ -883,14 +883,14 @@ pub(crate) fn date_color(min: f64, max: f64, day: f64) -> String {
 }
 
 /// The scale's ticks over `[min, max]` for `count` target ticks, in days, in the
-/// `aware` column's [`ladder_zone`](crate::families::temporal::ladder_zone). A
+/// `aware` column's [`ladder_zone`](layout::time_ladder::ladder_zone). A
 /// zero-width domain has its one date as the only tick.
 fn date_ticks(min: f64, max: f64, count: usize, aware: bool) -> Result<Vec<f64>, String> {
     if min == max {
         return Ok(vec![min]);
     }
-    let zone = crate::families::temporal::ladder_zone(aware);
-    crate::families::temporal::zone_instants(min, max, count, zone.as_ref())
+    let zone = ::layout::time_ladder::ladder_zone(aware);
+    ::layout::time_ladder::zone_instants(min, max, count, zone.as_ref())
 }
 
 /// The labeled dates of a time-scale legend over a gradient `length` px long:
@@ -904,7 +904,7 @@ pub(crate) fn date_legend_values(min: f64, max: f64, plot_h: f64, authored: Opti
 /// A date legend's labeled days for `count` target ticks.
 pub(crate) fn date_legend_ticks(min: f64, max: f64, count: usize, authored: Option<&[String]>, aware: bool) -> Result<Vec<f64>, String> {
     match authored {
-        Some(values) => Ok(values.iter().map(|v| ::bind::js_date::parse_days(v).unwrap_or(f64::NAN)).collect()),
+        Some(values) => Ok(values.iter().map(|v| ::layout::labels_expr::js_date::parse_days(v).unwrap_or(f64::NAN)).collect()),
         None if min == max => Ok(vec![min]),
         None => Ok(gradient_labeled_values(date_ticks(min, max, count, aware)?, min, max)),
     }

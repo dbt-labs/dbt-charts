@@ -210,6 +210,22 @@ class SQLDialect(ABC):
         """
         return None
 
+    time_zone_per_request: bool = False
+    """Whether the engine takes the zone with each job, query or connection
+    (BigQuery, ClickHouse, Trino) instead of as a statement. Such a dialect's
+    ``session_time_zone_sql`` is None although the warehouse has a session zone."""
+
+    def session_time_zone_sql(self, zone: str) -> str | None:
+        """Return this dialect's SQL to run the session in IANA zone *zone*.
+
+        Sent before a query whenever the connection's last applied zone
+        differs, so warehouse date truncation and casts follow the board clock.
+        None when the engine has no session time zone: the query runs in the
+        server's zone. BigQuery and ClickHouse take the zone per job or per
+        query setting, not as SQL.
+        """
+        return None
+
     def resolve_timeout_seconds(
         self,
         creds: dict[str, Any],  # type-state: explicit_any — raw source_config
@@ -328,20 +344,20 @@ class SQLDialect(ABC):
         return f"CAST({column} AS DATE)"
 
     def zoned_date_expr(self, column: str, time_zone: str) -> str:
-        """Return SQL for `column`'s calendar date in the IANA zone `time_zone`.
+        """Return SQL for the calendar date in `time_zone` of naive timestamp `column` storing UTC.
 
-        Only for a timestamp column: a DATE has no instant to convert. A dialect
-        without a time zone conversion we can spell raises rather than comparing
-        the UTC date under a zone the author asked for.
+        Independent of the session zone. A dialect without a spellable time zone
+        conversion raises rather than comparing the UTC date under a zone the
+        author asked for.
 
         Args:
-            column: Validated bare timestamp column identifier.
+            column: Validated bare naive-timestamp column identifier.
             time_zone: A validated IANA zone name.
         """
         raise ValueError(
-            f"filter_date_range(timestamp=true) cannot convert to time zone "
+            f"filter_date_range(is_naive_utc=true) cannot convert to time zone "
             f"{time_zone!r} on {self.name}: no time zone conversion is "
-            f"implemented for this dialect; drop timestamp=true or convert "
+            f"implemented for this dialect; drop is_naive_utc=true or convert "
             f"the column in the query"
         )
 

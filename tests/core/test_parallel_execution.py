@@ -18,6 +18,7 @@ from dbt_charts.core.execute.query_result import QueryResult
 from dbt_charts.core.execute.run import Failed
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 from dbt_charts.core.render import render
+from dbt_charts.core.text.time_zones import UTC
 
 from .._lookup import planned_query
 from .._results import rows_result
@@ -391,7 +392,7 @@ class TestDuckDBIntegration:
             for query_name in ("sales", "users", "orders"):
                 query = result.board.queries[query_name]
                 source_hash, query_hash, variables_hash = compute_cache_key(
-                    query, board_sources=result.board.sources
+                    query, board_sources=result.board.sources, time_zone=UTC
                 )
                 hit = cache.get(source_hash, query_hash, variables_hash)
                 assert hit is not None, f"{query_name} was not cached"

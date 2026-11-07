@@ -231,7 +231,9 @@ ConnectRootOption = Annotated[
 ]
 ConnectTrunkOption = Annotated[
     str | None,
-    typer.Option("--trunk", help="Branch Cloud pulls from (default: the repo's)"),
+    typer.Option(
+        "--trunk", help="Repository branch Cloud pulls from (default: the repo's)"
+    ),
 ]
 ConnectNameOption = Annotated[
     str | None, typer.Option("--name", help="Project name (default: the repo's)")
@@ -2508,7 +2510,8 @@ def _report_connected(
     else:
         typer.echo(
             f"Connected {project.slug}: {project.repo_label}"
-            f" (trunk: {project.trunk_branch}, work: {project.work_branch})"
+            f" (repository branch: {project.trunk_branch},"
+            f" dbtcharts.com branch: {project.work_branch})"
         )
         typer.echo(_connect_next_step(org_slug, project))
     _record_published_to(cloud_host, org_slug, project, git_url)
@@ -3159,7 +3162,7 @@ def _print_projects(org: str, result: ProjectList) -> None:
     if not result.projects:
         typer.echo(f"No projects yet. Connect one: {_connect_hint(org)}")
         return
-    table = _table("SLUG", "REPOSITORY", "HOST", "AUTH", "TRUNK", "UNMAPPED SOURCES")
+    table = _table("SLUG", "REPOSITORY", "HOST", "AUTH", "BRANCH", "UNMAPPED SOURCES")
     for project in result.projects:
         # A count Cloud could not compute prints as a word, not a number: the
         # reason is under the table, but the cell has to say it too or the

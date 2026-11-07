@@ -1,0 +1,5 @@
+kind: Fixes
+body: An unpinned table no longer wraps its headers and paints cell text over the next column when it is wider than the board.
+time: 2026-10-29T23:10:28.114334-05:00
+custom:
+    DbtChartsIssue: "78"

@@ -97,6 +97,7 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
     resolve_wide_measure_channels,
 )
 from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
+    bake_edge_size,
     density_adaptive_stroke,
 )
 from dbt_charts.core.compile.resolve.chart.enrich import (
@@ -785,8 +786,11 @@ def _resolve_area(
         ),
     )
     _ck, wide_measures = bake_wide_measures_kwargs(normalized.y, _ck)
-    area_point_mark = _resolved_point_mark(
-        area.marks.point, chart_style_context.formats, tooltip_format_values
+    area_point_mark = bake_edge_size(
+        _resolved_point_mark(
+            area.marks.point, chart_style_context.formats, tooltip_format_values
+        ),
+        resolved_line_mark.stroke.width,
     )
     return ResolvedAreaChart(
         **bkw,

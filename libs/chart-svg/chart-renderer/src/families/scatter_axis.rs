@@ -25,8 +25,9 @@ use crate::families::cartesian::band_edge;
 use d3rs::scale::{Band, Continuous};
 use crate::families::line::{bare_label_anchor, bare_label_layout, flush_anchor_px, tilted_temporal_label};
 use crate::families::subday::{SubdayPlan, SubdaySource};
-use crate::families::temporal::{authored_tick_count, authored_tick_interval, bare_temporal_ticks, generic_layout, none_tick_labels, part_band_texts, time_part_ticks, AuthoredTickCadence, build_all_temporal_labels, interval_axis, interval_labels_allowed, labels_unpinned, IntervalAxis, interval_tick_days, interval_tick_labels, native_tick_interval, build_temporal_labels, ResolvedVegaLabels, resolve_vega_x_labels, tooltip_header_date, TemporalLabel, time_unit_specifier, with_edge_point_labels, BareTick};
+use crate::families::temporal::{authored_tick_count, authored_tick_interval, bare_temporal_ticks, generic_layout, none_tick_labels, part_band_texts, time_part_ticks, build_all_temporal_labels, interval_axis, interval_labels_allowed, labels_unpinned, IntervalAxis, interval_tick_days, interval_tick_labels, build_temporal_labels, ResolvedVegaLabels, resolve_vega_x_labels, tooltip_header_date, TemporalLabel, time_unit_specifier, with_edge_point_labels, BareTick};
 use ::bind::temporal::{complete_buckets, parse_authored_time_unit};
+use layout::time_ladder::{native_tick_interval, AuthoredTickCadence};
 use ::bind::temporal::{TimePart, TimeUnit};
 use ::bind::time_axis::{date_text_day, Grain as AxisGrain, TimeAxis};
 use ::bind::x_type::{Grain, XResolution};
@@ -222,7 +223,7 @@ pub(crate) struct TemporalXAxis {
     title_text: String,
     title_key: Option<crate::contract::LabelKey>,
     /// An authored `labels.expr`: every tick speaks what it evaluates to at the tick's instant.
-    expr: Option<crate::labels_expr::Expr>,
+    expr: Option<::layout::labels_expr::Expr>,
     /// A point scale flushes its edge labels like a time scale's.
     flush_points: bool,
     /// Production compiles a `tickCount` interval onto this discrete scale, which Vega rejects: the chart paints no marks.
@@ -308,7 +309,7 @@ fn day_key(day: f64) -> String {
 impl TemporalXAxis {
     /// Registers the x scale for the `labels.expr`s that read it, over a plot `pw` wide.
     pub(crate) fn register(&self, pw: f64) {
-        use crate::labels_expr::view::{register_utc, Span};
+        use ::layout::labels_expr::view::{register_utc, Span};
         match &self.scale {
             Scale::Utc { .. } => {
                 let (lo, hi) = self.scale.domain_at(pw);
@@ -795,7 +796,7 @@ impl TemporalXAxis {
     }
 
     fn labels_at(&self, pw: f64, fonts: &FontBook) -> Result<Vec<(f64, AxisLabel)>, String> {
-        if crate::labels_expr::view::active() {
+        if ::layout::labels_expr::view::active() {
             self.register(pw);
         }
         let mut labels = self.labels_on_scale(pw, fonts)?;
@@ -814,7 +815,7 @@ impl TemporalXAxis {
 
     /// The ticks speak `expr` evaluated at their instants, in place of the ladder's own text. An expression that
     /// throws on a date of the axis fails Vega's whole view: the axis then only records that no mark paints.
-    pub(crate) fn speak(&mut self, expr: crate::labels_expr::Expr, dates: &[String]) -> Result<(), String> {
+    pub(crate) fn speak(&mut self, expr: ::layout::labels_expr::Expr, dates: &[String]) -> Result<(), String> {
         let days = dates.iter().map(|date| self.time.day(date)).collect::<Vec<_>>();
         let thrown = crate::families::temporal::first_throw_at_dates(&expr, dates, &days, false, |day| self.default_label(day))?;
         if thrown.is_some() {
@@ -848,12 +849,12 @@ impl TemporalXAxis {
                 // that zone, and the default label names its wall-clock day.
                 let aware = self.instants_aware();
                 let (instant, wall) = if aware { (day, ::bind::time_zone::wall_day(day)?) } else { (day.floor(), day) };
-                let value = crate::labels_expr::Val::Date(instant * 864e5);
+                let value = ::layout::labels_expr::Val::Date(instant * 864e5);
                 let default = if expr.uses_label() { self.default_label(wall.floor() as i64)? } else { String::new() };
                 let text = ::bind::time_zone::with_expression_local(aware, || {
-                    expr.eval(&crate::labels_expr::Tick::at(i, count, value, &default))
+                    expr.eval(&::layout::labels_expr::Tick::at(i, count, value, &default))
                 })
-                .map_err(|e| crate::labels_expr::describe(&e, "a validated tick"))?;
+                .map_err(|e| ::layout::labels_expr::describe(&e, "a validated tick"))?;
                 let text = self.cased(&text)?;
                 let width = fonts.measure(&text, &self.family, self.font_size)?;
                 Ok((frac, AxisLabel { text, row2: None, width, ..label }))
@@ -1211,7 +1212,7 @@ impl TemporalXAxis {
     /// How a lone chart's labels lie, for an expression that reads its label `item`. A rotated axis whose labels
     /// do not share one anchor is left unregistered: the expression then refuses.
     fn register_item_axis(&self, labels: &[(f64, AxisLabel)], plot_w: f64, ax_x: &AxisStyle) -> Result<(), String> {
-        use crate::labels_expr::view::{anchor, register_axis, AxisSpec, Orient};
+        use ::layout::labels_expr::view::{anchor, register_axis, AxisSpec, Orient};
         let (align, baseline, flush) = if self.angle == 0.0 {
             match self.align.as_deref() {
                 Some(authored) => (Some(anchor(authored)?), None, None),
@@ -1346,7 +1347,7 @@ impl TemporalXAxis {
             let end_y = group_y + sign * self.tick_len;
             items.extend(crate::common::x_tick_marks(&ax_x.ticks, self.floor_rule.as_deref(), &[], xs, (floor_y, end_y))?);
         }
-        if crate::labels_expr::view::active() && self.title_key.is_some() {
+        if ::layout::labels_expr::view::active() && self.title_key.is_some() {
             self.register_item_axis(&labels, plot_w, ax_x)?;
         }
         let kept = self.kept(&labels, plot_w);

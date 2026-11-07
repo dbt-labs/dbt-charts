@@ -20,7 +20,7 @@ import math
 import re
 import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -95,6 +95,9 @@ class _FakeResultSet:
             ]
         )
 
+    def collect(self) -> list[Mapping[str, str]]:
+        return [dict(zip(self.columns, row, strict=True)) for row in self._rows]
+
     def to_local_iterator(self) -> Iterator[tuple[Any, ...]]:
         return iter(self._rows)
 
@@ -104,8 +107,10 @@ class _FakeSession:
         self._rows = rows
         self.received_sql: list[str] = []
 
-    def sql(self, sql: str) -> _FakeResultSet:
-        self.received_sql.append(sql)
+    def sql(self, query: str, /) -> _FakeResultSet:
+        if query == "SHOW PARAMETERS LIKE 'TIMEZONE' IN SESSION":
+            return _FakeResultSet([{"value": "UTC"}])
+        self.received_sql.append(query)
         return _FakeResultSet(self._rows)
 
     def get_current_database(self) -> str | None:

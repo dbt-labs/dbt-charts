@@ -56,6 +56,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import cached_property
 from typing import (
     Any,
     Literal,
@@ -66,7 +67,9 @@ from typing import (
     runtime_checkable,
 )
 
+from dbt_charts import _engine
 from dbt_charts.core.column_types import ColumnType
+from dbt_charts.core.execute.rows_wire import dumps_rows
 
 # The set of causes a cached rows entry can carry.
 TruncatedReason: TypeAlias = Literal["max_rows", "max_result_bytes"]
@@ -102,6 +105,29 @@ class ResultRows:
 
     rows: CacheRows
     schema: dict[str, ColumnType]
+
+    @cached_property
+    def engine_rows(self) -> _engine.Rows:
+        """This result loaded into the render engine, once for however many
+        sizing probes and paints draw from it."""
+        return _engine.load_rows(dumps_rows(self.rows, self.schema))
+
+    @cached_property
+    def datetimes_as_text(self) -> ResultRows:
+        """This result with each datetime cell as `str(cell)` and its column
+        declared a string; built once so its `engine_rows` loads once."""
+        return ResultRows(
+            [
+                {k: str(v) if isinstance(v, datetime) else v for k, v in row.items()}
+                for row in self.rows
+            ],
+            {
+                column: ColumnType(kind="string")
+                if declared.kind in ("datetime", "datetime_tz")
+                else declared
+                for column, declared in self.schema.items()
+            },
+        )
 
 
 def _require_aware(value: datetime, field: str) -> None:

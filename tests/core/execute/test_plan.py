@@ -14,6 +14,7 @@ from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+from dbt_charts.core.text.time_zones import UTC
 
 from ..._run import Run
 
@@ -167,5 +168,5 @@ def test_planned_cache_key_is_the_content_key_over_a_mocked_registry() -> None:
     [planned] = plan(executor.ctx, ["q"])
 
     assert planned.cache_key == compute_cache_key(
-        board.queries["q"], board_sources=board.sources
+        board.queries["q"], board_sources=board.sources, time_zone=UTC
     )

@@ -93,7 +93,7 @@ def require_driver_extra(config: ResolvedSourceConfig) -> None:
 
 
 def open_driver(
-    config: ResolvedSourceConfig, timeout_seconds: int | None
+    config: ResolvedSourceConfig, timeout_seconds: int | None, time_zone: str
 ) -> DriverConnection:
     """Open *config*'s warehouse on its driver.
 
@@ -101,6 +101,8 @@ def open_driver(
         config: A source for which :func:`is_driver_source` is true.
         timeout_seconds: The per-query cap the driver enforces server-side, or
             ``None`` for no cap beyond the driver's own default.
+        time_zone: The IANA zone the session runs in, for a driver that takes it
+            at connect (Trino). The others set it with a statement per query.
 
     Raises:
         ValueError: *config* is not a driver source. Every caller checks
@@ -113,7 +115,7 @@ def open_driver(
     if isinstance(config, TrinoSourceConfig):
         from dbt_charts.core.execute.drivers.trino import open_trino
 
-        return open_trino(config, timeout_seconds)
+        return open_trino(config, timeout_seconds, time_zone)
     raise _not_a_driver_source(config)
 
 

@@ -1,0 +1,3 @@
+kind: Fixes
+body: Line and area charts now pad a continuous x axis like a scatter, so end points and bands no longer sit flush against the plot edge.
+time: 2026-11-05T17:40:16.736034-08:00

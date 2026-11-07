@@ -54,7 +54,7 @@ class DriverBackend:
 
     def execute(self, source: ResolvedSourceConfig, query: ResolvedQuery) -> na.Array:
         return self._pool_for(source).execute(
-            query.inline(source.type), query.setup_sql, query.limit
+            query.inline(source.type), query.setup_sql, query.time_zone, query.limit
         )
 
     def _pool_for(self, source: ResolvedSourceConfig) -> _DriverPool:
@@ -120,7 +120,11 @@ class _DriverPool:
         )
 
     def execute(
-        self, sql: str, setup_sql: tuple[str, ...], limit: RowFetchLimit
+        self,
+        sql: str,
+        setup_sql: tuple[str, ...],
+        time_zone: str,
+        limit: RowFetchLimit,
     ) -> na.Array:
         """Run SQL on a persistent worker thread, reconnecting once if the session died.
 
@@ -131,7 +135,12 @@ class _DriverPool:
             raise QueryError.from_code(ERR_QUERY_INTERRUPTED)
         try:
             return self._pool.submit(
-                copy_context().run, self._execute_on_worker, sql, setup_sql, limit
+                copy_context().run,
+                self._execute_on_worker,
+                sql,
+                setup_sql,
+                time_zone,
+                limit,
             ).result()
         except Exception as exc:  # noqa: BLE001 — re-raised unless interrupted
             # A cancelled statement, a dropped queued query and a refused submit
@@ -141,13 +150,17 @@ class _DriverPool:
             raise
 
     def _execute_on_worker(
-        self, sql: str, setup_sql: tuple[str, ...], limit: RowFetchLimit
+        self,
+        sql: str,
+        setup_sql: tuple[str, ...],
+        time_zone: str,
+        limit: RowFetchLimit,
     ) -> na.Array:
-        connection = self._ensure_connected()
+        connection = self._ensure_connected(time_zone)
         try:
             if self._tls.session_dirty:
-                connection = self._clean_session(connection)
-            return self._run(connection, sql, setup_sql, limit)
+                connection = self._clean_session(connection, time_zone)
+            return self._run(connection, sql, setup_sql, time_zone, limit)
         except QueryDurationExceeded:
             raise
         except Exception:  # noqa: BLE001 — retried below only if the session died
@@ -158,18 +171,25 @@ class _DriverPool:
                 # fails identically, and the reconnect throws away a warm session.
                 raise
             self._drop_connection()
-            return self._run(self._ensure_connected(), sql, setup_sql, limit)
+            return self._run(
+                self._ensure_connected(time_zone), sql, setup_sql, time_zone, limit
+            )
 
     def _run(
         self,
         connection: DriverConnection,
         sql: str,
         setup_sql: tuple[str, ...],
+        time_zone: str,
         limit: RowFetchLimit,
     ) -> na.Array:
+        self._apply_time_zone(connection, time_zone)
         # Set before the send: a setup_sql that fails partway still leaves
         # whatever it created on the connection.
         self._tls.session_dirty = bool(setup_sql)
+        if setup_sql and not self._dialect.time_zone_per_request:
+            # It may change the session zone.
+            self._tls.session_zone = None
         try:
             for statement in setup_sql:
                 connection.session_sql(statement)
@@ -179,8 +199,23 @@ class _DriverPool:
                 raise QueryDurationExceeded(self._timeout_seconds) from exc
             raise
 
-    def _ensure_connected(self) -> DriverConnection:
+    def _apply_time_zone(self, connection: DriverConnection, time_zone: str) -> None:
+        """Run this connection's session in *time_zone*, sending only a change.
+
+        A dialect that takes the zone per request fixed it when the connection
+        opened (``_ensure_connected``).
+        """
+        if self._dialect.time_zone_per_request or self._tls.session_zone == time_zone:
+            return
+        if statement := self._dialect.session_time_zone_sql(time_zone):
+            connection.session_sql(statement)
+        self._tls.session_zone = time_zone
+
+    def _ensure_connected(self, time_zone: str) -> DriverConnection:
         """Return this thread's connection, opening it on first use.
+
+        Where the zone is fixed at connect, a connection opened in another zone
+        is closed and replaced.
 
         A failure here raises ConnectionSetupFailed: it happened before any SQL
         reached the warehouse, so the caller reports a connection failure rather
@@ -193,9 +228,16 @@ class _DriverPool:
             None,  # type-state: silent_fallback — unset until this thread first connects
         )
         if connection is not None:
-            return connection
+            if not (
+                self._dialect.time_zone_per_request
+                and self._tls.session_zone != time_zone
+            ):
+                return connection
+            self._drop_connection()
         try:
-            connection = open_driver(self._driver_config, self._timeout_seconds)
+            connection = open_driver(
+                self._driver_config, self._timeout_seconds, time_zone
+            )
         except DbtChartsError:
             # Coded verdicts (a missing extra, a driver download that failed its
             # checksum) are not connection failures and keep their own code.
@@ -204,6 +246,9 @@ class _DriverPool:
             raise ConnectionSetupFailed(e) from e
         self._tls.connection = connection
         self._tls.session_dirty = False
+        self._tls.session_zone = (
+            time_zone if self._dialect.time_zone_per_request else None
+        )
         with self._connections_lock:
             self._connections.append(connection)
         return connection
@@ -219,12 +264,14 @@ class _DriverPool:
             return False
         return True
 
-    def _clean_session(self, connection: DriverConnection) -> DriverConnection:
+    def _clean_session(
+        self, connection: DriverConnection, time_zone: str
+    ) -> DriverConnection:
         """Clear session objects a previous ``setup_sql`` left on the connection."""
         reset = self._dialect.session_reset_statements()
         if not reset:
             self._drop_connection()
-            return self._ensure_connected()
+            return self._ensure_connected(time_zone)
         for statement in reset:
             connection.session_sql(statement)
         return connection
@@ -237,6 +284,7 @@ class _DriverPool:
         )
         self._tls.connection = None
         self._tls.session_dirty = False
+        self._tls.session_zone = None
         if connection is None:
             return
         with self._connections_lock:

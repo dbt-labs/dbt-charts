@@ -73,7 +73,7 @@ pub fn centered_baseline_offset(measurer: &crate::fonts::FontMeasurer, font_size
 /// own advance; an emoji cluster or an unmapped codepoint books what
 /// `crate::fonts::FontMeasurer::measure` books, never an `Err` — production
 /// does not fail a chart over one rare character.
-fn cluster_advance(
+pub(crate) fn cluster_advance(
     face: &ttf_parser::Face<'_>,
     codepoints: &[u32],
     i: usize,
@@ -279,6 +279,19 @@ impl FontBook {
             .face_for(family_list)
             .ok_or_else(|| format!("text: no font face resolved for {family_list:?}"))?;
         Ok(crate::fonts::cached_measurer(&self.faces[i].path, 0, None))
+    }
+
+    /// [`Self::measurer`] instanced at the CSS `weight` the text paints at.
+    pub fn measurer_at_weight(
+        &self,
+        family_list: &str,
+        weight: &str,
+    ) -> Result<std::sync::Arc<crate::fonts::FontMeasurer>, String> {
+        Ok(crate::fonts::cached_measurer(
+            &self.font_path(family_list)?,
+            0,
+            crate::fonts::css_weight_axis(weight)?,
+        ))
     }
 
     /// The font file `family_list` resolves to, for a weighted

@@ -189,6 +189,7 @@ def compose_over_named_rows(
     named_rows: dict[str, CacheRows],
     params: list[Any],
     schemas: dict[str, dict[str, ColumnType]],
+    time_zone: str,
     limit: int | None = None,
 ) -> tuple[CacheRows, dict[str, ColumnType]]:
     """Execute *sql* over *named_rows* in an isolated in-process DuckDB.
@@ -205,6 +206,7 @@ def compose_over_named_rows(
         named_rows: Mapping of table name → row dicts to register.
         params: Positional parameter values in $1/$2/… order.
         schemas: Declared column types of each table in *named_rows*.
+        time_zone: The session zone the composing SQL runs in: the board's.
         limit: Bounds the fetch itself via ``fetchmany()`` — a join across two
             upstream tables each near the row ceiling can otherwise blow up
             memory during composition, before any post-fetch check runs. None
@@ -221,7 +223,7 @@ def compose_over_named_rows(
 
     conn = duckdb.connect(":memory:", config={"enable_external_access": False})
     try:
-        conn.execute("SET TimeZone='UTC'")
+        conn.execute("SET TimeZone = ?", [time_zone])
         for name, rows in named_rows.items():
             _register(conn, name, rows, schemas[name])
         result = conn.execute(sql, params)

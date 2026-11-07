@@ -93,6 +93,7 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
     resolve_wide_measure_channels,
 )
 from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
+    bake_edge_size,
     bake_point_companions,
     resolve_px_per_point,
     stroke_from_px_per_point,
@@ -513,6 +514,7 @@ def _resolve_line(
         line_point_mark = bake_point_companions(
             line_point_mark, line_stroke, _px_per_point
         )
+    line_point_mark = bake_edge_size(line_point_mark, line_stroke)
     _tf = resolve_title_font(chart_local_style_context, title_width)
     bkw = _base_kwargs(
         normalized,

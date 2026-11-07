@@ -46,6 +46,7 @@ from dbt_charts.core.execute.warehouse_check import (
     _strip_trailing_semicolon_for_script_join,
     warehouse_check,
 )
+from dbt_charts.core.text.time_zones import UTC
 
 from ..._scripted_env import ScriptedBackend, backend_of, scripted_env
 from .test_metricflow import _project, needs_metricflow
@@ -503,6 +504,7 @@ def _bigquery_registry(
         params=(),
         setup_sql=(),
         limit=resolve_effective_row_limit(None),
+        time_zone=UTC,
     )
     return registry
 
@@ -723,6 +725,7 @@ class TestWarehouseCheckBigQuery:
             params=(),
             setup_sql=(f"CREATE TEMP FUNCTION f(x INT64) AS (x + 1){trailing}",),
             limit=resolve_effective_row_limit(None),
+            time_zone=UTC,
         )
 
         result = _check_sql("SELECT f(1)", registry)
@@ -1133,6 +1136,7 @@ def _sqlserver_registry(
         params=(),
         setup_sql=(),
         limit=resolve_effective_row_limit(None),
+        time_zone=UTC,
     )
     warehouse_check_module.execute_resolved.return_value = result
     return registry
@@ -1314,6 +1318,7 @@ class TestWarehouseCheckSqlServer:
             params=(),
             setup_sql=("SELECT 1 AS x INTO #t",),
             limit=resolve_effective_row_limit(None),
+            time_zone=UTC,
         )
         result = _check_sql("SELECT * FROM #t", registry)
         assert result.status == "unchecked"

@@ -3,6 +3,7 @@
 //! non-string kind decides; a `string` column keeps shape detection.
 
 use std::collections::HashMap;
+use crate::SharedRows;
 
 use column_types::{CellMismatch, ColumnType, ColumnTypes, QueryDatasets};
 use serde::Deserialize;
@@ -51,7 +52,7 @@ impl PayloadSchema {
     pub fn check(
         &self,
         rows: &[Map<String, Value>],
-        datasets: Option<&HashMap<String, Vec<Map<String, Value>>>>,
+        datasets: Option<&HashMap<String, SharedRows>>,
     ) -> Result<(), Diagnostic> {
         let check = |types: &ColumnTypes, rows: &[Map<String, Value>]| types.check_rows(rows).map_err(CellMismatch::into_diagnostic);
         check(&self.rows, rows)?;
@@ -127,7 +128,7 @@ pub fn refuse_text_measures(payload: &Payload, chart_type: &str) -> Result<(), D
 }
 
 /// The rows of every dataset, keyed by query name: `Payload::datasets`.
-pub fn rows_by_query(datasets: &QueryDatasets) -> HashMap<String, Vec<Map<String, Value>>> {
+pub fn rows_by_query(datasets: &QueryDatasets) -> HashMap<String, SharedRows> {
     datasets.iter().map(|(name, d)| (name.clone(), d.rows.clone())).collect()
 }
 
@@ -233,6 +234,17 @@ mod tests {
     }
 
     #[test]
+    fn payloads_built_from_one_dataset_share_its_rows() {
+        let dataset: column_types::Dataset =
+            serde_json::from_value(json!({"schema": {"n": {"kind": "integer"}}, "rows": [{"n": 1}]}))
+                .expect("dataset deserializes");
+        let datasets = QueryDatasets::from([("q".to_string(), dataset)]);
+        let (first, second) = (rows_by_query(&datasets), rows_by_query(&datasets));
+        assert!(first["q"].ptr_eq(&second["q"]));
+        assert!(first["q"].ptr_eq(&datasets["q"].rows));
+    }
+
+    #[test]
     fn a_payload_without_a_schema_is_refused() {
         let payload = json!({"resolved": {}, "rows": [], "width": 1.0, "height": 1.0});
         // The inherent deserializer, ahead of the unit-test hook that declares inline rows.
@@ -244,7 +256,7 @@ mod tests {
     fn a_cell_contradicting_its_declared_type_is_a_data_shape_diagnostic() {
         let schema = schema();
         let row = |key: &str, value: Value| vec![json!({ key: value }).as_object().unwrap().clone()];
-        let datasets = HashMap::from([("other".to_string(), row("n", json!("3")))]);
+        let datasets = HashMap::from([("other".to_string(), row("n", json!("3")).into())]);
         assert!(schema.check(&row("day", json!("2024-01-02")), None).is_ok());
         let err = schema.check(&row("day", json!(5)), None).unwrap_err();
         assert_eq!(err.code, "ERR-CHART-CELL-TYPE-MISMATCH");

@@ -521,7 +521,7 @@ SLOT_FIXTURES: dict[str, SlotFixture] = {
     for f in (
         SlotFixture(
             "style.axis_y.labels.format",
-            covers=(("AxisLabelStyle", "format"),),
+            covers=(("AxisLabelStyle", "format"), ("AxisYLabelStyle", "format")),
             bands=_ALL_BANDS,
             build=_axis_y_labels,
             tooltip_check=True,

@@ -98,7 +98,7 @@ fn y_date_labels(
     let labels = ladder.labels.into_iter().map(|l| TemporalLabel { domain_idx: bands[l.domain_idx], ..l }).collect::<Vec<_>>();
     let labels = match labels_cfg.expr.as_deref() {
         Some(expr) => {
-            let expr = crate::labels_expr::Expr::parse(expr).map(|e| e.on("y")).map_err(|e| format!("heatmap: {e:?}"))?;
+            let expr = ::layout::labels_expr::Expr::parse(expr).map(|e| e.on("y")).map_err(|e| format!("heatmap: {e:?}"))?;
             rewrite_with_expr(labels, domain, &expr, ExprBands::KeptByLadder).map_err(|e| format!("heatmap: {e}"))?
         }
         None => fold_steep(labels, labels_cfg.angle, data_tu),
@@ -532,8 +532,8 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     let (plot_w, plot_h) = (m.plot_w, m.plot_h);
     let x_scale = BandScale::new(x_domain.clone(), 0.0, plot_w, 0.0, 0.0);
     let y_scale = BandScale::new(y_domain.clone(), 0.0, plot_h, 0.0, 0.0);
-    if crate::labels_expr::view::active() {
-        use crate::labels_expr::view::{anchor, register_axis, register_band, AxisSpec, Orient, Span};
+    if ::layout::labels_expr::view::active() {
+        use ::layout::labels_expr::view::{anchor, register_axis, register_band, AxisSpec, Orient, Span};
         register_band("x", x_domain, 0.0, 0.0, Span::Width)?;
         register_band("y", y_domain, 0.0, 0.0, Span::HeightDown)?;
         if let Some(axis) = &x_dates {

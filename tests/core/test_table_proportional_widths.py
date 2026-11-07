@@ -65,6 +65,8 @@ class TestClusterEqualization:
             cell_padding=8.0,
             width_similarity_threshold=0.8,
             content_headroom=0.10,
+            overflow="scroll",
+            freeze=0,
         )
         # Override to 1.0 (disable clustering)
         overridden = baseline.model_copy(update={"width_similarity_threshold": 1.0})

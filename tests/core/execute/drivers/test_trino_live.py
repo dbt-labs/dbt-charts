@@ -40,7 +40,7 @@ def _source() -> TrinoSourceConfig:
 
 def test_select_one() -> None:
     limit = resolve_effective_row_limit(10)
-    connection = open_driver(_source(), None)
+    connection = open_driver(_source(), None, "UTC")
     try:
         table = connection.execute("SELECT 1 AS one", limit)
     finally:
@@ -50,7 +50,7 @@ def test_select_one() -> None:
 
 def test_a_fetch_stops_near_the_row_limit() -> None:
     limit = resolve_effective_row_limit(100)
-    connection = open_driver(_source(), None)
+    connection = open_driver(_source(), None, "UTC")
     try:
         table = connection.execute("SELECT * FROM tpch.sf1.lineitem", limit)
     finally:
@@ -60,7 +60,7 @@ def test_a_fetch_stops_near_the_row_limit() -> None:
 
 
 def test_cancel_stops_a_running_statement() -> None:
-    connection = open_driver(_source(), None)
+    connection = open_driver(_source(), None, "UTC")
     timer = threading.Timer(2, connection.cancel)
     timer.start()
     try:
@@ -75,7 +75,7 @@ def test_cancel_stops_a_running_statement() -> None:
 
 
 def test_the_query_cap_is_enforced_and_recognized() -> None:
-    connection = open_driver(_source(), 1)
+    connection = open_driver(_source(), 1, "UTC")
     try:
         with pytest.raises(Exception) as excinfo:  # noqa: PT011 — the client's own error type
             connection.execute(

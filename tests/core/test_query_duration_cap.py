@@ -26,6 +26,7 @@ from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_DURATION_EXCEEDED
 from dbt_charts.core.execute.compose import ResolvedQuery
 from dbt_charts.core.execute.query_result import resolve_effective_row_limit
+from dbt_charts.core.text.time_zones import UTC
 
 from .conftest import DbtHarness
 
@@ -40,6 +41,7 @@ def _prepared(sql: str) -> ResolvedQuery:
         params=(),
         setup_sql=(),
         limit=resolve_effective_row_limit(None),
+        time_zone=UTC,
     )
 
 

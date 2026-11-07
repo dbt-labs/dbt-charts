@@ -175,7 +175,7 @@ impl LegendView {
     pub(crate) fn narrowed(&self, payload: &Payload, color: &str) -> Option<Narrowed> {
         let Source::Param { shown: Some(_), .. } = &self.source else { return None };
         let shown: Vec<_> = payload.rows.iter().filter(|row| self.shows(&::bind::rows::row_str(row, color))).cloned().collect();
-        (shown.len() < payload.rows.len()).then(|| Narrowed { payload: payload.with_inputs(payload.resolved.clone(), shown), whole: payload.rows.clone() })
+        (shown.len() < payload.rows.len()).then(|| Narrowed { payload: payload.with_inputs(payload.resolved.clone(), shown), whole: payload.rows.to_vec() })
     }
 
     /// `entries` with each series' entry toggling this view, and a hidden series' receded. `keys`

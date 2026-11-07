@@ -1,0 +1,22 @@
+[package]
+name = "model-derive"
+version = "0.0.1"
+edition = "2021"
+publish = false
+description = "`#[derive(Model)]`: generates the Authored and Patch twins, the FieldTable and Patch::merge."
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["derive", "parsing", "printing", "proc-macro", "clone-impls"], default-features = false }
+
+[dev-dependencies]
+indexmap = "2"
+model-core = { path = "../model-core" }
+trybuild = "1"
+diagnostic = { path = "../diagnostic" }
+yaml = { path = "../yaml" }
+serde_json = { version = "1", features = ["preserve_order"] }

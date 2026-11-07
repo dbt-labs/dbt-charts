@@ -56,6 +56,30 @@ def controls_are_interactive() -> bool:
     return _INTERACTIVE.get()
 
 
+_FLAT_EXPORT: ContextVar[bool] = ContextVar("dct_flat_export", default=False)
+
+
+@contextmanager
+def flat_export(enabled: bool) -> Generator[None]:
+    """Draw every table to fit its slot, for one render to an image or PDF.
+
+    A picture cannot scroll, so a table that would scroll sideways
+    (`column_layout.overflow: scroll`) would hide its columns past the slot's
+    edge. Under this scope every table squeezes to fit instead, frozen
+    columns dropped with the scrolling they belong to.
+    """
+    token = _FLAT_EXPORT.set(enabled)
+    try:
+        yield
+    finally:
+        _FLAT_EXPORT.reset(token)
+
+
+def is_flat_export() -> bool:
+    """True while a render is being done for an image or a PDF."""
+    return _FLAT_EXPORT.get()
+
+
 # The words the controls and table runtimes (variables.js, table_runtime.js)
 # print themselves, keyed by the last segment of their catalog id: the page
 # cannot fetch the catalog, so the strip carries this slice and the engine
@@ -147,7 +171,7 @@ def controls_language() -> dict[str, str]:
 
 @cache
 def controls_runtime_source() -> str:
-    """The board runtimes (the English controls words, the calendar, chart hover, table sort/filter, the link modal, then variable controls) as JS for a host to ship in its page.
+    """The board runtimes (the English controls words, the calendar, chart hover, table scroll and sort/filter, the link modal, then variable controls) as JS for a host to ship in its page.
 
     Strips the ``/*{# ... #}*/``-fenced comments — engineering notes with no
     audience once the runtime is shipped. Cached: hosts rebuild this per page
@@ -160,6 +184,7 @@ def controls_runtime_source() -> str:
             _read_script("controls_english.js"),
             strip_js_comments(_read_script("calendar.js")),
             hover_runtime_source(),
+            strip_js_comments(_read_script("table_scroll.js")),
             strip_js_comments(_read_script("table_runtime.js")),
             link_modal_source(),
             strip_js_comments(_read_script("variables.js")),

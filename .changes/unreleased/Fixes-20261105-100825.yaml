@@ -1,0 +1,3 @@
+kind: Fixes
+body: Inside a shaded band, the gap around each bar now shows the band's color instead of white.
+time: 2026-11-05T10:08:25.716419-08:00

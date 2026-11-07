@@ -89,7 +89,7 @@ from dbt_charts.core.text.format_d3 import (
     unsupported_time_directives,
 )
 from dbt_charts.core.text.predefined_formats import PREDEFINED_NUMBER_NAMES
-from dbt_charts.core.text.time_zones import TIME_ZONE_NAMES, TimeZoneName
+from dbt_charts.core.text.time_zones import TIME_ZONE_NAMES, UTC, TimeZoneName
 
 # A frozenset dumps in Python's per-process hash-seed order, so two otherwise-
 # identical processes emit different orderings for the same set. Every model
@@ -569,12 +569,13 @@ class Regional(BaseModel):
     )
 
     time_zone: Annotated[TimeZoneName, BeforeValidator(_known_time_zone)] = Field(
-        default=TimeZoneName("UTC"),
+        default=UTC,
         description=(
             "IANA time zone of the board's clock: the date daterange presets "
             "resolve on, the zone of the data-freshness stamp, and the zone a "
             "query timestamp carrying a zone or offset prints, buckets and "
-            "ticks in."
+            "ticks in. Warehouse queries run in this zone too, so SQL date "
+            "truncation and casts agree with the printed times."
         ),
     )
 

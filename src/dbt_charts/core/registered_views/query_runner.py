@@ -191,6 +191,7 @@ def run_registry_queries(
         cache_key: tuple[str, str, str] | None = None
         if cache is not None and query.cache.enabled:
             from dbt_charts.core.execute.duckdb_cache import compute_cache_key
+            from dbt_charts.core.text.time_zones import UTC
 
             # Path params are already baked into the materialized SQL /
             # source_description, so there are no variables — keying is purely by
@@ -205,7 +206,7 @@ def run_registry_queries(
             # today; if a future entry authors a SqlQuery against a file source,
             # this key must fold in Project.file_version first, or edited data
             # files would go stale.
-            cache_key = compute_cache_key(query)
+            cache_key = compute_cache_key(query, time_zone=UTC)
             outcome = cache.get(*cache_key, ttl=query.cache.ttl_timedelta)
             # Registry queries raise on failure rather than caching the error
             # (below), so only a rows outcome can be here — narrowed anyway so

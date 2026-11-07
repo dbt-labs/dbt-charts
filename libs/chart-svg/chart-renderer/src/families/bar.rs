@@ -109,7 +109,7 @@ pub(crate) struct BarResolved {
     series_from_measures: bool,
     /// The rows as queried, set where a wide chart folds: a support_table strip reads them.
     #[serde(skip)]
-    prefold_rows: Vec<serde_json::Map<String, Value>>,
+    prefold_rows: crate::SharedRows,
     id: String,
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     title: Option<String>,
@@ -164,7 +164,7 @@ pub(crate) struct BarResolved {
     /// Every queried row when rows with a null numeric color were dropped: a dropped row
     /// draws no bar but its category keeps its place on the axis.
     #[serde(skip)]
-    all_rows: Option<Vec<serde_json::Map<String, Value>>>,
+    all_rows: Option<crate::SharedRows>,
     /// The series a legend click leaves shown.
     #[serde(skip)]
     legend_view: Option<crate::legend_view::LegendView>,
@@ -677,7 +677,7 @@ impl BarResolved {
                     (lo <= hi).then_some((lo, hi))
                 };
                 let kept = extent(rows).expect("a numeric color has a drawn value");
-                let all = self.all_rows.as_deref().map_or(Some(kept), extent);
+                let all = self.all_rows.as_ref().map_or(Some(kept), |rows| extent(rows));
                 ContinuousColor::gradient(scale, all, kept, self.legend.visible)?
             }
             None => blues,
@@ -1463,7 +1463,7 @@ mod tests {
                 "three base bars at palette[0]: {svg}"
             );
             assert_eq!(
-                svg.matches("fill=\"#779bc9\" stroke=\"#FFFFFF\"").count(),
+                svg.matches("Z\" fill=\"#779bc9\"").count(),
                 3,
                 "three layer bars at the next palette slot: {svg}"
             );
@@ -1594,12 +1594,28 @@ mod tests {
             let rows: &[(&str, f64)] = &[("East", 40.0), ("West", 30.0)];
             let svg = own_color_layers_with(&[rows], |p| p["datasets"]["layer0"][0]["region"] = serde_json::Value::Null)
                 .expect("renders");
-            assert!(svg.contains("fill=\"#779bc9\" stroke=\"#FFFFFF\""), "West takes palette[1], the null claims none: {svg}");
+            assert!(svg.contains("Z\" fill=\"#779bc9\""), "West takes palette[1], the null claims none: {svg}");
             assert!(!svg.contains("#ad9c7f"), "no second slot is claimed: {svg}");
             assert_eq!(svg.matches(">West</text>").count(), 1, "{svg}");
-            let colored = svg.find("fill=\"#779bc9\" stroke=\"#FFFFFF\"").expect("West's segment");
-            let unpainted = svg.find("fill=\"none\" stroke=\"#FFFFFF\"").expect("the null segment");
+            let colored = svg.find("Z\" fill=\"#779bc9\"").expect("West's segment");
+            let unpainted = svg.find("fill=\"none\"/>").expect("the null segment");
             assert!(colored < unpainted, "the null segment stacks last: {svg}");
+        }
+
+        /// An unpainted segment's halo is only its rim: its undercoat fills nothing, so the
+        /// grid and the band still show through the segment. Only the painted one is filled.
+        #[test]
+        fn an_unpainted_bar_layer_segments_undercoat_is_its_rim_only() {
+            let rows: &[(&str, f64)] = &[("East", 40.0), ("West", 30.0)];
+            let svg = own_color_layers_with(&[rows], |p| p["datasets"]["layer0"][0]["region"] = serde_json::Value::Null)
+                .expect("renders");
+            let undercoats: Vec<&str> = svg
+                .split("class=\"knockout-undercoat\"")
+                .skip(1)
+                .map(|rest| rest.split("</g>").next().unwrap())
+                .collect();
+            assert!(!undercoats.is_empty(), "{svg}");
+            assert_eq!(undercoats.iter().map(|u| u.matches("fill=\"#ffffff\"").count()).sum::<usize>(), 1, "{svg}");
         }
 
         /// A color promotes the series into each datum's description only where two
@@ -1680,8 +1696,8 @@ mod tests {
         fn a_bar_type_layer_with_a_color_field_paints_each_value_at_its_claimed_slot() {
             let svg = own_color_layers_svg(&[&[("East", 40.0), ("West", 30.0)]]).expect("renders");
             assert_eq!(svg.matches(">East</text>").count(), 1, "{svg}");
-            assert!(svg.contains("fill=\"#779bc9\" stroke=\"#FFFFFF\""), "East takes palette[1]: {svg}");
-            assert!(svg.contains("fill=\"#ad9c7f\" stroke=\"#FFFFFF\""), "West takes palette[2]: {svg}");
+            assert!(svg.contains("Z\" fill=\"#779bc9\""), "East takes palette[1]: {svg}");
+            assert!(svg.contains("Z\" fill=\"#ad9c7f\""), "West takes palette[2]: {svg}");
         }
 
         /// No `order` channel over a colorless base: Vega-Lite stacks by the color
@@ -1689,7 +1705,7 @@ mod tests {
         #[test]
         fn a_color_grouped_bar_layer_stacks_by_its_color_field_not_by_value() {
             let svg = own_color_layers_svg(&[&[("East", 60.0), ("West", 20.0)]]).expect("renders");
-            let at = |fill: &str| svg.find(&format!("fill=\"{fill}\" stroke=\"#FFFFFF\"")).expect(fill);
+            let at = |fill: &str| svg.find(&format!("Z\" fill=\"{fill}\"")).expect(fill);
             assert!(at("#ad9c7f") < at("#779bc9"), "West (palette[2]) stacks first, East on top: {svg}");
         }
 
@@ -1708,8 +1724,8 @@ mod tests {
             let svg = own_color_layers_svg(&[&[("East", 40.0), ("West", 30.0)], &[("East", 20.0), ("North", 10.0)]])
                 .expect("renders");
             assert_eq!(svg.matches(">East</text>").count(), 1, "{svg}");
-            assert_eq!(svg.matches("fill=\"#779bc9\" stroke=\"#FFFFFF\"").count(), 2, "East bars share palette[1]: {svg}");
-            assert!(svg.contains("fill=\"#7a8895\" stroke=\"#FFFFFF\""), "North is the next free color: {svg}");
+            assert_eq!(svg.matches("Z\" fill=\"#779bc9\"").count(), 2, "East bars share palette[1]: {svg}");
+            assert!(svg.contains("Z\" fill=\"#7a8895\""), "North is the next free color: {svg}");
         }
 
         #[test]
@@ -1720,7 +1736,7 @@ mod tests {
             layer["ink"] = serde_json::Value::Null;
             layer["series_inks"] = serde_json::json!({"Jan": "#779bc9"});
             let svg = render(&make_payload(payload_with_layer(&[("Jan", 1000.0, 3.1)], layer)), &test_fonts()).expect("renders");
-            assert!(svg.contains("fill=\"#779bc9\" stroke=\"#FFFFFF\""), "Jan takes palette[1]: {svg}");
+            assert!(svg.contains("Z\" fill=\"#779bc9\""), "Jan takes palette[1]: {svg}");
             assert_eq!(svg.matches(">Jan</text>").count(), 2, "the category label and the legend entry: {svg}");
         }
 
@@ -3327,7 +3343,7 @@ mod tests {
             let mut payload_json = payload_with_layer(&[("Jan", 100.0, 40.0)], bar_layer_json(None));
             payload_json["resolved"]["layers"] = serde_json::json!([bar_layer_json(None), scatter]);
             let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
-            assert!(svg.contains("fill=\"#779bc9\" stroke=\"#FFFFFF\""), "the bar layer takes palette[1]: {svg}");
+            assert!(svg.contains("Z\" fill=\"#779bc9\""), "the bar layer takes palette[1]: {svg}");
             assert!(svg.contains("fill=\"#ad9c7f\""), "the scatter takes palette[2]: {svg}");
             assert!(svg.contains(">Marker<"), "and its legend row: {svg}");
         }
@@ -4244,8 +4260,8 @@ mod tests {
                 ]
             });
             let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
-            assert_eq!(svg.matches("fill=\"#ad9c7f\" stroke=\"#FFFFFF\"").count(), 2, "East takes palette[2], one segment per row: {svg}");
-            assert!(svg.contains("fill=\"#7a8895\" stroke=\"#FFFFFF\""), "West takes palette[3]: {svg}");
+            assert_eq!(svg.matches("Z\" fill=\"#ad9c7f\"").count(), 2, "East takes palette[2], one segment per row: {svg}");
+            assert!(svg.contains("Z\" fill=\"#7a8895\""), "West takes palette[3]: {svg}");
             assert_eq!(svg.matches(">East</text>").count(), 1, "one legend entry per value: {svg}");
         }
 
@@ -4267,7 +4283,7 @@ mod tests {
             });
             let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
             assert_eq!(svg.matches(">z</text>").count(), 1, "one legend entry for the new series: {svg}");
-            assert_eq!(svg.matches("fill=\"#ad9c7f\" stroke=\"#FFFFFF\"").count(), 2, "z takes the third palette slot: {svg}");
+            assert_eq!(svg.matches("Z\" fill=\"#ad9c7f\"").count(), 2, "z takes the third palette slot: {svg}");
         }
     }
 
@@ -4814,14 +4830,15 @@ mod tests {
         let mut p = make_time_series_payload("zero");
         p["resolved"]["style"]["mark"]["border"] = serde_json::json!({"width": 1.0, "color": "#FFFFFF", "radius": 2.0});
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
-        // The stack's outline is the one unfilled path with a corner arc at each top end: one per bucket.
+        // The stack's outline is an unfilled path with a corner arc at each top end: one per bucket.
         let radii: Vec<&str> = svg
             .split("<path d=\"")
             .skip(1)
             .filter(|seg| seg.contains("fill=\"none\"") && seg.split('"').next().unwrap().matches('A').count() == 2)
             .map(|seg| seg.split('A').nth(1).unwrap().split(',').next().unwrap())
             .collect();
-        assert_eq!(radii.len(), 72, "one outline per bucket: {radii:?}");
+        // The mask also holds each bucket's top segment, which rounds the same way.
+        assert!(radii.len() >= 72, "an outline per bucket: {radii:?}");
         assert_eq!(radii[0], "1.07");
     }
 
@@ -5305,6 +5322,11 @@ mod tests {
         json["resolved"]["style"]["axis_y"]["domain_min"] = serde_json::json!(90.0);
         let zoomed = render(&make_payload(json), &test_fonts()).expect("renders");
         assert!(zoomed.contains("dbt-layer-clip"), "{zoomed}");
+        let undercoats: Vec<usize> = zoomed.match_indices("<g class=\"knockout-undercoat\"").map(|(at, _)| at).collect();
+        assert!(
+            undercoats.iter().any(|&at| zoomed[..at].rsplit("<g ").next().is_some_and(|g| g.contains("dbt-layer-clip"))),
+            "the layer's undercoat is clipped with its bars: {zoomed}"
+        );
     }
 
     /// The min ADJACENT step drives the width — an uneven cluster's tight
@@ -16952,6 +16974,23 @@ mod tests {
             assert_eq!(svg.matches(">$1,000<").count(), 1, "the ghost's own format: {svg}");
         }
 
+        /// A hidden value axis reserves no label gutter on the ghost either: a
+        /// wider ghost format must not widen the canvas of a left-axis facet.
+        #[test]
+        fn hidden_value_labels_keep_the_left_mirror_ghost_from_reserving_a_gutter() {
+            let canvas_width = |mirror: Value| {
+                let mut payload_json = make_facet_payload("shared");
+                payload_json["resolved"]["multiples"] =
+                    json!({"rows": null, "columns": "region", "scale": "shared"});
+                payload_json["resolved"]["style"]["axis_y"]["position"] = json!("left");
+                payload_json["resolved"]["style"]["axis_y"]["labels"]["visible"] = json!(false);
+                payload_json["resolved"]["style"]["axis_y"]["mirror"] = mirror;
+                let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
+                svg.split("width=\"").nth(1).unwrap().split('"').next().unwrap().parse::<f64>().unwrap()
+            };
+            assert_eq!(canvas_width(json!({"format": "$,.0f"})), canvas_width(json!(true)));
+        }
+
         /// The production wire shape of `axis_y.mirror` (`ResolvedMirrorAxis`,
         /// `axis_cascade.py:708-713`) for an authored `mirror: true`: every
         /// field null. It is the same request as the bare `true` and must
@@ -17079,23 +17118,7 @@ mod tests {
         /// `url(#id)` resolves to the first match in the composed document.
         #[test]
         fn a_stroked_temporal_multiples_bar_clips_each_panel_to_its_own_bar() {
-            let _locale = ::bind::time_locale::en_us_scope();
-            let months = months_from_2000(72);
-            let mut payload_json = make_time_payload(&months);
-            payload_json["resolved"]["multiples"] = json!({"rows": "region", "columns": null, "scale": "shared"});
-            payload_json["resolved"]["panel_axes"] =
-                json!([{"field": "region", "values": ["\"North\"", "\"South\""]}]);
-            payload_json["resolved"]["style"]["axis_y"]["position"] = json!("right");
-            payload_json["resolved"]["style"]["axis_x"]["labels"]["overlap"] = json!({"skip": true, "tilt": false});
-            payload_json["resolved"]["style"]["mark"]["border"] = json!({"width": 1.0, "color": "#FFFFFF", "radius": 4.0});
-            let rows: Vec<_> = ["North", "South"]
-                .iter()
-                .flat_map(|region| {
-                    months.iter().enumerate().map(move |(i, d)| json!({"product": d, "region": region, "revenue": 100.0 + i as f64}))
-                })
-                .collect();
-            payload_json["rows"] = json!(rows);
-            let svg = rendered(payload_json);
+            let svg = temporal_multiples("#d49656");
             let ids: Vec<&str> = svg.split("<clipPath id=\"").skip(1).map(|s| s.split('"').next().unwrap()).collect();
             let bar_ids: Vec<&&str> = ids.iter().filter(|id| id.starts_with("bar-")).collect();
             assert_eq!(bar_ids.len(), 144, "one clip per bar over two panels: {ids:?}");
@@ -17104,6 +17127,39 @@ mod tests {
             for id in bar_ids {
                 assert_eq!(svg.matches(&format!("url(#{id})")).count(), 1, "{id} is referenced by exactly its own bar: {svg}");
             }
+        }
+
+        /// A canvas-colored border has no stroke left to clip: each panel masks its own bars.
+        #[test]
+        fn a_canvas_stroked_temporal_multiples_bar_masks_each_panel_to_its_own_bars() {
+            let svg = temporal_multiples("#FFFFFF");
+            assert!(!svg.contains("<clipPath id=\"bar-"), "{svg}");
+            let ids: Vec<&str> = svg.split("<mask ").skip(1).map(|s| s.split("id=\"").nth(1).unwrap().split('"').next().unwrap()).collect();
+            assert_eq!(ids.len(), 2, "one mask per panel: {ids:?}");
+            assert_ne!(ids[0], ids[1]);
+            for id in ids {
+                assert_eq!(svg.matches(&format!("mask=\"url(#{id})\"")).count(), 1, "{id}: {svg}");
+            }
+        }
+
+        fn temporal_multiples(border: &str) -> String {
+            let _locale = ::bind::time_locale::en_us_scope();
+            let months = months_from_2000(72);
+            let mut payload_json = make_time_payload(&months);
+            payload_json["resolved"]["multiples"] = json!({"rows": "region", "columns": null, "scale": "shared"});
+            payload_json["resolved"]["panel_axes"] =
+                json!([{"field": "region", "values": ["\"North\"", "\"South\""]}]);
+            payload_json["resolved"]["style"]["axis_y"]["position"] = json!("right");
+            payload_json["resolved"]["style"]["axis_x"]["labels"]["overlap"] = json!({"skip": true, "tilt": false});
+            payload_json["resolved"]["style"]["mark"]["border"] = json!({"width": 1.0, "color": border, "radius": 4.0});
+            let rows: Vec<_> = ["North", "South"]
+                .iter()
+                .flat_map(|region| {
+                    months.iter().enumerate().map(move |(i, d)| json!({"product": d, "region": region, "revenue": 100.0 + i as f64}))
+                })
+                .collect();
+            payload_json["rows"] = json!(rows);
+            rendered(payload_json)
         }
     }
 
@@ -17865,6 +17921,124 @@ mod tests {
             let svg = rendered(vertical(), rule_and_band());
             assert_plane_order(&svg);
             assert!(svg.contains("<clipPath id=\"bar-ann0\">") || svg.contains("-ann0\">"), "{svg}");
+        }
+
+        const CANVAS_STROKE: &str = "stroke=\"#ffffff\" stroke-width=\"1\"";
+
+        /// `payload` with the 1 px canvas-colored bar border themes author.
+        fn haloed(mut payload: Value) -> Value {
+            payload["resolved"]["style"]["mark"]["border"]["color"] = json!("#FFFFFF");
+            payload["resolved"]["style"]["mark"]["border"]["width"] = json!(1.0);
+            payload
+        }
+
+        /// The bar's canvas-colored halo is an undercoat painted before the band and a mask over the
+        /// bars, never a stroke painted over the band.
+        #[test]
+        fn a_vertical_bars_halo_knocks_out_to_the_band_under_it() {
+            let svg = rendered(haloed(vertical()), vec![annotation(5, category("East"), Value::Null)]);
+            let band = at(&svg, "annotations-background");
+            assert!(at(&svg, CANVAS_STROKE) < band, "the undercoat cuts what is under the band: {svg}");
+            assert!(!svg[band..].contains(CANVAS_STROKE), "no canvas stroke paints over the band: {svg}");
+            let mask = at(&svg, "<mask ");
+            assert!(mask < at(&svg, BAR_FILL), "{svg}");
+            assert!(svg[mask..].starts_with("<mask maskUnits=\"userSpaceOnUse\""), "{svg}");
+            assert_eq!(svg.matches("mask=\"url(#").count(), 1, "{svg}");
+            assert!(svg.contains("id=\"ko0-"), "{svg}");
+        }
+
+        #[test]
+        fn horizontal_and_continuous_bar_halos_knock_out_to_the_band_too() {
+            let xs: Vec<(f64, f64)> = (0..24).map(|h| (h as f64, 100.0 + h as f64)).collect();
+            let horizontal = rendered(haloed(make_horizontal_payload()), vec![annotation(5, category("Alpha"), Value::Null)]);
+            let continuous = rendered(haloed(make_continuous_payload(&xs)), vec![annotation(6, json!({"kind": "range", "from": 4, "to": 9}), Value::Null)]);
+            for svg in [horizontal, continuous] {
+                let band = at(&svg, "annotations-background");
+                assert!(at(&svg, CANVAS_STROKE) < band, "{svg}");
+                assert!(!svg[band..].contains(CANVAS_STROKE), "{svg}");
+                assert_eq!(svg.matches("<mask ").count(), 1, "{svg}");
+            }
+        }
+
+        /// A bar strokes its halo twice (the mark, then its second pass), and the mask cuts its
+        /// outline once per pass, so on a plain canvas its edge antialiases as a canvas halo does.
+        #[test]
+        fn a_bars_mask_cuts_its_outline_once_per_stroke_pass() {
+            let svg = rendered(haloed(vertical()), vec![annotation(5, category("East"), Value::Null)]);
+            let mask = &svg[at(&svg, "<mask ")..at(&svg, "</mask>")];
+            let bars = svg.matches(BAR_FILL).count();
+            assert!(bars > 0, "{svg}");
+            assert_eq!(mask.matches("stroke=\"#000\"").count(), 2 * bars, "{svg}");
+        }
+
+        /// The undercoat strokes each pass too, the second unfilled like the bar's own second pass,
+        /// so a gridline the halo cuts ends clean at its antialiased pixel.
+        #[test]
+        fn a_bars_undercoat_strokes_its_outline_once_per_stroke_pass() {
+            let svg = rendered(haloed(vertical()), vec![annotation(5, category("East"), Value::Null)]);
+            let undercoat = &svg[at(&svg, "knockout-undercoat")..at(&svg, "annotations-background")];
+            let bars = svg.matches(BAR_FILL).count();
+            assert_eq!(undercoat.matches(CANVAS_STROKE).count(), 2 * bars, "{svg}");
+            assert_eq!(undercoat.matches("fill=\"none\"").count(), bars, "{svg}");
+        }
+
+        #[test]
+        fn a_stacked_bars_mask_holds_every_segments_outline() {
+            let svg = rendered(haloed(make_stacked_payload("vertical", "zero")), vec![annotation(5, category("A"), Value::Null)]);
+            let mask = &svg[at(&svg, "<mask ")..at(&svg, "</mask>")];
+            assert_eq!(mask.matches("stroke=\"#000\"").count(), 4, "2 categories x 2 series: {svg}");
+            assert!(!svg[at(&svg, "annotations-background")..].contains(CANVAS_STROKE), "{svg}");
+        }
+
+        /// The layer's bars are a second group of marks, so they get a mask of their own (the base's
+        /// would cut them along the base's outlines) and their outlines join the undercoat.
+        fn assert_layer_halo_knocks_out(svg: &str, bars: usize) {
+            let band = at(svg, "annotations-background");
+            assert!(!svg[band..].contains(CANVAS_STROKE), "no canvas stroke paints over the band: {svg}");
+            let ids: Vec<&str> = svg.split("<mask ").skip(1).map(|s| s.split("id=\"").nth(1).unwrap().split('"').next().unwrap()).collect();
+            assert_eq!(ids.len(), 2, "a mask for the base and one for its layer: {svg}");
+            assert_ne!(ids[0], ids[1]);
+            for id in ids {
+                assert_eq!(svg.matches(&format!("mask=\"url(#{id})\"")).count(), 1, "{id}: {svg}");
+            }
+            let undercoat_paths: usize = svg[..band].split("knockout-undercoat").skip(1).map(|g| g[..g.find("</g>").unwrap()].matches("fill=\"#ffffff\" stroke=\"#ffffff\"").count()).sum();
+            assert_eq!(undercoat_paths, 2 * bars, "the base bars and the layer bars cut what is under the band: {svg}");
+        }
+
+        #[test]
+        fn a_vertical_bar_layers_halo_knocks_out_to_the_band_under_it() {
+            let payload = haloed(layered(super::layers::bar_layer_json(None), [1500.0; 3]));
+            assert_layer_halo_knocks_out(&rendered(payload, vec![annotation(5, category("East"), Value::Null)]), 3);
+        }
+
+        #[test]
+        fn a_horizontal_bar_layers_halo_knocks_out_to_the_band_under_it() {
+            let mut payload = haloed(make_horizontal_payload());
+            for (row, target) in payload["rows"].as_array_mut().unwrap().iter_mut().zip([1500.0, 1500.0, 1500.0]) {
+                row["target"] = json!(target);
+            }
+            payload["resolved"]["layers"] = json!([super::layers::bar_layer_json(None)]);
+            let bars = payload["rows"].as_array().unwrap().len();
+            assert_layer_halo_knocks_out(&rendered(payload, vec![annotation(5, category("Alpha"), Value::Null)]), bars);
+        }
+
+        #[test]
+        fn a_continuous_bar_layers_halo_knocks_out_to_the_band_under_it() {
+            let xs: Vec<(f64, f64)> = (0..24).map(|h| (h as f64, 100.0 + h as f64)).collect();
+            let mut payload = haloed(make_continuous_payload(&xs));
+            for row in payload["rows"].as_array_mut().unwrap() {
+                row["target"] = json!(150.0);
+            }
+            let mut layer = super::layers::bar_layer_json(None);
+            layer["bar_mark"].as_object_mut().unwrap().extend([("gap", json!(3.0)), ("min_size", json!(4.0)), ("max_size", json!(20.0)), ("size", json!(null))].map(|(k, v)| (k.to_string(), v)));
+            payload["resolved"]["layers"] = json!([layer]);
+            assert_layer_halo_knocks_out(&rendered(payload, vec![annotation(6, json!({"kind": "range", "from": 4, "to": 9}), Value::Null)]), 24);
+        }
+
+        #[test]
+        fn a_bar_chart_without_a_canvas_stroke_paints_no_mask() {
+            let svg = rendered(vertical(), rule_and_band());
+            assert!(!svg.contains("<mask"), "{svg}");
         }
 
         #[test]

@@ -12,6 +12,10 @@ The client connects lazily: `trino.dbapi.connect` opens no socket. `open_trino`
 therefore sends one statement before it returns, so a wrong host or credential
 fails the open, where callers report a connection failure, and not the first
 query.
+
+With `restrict_to_host`, `SourceHostSession` refuses any request off the source's
+scheme, host and port, and spooled results are never requested. OAuth's
+token-server polling runs outside that session.
 """
 
 from __future__ import annotations
@@ -191,7 +195,7 @@ def _kerberos_auth(
 
 
 def trino_connect_kwargs(
-    config: TrinoSourceConfig, timeout_seconds: int | None
+    config: TrinoSourceConfig, timeout_seconds: int | None, time_zone: str
 ) -> dict[str, Any]:  # type-state: explicit_any — trino.dbapi.connect kwargs
     """The arguments `trino.dbapi.connect` takes for *config*.
 
@@ -207,7 +211,7 @@ def trino_connect_kwargs(
     if timeout_seconds is not None:
         session_properties["query_max_run_time"] = f"{timeout_seconds}s"
     identity = connection_identity()
-    return {
+    kwargs: dict[str, Any] = {  # type-state: explicit_any — trino.dbapi.connect kwargs
         "host": config.host,
         "port": config.port,
         "user": config.impersonation_user or config.user,
@@ -219,15 +223,22 @@ def trino_connect_kwargs(
         "auth": _auth(config),
         "verify": True if config.cert is None else config.cert,
         "roles": config.roles,
-        "timezone": config.timezone,
         "max_attempts": config.retries,
         "session_properties": session_properties,
+        # The client sends this zone with every request and never reads one back
+        # from the server, so a `SET TIME ZONE` statement would be overridden by
+        # the next request. Unset, it falls to the machine's zone.
+        "timezone": time_zone,
         "source": identity["app"],
         # An authored tag may drive the cluster's resource-group routing, so the
         # engine's identity fills the field only when the author left it unset.
         "client_tags": config.client_tags
         or [f"{key}={value}" for key, value in sorted(identity.items())],
     }
+    if config.restrict_to_host:
+        # `encoding=None` stops the client requesting spooled results.
+        kwargs["encoding"] = None
+    return kwargs
 
 
 class TrinoDriverConnection:
@@ -350,7 +361,7 @@ def require_trino_extra() -> None:
 
 
 def open_trino(
-    config: TrinoSourceConfig, timeout_seconds: int | None
+    config: TrinoSourceConfig, timeout_seconds: int | None, time_zone: str
 ) -> TrinoDriverConnection:
     """Open a Trino session and prove the coordinator answers on it.
 
@@ -365,9 +376,16 @@ def open_trino(
         # imports nothing the `trino` extra does not itself declare.
         warnings.filterwarnings("ignore", message="Unverified HTTPS request")
 
-    connection = TrinoDriverConnection(
-        trino.dbapi.connect(**trino_connect_kwargs(config, timeout_seconds))
-    )
+    kwargs = trino_connect_kwargs(config, timeout_seconds, time_zone)
+    if config.restrict_to_host:
+        from dbt_charts.core.execute.drivers._trino_client import (
+            SourceHostConnection,
+        )
+
+        raw = SourceHostConnection(**kwargs)
+    else:
+        raw = trino.dbapi.connect(**kwargs)
+    connection = TrinoDriverConnection(raw)
     try:
         connection.session_sql("SELECT 1")
     except BaseException:

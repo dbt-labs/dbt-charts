@@ -39,10 +39,11 @@ def test_a_stacks_inner_joins_are_square_and_each_segment_strokes_once() -> None
                 rows,
             )
         )
-        segments = re.findall(
-            r'<(?:path|rect)[^>]*stroke="#FFFFFF"[^>]*data-dct-role="bar"[^>]*>', svg
-        )
+        segments = re.findall(r'<(?:path|rect)[^>]*data-dct-role="bar"[^>]*>', svg)
         assert len(segments) == 6, svg
+        # The canvas halo is knocked out: one outline per segment in the mask, none
+        # stroked a second time.
+        assert len(re.findall(r'fill="none" stroke="#000"', svg)) == 6, svg
         assert len(re.findall(r'fill="none" stroke="#FFFFFF"', svg)) == 0
         rounded = [
             [

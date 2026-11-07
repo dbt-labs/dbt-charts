@@ -33,6 +33,8 @@ class TrinoDialect(AthenaDialect):
     # Trino lowercases unquoted identifiers and stores them that way.
     folds_identifier_case = True
 
+    time_zone_per_request = True
+
     def resolve_timeout_seconds(
         self,
         creds: dict[str, Any],  # type-state: explicit_any — raw source_config

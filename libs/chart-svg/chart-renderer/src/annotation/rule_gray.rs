@@ -4,7 +4,7 @@
 
 use super::DataMark;
 use diagnostic::Diagnostic;
-use crate::labels_expr::colors::{contrast, Color};
+use ::layout::labels_expr::colors::{contrast, Color};
 
 /// The contrast a rule must hold against the canvas and the marks it crosses.
 const FLOOR: f64 = 3.0;

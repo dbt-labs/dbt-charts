@@ -118,24 +118,15 @@ def test_authored_leaves_win(
     assert (position.edge, position.align, position.overlay) == expected
 
 
-def test_a_horizontal_bar_never_floats_its_legend_over_the_bars() -> None:
-    authored = {"edge": "top", "overlay": True}
-    horizontal = make_test_resolved_chart(
-        _bar(authored, orientation="horizontal"), _ROWS, width=900.0
-    )
-    assert (horizontal.legend.position.edge, horizontal.legend.position.overlay) == (
-        "top",
-        False,
-    )
-    no_edge = make_test_resolved_chart(
-        _bar({"overlay": True}, orientation="horizontal"), _ROWS, width=900.0
-    )
-    assert (no_edge.legend.position.edge, no_edge.legend.position.overlay) == (
-        "top",
-        False,
-    )
-    vertical = make_test_resolved_chart(_bar(authored), _ROWS, width=900.0)
-    assert vertical.legend.position.overlay is True
+@pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
+def test_an_authored_overlay_floats_at_its_corner_on_either_orientation(
+    orientation: str,
+) -> None:
+    authored = {"edge": "top", "align": "end", "overlay": True}
+    position = make_test_resolved_chart(
+        _bar(authored, orientation=orientation), _ROWS, width=900.0
+    ).legend.position
+    assert (position.edge, position.align, position.overlay) == ("top", "end", True)
 
 
 def test_overlay_without_an_edge_anchors_to_the_top() -> None:

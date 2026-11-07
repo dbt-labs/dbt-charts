@@ -454,7 +454,13 @@ class Generator:
             "filter_date_range": p.make_filter_date_range_helper,
         }
         fn = maker[name](_placeholder, None)
-        sig = re.sub(r" -> .*", "", str(inspect.signature(fn)).replace("*, ", ""))
+        full = inspect.signature(fn)
+        shown = full.replace(
+            parameters=[
+                p for p in full.parameters.values() if p.kind is not p.VAR_KEYWORD
+            ]
+        )
+        sig = re.sub(r" -> .*", "", str(shown).replace("*, ", ""))
         doc = inspect.getdoc(fn) or ""
         summary = doc.splitlines()[0].rstrip(".")
         args = dict(re.findall(r"^\s{4}(\w+): (.+(?:\n\s{8}.+)*)", doc, re.M))

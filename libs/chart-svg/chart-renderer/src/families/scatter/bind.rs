@@ -96,7 +96,7 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
             }
         }
         wide_series = raw_names.iter().map(|raw| shown[raw].clone()).collect();
-        let folded = ::bind::wide::unfold_wide_rows(&payload.rows, &fold_order, dimension.as_deref())
+        let folded: Vec<_> = ::bind::wide::unfold_wide_rows(&payload.rows, &fold_order, dimension.as_deref())
             .into_iter()
             .map(|mut row| {
                 if let Some(Value::String(raw)) = row.remove(::bind::wide::WIDE_LABEL_FIELD) {

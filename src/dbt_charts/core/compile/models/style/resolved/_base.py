@@ -385,6 +385,8 @@ class ResolvedAxisElementStyle:
     # a test stub or a labels-less axis, not an authored choice.
     # See DimensionLabelStyle.clock.
     clock: int | None = None
+    # Y axis only: where labels sit against their gridlines. See AxisYLabelStyle.position.
+    position: Literal["beside_gridline", "above_gridline"] | None = None
 
 
 @dataclasses.dataclass(frozen=True)

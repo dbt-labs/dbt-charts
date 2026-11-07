@@ -72,6 +72,7 @@ class ClickHouseDialect(SQLDialect):
     """
 
     name = "clickhouse"
+    time_zone_per_request = True
     # String literals take backslash escape sequences (\\', \\\\, \\n, ...); an
     # embedded quote may be spelled either \\' or ''.
     # https://clickhouse.com/docs/sql-reference/syntax#string

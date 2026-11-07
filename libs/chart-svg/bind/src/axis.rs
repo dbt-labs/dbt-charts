@@ -19,7 +19,7 @@ use board_types::{
     AxisYStylePatch, BandAxisStyle, BandAxisStylePatch, BaseAxisStyle, BaseAxisStylePatch,
     BoardChartStylesValue, BoardChartTiers, DimensionLabelStyleFormat, DimensionLabelStylePatchFormat,
     FormatConfig, FormatConfigNotation, FormatConfigRepeat, FormatConfigSignPlacement,
-    QuantitativeAxisStyle, QuantitativeAxisStylePatch,
+    QuantitativeAxisStyle, QuantitativeAxisStylePatch, AxisYLabelStyleFormat, AxisYLabelStylePatchFormat,
 };
 use diagnostic::Diagnostic;
 
@@ -72,7 +72,9 @@ authored_from_slot!(
     AxisLabelStyleFormat,
     AxisLabelStylePatchFormat,
     DimensionLabelStyleFormat,
-    DimensionLabelStylePatchFormat
+    DimensionLabelStylePatchFormat,
+    AxisYLabelStyleFormat,
+    AxisYLabelStylePatchFormat
 );
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

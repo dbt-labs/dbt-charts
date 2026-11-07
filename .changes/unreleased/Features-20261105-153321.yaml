@@ -1,0 +1,3 @@
+kind: Features
+body: filter_date_range takes is_naive_utc=true for a naive column that stores UTC; timestamp= now raises an error
+time: 2026-11-05T15:33:21.933178-08:00

@@ -43,6 +43,7 @@ from dbt_charts.core.execute.query_result import (
     RowFetchLimit,
 )
 from dbt_charts.core.execute.run import execute_resolved
+from dbt_charts.core.text.time_zones import UTC
 
 pytestmark = pytest.mark.usefixtures("typed_via_execute")
 
@@ -173,8 +174,8 @@ class TestSourcePoolCache:
         sa = _make_sql_adapter(tmp_path, local_project)
         with patch(_BUILD_ADAPTER, return_value=_make_adapter_mock()) as mock_build:
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
-            pool.execute("SELECT 1", setup_sql=None)
-            pool.execute("SELECT 2", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
+            pool.execute("SELECT 2", setup_sql=None, time_zone="UTC")
         # Same source → same pool → adapter built only once (persistent worker)
         mock_build.assert_called_once()
 
@@ -195,8 +196,8 @@ class TestSourcePoolCache:
         with patch(_BUILD_ADAPTER, return_value=_make_adapter_mock()) as mock_build:
             pool_pg = sa._get_source_pool(_POSTGRES_SOURCE)
             pool_sf = sa._get_source_pool(_SNOWFLAKE_SOURCE)
-            pool_pg.execute("SELECT 1", setup_sql=None)
-            pool_sf.execute("SELECT 1", setup_sql=None)
+            pool_pg.execute("SELECT 1", setup_sql=None, time_zone="UTC")
+            pool_sf.execute("SELECT 1", setup_sql=None, time_zone="UTC")
         # Different sources → different pools → adapter built once per source
         assert mock_build.call_count == 2
 
@@ -242,7 +243,7 @@ class TestConnectFailureDetection:
         with patch(_BUILD_ADAPTER, side_effect=_build):
             pool = sa._get_source_pool(_DATABRICKS_SOURCE)
             with pytest.raises(ConnectionSetupFailed, match="Invalid access token"):
-                pool.execute("SELECT 1", setup_sql=None)
+                pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             pool.close()
 
 
@@ -252,6 +253,7 @@ def _prepared() -> ResolvedQuery:
         params=(),
         setup_sql=(),
         limit=RowFetchLimit(fetch_limit=10, effective_limit=10, ceiling_binding=False),
+        time_zone=UTC,
     )
 
 
@@ -349,7 +351,7 @@ class TestSourcePoolConcurrency:
         with patch(_BUILD_ADAPTER, side_effect=_new_adapter):
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
             callers = [
-                threading.Thread(target=pool.execute, args=("SELECT 1", None))
+                threading.Thread(target=pool.execute, args=("SELECT 1", None, "UTC"))
                 for _ in range(4)
             ]
             for t in callers:
@@ -377,7 +379,9 @@ class TestSourcePoolConcurrency:
         with patch(_BUILD_ADAPTER, return_value=_make_adapter_mock()) as mock_build:
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
             for _ in range(3):  # three successive "renders", each a new caller thread
-                t = threading.Thread(target=pool.execute, args=("SELECT 1", None))
+                t = threading.Thread(
+                    target=pool.execute, args=("SELECT 1", None, "UTC")
+                )
                 t.start()
                 t.join()
             pool.close()
@@ -403,7 +407,7 @@ class TestSourcePoolConcurrency:
         mock_adapter.execute.side_effect = _record_thread
         with patch(_BUILD_ADAPTER, return_value=mock_adapter):
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
-            pool.execute("SELECT 1", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             pool.close()
 
         assert run_threads and run_threads[0].startswith("dct-srcpool")
@@ -416,7 +420,7 @@ class TestSourcePoolConcurrency:
         sa = _make_sql_adapter(tmp_path, local_project)
         with patch(_BUILD_ADAPTER, return_value=_make_adapter_mock()) as mock_build:
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
-            pool.execute("SELECT 1", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
         mock_build.assert_called_once()
         assert mock_build.call_args.kwargs.get("register_macros") is False
 
@@ -427,14 +431,14 @@ class TestSourcePoolConcurrency:
         mock_adapter = _make_adapter_mock()
         with patch(_BUILD_ADAPTER, return_value=mock_adapter):
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
-            pool.execute("SELECT 1", setup_sql=None)
-            pool.execute("SELECT 2", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
+            pool.execute("SELECT 2", setup_sql=None, time_zone="UTC")
 
         # sequential executes reuse the same warm worker: built + connected once.
-        # execute is called 3 times: once for the connection-setup timeout SQL,
-        # then once per data query (2).
+        # execute is called 4 times: the connection-setup timeout SQL, the session
+        # zone once, then once per data query (2).
         assert mock_adapter.connection_named.call_count == 1
-        assert mock_adapter.execute.call_count == 3
+        assert mock_adapter.execute.call_count == 4
 
     def test_pool_width_follows_env_max_workers(
         self,
@@ -473,9 +477,11 @@ class TestSourcePoolConcurrency:
         adapter = _make_adapter_mock()
         with patch(_BUILD_ADAPTER, return_value=adapter):
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
-            pool.execute("SELECT 1", "CREATE TEMP TABLE scratch AS SELECT 1")
+            pool.execute(
+                "SELECT 1", "CREATE TEMP TABLE scratch AS SELECT 1", time_zone="UTC"
+            )
             adapter.execute.reset_mock()
-            pool.execute("SELECT 2", setup_sql=None)
+            pool.execute("SELECT 2", setup_sql=None, time_zone="UTC")
 
         sent = [call.args[0] for call in adapter.execute.call_args_list]
         assert sent[0] == get_dialect("postgres").session_reset_statements()[0]
@@ -489,12 +495,45 @@ class TestSourcePoolConcurrency:
         adapter = _make_adapter_mock()
         with patch(_BUILD_ADAPTER, return_value=adapter):
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
-            pool.execute("SELECT 1", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             adapter.execute.reset_mock()
-            pool.execute("SELECT 2", setup_sql=None)
+            pool.execute("SELECT 2", setup_sql=None, time_zone="UTC")
 
         sent = [call.args[0] for call in adapter.execute.call_args_list]
         assert sent == ["SELECT 2"]
+
+    def test_a_pooled_connection_follows_the_zone_of_each_query(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """One connection serves many boards: a New York board then a UTC board
+        must run the second in UTC, and a repeated zone costs no round trip."""
+        sa = _make_sql_adapter(tmp_path, local_project)
+        adapter = _make_adapter_mock()
+        with patch(_BUILD_ADAPTER, return_value=adapter):
+            pool = sa._get_source_pool(_POSTGRES_SOURCE)
+            for zone in ("America/New_York", "America/New_York", "UTC"):
+                pool.execute("SELECT 1", setup_sql=None, time_zone=zone)
+
+        sent = [call.args[0] for call in adapter.execute.call_args_list]
+        assert [sql for sql in sent if "TIME ZONE" in sql] == [
+            "SET TIME ZONE 'America/New_York'",
+            "SET TIME ZONE 'UTC'",
+        ]
+
+    def test_a_setup_sql_that_may_change_the_zone_makes_the_next_query_resend_it(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        sa = _make_sql_adapter(tmp_path, local_project)
+        adapter = _make_adapter_mock()
+        with patch(_BUILD_ADAPTER, return_value=adapter):
+            pool = sa._get_source_pool(_POSTGRES_SOURCE)
+            pool.execute("SELECT 1", "SET TIME ZONE 'Asia/Tokyo'", time_zone="UTC")
+            pool.execute("SELECT 2", setup_sql=None, time_zone="UTC")
+
+        sent = [call.args[0] for call in adapter.execute.call_args_list]
+        assert [sql for sql in sent if sql == "SET TIME ZONE 'UTC'"] == [
+            "SET TIME ZONE 'UTC'"
+        ] * 2
 
     def test_a_dialect_with_no_reset_drops_the_connection_instead(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -511,8 +550,8 @@ class TestSourcePoolConcurrency:
 
         with patch(_BUILD_ADAPTER, side_effect=_build):
             pool = sa._get_source_pool(_BIGQUERY_SOURCE)
-            pool.execute("SELECT 1", "CREATE TEMP FUNCTION f() AS (1)")
-            pool.execute("SELECT 2", setup_sql=None)
+            pool.execute("SELECT 1", "CREATE TEMP FUNCTION f() AS (1)", time_zone="UTC")
+            pool.execute("SELECT 2", setup_sql=None, time_zone="UTC")
 
         adapters[0].connections.cleanup_all.assert_called_once()
         assert len(adapters) == 2
@@ -545,7 +584,7 @@ class TestSourcePoolConcurrency:
         with patch(_BUILD_ADAPTER, return_value=adapter):
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
             with pytest.raises(RuntimeError, match="syntax error"):
-                pool.execute("SELCT 1", setup_sql=None)
+                pool.execute("SELCT 1", setup_sql=None, time_zone="UTC")
 
         assert sent.count("SELCT 1") == 1
         adapter.connections.cleanup_all.assert_not_called()
@@ -557,7 +596,7 @@ class TestSourcePoolConcurrency:
         mock_adapter = _make_adapter_mock()
         with patch(_BUILD_ADAPTER, return_value=mock_adapter):
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
-            pool.execute("SELECT 1", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
 
         assert mock_adapter.execute.call_args[1].get("auto_begin") is False
 
@@ -568,7 +607,11 @@ class TestSourcePoolConcurrency:
         mock_adapter = _make_adapter_mock()
         with patch(_BUILD_ADAPTER, return_value=mock_adapter):
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
-            pool.execute("SELECT fn()", setup_sql="CREATE TEMP FUNCTION fn() AS 1")
+            pool.execute(
+                "SELECT fn()",
+                setup_sql="CREATE TEMP FUNCTION fn() AS 1",
+                time_zone="UTC",
+            )
 
         call_sql = mock_adapter.execute.call_args[0][0]
         assert "CREATE TEMP FUNCTION fn() AS 1" in call_sql
@@ -612,7 +655,7 @@ class TestSourcePoolReconnect:
 
         with patch(_BUILD_ADAPTER, side_effect=_build):
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
-            result = pool.execute("SELECT 1", setup_sql=None)
+            result = pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
 
         # dead adapter's connections were closed (no leaked session) before retry
         first.connections.cleanup_all.assert_called_once()
@@ -642,7 +685,7 @@ class TestSourcePoolReconnect:
 
         with patch(_BUILD_ADAPTER, side_effect=_build):
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
-            pool.execute("SELECT 1", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             pool.close()
 
         # dead adapter closed exactly once (at drop); live adapter closed once (at close)
@@ -663,7 +706,7 @@ class TestSourcePoolClose:
         mock_adapter = _make_adapter_mock()
         with patch(_BUILD_ADAPTER, return_value=mock_adapter):
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
-            pool.execute("SELECT 1", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             pool.close()
 
         mock_adapter.connections.cleanup_all.assert_called_once()
@@ -675,7 +718,7 @@ class TestSourcePoolClose:
         mock_adapter = _make_adapter_mock()
         with patch(_BUILD_ADAPTER, return_value=mock_adapter):
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
-            pool.execute("SELECT 1", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
 
         mock_adapter.connections.cleanup_all.assert_not_called()
         sa.close()
@@ -710,7 +753,7 @@ class TestBigQueryDefaultDataset:
             patch("google.cloud.bigquery.QueryJobConfig") as mock_qjc,
         ):
             pool = sa._get_source_pool(_BIGQUERY_SOURCE)
-            pool.execute("SELECT 1", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
 
         expected_timeout_ms = get_execution_config().max_query_duration_seconds * 1000
         mock_qjc.assert_called_once_with(
@@ -718,6 +761,54 @@ class TestBigQueryDefaultDataset:
             job_timeout_ms=expected_timeout_ms,
         )
         assert mock_handle.default_query_job_config is mock_qjc.return_value
+
+    def test_bigquery_jobs_carry_the_zone_of_the_query(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """BigQuery has no session SQL: the zone rides each job's connection
+        properties, through the default config dbt's own job config merges into."""
+        sa = _make_sql_adapter(tmp_path, local_project)
+        mock_adapter = _make_adapter_mock()
+        mock_handle = MagicMock()
+        mock_adapter.connections.get_thread_connection.return_value.handle = mock_handle
+
+        with (
+            patch(_BUILD_ADAPTER, return_value=mock_adapter),
+            patch("google.cloud.bigquery.QueryJobConfig"),
+        ):
+            pool = sa._get_source_pool(_BIGQUERY_SOURCE)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="America/New_York")
+
+        [prop] = mock_handle.default_query_job_config.connection_properties
+        assert (prop.key, prop.value) == ("time_zone", "America/New_York")
+
+    def test_bigquery_handle_swapped_by_dbt_retry_gets_the_zone_again(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """dbt-bigquery replaces ``connection.handle`` on a retry; the new client
+        carries no default config, so the zone must be applied to it again."""
+        sa = _make_sql_adapter(tmp_path, local_project)
+        mock_adapter = _make_adapter_mock()
+        connection = mock_adapter.connections.get_thread_connection.return_value
+        connection.handle = MagicMock()
+        with (
+            patch(_BUILD_ADAPTER, return_value=mock_adapter),
+            patch("google.cloud.bigquery.QueryJobConfig") as mock_qjc,
+        ):
+            pool = sa._get_source_pool(_BIGQUERY_SOURCE)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="America/New_York")
+            swapped = MagicMock()
+            swapped.default_query_job_config = None
+            connection.handle = swapped
+            pool.execute("SELECT 2", setup_sql=None, time_zone="America/New_York")
+
+        assert swapped.default_query_job_config is mock_qjc.return_value
+        [prop] = swapped.default_query_job_config.connection_properties
+        assert (prop.key, prop.value) == ("time_zone", "America/New_York")
+        assert mock_qjc.call_args.kwargs == {
+            "default_dataset": "my-gcp-project.my_dataset",
+            "job_timeout_ms": mock_qjc.call_args.kwargs["job_timeout_ms"],
+        }
 
     def test_bigquery_reconnect_resets_default_dataset(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -745,7 +836,7 @@ class TestBigQueryDefaultDataset:
             patch("google.cloud.bigquery.QueryJobConfig") as mock_qjc,
         ):
             pool = sa._get_source_pool(_BIGQUERY_SOURCE)
-            pool.execute("SELECT 1", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
 
         # Both the initial connection and the reconnected replacement must have
         # default_query_job_config set — one call per _ensure_connected invocation.
@@ -817,7 +908,7 @@ class TestAttributionReachesTheWorker:
         with patch(_BUILD_ADAPTER, return_value=adapter):
             pool = sa._get_source_pool(_POSTGRES_SOURCE)
             with attribute({"board": "revenue"}, {"team": "finance"}):
-                pool.execute("SELECT 1", setup_sql=None)
+                pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
 
         assert seen["dbt_charts_board"] == "revenue"
         assert seen["team"] == "finance"
@@ -847,7 +938,7 @@ class TestClickHouseQueryTimeout:
 
         with patch(_BUILD_ADAPTER, return_value=mock_adapter) as build:
             pool = sa._get_source_pool(_CLICKHOUSE_SOURCE)
-            pool.execute("SELECT 1", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             pool.close()
 
         built = build.call_args.args[0]
@@ -869,7 +960,7 @@ class TestClickHouseQueryTimeout:
 
         with patch(_BUILD_ADAPTER, return_value=_make_adapter_mock()) as build:
             pool = sa._get_source_pool(source)
-            pool.execute("SELECT 1", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             pool.close()
 
         built = build.call_args.args[0]
@@ -893,7 +984,7 @@ class TestClickHouseQueryTimeout:
 
         with patch(_BUILD_ADAPTER, return_value=_make_adapter_mock()) as build:
             pool = sa._get_source_pool(source)
-            pool.execute("SELECT 1", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             pool.close()
 
         assert build.call_args.args[0]["custom_settings"] == {"max_execution_time": 5}
@@ -916,7 +1007,7 @@ class TestClickHouseQueryTimeout:
         with patch(_BUILD_ADAPTER, return_value=mock_adapter):
             pool = _SourcePool(source, max_workers=1, timeout_seconds=120)
             with pytest.raises(QueryDurationExceeded) as excinfo:
-                pool.execute("SELECT 1", setup_sql=None)
+                pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             pool.close()
 
         assert excinfo.value.seconds == 5
@@ -942,7 +1033,7 @@ class TestClickHouseQueryTimeout:
 
         with patch(_BUILD_ADAPTER, return_value=_make_adapter_mock()) as build:
             pool = _SourcePool(_CLICKHOUSE_SOURCE, max_workers=1, timeout_seconds=7)
-            pool.execute("SELECT 1", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             pool.close()
 
         assert build.call_args.args[0]["custom_settings"] == {"max_execution_time": 7}
@@ -965,7 +1056,7 @@ class TestClickHouseQueryTimeout:
         with patch(_BUILD_ADAPTER, return_value=mock_adapter) as build:
             pool = sa._get_source_pool(_CLICKHOUSE_SOURCE)
             with pytest.raises(QueryDurationExceeded):
-                pool.execute("SELECT 1", setup_sql=None)
+                pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             pool.close()
 
         assert build.call_count == 1
@@ -995,7 +1086,7 @@ class TestSQLServerQueryTimeout:
 
         with patch(_BUILD_ADAPTER, return_value=mock_adapter) as build:
             pool = sa._get_source_pool(_SQLSERVER_SOURCE)
-            pool.execute("SELECT 1", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             pool.close()
 
         assert (
@@ -1017,7 +1108,7 @@ class TestSQLServerQueryTimeout:
         source = {**_SQLSERVER_SOURCE, "query_timeout": authored}
         with patch(_BUILD_ADAPTER, return_value=_make_adapter_mock()) as build:
             pool = _SourcePool(source, max_workers=1, timeout_seconds=7)
-            pool.execute("SELECT 1", setup_sql=None)
+            pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             pool.close()
 
         assert build.call_args.args[0]["query_timeout"] == expected
@@ -1038,7 +1129,7 @@ class TestSQLServerQueryTimeout:
         with patch(_BUILD_ADAPTER, return_value=mock_adapter) as build:
             pool = _SourcePool(_SQLSERVER_SOURCE, max_workers=1, timeout_seconds=2)
             with pytest.raises(QueryDurationExceeded) as excinfo:
-                pool.execute("SELECT 1", setup_sql=None)
+                pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             pool.close()
 
         assert excinfo.value.seconds == 2

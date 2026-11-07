@@ -55,6 +55,7 @@ from dbt_charts.core.compile.models.style.theme import (
     AxisLabelOverlapConfig,
     AxisMirrorStyle,
     AxisXStyle,
+    AxisYLabelStyle,
     AxisYStyle,
     BaseScaleStyle,
     DimensionLabelStyle,
@@ -106,8 +107,11 @@ _LABEL_PASSTHROUGH = (
 )
 
 
-# Additional passthrough fields only on DimensionLabelStyle (AxisXStyle.labels).
-# Absent from AxisLabelStyle (used by AxisYStyle.labels and axis_quantitative/band).
+# Additional passthrough fields only on AxisYLabelStyle (AxisYStyle.labels) and
+# DimensionLabelStyle (AxisXStyle.labels).
+# Absent from AxisLabelStyle (used by axis_quantitative/band).
+_ELEM_Y_LABEL_PASSTHROUGH = ("position",)
+
 _ELEM_X_LABEL_PASSTHROUGH = (
     "time_unit",
     "tilt_increments",
@@ -441,6 +445,11 @@ def build_resolved_axis(
 
     # label passthrough: x-axis adds tilt_increments/values/time_unit/clock from DimensionLabelStyle.
     label_kwargs = {f: getattr(axis.labels, f) for f in _LABEL_PASSTHROUGH}
+    # Only a quantitative value axis has horizontal rules to set labels above.
+    if isinstance(axis.labels, AxisYLabelStyle) and is_quantitative:
+        label_kwargs.update(
+            {f: getattr(axis.labels, f) for f in _ELEM_Y_LABEL_PASSTHROUGH}
+        )
     if isinstance(axis.labels, DimensionLabelStyle):
         label_kwargs.update(
             {f: getattr(axis.labels, f) for f in _ELEM_X_LABEL_PASSTHROUGH}

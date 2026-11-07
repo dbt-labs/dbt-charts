@@ -247,9 +247,9 @@ def test_engine_payload_carries_colors_never_auto_and_dash_renders(
     seen: list[str] = []
     real = _engine.render_chart
 
-    def spy(payload_json: str) -> Any:
-        seen.append(payload_json)
-        return real(payload_json)
+    def spy(rows: Any, datasets: Any, layout_json: str) -> Any:
+        seen.append(layout_json)
+        return real(rows, datasets, layout_json)
 
     monkeypatch.setattr(_engine, "render_chart", spy)
     svg = render_board_to_svg(_BOARD)

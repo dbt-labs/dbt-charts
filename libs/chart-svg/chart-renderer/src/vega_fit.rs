@@ -20,8 +20,8 @@
 //!    outside the padded view and get clamped back to it.
 
 use crate::constants::layout::VEGA_SUBTITLE_PADDING;
-use crate::labels_expr::view::FitPlan;
-use d3rs::js_math::js_sign;
+use crate::labels_expr::FitPlan;
+use ::layout::zoom::lift_ground;
 use d3rs::scale::Transform;
 
 /// Vega-Lite's default `labelLimit` — the width cap it truncates axis and
@@ -161,24 +161,21 @@ pub fn vl_y_label_anchor(angle: f64, orient_left: bool) -> (&'static str, &'stat
     (align, baseline)
 }
 
-/// How far a `middle`-baselined text hangs above its anchor: the ink rise
+/// How far a text of the given Vega `baseline` hangs above its anchor: the ink rise
 /// (`0.8 * font_size`, rounded) less Vega's baseline shift.
+pub fn baseline_rise(font_size: f64, baseline: &str) -> f64 {
+    (0.8 * font_size).round() - measure::baseline_shift(baseline, font_size)
+}
+
+/// [`baseline_rise`] of a `middle`-baselined text.
 pub fn middle_rise(font_size: f64) -> f64 {
-    (0.8 * font_size).round() - measure::baseline_shift("middle", font_size)
+    baseline_rise(font_size, "middle")
 }
 
 /// The advance between the rows of a stacked axis label (Vega's default
 /// `lineHeight`: the font size plus 2).
 pub fn label_row_advance(font_size: f64) -> f64 {
     font_size + 2.0
-}
-
-/// vega-util's lift into a scale's zoom space and the ground back (`zoomLog`,
-/// `zoomPow`, `zoomSymlog`, and the identity of `zoomLinear`): d3's transform,
-/// a log domain read through the sign of its first end.
-pub fn lift_ground(transform: Transform, domain0: f64) -> (impl Fn(f64) -> f64, impl Fn(f64) -> f64) {
-    let sign = if matches!(transform, Transform::Log { .. }) { js_sign(domain0) } else { 1.0 };
-    (move |x| transform.apply(false, sign * x), move |x| sign * transform.undo(false, x))
 }
 
 /// Vega's `padDomain` (vega-encode, over vega-util's `zoomLinear`, `zoomLog`,
@@ -642,9 +639,9 @@ pub fn fit_passes(
     let mut raw_left = 0.0;
     let mut raw_right = 0.0;
     // A chart whose axis expressions read the view settles its layout one padding pass at a time
-    // (`labels_expr::view::render_passes`), so the labels each pass measures are the ones its plot size paints.
+    // (`labels_expr::render_passes`), so the labels each pass measures are the ones its plot size paints.
     let passes_asked = passes;
-    let (passes, pinned) = match crate::labels_expr::view::fit_plan() {
+    let (passes, pinned) = match crate::labels_expr::fit_plan() {
         FitPlan::Normal => (passes, None),
         FitPlan::From((w, h)) => {
             if !fixed_width {
@@ -698,7 +695,7 @@ pub fn fit_passes(
         (if pad_l > 0.0 { tx.max(-left) } else { tx }, ty)
     });
     let margins = FitMargins { left, top, right, bottom, plot_w: pw, plot_h: ph, title_pos, raw_left, raw_right };
-    crate::labels_expr::view::fit_done((view_w, view_h), passes_asked, &margins);
+    crate::labels_expr::fit_done((view_w, view_h), passes_asked, &margins);
     margins
 }
 
@@ -728,7 +725,7 @@ pub fn pad_plot(
     }
     let raw_left = (-b.x1).max(0.0);
     let raw_right = (b.x2 - pw).max(0.0);
-    crate::labels_expr::view::pad_done((pw, ph));
+    crate::labels_expr::pad_done((pw, ph));
     FitMargins {
         left: raw_left.ceil(),
         top: (-b.y1).ceil().max(0.0),

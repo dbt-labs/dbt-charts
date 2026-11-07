@@ -22,7 +22,7 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.models.chart.normalized import BarChart, LineChart
 from dbt_charts.core.compile.models.style.authored import (
-    AxisLabelStylePatch,
+    AxisYLabelStylePatch,
     AxisYStylePatch,
     BarChartStylePatch,
     LineChartStylePatch,
@@ -142,7 +142,7 @@ def test_raw_d3_format_right_aligns_through_full_resolve(spec: str):
     ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
     patch = LineChartStylePatch(
         axis_y=AxisYStylePatch(
-            position="right", labels=AxisLabelStylePatch(format=spec)
+            position="right", labels=AxisYLabelStylePatch(format=spec)
         )
     )
     data = [{"m": 1, "v": 12000}, {"m": 2, "v": 90000}, {"m": 3, "v": 150000}]
@@ -238,7 +238,7 @@ def test_right_edge_house_alias_wired_through_full_resolve():
     patch = LineChartStylePatch(
         axis_y=AxisYStylePatch(
             position="right",
-            labels=AxisLabelStylePatch(format="percent"),
+            labels=AxisYLabelStylePatch(format="percent"),
         )
     )
     data = [
@@ -310,7 +310,7 @@ def test_time_predefined_name_does_not_force_right_align_on_right_edge():
     patch = LineChartStylePatch(
         axis_y=AxisYStylePatch(
             position="right",
-            labels=AxisLabelStylePatch(format="date_short"),
+            labels=AxisYLabelStylePatch(format="date_short"),
         )
     )
     data = [
@@ -361,7 +361,7 @@ def test_vertical_bar_house_alias_forces_align_right():
         style=BarChartStylePatch(
             axis_y=AxisYStylePatch(
                 position="right",
-                labels=AxisLabelStylePatch(format="percent"),
+                labels=AxisYLabelStylePatch(format="percent"),
             )
         ),
     )
@@ -405,7 +405,7 @@ def test_horizontal_bar_house_alias_does_not_force_align_right():
         y="value",
         style=BarChartStylePatch(
             axis_y=AxisYStylePatch(
-                labels=AxisLabelStylePatch(format="percent"),
+                labels=AxisYLabelStylePatch(format="percent"),
             )
         ),
     )
@@ -680,7 +680,7 @@ def test_horizontal_bar_explicit_right_position_does_not_force_align_right():
         style=BarChartStylePatch(
             axis_y=AxisYStylePatch(
                 position="right",
-                labels=AxisLabelStylePatch(format="percent"),
+                labels=AxisYLabelStylePatch(format="percent"),
             )
         ),
     )

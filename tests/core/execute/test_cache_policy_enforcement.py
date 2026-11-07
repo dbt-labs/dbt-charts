@@ -24,6 +24,7 @@ from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.execute.lookup import lookup_and_record, query_data_ages
 from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+from dbt_charts.core.text.time_zones import UTC as BOARD_UTC
 
 from ..._results import rows_result
 from ..._run import Run
@@ -94,7 +95,9 @@ class TestCacheDisabledIsNoStore:
         cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
         try:
             query = result.board.queries["q"]
-            key = compute_cache_key(query, {}, result.board.sources)
+            key = compute_cache_key(
+                query, {}, result.board.sources, time_zone=BOARD_UTC
+            )
             cache.put(
                 *key,
                 rows_result([{"value": 999}]),
@@ -246,7 +249,9 @@ class TestTtlLazyExpiry:
             from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 
             query = result.board.queries["q"]
-            key = compute_cache_key(query, {}, result.board.sources)
+            key = compute_cache_key(
+                query, {}, result.board.sources, time_zone=BOARD_UTC
+            )
             with cache._connection() as conn:
                 conn.execute(
                     "UPDATE _query_outcomes SET written_at_utc = TIMESTAMP '2000-01-01' "
@@ -318,7 +323,9 @@ class TestTtlLazyExpiry:
             # ttl is None, so no age can evict it.
             from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 
-            key = compute_cache_key(query, {}, result.board.sources)
+            key = compute_cache_key(
+                query, {}, result.board.sources, time_zone=BOARD_UTC
+            )
             with cache._connection() as conn:
                 conn.execute(
                     "UPDATE _query_outcomes SET written_at_utc = TIMESTAMP '2000-01-01' "
@@ -486,10 +493,10 @@ def _age_shared_entry(cache, board, names: tuple[str, str], hours: int) -> None:
     from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 
     left, right = names
-    key = compute_cache_key(board.queries[left], {}, board.sources)
-    assert key == compute_cache_key(board.queries[right], {}, board.sources), (
-        "the two queries must share a key — otherwise this test proves nothing"
-    )
+    key = compute_cache_key(board.queries[left], {}, board.sources, time_zone=BOARD_UTC)
+    assert key == compute_cache_key(
+        board.queries[right], {}, board.sources, time_zone=BOARD_UTC
+    ), "the two queries must share a key — otherwise this test proves nothing"
     aged = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
     with cache._connection() as conn:
         conn.execute(
@@ -625,7 +632,9 @@ class TestNoStoreIsEnforcedAtTheStoreRead:
 
             result = df_compile(_board_yaml("cache: false"))
             query = result.board.queries["q"]
-            key = compute_cache_key(query, {}, result.board.sources)
+            key = compute_cache_key(
+                query, {}, result.board.sources, time_zone=BOARD_UTC
+            )
             # A fresh entry the disabled query must not be handed.
             cache.put(
                 *key, rows_result([{"value": 999}]), board_slug="test", query_name="q"
@@ -817,7 +826,9 @@ class TestQueryDataAgesOnFailure:
         try:
             result = df_compile(_board_yaml("cache:\n      ttl: 1h"))
             query = result.board.queries["q"]
-            key = compute_cache_key(query, {}, result.board.sources)
+            key = compute_cache_key(
+                query, {}, result.board.sources, time_zone=BOARD_UTC
+            )
             # Seed a cached failure still inside the 1h retry window.
             cache.put(
                 *key, RuntimeError("seed failure"), board_slug="test", query_name="q"
@@ -872,7 +883,9 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
             assert len(data) == 3
 
             query = result.board.queries["q"]
-            key = compute_cache_key(query, {}, result.board.sources)
+            key = compute_cache_key(
+                query, {}, result.board.sources, time_zone=BOARD_UTC
+            )
             cached = cache.get(*key, ttl=None)
             assert cached is not None
             assert len(cached.rows) == 3, (
@@ -913,7 +926,9 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
             assert data == [{"value": "small"}]
 
             query = result.board.queries["q"]
-            key = compute_cache_key(query, {}, result.board.sources)
+            key = compute_cache_key(
+                query, {}, result.board.sources, time_zone=BOARD_UTC
+            )
             cached = cache.get(*key, ttl=None)
             assert cached is not None
             assert cached.rows == [{"value": "small"}], (
@@ -955,7 +970,9 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
             assert executor.ledger.truncations["q"].kept_row_count == 0
 
             query = result.board.queries["q"]
-            key = compute_cache_key(query, {}, result.board.sources)
+            key = compute_cache_key(
+                query, {}, result.board.sources, time_zone=BOARD_UTC
+            )
             cached = cache.get(*key, ttl=None)
             assert cached is not None
             assert cached.rows == []

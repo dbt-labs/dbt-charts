@@ -1274,9 +1274,11 @@ class TestSQLServerAdapter:
         with patch.object(SQLServerConnectionManager, "open", classmethod(_open)):
             pool = _SourcePool(self._SOURCE, max_workers=1, timeout_seconds=120)
             with pytest.raises(Exception, match="Invalid column name"):
-                pool.execute("SELECT no_such_col FROM t", setup_sql=None)
+                pool.execute(
+                    "SELECT no_such_col FROM t", setup_sql=None, time_zone="UTC"
+                )
             # The rebuilt connection serves the next query.
-            table = pool.execute("SELECT 1", setup_sql=None)
+            table = pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             pool.close()
 
         assert sum("no_such_col" in s for s in sent) == 1
@@ -1306,8 +1308,10 @@ class TestSQLServerAdapter:
         with patch.object(SQLServerConnectionManager, "open", classmethod(_open)):
             pool = _SourcePool(self._SOURCE, max_workers=1, timeout_seconds=2)
             with pytest.raises(QueryDurationExceeded):
-                pool.execute("SELECT * FROM slow_table", setup_sql=None)
-            table = pool.execute("SELECT 1", setup_sql=None)
+                pool.execute(
+                    "SELECT * FROM slow_table", setup_sql=None, time_zone="UTC"
+                )
+            table = pool.execute("SELECT 1", setup_sql=None, time_zone="UTC")
             pool.close()
 
         assert sum("slow_table" in s for s in sent) == 1

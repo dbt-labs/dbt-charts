@@ -470,7 +470,7 @@ pub(crate) fn resolve_layer_rows<'a>(
         .datasets
         .as_ref()
         .and_then(|d| d.get(qn))
-        .map(Vec::as_slice)
+        .map(|rows| rows.as_slice())
         .ok_or_else(|| format!("{family}: a layer reading query {qn:?} has no dataset available"))
 }
 
@@ -1008,9 +1008,6 @@ pub(crate) struct LayerClaim {
     /// The color a layer with no `color` took for its label, which its marks
     /// paint as a literal even when the label repeats an earlier entry.
     pub fill: Option<String>,
-    /// Whether the claimed values draw as circles in the legend: a scatter
-    /// layer's own grouping.
-    pub circle: bool,
     /// The sequential scale of a layer colored by a numeric field: it claims no
     /// slot on the shared scale and paints each value by position on this one.
     pub numeric: Option<ContinuousColor>,
@@ -1105,7 +1102,7 @@ fn claim_layer(
         OverlayLayer::Scatter(l) => l.color.is_some().then(|| LegendSymbol::FadedCircle(area_opacity.unwrap_or(1.0))),
     };
     if let Some(numeric) = layer.color().and_then(|field| numeric_layer_color(rows, field)) {
-        return Ok(LayerClaim { label, values: Vec::new(), fill: None, circle: false, numeric: Some(numeric), legend: layer.legend() });
+        return Ok(LayerClaim { label, values: Vec::new(), fill: None, numeric: Some(numeric), legend: layer.legend() });
     }
     let Some(color_field) = layer.color() else {
         scale.refuse_repeat(&label)?;
@@ -1122,7 +1119,7 @@ fn claim_layer(
         if matches!(layer, OverlayLayer::Bar(_)) {
             scale.set_square(&label);
         }
-        return Ok(LayerClaim { label, values: Vec::new(), fill: Some(fill), circle: false, numeric: None, legend: layer.legend() });
+        return Ok(LayerClaim { label, values: Vec::new(), fill: Some(fill), numeric: None, legend: layer.legend() });
     };
     let values = layer_color_values(rows, color_field);
     scale.claim_values(&values, layer.series_inks())?;
@@ -1135,7 +1132,7 @@ fn claim_layer(
     if matches!(layer, OverlayLayer::Bar(_)) {
         values.iter().for_each(|value| scale.set_square(value));
     }
-    Ok(LayerClaim { label, values, fill: None, circle: matches!(layer, OverlayLayer::Scatter(_)), numeric: None, legend: layer.legend() })
+    Ok(LayerClaim { label, values, fill: None, numeric: None, legend: layer.legend() })
 }
 
 /// A band x's step geometry: its bandwidth and the centers of its first and
@@ -2204,6 +2201,8 @@ pub(crate) struct LayerAxis {
     /// The baked ink of the axis's tick labels and title; the base's where absent.
     pub label_color: Option<String>,
     pub title_color: Option<String>,
+    /// The labels sit above their gridlines, flush to the gutter's outer edge ([`crate::common::AxisStyle::labels_above`]).
+    pub above: bool,
     pub title_text: String,
     /// Vega's description of the layer's axis.
     pub caption: AxisCaption,
@@ -2249,6 +2248,25 @@ impl LayerAxis {
         self.grid.attrs(base_color, base_width).num_some("opacity", self.grid.opacity.filter(|&o| o != 1.0))
     }
 
+    /// The x of the gutter's outer edge where above-gridline labels sit flush, for a plot `plot_w` wide whose
+    /// right edge carries `offset` of facet overhang; `None` when the labels center on their ticks.
+    pub(crate) fn label_edge(&self, plot_w: f64, offset: f64) -> Option<f64> {
+        self.above.then(|| match self.side {
+            LayerSide::Right => plot_w + offset + 0.5 + self.gutter,
+            LayerSide::Left => 0.5 - self.gutter,
+        })
+    }
+
+    /// The x extent of the axis' gridlines: the plot, run out to the label edge under above-gridline labels.
+    pub(crate) fn grid_span(&self, plot_w: f64, offset: f64) -> (f64, f64) {
+        crate::common::reach_label_edges((0.5, plot_w + 0.5), self.label_edge(plot_w, offset).as_slice())
+    }
+
+    /// The Vega baseline of the axis' labels.
+    pub(crate) fn label_baseline(&self) -> &'static str {
+        if self.above { "bottom" } else { "middle" }
+    }
+
     /// The axis's own scale at a plot height.
     pub(crate) fn scale(&self, plot_h: f64) -> d3rs::scale::Continuous {
         d3rs::scale::Continuous::linear([self.domain_min, self.domain_max], [plot_h, 0.0])
@@ -2287,12 +2305,13 @@ impl LayerAxis {
         b.union(&if right { Bounds::new(0.0, 0.0, pw + reach, ph) } else { Bounds::new(-reach, 0.0, 0.0, ph) });
         let scale = self.scale(ph);
         for (&tv, &lw) in self.tick_values.iter().zip(&self.label_ws) {
-            let (x, align) = if right {
-                (pw + offset + self.label_offset, "left")
-            } else {
-                (-(offset + self.label_offset), "right")
+            let (x, align) = match (right, self.above) {
+                (true, false) => (pw + offset + self.label_offset, "left"),
+                (true, true) => (pw + offset + self.gutter, "right"),
+                (false, false) => (-(offset + self.label_offset), "right"),
+                (false, true) => (-(offset + self.gutter), "left"),
             };
-            b.union(&text_ink(x, scale.scale(tv), lw.min(label_limit), font_size, align, "middle"));
+            b.union(&text_ink(x, scale.scale(tv), lw.min(label_limit), font_size, align, self.label_baseline()));
         }
     }
 }
@@ -2415,8 +2434,8 @@ impl<'a> PlotClips<'a> {
     /// chart asks for that plot.
     pub(crate) fn wrap(&self, plot: (f64, f64), children: Vec<Node>) -> Vec<Node> {
         let (id, defines) = self.id_for(plot);
-        let group = Node::group(Role::Chrome, Attrs::new().set("clip-path", format!("url(#{id})")), children);
-        if defines { vec![plot_clip(&id, plot), group] } else { vec![group] }
+        let clipped = crate::knockout::clip(children, &format!("url(#{id})"));
+        if defines { std::iter::once(plot_clip(&id, plot)).chain(clipped).collect() } else { clipped }
     }
 
     /// The id of the clip for `plot` and whether this call defines it.
@@ -2519,6 +2538,7 @@ pub(crate) fn layer_grids(
         let gc = crate::common::required_ink(ax_y.grid.color.as_deref(), family, "axis_y.grid.color")?;
         let go = la.grid.opacity.unwrap_or(1.0);
         let scale = la.scale(plot_h);
+        let span = la.grid_span(plot_w, 0.0);
         let lines = la
             .tick_values
             .iter()
@@ -2526,8 +2546,8 @@ pub(crate) fn layer_grids(
                 let gy = crate::common::tick_round(scale.scale(tv));
                 Node::line(
                     Role::Grid,
-                    (0.5, gy),
-                    (plot_w + 0.5, gy),
+                    (span.0, gy),
+                    (span.1, gy),
                     la.grid.attrs(gc, ax_y.grid.width.unwrap_or(1.0)).num("opacity", go),
                 )
             })
@@ -2787,6 +2807,7 @@ impl<'a> ScaledLayer<'a> {
             grid: LayerGrid::of(self.axis_y.grid.as_ref(), &ax_y.grid),
             label_color: self.axis_y.labels.as_ref().and_then(|l| l.font_color.clone()),
             title_color: self.axis_y.title_color.clone(),
+            above: ax_y.labels_above(),
             title_text,
             caption,
             title_extra,
@@ -2804,6 +2825,8 @@ pub(crate) struct LayerAxisInk<'a> {
     pub font_style: Option<&'a str>,
     pub font_color: &'a str,
     pub tick_size: f64,
+    /// The base axis' gridline width, which the layer's own grid inherits where it sets none.
+    pub grid_width: f64,
     pub ticks: &'a crate::common::AxisTicks,
     pub title_style: &'a crate::common::AxisTitle,
     /// The stroke and width of this layer's own painted zero rule, which its tick at 0 continues.
@@ -2826,11 +2849,13 @@ pub(crate) fn layer_axis(
     ink: &LayerAxisInk,
     title_key: Option<crate::contract::LabelKey>,
 ) -> Result<Vec<Node>, String> {
-    let (outward, anchor) = match la.side {
-        LayerSide::Right => (1.0, "start"),
-        LayerSide::Left => (-1.0, "end"),
+    let (outward, anchor) = match (la.side, la.above) {
+        (LayerSide::Right, false) => (1.0, "start"),
+        (LayerSide::Left, false) => (-1.0, "end"),
+        (LayerSide::Right, true) => (1.0, "end"),
+        (LayerSide::Left, true) => (-1.0, "start"),
     };
-    let label_x = edge_x + outward * la.label_offset;
+    let label_x = edge_x + outward * if la.above { la.gutter } else { la.label_offset };
     let title_x = edge_x + outward * la.gutter;
     let mut items = Vec::new();
     let zero_rules = ink.zero_rule.map_or_else(Vec::new, |(stroke, width)| crate::common::value_axis_rules(top, [scale.scale(0.0)], stroke, width));
@@ -2841,13 +2866,17 @@ pub(crate) fn layer_axis(
         }
         items.extend(crate::common::value_ticks(
             ink.ticks,
-            (ink.tick_size > 0.0).then(|| crate::common::tick_row(top, scale.scale(tv))),
+            (ink.tick_size > 0.0 && !la.above).then(|| crate::common::tick_row(top, scale.scale(tv))),
             edge_x,
             outward,
             ink.tick_size,
             &crate::common::thresholds(&zero_rules),
         )?);
-        let y = tick_y + measure::baseline_shift("middle", ink.font_size);
+        let y = if la.above {
+            crate::common::above_label_y(&crate::common::thresholds(&zero_rules), crate::common::tick_row(top, scale.scale(tv)), la.grid.width.unwrap_or(ink.grid_width), ink.font_size)
+        } else {
+            tick_y + measure::baseline_shift(la.label_baseline(), ink.font_size)
+        };
         items.push(crate::text::label(Role::Label, (label_x, y), Attrs::new().set("text-anchor", anchor).vega("font-family", ink.font_family).num("font-size", ink.font_size).quick_some("font-style", ink.font_style).set("font-weight", ink.font_weight).set("fill", la.label_color.as_deref().unwrap_or(ink.font_color)), label.as_str()));
     }
     let inked_title;
@@ -3053,6 +3082,7 @@ mod tests {
             grid: LayerGrid { color: None, width: None, dash: None, opacity: None },
             label_color: None,
             title_color: None,
+            above: false,
             title_text: String::new(),
             caption: AxisCaption {
                 bare: false,

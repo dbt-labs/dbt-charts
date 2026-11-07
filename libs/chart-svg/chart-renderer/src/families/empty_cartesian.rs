@@ -111,6 +111,10 @@ struct ValueAxisPlan {
     grid: bool,
     /// A mirrored copy repeats the labels and the domain line, never the title.
     ghost: bool,
+    /// Labels sit above their gridlines, flush to the gutter's outer edge: only a linear vertical axis.
+    above: bool,
+    /// The axis' own `labels.align: left`, which starts an above label at the outer edge of a left axis.
+    align_left: bool,
 }
 
 impl ValueAxisPlan {
@@ -126,7 +130,14 @@ impl ValueAxisPlan {
     /// labels to the range ends; beside a vertical axis the side and gutter decide.
     fn anchor(&self, st: &LabelStyle, pos: f64, pw: f64) -> (&'static str, &'static str) {
         if !self.horizontal {
-            (if self.side > 0.0 && self.away { "left" } else if self.side > 0.0 { "right" } else { "right" }, "middle")
+            let baseline = if self.above { "bottom" } else { "middle" };
+            if self.start_outer() {
+                ("left", baseline)
+            } else if self.side > 0.0 && self.away && !self.above {
+                ("left", baseline)
+            } else {
+                ("right", baseline)
+            }
         } else if st.angle == 0.0 {
             match flush_edge(pos, pw, st.flush) {
                 Some(true) => ("left", "top"),
@@ -138,9 +149,30 @@ impl ValueAxisPlan {
         }
     }
 
+    /// A left axis whose above labels start at the gutter's outer edge: its own `labels.align: left`, or a mirror ghost.
+    fn start_outer(&self) -> bool {
+        self.above && self.side < 0.0 && (self.align_left || self.ghost)
+    }
+
+    /// The widest label, as far out as an above label's far edge is from its near one.
+    fn widest(&self, st: &LabelStyle) -> f64 {
+        self.widths.iter().map(|w| w.min(st.limit)).fold(0.0, f64::max)
+    }
+
     /// Where a vertical axis' labels anchor, from its line.
-    fn label_dx(&self) -> f64 {
-        self.side * self.tick_len + if self.side > 0.0 && !self.away { self.gutter } else { self.side * self.pad }
+    fn label_dx(&self, st: &LabelStyle) -> f64 {
+        let near = self.side * self.tick_len + if self.side > 0.0 && !self.away { self.gutter } else { self.side * self.pad };
+        if self.above && (self.start_outer() || self.side > 0.0 && self.away) {
+            near + self.side * self.widest(st)
+        } else {
+            near
+        }
+    }
+
+    /// Where the gutter ends, from the axis line: the far edge of its labels. Gridlines run out to it.
+    fn outer_edge(&self, st: &LabelStyle) -> f64 {
+        let dx = self.label_dx(st);
+        if self.side < 0.0 && !self.start_outer() { dx - self.widest(st) } else { dx }
     }
 
     fn label_ink(&self, st: &LabelStyle, x: f64, y: f64, w: f64, align: &str, baseline: &str) -> vega_fit::Bounds {
@@ -160,7 +192,7 @@ impl ValueAxisPlan {
                 if self.horizontal {
                     self.label_ink(st, pos, self.tick_len + self.pad, w, align, baseline)
                 } else {
-                    self.label_ink(st, self.label_dx(), pos, w, align, baseline)
+                    self.label_ink(st, self.label_dx(st), pos, w, align, baseline)
                 }
             })
             .collect();
@@ -454,6 +486,8 @@ pub(crate) fn render(
         line: domain_line(ax_y, family, "axis_y")?,
         grid: ax_y.grid.visible.unwrap_or(false) && facet.is_none(),
         ghost: false,
+        above: ax_y.labels_above() && !horizontal && point_labels.is_none(),
+        align_left: ax_y.labels.align.as_deref() == Some("left"),
     };
     // Each layer's own axis beside the base's, overlaying it on a shared side.
     let mut layer_axes: Vec<ValueAxisPlan> = Vec::new();
@@ -492,6 +526,8 @@ pub(crate) fn render(
                 line: domain_line(ax_y, family, "axis_y")?,
                 grid: grid && has_rung,
                 ghost: false,
+                above: ax_y.labels_above() && has_rung,
+                align_left: ax_y.labels.align.as_deref() == Some("left"),
             });
         }
     }
@@ -820,7 +856,14 @@ fn axes_nodes(
             for &value in &axis.rungs {
                 let at = crate::common::tick_round(axis.pos(value, m.plot_w, m.plot_h));
                 // The 0.5 edge is the one coordinate Vega's gridline writes unpadded.
-                let (from, to) = if horizontal { ((at, 0.5), (at, m.plot_h + 0.5)) } else { ((0.5, at), (m.plot_w + 0.5, at)) };
+                let (from, to) = if horizontal {
+                    ((at, 0.5), (at, m.plot_h + 0.5))
+                } else if axis.above {
+                    let outer = axis_x0(axis) + axis.outer_edge(st);
+                    ((0.5_f64.min(outer), at), ((m.plot_w + 0.5).max(outer), at))
+                } else {
+                    ((0.5, at), (m.plot_w + 0.5, at))
+                };
                 let color = ax_y.grid.color.as_deref().ok_or_else(|| format!("{family}: axis_y.grid.color absent (theme required)"))?;
                 let width = ax_y.grid.width.ok_or_else(|| format!("{family}: axis_y.grid.width absent (theme required)"))?;
                 let mut attrs = Attrs::new().set("stroke", color).num("stroke-width", width);
@@ -873,7 +916,7 @@ fn axes_nodes(
             };
             ink.push(line(ends, color, *width));
         }
-        if axis.tick_len > 0.0 {
+        if axis.tick_len > 0.0 && !axis.above {
             let ticks = &ax_y.ticks;
             for &value in &axis.rungs {
                 let at = crate::common::tick_round(axis.pos(value, m.plot_w, m.plot_h));
@@ -898,7 +941,7 @@ fn axes_nodes(
                 let (anchor_x, anchor_y) = if horizontal {
                     (plot_left + 0.5 + along, plot_top + m.plot_h + axis.offset + 0.5 + axis.tick_len + axis.pad)
                 } else {
-                    (plot_left + axis_x0(axis) + axis.label_dx(), plot_top + along + 0.5)
+                    (plot_left + axis_x0(axis) + axis.label_dx(st), plot_top + along + 0.5)
                 };
                 let fill = ax_y.labels.font.color.as_deref().ok_or_else(|| format!("{family}: axis_y.labels.font.color absent (theme required)"))?;
                 let weight = ax_y.labels.font.weight_str();

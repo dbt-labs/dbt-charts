@@ -31,7 +31,7 @@ from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.authored import (
-    AxisLabelStylePatch,
+    AxisYLabelStylePatch,
     AxisYStylePatch,
 )
 from dbt_charts.core.compile.models.style.resolved import ResolvedBarLabels
@@ -69,7 +69,7 @@ def _resolved_axis_y_for_format(format_spec: str) -> object:
     chart_style_context = resolve_chart_style_context(get_theme_style("stark"))
     chart = BarChart(id="fixture", type="bar")
     overrides = AxisOverrides(
-        y=AxisYStylePatch(labels=AxisLabelStylePatch(format=format_spec))
+        y=AxisYStylePatch(labels=AxisYLabelStylePatch(format=format_spec))
     )
     baked = _bake_cartesian_axes(
         chart_style_context, chart, "bar", "ordinal", "quantitative", overrides

@@ -1,0 +1,3 @@
+kind: Features
+body: 'Value-axis labels can sit just above their gridlines with `axis_y.labels.position: above_gridline`, and the paper theme now sets it.'
+time: 2026-11-05T16:16:10.533839-08:00

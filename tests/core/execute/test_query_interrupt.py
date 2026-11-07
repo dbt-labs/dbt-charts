@@ -108,7 +108,7 @@ class TestDbtBackendInterrupt:
 
             def _caller() -> Exception | None:
                 try:
-                    pool.execute(_USER_SQL, None)
+                    pool.execute(_USER_SQL, None, time_zone="UTC")
                 except QueryError as exc:
                     return exc
                 return None
@@ -126,7 +126,7 @@ class TestDbtBackendInterrupt:
             assert build.call_count == 1
 
             with pytest.raises(QueryError) as refused:
-                pool.execute(_USER_SQL, None)
+                pool.execute(_USER_SQL, None, time_zone="UTC")
             assert refused.value.code is ERR_QUERY_INTERRUPTED
             with pytest.raises(QueryError) as refused_new:
                 sa._get_source_pool({**_POSTGRES_SOURCE, "host": "other"})

@@ -715,7 +715,15 @@ fn wheel(
             wedges.push(crate::pattern::edge_node(path.clone(), &mark.edge, crate::pattern::PIE_EDGE_W, &extra));
         }
     }
-    nodes.push(Node::group(Role::Chrome, Attrs::new(), wedges).translate(cx, cy));
+    // Slices sit on the canvas, so only the mask matters: the undercoat has nothing to cut.
+    let knocked = crate::knockout::knock_out(
+        wedges,
+        &r.canvas,
+        &format!("ko0"),
+        &contract::scoped_id(&r.id),
+        (-radius, -radius, 2.0 * radius, 2.0 * radius),
+    );
+    nodes.push(Node::group(Role::Chrome, Attrs::new(), knocked.marks).translate(cx, cy));
 
     // Center total — Vega text baselines: value "bottom", caption "top". Both text layers carry
     // one row, so a description inherited from the arc layer would name the FIRST slice

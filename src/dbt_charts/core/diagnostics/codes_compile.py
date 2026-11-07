@@ -375,6 +375,17 @@ ERR_JINJA_ERROR = REGISTRY.register(
     )
 )
 
+ERR_FILTER_DATE_RANGE_TIMESTAMP = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FILTER-DATE-RANGE-TIMESTAMP",
+        domain="compile",
+        title="filter_date_range was passed the retired timestamp argument",
+        message_template="A column with a time zone dates in the board's `regional.time_zone` when passed bare, so drop `timestamp=`. A naive column that stores UTC passes `is_naive_utc=true`.",
+        doc="Fired when `filter_date_range` is called with `timestamp=`. The argument was replaced by `is_naive_utc=true`, which dates a naive timestamp column that stores UTC in the board zone. A timestamp column with a zone needs no argument.",
+        docs_topic="variables",
+    )
+)
+
 ERR_TEMPLATE_OUTPUT_TOO_LARGE = REGISTRY.register(
     ErrorCode(
         code="ERR-TEMPLATE-OUTPUT-TOO-LARGE",

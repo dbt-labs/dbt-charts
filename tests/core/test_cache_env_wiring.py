@@ -25,6 +25,7 @@ from dbt_charts.core.execute import QueryError
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure
 from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+from dbt_charts.core.text.time_zones import UTC
 
 from .._run import Run
 
@@ -68,7 +69,7 @@ class TestExecutorFailureCacheBlocksAdapter:
         result_for_seed = df_compile(BOARD_YAML)
         query = result_for_seed.board.queries["my_query"]
         source_hash, query_hash, variables_hash = compute_cache_key(
-            query, board_sources=result_for_seed.board.sources
+            query, board_sources=result_for_seed.board.sources, time_zone=UTC
         )
         seed = TrivialDuckDBCache(db_path=db, failure_ttl_seconds=9000)
         seed.put(

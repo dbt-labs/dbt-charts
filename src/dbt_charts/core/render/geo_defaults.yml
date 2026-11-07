@@ -52,9 +52,8 @@ geo_sources:
     key_examples: ["Mission", "Chinatown", "Castro"]
 
   nyc-neighborhoods:
-    # Dataset cpf4-rkhq (2010 NTAs) was retired. Use 9nt8-h7nd (2020 NTAs)
-    # which has the same ntaname field and 262 neighborhood tabulation areas.
-    url: "https://data.cityofnewyork.us/api/geospatial/9nt8-h7nd?method=export&format=GeoJSON"
+    # 2020 NTAs (NYC Open Data 9nt8-h7nd), simplified; provenance in geo/LICENSES.md.
+    url: "bundled:nyc-neighborhoods.json"
     format: json
     property: features
     projection:

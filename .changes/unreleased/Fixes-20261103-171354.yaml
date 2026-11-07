@@ -1,0 +1,3 @@
+kind: Fixes
+body: Fix KPI label wrapping, table digit overflow, spark bar corner radius, and the gutter of a mirrored axis with hidden labels.
+time: 2026-11-03T17:13:54.030297-08:00

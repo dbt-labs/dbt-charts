@@ -460,6 +460,8 @@ style:
       # Also serves the categorical-orient role for horizontal bar's swapped
       # categorical axis (categorical_orient was deleted 2026-08 trim).
       position: auto
+      labels:
+        position: beside_gridline
       scale:
         # Editorial default (settled 2026-07-16): data marks sit ~8% from
         # the visible axis edges. Zero-anchored: domain_max = data_max * 1.08.
@@ -572,6 +574,7 @@ style:
       pagination:
         enabled: true
         page_rows: 20
+        mode: pages
       transpose: false
       text_baseline_offset: 4.0
       # No title_baseline_offset: the title baseline derives from the
@@ -594,6 +597,8 @@ style:
         # Looker migrator sets this per-table so migrated tables get breathing
         # room without perturbing every authored table's column widths.
         content_headroom: 0.0
+        overflow: scroll
+        freeze: 0
       title_row:
         height: 40.0
       more_rows:
@@ -618,6 +623,14 @@ style:
         color_active: chrome[11]
         color_inactive: chrome[9]
         color_disabled: chrome[6]
+      scrollbar:
+        # Thin bars drawn at the body edge of a scrolling table.
+        size: 6.0
+        inset: 2.0
+        thumb_color: chrome[6]
+        # The hairline at the frozen-column edge: light, so it never reads as
+        # one of the table's black structural rules.
+        edge_color: chrome[4]
       empty_state:
         font:
           extends: secondary

@@ -208,3 +208,14 @@ def test_a_leading_byte_order_mark_is_dropped() -> None:
         text = load_geometry_text("https://example.com/geo.json")
 
     assert text == '{"a": 1}'
+
+
+def test_bundled_nyc_neighborhoods_loads_without_network() -> None:
+    with geometry_fetcher_scope(_forbid):
+        document = json.loads(load_geometry_text("bundled:nyc-neighborhoods.json"))
+
+    assert document["type"] == "FeatureCollection"
+    assert len(document["features"]) == 262
+    assert {"Williamsburg", "Greenwich Village"} <= {
+        f["properties"]["ntaname"] for f in document["features"]
+    }

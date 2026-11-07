@@ -6,6 +6,7 @@ mod board;
 
 use diagnostic::Diagnostic;
 use chart_renderer::families::table::width::{measure_natural_width, MeasurePayload};
+use chart_renderer::loaded_rows::LoadedRows;
 use chart_renderer::{render_measured, Payload};
 use measure::FontBook;
 use pyo3::exceptions::PyValueError;
@@ -60,24 +61,48 @@ fn coded_error(py: Python<'_>, diagnostic: &Diagnostic) -> PyErr {
     build().unwrap_or_else(|failure| failure)
 }
 
-/// Render one chart payload (the `chart-renderer payload.json out.svg` JSON)
-/// to `(svg, warnings, natural_height)`, the SVG without the CLI's trailing
-/// newline, each warning a `{"code", "params"}` dict, and
-/// `RenderOutput.natural_height`. `fonts_dir` is used as given, so it
-/// must be absolute or relative to the process cwd. A refusal raises
-/// `RenderDiagnosticError` (a `ValueError`) with `.code` and `.params`; an
-/// engine gap carries code `ERR-ENGINE-REFUSED`. The GIL is released
-/// while rendering.
+/// One query result parsed once: its rows, with every cell tag decoded, and
+/// its declared column types. Built by `load_rows`, then shared by every
+/// engine call that draws from the result.
+#[pyclass(frozen, module = "dbt_charts._engine")]
+struct Rows(Arc<LoadedRows>);
+
+/// Parse `{"rows": [...], "schema": {column: type}}` into a shared `Rows`.
+/// Python's `dumps_rows` writes the JSON. The GIL is released while parsing.
+#[pyfunction]
+fn load_rows(py: Python<'_>, rows_json: &str) -> PyResult<Rows> {
+    let loaded = py.detach(|| LoadedRows::from_json(rows_json).map_err(Diagnostic::from));
+    loaded.map(|loaded| Rows(Arc::new(loaded))).map_err(|diagnostic| coded_error(py, &diagnostic))
+}
+
+/// Each named dataset's `Rows`, as the engine's own handles.
+fn dataset_handles(datasets: HashMap<String, Bound<'_, Rows>>) -> HashMap<String, Arc<LoadedRows>> {
+    datasets.into_iter().map(|(name, rows)| (name, rows.get().0.clone())).collect()
+}
+
+/// Render one chart to `(svg, warnings, natural_height)`. `layout_json` is the
+/// payload the `chart-renderer payload.json out.svg` CLI reads, minus `rows`,
+/// `datasets` and `schema`, which arrive as `rows` (the chart's own result) and
+/// `datasets` (every result by query name, the layers' beside `rows`'). The SVG
+/// has no trailing newline; each warning is a `{"code", "params"}` dict;
+/// `natural_height` is `RenderOutput.natural_height`. `fonts_dir` is used as
+/// given, so it must be absolute or relative to the process cwd. A refusal
+/// raises `RenderDiagnosticError` (a `ValueError`) with `.code` and `.params`;
+/// an engine gap carries code `ERR-ENGINE-REFUSED`. The GIL is released while
+/// rendering.
 #[pyfunction]
 fn render_chart<'py>(
     py: Python<'py>,
-    payload_json: &str,
+    rows: &Bound<'py, Rows>,
+    datasets: HashMap<String, Bound<'py, Rows>>,
+    layout_json: &str,
 ) -> PyResult<(String, Bound<'py, PyAny>, Option<f64>)> {
+    let rows = rows.get().0.clone();
+    let datasets = dataset_handles(datasets);
     // `Payload` holds a `RefCell` report, so it is built inside the detached
     // closure rather than moved across the GIL release.
     let output = py.detach(|| {
-        let payload: Payload = serde_json::from_str(payload_json)
-            .map_err(|e| Diagnostic::from(format!("parse payload: {e}")))?;
+        let payload = Payload::from_layout(layout_json, &rows, &datasets)?;
         let fonts = fonts_for(payload.fonts_dir.as_deref())?;
         render_measured(&payload, &fonts)
     });
@@ -86,15 +111,21 @@ fn render_chart<'py>(
 }
 
 /// How much of a pie its box lets it draw: `(mode, radius, free_radius,
-/// min_radius)` for the pie payload `render_chart` takes, decided by the same
-/// solve the render draws with (`pie_layout`). `mode` is `direct`, `hybrid` or
-/// `full_table`. A pie that cannot fit its box even bare raises
-/// `RenderDiagnosticError` like `render_chart`.
+/// min_radius)`, decided by the same solve the render draws with, over the same
+/// arguments as `render_chart`. `mode` is `direct`, `hybrid` or `full_table`. A
+/// pie that cannot fit its box even bare raises `RenderDiagnosticError` like
+/// `render_chart`.
 #[pyfunction]
-fn pie_layout(py: Python<'_>, payload_json: &str) -> PyResult<(String, f64, f64, Option<f64>)> {
+fn pie_layout<'py>(
+    py: Python<'py>,
+    rows: &Bound<'py, Rows>,
+    datasets: HashMap<String, Bound<'py, Rows>>,
+    layout_json: &str,
+) -> PyResult<(String, f64, f64, Option<f64>)> {
+    let rows = rows.get().0.clone();
+    let datasets = dataset_handles(datasets);
     let layout = py.detach(|| {
-        let payload: Payload = serde_json::from_str(payload_json)
-            .map_err(|e| Diagnostic::from(format!("parse payload: {e}")))?;
+        let payload = Payload::from_layout(layout_json, &rows, &datasets)?;
         let fonts = fonts_for(payload.fonts_dir.as_deref())?;
         chart_renderer::pie_layout(&payload, &fonts)
     });
@@ -103,14 +134,14 @@ fn pie_layout(py: Python<'_>, payload_json: &str) -> PyResult<(String, f64, f64,
 }
 
 /// The width a table needs to show every column, columns and outer padding
-/// only (`measure_natural_width`): `None` with nothing to hug. The payload is
-/// the table's resolved chart, its rows and `fonts_dir`. A table the engine
+/// only (`measure_natural_width`): `None` with nothing to hug. `layout_json` is
+/// the table's resolved chart and `fonts_dir`, `rows` its result. A table the engine
 /// cannot measure raises `RenderDiagnosticError` like `render_chart`.
 #[pyfunction]
-fn measure_table_natural_width(py: Python<'_>, payload_json: &str) -> PyResult<Option<f64>> {
+fn measure_table_natural_width<'py>(py: Python<'py>, rows: &Bound<'py, Rows>, layout_json: &str) -> PyResult<Option<f64>> {
+    let rows = rows.get().0.clone();
     let measured = py.detach(|| {
-        let payload: MeasurePayload = serde_json::from_str(payload_json)
-            .map_err(|e| Diagnostic::from(format!("parse payload: {e}")))?;
+        let payload = MeasurePayload::from_layout(layout_json, &rows)?;
         let fonts = fonts_for(payload.fonts_dir.as_deref())?;
         measure_natural_width(&payload, &fonts).map_err(Diagnostic::from)
     });
@@ -261,6 +292,8 @@ fn apply_case(lang: &str, text: &str, case: &str) -> PyResult<String> {
 
 #[pymodule]
 fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<Rows>()?;
+    m.add_function(wrap_pyfunction!(load_rows, m)?)?;
     m.add_function(wrap_pyfunction!(render_chart, m)?)?;
     m.add_function(wrap_pyfunction!(pie_layout, m)?)?;
     m.add_function(wrap_pyfunction!(measure_table_natural_width, m)?)?;

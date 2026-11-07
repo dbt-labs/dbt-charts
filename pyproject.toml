@@ -197,6 +197,7 @@ spark = [
 
 trino = [
     "trino>=0.334",
+    "requests>=2.32",
 ]
 
 athena = [
@@ -283,6 +284,7 @@ addopts = "--import-mode=importlib --maxprocesses=6 --dist=loadgroup"
 timeout = 60
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "postgres: needs a host `pg_ctl` for `pg_cluster`; applied by tests/conftest.py",
     "windows: opt-in — test asserted Windows-safe; the release-gating Windows subset is exactly `-m windows`",
     "docs_derived: computed from apps/docs/** content (e.g. DOCS_DIR); selected by docs.yml's docs lane, whose path filter — unlike the main test matrix — includes apps/docs/**",
 ]

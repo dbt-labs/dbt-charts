@@ -117,7 +117,7 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     // (`complete_ordinal_time_series`), so a month-end or off-anchor yearly date lands in its band
     // rather than matching none.
     if let Some((rekeyed, prefold_rows)) = rekey_to_enclosing_buckets(&r, &prepared)? {
-        r.prefold_rows = prefold_rows;
+        r.prefold_rows = prefold_rows.into();
         prepared = Cow::Owned(rekeyed);
     }
     // The value axis fits what a legend view draws; resolve baked its bounds and ladder off every row.

@@ -426,7 +426,6 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
                     chart_rows: payload.rows.as_slice(),
                     center_stack,
                     center_label_stack: whole_chart,
-                    share_cat_domain: mc.rows.is_some(),
                     cat_rows: if mc.rows.is_some() { chart_cat_rows } else { panel_cat_rows(all_panels.as_deref(), panel) },
                     color_one_to_one,
                     has_mirror,
@@ -466,6 +465,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
                         val_gutter: geom.val_gutter,
                         val_tick_size: geom.val_tick_size,
                         val_ticks: geom.val_ticks,
+                        val_label_ys: geom.val_label_ys,
                         val_tick_marks: geom.val_tick_marks,
                         ghost_labels: geom.ghost_labels,
                         mirror_style: Some(GhostStyle {

@@ -21,7 +21,10 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import get_execution_config
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.compile.models.source import LakeComputeTokenSource
+from dbt_charts.core.compile.models.source import (
+    LakeComputeTokenSource,
+    TrinoSourceConfig,
+)
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_UNKNOWN_RELATION,
     ERR_WAREHOUSE_CONNECTION,
@@ -43,8 +46,10 @@ from dbt_charts.core.execute.query_result import (
     resolve_effective_row_limit,
 )
 from dbt_charts.core.execute.run import execute_resolved
+from dbt_charts.core.text.time_zones import UTC, TimeZoneName
 
 _OPEN = "dbt_charts.core.execute.drivers.lakecompute.open_lakecompute"
+_TRINO_OPEN = "dbt_charts.core.execute.drivers.trino.open_trino"
 _CDN = "dbt_charts.core.execute.drivers.lakecompute.open_cdn_driver"
 _TABLE = pa.table({"Month": [1, 2], "n": [10, 20]})
 
@@ -101,13 +106,16 @@ def _source(**fields: Any) -> LakeComputeTokenSource:
 
 
 def _prepared(
-    sql: str = 'SELECT 1 AS "Month"', setup_sql: str | None = None
+    sql: str = 'SELECT 1 AS "Month"',
+    setup_sql: str | None = None,
+    time_zone: str = "UTC",
 ) -> ResolvedQuery:
     return ResolvedQuery(
         sql=sql,
         params=(),
         setup_sql=(setup_sql,) if setup_sql else (),
         limit=resolve_effective_row_limit(100),
+        time_zone=TimeZoneName(time_zone),
     )
 
 
@@ -141,6 +149,7 @@ def test_the_ceiling_overfetch_is_sliced_and_flagged(adapter: ExecEnv) -> None:
         params=(),
         setup_sql=(),
         limit=RowFetchLimit(fetch_limit=11, effective_limit=10, ceiling_binding=True),
+        time_zone=UTC,
     )
     with _opened(_Connection(table)):
         result = _run(adapter, prepared)
@@ -166,10 +175,99 @@ def test_setup_sql_runs_first_and_the_next_query_gets_a_fresh_session(
     with _opened(first, second) as opener:
         _run(adapter, _prepared(setup_sql="CREATE TEMP TABLE t AS SELECT 1"))
         _run(adapter, _prepared())
-    assert first.session_statements == ["CREATE TEMP TABLE t AS SELECT 1"]
+    assert first.session_statements == [
+        "SET TIME ZONE 'UTC'",
+        "CREATE TEMP TABLE t AS SELECT 1",
+    ]
     assert first.closed
     assert opener.call_count == 2
-    assert second.session_statements == []
+    assert second.session_statements == ["SET TIME ZONE 'UTC'"]
+
+
+def test_a_pooled_session_is_told_the_zone_only_when_it_changes(
+    adapter: ExecEnv,
+) -> None:
+    connection = _Connection()
+    with _opened(connection):
+        for zone in ("America/New_York", "America/New_York", "UTC"):
+            _run(adapter, _prepared(time_zone=zone))
+    assert connection.session_statements == [
+        "SET TIME ZONE 'America/New_York'",
+        "SET TIME ZONE 'UTC'",
+    ]
+
+
+class _ResettableDialect(LakeComputeDialect):
+    def session_reset_statements(self) -> tuple[str, ...]:
+        return ("DISCARD TEMP",)
+
+
+def test_a_setup_sql_that_may_change_the_zone_makes_the_next_query_resend_it(
+    adapter: ExecEnv,
+) -> None:
+    connection = _Connection()
+    with (
+        _opened(connection),
+        patch(
+            "dbt_charts.core.execute.backends.driver.get_dialect",
+            return_value=_ResettableDialect(),
+        ),
+    ):
+        _run(adapter, _prepared(setup_sql="SET TIME ZONE 'Asia/Tokyo'"))
+        _run(adapter, _prepared())
+    assert connection.session_statements == [
+        "SET TIME ZONE 'UTC'",
+        "SET TIME ZONE 'Asia/Tokyo'",
+        "DISCARD TEMP",
+        "SET TIME ZONE 'UTC'",
+    ]
+
+
+@pytest.fixture
+def trino_adapter(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> Generator[ExecEnv]:
+    registry = make_exec_env(
+        project=local_project(tmp_path),
+        backends=BackendRegistry({"trino": DriverBackend(max_workers=1)}),
+    )
+    yield registry
+    close_env(registry)
+
+
+def _run_trino(adapter: ExecEnv, zone: str) -> Any:
+    source = TrinoSourceConfig.model_validate(
+        {"type": "trino", "host": "h", "catalog": "c", "schema": "s", "user": "u"}
+    )
+    return _run(adapter, _prepared(time_zone=zone), source)
+
+
+def test_a_trino_session_is_reopened_in_the_zone_the_next_query_needs(
+    trino_adapter: ExecEnv,
+) -> None:
+    """The client sends its connect-time zone with every request, so a session
+    statement would be overridden by the next one."""
+    first, second = _Connection(), _Connection()
+    with patch(_TRINO_OPEN, side_effect=[first, second]) as opener:
+        for zone in ("America/New_York", "UTC"):
+            _run_trino(trino_adapter, zone)
+    assert [call.args[2] for call in opener.call_args_list] == [
+        "America/New_York",
+        "UTC",
+    ]
+    assert first.closed
+    assert first.session_statements == second.session_statements == []
+
+
+def test_a_trino_session_is_reused_while_the_zone_holds(
+    trino_adapter: ExecEnv,
+) -> None:
+    connection = _Connection()
+    with patch(_TRINO_OPEN, side_effect=[connection]) as opener:
+        for _ in range(2):
+            _run_trino(trino_adapter, "America/New_York")
+    assert opener.call_count == 1
+    assert not connection.closed
 
 
 def test_the_source_timeout_reaches_the_driver_as_its_own_option(

@@ -169,8 +169,8 @@ def test_duckdb_execution_does_not_leak_process_cwd_under_concurrency(
     conn_a = _BlockingConnection(a_entered, release=release_a)
     conn_b = _BlockingConnection(b_entered)
 
-    adapter_a.backend._pooled_connection = lambda _raw, _path: conn_a  # type: ignore[method-assign, assignment]
-    adapter_b.backend._pooled_connection = lambda _raw, _path: conn_b  # type: ignore[method-assign, assignment]
+    adapter_a.backend._pooled_connection = lambda _raw, _path, _zone: conn_a  # type: ignore[method-assign, assignment]
+    adapter_b.backend._pooled_connection = lambda _raw, _path, _zone: conn_b  # type: ignore[method-assign, assignment]
 
     def run_query(adapter: DuckDBRunner) -> None:
         result = adapter.execute(query)

@@ -23,6 +23,7 @@ from dbt_charts.core.compile import compile
 from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import Project
 from dbt_charts.core.render import render
+from dbt_charts.core.text.time_zones import UTC as BOARD_UTC
 
 from ..._results import rows_result
 from ..._run import Run, render_run
@@ -234,7 +235,7 @@ class TestDataFreshnessStamp:
         cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
         try:
             query = result.board.queries["q"]
-            key = compute_cache_key(query)
+            key = compute_cache_key(query, time_zone=BOARD_UTC)
             cache.put(*key, rows_result([{"n": 1}]), board_slug="test", query_name="q")
 
             rendered = render_run(

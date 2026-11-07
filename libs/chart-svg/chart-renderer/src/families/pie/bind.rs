@@ -665,10 +665,10 @@ fn bind_table(
         .with("name", identity_field.map_or(Ok(column_types::ColumnType::String), |f| declared(f))?)
         .with("value", declared(theta_field)?);
     let table_payload = Payload {
-        cell_text: Vec::new(),
+        cell_text: Default::default(),
         max_template_output_bytes: None,
         resolved: attached.clone(),
-        rows: table_rows,
+        rows: table_rows.into(),
         width: table_width,
         height: 0.0,
         background: payload.background.clone(),

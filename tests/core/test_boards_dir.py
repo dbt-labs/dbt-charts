@@ -595,3 +595,12 @@ def test_a_broken_config_leaves_the_default_project_readable(
 
     assert project.exists("charts/x.yml")
     assert project.read_text("charts/x.yml") == "title: Hello\n"
+
+
+@pytest.mark.parametrize(
+    ("relpath", "slug"),
+    [("charts/a.b.yml", "a.b"), ("charts/..yml", "."), ("charts/.yml", ".yml")],
+)
+def test_board_slug_strips_the_suffix_lexically(relpath: str, slug: str) -> None:
+    """Python 3.14 reads no suffix on ``..yml``; the slug must not depend on it."""
+    assert board_slug(relpath) == slug

@@ -67,7 +67,11 @@ class TestJsonGlob:
         mat = _mat(project)
 
         rows = mat.materialize_and_run(
-            source, "SELECT run, score FROM reports ORDER BY run", {}, "evals"
+            source,
+            "SELECT run, score FROM reports ORDER BY run",
+            {},
+            "evals",
+            time_zone="UTC",
         )[0]
 
         assert [r["run"] for r in rows] == ["a", "b"]
@@ -90,7 +94,11 @@ class TestJsonGlob:
         mat = _mat(project)
 
         rows = mat.materialize_and_run(
-            source, "SELECT run_id, pass_rate FROM reports ORDER BY run_id", {}, "evals"
+            source,
+            "SELECT run_id, pass_rate FROM reports ORDER BY run_id",
+            {},
+            "evals",
+            time_zone="UTC",
         )[0]
 
         assert [r["run_id"] for r in rows] == ["a", "b"]
@@ -105,7 +113,7 @@ class TestJsonGlob:
         mat = _mat(project)
 
         rows = mat.materialize_and_run(
-            source, "SELECT run_id FROM report", {}, "evals"
+            source, "SELECT run_id FROM report", {}, "evals", time_zone="UTC"
         )[0]
 
         assert len(rows) == 1
@@ -125,7 +133,7 @@ class TestJsonGlob:
         mat = _mat(project)
 
         rows = mat.materialize_and_run(
-            source, "SELECT n FROM reports ORDER BY n", {}, "evals"
+            source, "SELECT n FROM reports ORDER BY n", {}, "evals", time_zone="UTC"
         )[0]
 
         assert [r["n"] for r in rows] == [1, 2, 3]
@@ -137,7 +145,9 @@ class TestJsonGlob:
         mat = _mat(project)
 
         with pytest.raises(DbtChartsError, match="matched no files"):
-            mat.materialize_and_run(source, "SELECT * FROM reports", {}, "evals")
+            mat.materialize_and_run(
+                source, "SELECT * FROM reports", {}, "evals", time_zone="UTC"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +173,7 @@ class TestCsvGlob:
             "SELECT region, amount FROM sales ORDER BY amount",
             {},
             "sales_source",
+            time_zone="UTC",
         )[0]
 
         assert [r["region"] for r in rows] == ["North", "South"]
@@ -175,7 +186,9 @@ class TestCsvGlob:
         mat = _mat(project)
 
         with pytest.raises(DbtChartsError, match="matched no files"):
-            mat.materialize_and_run(source, "SELECT * FROM sales", {}, "sales_source")
+            mat.materialize_and_run(
+                source, "SELECT * FROM sales", {}, "sales_source", time_zone="UTC"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +213,9 @@ class TestGlobFanoutCap:
         mat = _mat(project)
 
         with pytest.raises(DbtChartsError, match=str(cap)):
-            mat.materialize_and_run(source, "SELECT * FROM reports", {}, "evals")
+            mat.materialize_and_run(
+                source, "SELECT * FROM reports", {}, "evals", time_zone="UTC"
+            )
 
     def test_at_cap_succeeds(self, in_memory_project: Any) -> None:
         """Exactly cap files is allowed."""
@@ -213,7 +228,7 @@ class TestGlobFanoutCap:
         mat = _mat(project)
 
         rows = mat.materialize_and_run(
-            source, "SELECT count(*) AS n FROM reports", {}, "evals"
+            source, "SELECT count(*) AS n FROM reports", {}, "evals", time_zone="UTC"
         )[0]
         assert rows[0]["n"] == cap
 
@@ -252,7 +267,9 @@ class TestFileSourceMaxTablesCap:
         monkeypatch.setattr(project, "read_bytes", _spy_read_bytes)
 
         with pytest.raises(DbtChartsError, match="3 tables"):
-            mat.materialize_and_run(source, "SELECT * FROM a", {}, "evals")
+            mat.materialize_and_run(
+                source, "SELECT * FROM a", {}, "evals", time_zone="UTC"
+            )
         assert read_calls == []
 
     def test_at_cap_succeeds(
@@ -269,7 +286,9 @@ class TestFileSourceMaxTablesCap:
         )
         mat = _mat(project)
 
-        rows = mat.materialize_and_run(source, "SELECT id FROM a", {}, "evals")[0]
+        rows = mat.materialize_and_run(
+            source, "SELECT id FROM a", {}, "evals", time_zone="UTC"
+        )[0]
         assert rows[0]["id"] == 1
 
     def test_project_config_cannot_raise_above_ceiling(
@@ -294,7 +313,9 @@ class TestFileSourceMaxTablesCap:
             mat = _mat(project)
 
             with pytest.raises(DbtChartsError, match="2 tables"):
-                mat.materialize_and_run(source, "SELECT * FROM a", {}, "evals")
+                mat.materialize_and_run(
+                    source, "SELECT * FROM a", {}, "evals", time_zone="UTC"
+                )
         finally:
             reset_config()
 
@@ -329,7 +350,9 @@ class TestFileSourceMaxBytesCap:
         mat = _mat(project)
 
         with pytest.raises(DbtChartsError, match="exceeding"):
-            mat.materialize_and_run(source, "SELECT * FROM big", {}, "evals")
+            mat.materialize_and_run(
+                source, "SELECT * FROM big", {}, "evals", time_zone="UTC"
+            )
 
     def test_under_cap_succeeds(
         self, in_memory_project: Any, monkeypatch: pytest.MonkeyPatch
@@ -340,7 +363,9 @@ class TestFileSourceMaxBytesCap:
         source = JsonSourceConfig(type="json", files={"small": "data/small.json"})
         mat = _mat(project)
 
-        rows = mat.materialize_and_run(source, "SELECT id FROM small", {}, "evals")[0]
+        rows = mat.materialize_and_run(
+            source, "SELECT id FROM small", {}, "evals", time_zone="UTC"
+        )[0]
         assert rows[0]["id"] == 1
 
     def test_project_config_cannot_raise_above_ceiling(
@@ -362,7 +387,9 @@ class TestFileSourceMaxBytesCap:
             mat = _mat(project)
 
             with pytest.raises(DbtChartsError, match="exceeding"):
-                mat.materialize_and_run(source, "SELECT * FROM big", {}, "evals")
+                mat.materialize_and_run(
+                    source, "SELECT * FROM big", {}, "evals", time_zone="UTC"
+                )
         finally:
             reset_config()
 
@@ -379,7 +406,9 @@ class TestFileSourceMaxBytesCap:
         source = JsonSourceConfig(type="json", files={"rows": "data/rows.json"})
         mat = _mat(project)
 
-        rows = mat.materialize_and_run(source, "SELECT id FROM rows", {}, "evals")[0]
+        rows = mat.materialize_and_run(
+            source, "SELECT id FROM rows", {}, "evals", time_zone="UTC"
+        )[0]
         assert rows[0]["id"] == 1
 
     def test_parquet_is_measured_from_its_footer_not_a_multiplier(
@@ -417,7 +446,9 @@ class TestFileSourceMaxBytesCap:
         )
         mat = _mat(project)
 
-        rows = mat.materialize_and_run(source, "SELECT id FROM events", {}, "evals")[0]
+        rows = mat.materialize_and_run(
+            source, "SELECT id FROM events", {}, "evals", time_zone="UTC"
+        )[0]
         assert len(rows) == 50
 
     def test_parquet_over_the_cap_by_measured_size_still_raises(
@@ -457,7 +488,9 @@ class TestFileSourceMaxBytesCap:
         mat = _mat(project)
 
         with pytest.raises(DbtChartsError, match="exceeding"):
-            mat.materialize_and_run(source, "SELECT * FROM events", {}, "evals")
+            mat.materialize_and_run(
+                source, "SELECT * FROM events", {}, "evals", time_zone="UTC"
+            )
 
     def test_parquet_and_csv_of_the_same_rows_are_measured_alike(
         self,
@@ -496,6 +529,7 @@ class TestFileSourceMaxBytesCap:
             "SELECT id FROM events",
             {},
             "evals",
+            time_zone="UTC",
         )[0]
         parquet_rows = _mat(project).materialize_and_run(
             ParquetSourceConfig(
@@ -504,6 +538,7 @@ class TestFileSourceMaxBytesCap:
             "SELECT id FROM events",
             {},
             "evals",
+            time_zone="UTC",
         )[0]
 
         assert len(csv_rows) == len(parquet_rows) == 2_000
@@ -540,7 +575,9 @@ class TestFileSourceMaxBytesCap:
         mat = _mat(project)
 
         with pytest.raises(DbtChartsError) as excinfo:
-            mat.materialize_and_run(source, "SELECT * FROM events", {}, "evals")
+            mat.materialize_and_run(
+                source, "SELECT * FROM events", {}, "evals", time_zone="UTC"
+            )
 
         message = str(excinfo.value)
         assert "file_source_max_bytes" not in message
@@ -568,7 +605,9 @@ class TestGlobColumnConsistency:
         mat = _mat(project)
 
         with pytest.raises(DbtChartsError, match="on column names or types"):
-            mat.materialize_and_run(source, "SELECT * FROM reports", {}, "evals")
+            mat.materialize_and_run(
+                source, "SELECT * FROM reports", {}, "evals", time_zone="UTC"
+            )
 
     def test_mismatched_columns_second_has_extra(self, in_memory_project: Any) -> None:
         """Error message names both the offending file and the differing columns."""
@@ -583,7 +622,9 @@ class TestGlobColumnConsistency:
         mat = _mat(project)
 
         with pytest.raises(DbtChartsError, match="bonus"):
-            mat.materialize_and_run(source, "SELECT * FROM reports", {}, "evals")
+            mat.materialize_and_run(
+                source, "SELECT * FROM reports", {}, "evals", time_zone="UTC"
+            )
 
     def test_mismatched_csv_columns_names_the_difference(
         self, in_memory_project: Any
@@ -599,7 +640,9 @@ class TestGlobColumnConsistency:
         mat = _mat(project)
 
         with pytest.raises(DbtChartsError) as excinfo:
-            mat.materialize_and_run(source, "SELECT * FROM sales", {}, "sales_source")
+            mat.materialize_and_run(
+                source, "SELECT * FROM sales", {}, "sales_source", time_zone="UTC"
+            )
         message = str(excinfo.value)
         assert "Extra: ['bonus']" in message
         assert "Missing: ['amount']" in message
@@ -617,7 +660,11 @@ class TestGlobColumnConsistency:
         mat = _mat(project)
 
         rows = mat.materialize_and_run(
-            source, "SELECT region, amount FROM sales", {}, "sales_source"
+            source,
+            "SELECT region, amount FROM sales",
+            {},
+            "sales_source",
+            time_zone="UTC",
         )[0]
 
         assert rows == [{"region": "North", "amount": 100}]
@@ -635,7 +682,11 @@ class TestGlobColumnConsistency:
         mat = _mat(project)
 
         rows = mat.materialize_and_run(
-            source, "SELECT id, score FROM reports ORDER BY id", {}, "evals"
+            source,
+            "SELECT id, score FROM reports ORDER BY id",
+            {},
+            "evals",
+            time_zone="UTC",
         )[0]
         assert [r["id"] for r in rows] == [1, 2]
 

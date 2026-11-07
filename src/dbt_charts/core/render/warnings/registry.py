@@ -87,6 +87,7 @@ import dbt_charts.core.render.warnings.table_content_taller_than_wide as table_c
 import dbt_charts.core.render.warnings.table_header_extra_wrap as table_header_extra_wrap
 import dbt_charts.core.render.warnings.table_numeric_align_left as table_numeric_align_left
 import dbt_charts.core.render.warnings.table_page_squeezed as table_page_squeezed
+import dbt_charts.core.render.warnings.table_scroll_rows_capped as table_scroll_rows_capped
 import dbt_charts.core.render.warnings.table_text_truncated as table_text_truncated
 import dbt_charts.core.render.warnings.temporal_single_point as temporal_single_point
 import dbt_charts.core.render.warnings.too_many_color_categories as too_many_color_categories
@@ -139,6 +140,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     table_header_extra_wrap,
     table_numeric_align_left,
     table_page_squeezed,
+    table_scroll_rows_capped,
     table_text_truncated,
     value_labels_crowd_width,
     value_labels_no_markers,

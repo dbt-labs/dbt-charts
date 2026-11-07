@@ -31,6 +31,7 @@ from dbt_charts.core.compile.models.style.authored import (
     AxisLabelStylePatch,
     AxisTicksStylePatch,
     AxisXStylePatch,
+    AxisYLabelStylePatch,
     AxisYStylePatch,
     BandAxisStylePatch,
     BarChartStylePatch,
@@ -105,7 +106,7 @@ class TestChartLocalAxisYMerge:
 
     def test_label_padding_propagates(self) -> None:
         patch = BarChartStylePatch(
-            axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(padding=42))
+            axis_y=AxisYStylePatch(labels=AxisYLabelStylePatch(padding=42))
         )
         result = build_chart_style_context(
             _board(), BarChart(id="t", type="bar", style=patch)
@@ -141,7 +142,7 @@ class TestChartLocalAxisYMerge:
 
     def test_format_propagates(self) -> None:
         patch = BarChartStylePatch(
-            axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="$,.0f"))
+            axis_y=AxisYStylePatch(labels=AxisYLabelStylePatch(format="$,.0f"))
         )
         result = build_chart_style_context(
             _board(), BarChart(id="t", type="bar", style=patch)
@@ -153,7 +154,7 @@ class TestChartLocalAxisYMerge:
 
     def test_axis_y_does_not_leak_to_axis_x(self) -> None:
         patch = BarChartStylePatch(
-            axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(padding=42))
+            axis_y=AxisYStylePatch(labels=AxisYLabelStylePatch(padding=42))
         )
         board = _board()
         result = build_chart_style_context(
@@ -456,7 +457,7 @@ class TestChartTypeAxisAlignCascade:
 
     def test_heatmap_axis_y_label_align_propagates_via_chart_type_patch(self) -> None:
         board = _board()
-        align_patch = AxisYStylePatch(labels=AxisLabelStylePatch(align="inward"))
+        align_patch = AxisYStylePatch(labels=AxisYLabelStylePatch(align="inward"))
         custom_heatmap = board.heatmap.model_copy(update={"axis_y": align_patch})
         custom_charts = dataclasses.replace(board, heatmap=custom_heatmap)
 
@@ -795,7 +796,7 @@ class TestRendererReadsNoPatch:
             x="a",
             y="b",
             style=BarChartStylePatch(
-                axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(padding=42))
+                axis_y=AxisYStylePatch(labels=AxisYLabelStylePatch(padding=42))
             ),
         )
         resolved = resolve(chart, [{"a": "x", "b": 1}], chart_style_context=_board())
@@ -1121,7 +1122,7 @@ class TestAxisFormatPropagation:
         theme = get_theme_style()
         family = getattr(theme.charts, chart_type).model_copy(
             update={
-                "axis_y": AxisYStylePatch(labels=AxisLabelStylePatch(format=",.2f"))
+                "axis_y": AxisYStylePatch(labels=AxisYLabelStylePatch(format=",.2f"))
             }
         )
         board = resolve_chart_style_context(

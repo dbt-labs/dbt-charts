@@ -679,7 +679,7 @@ fn value_labels(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
         let rows = if layer.query_name == facts.query_name {
             Some(payload.rows.as_slice())
         } else {
-            layer.query_name.as_deref().and_then(|n| payload.datasets.as_ref()?.get(n)).map(Vec::as_slice)
+            layer.query_name.as_deref().and_then(|n| payload.datasets.as_ref()?.get(n)).map(|rows| rows.as_slice())
         };
         let source = format!("overlay layer {index} ({}, query={})", layer.kind, py_repr(&json!(layer.query_name)));
         for field in layer.label_slots().into_iter().filter_map(|slot| slot.field.as_deref()) {

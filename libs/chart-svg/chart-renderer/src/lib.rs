@@ -15,8 +15,11 @@ pub(crate) mod placement;
 pub mod font_normalize;
 pub mod frame;
 pub mod href;
+pub mod knockout;
 pub mod labels_expr;
 pub(crate) mod legend_view;
+pub mod loaded_rows;
+pub use column_types::SharedRows;
 pub mod payload_schema;
 pub mod pattern;
 pub mod prose;
@@ -37,6 +40,7 @@ pub mod tree;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use diagnostic::{codes, Diagnostic, RenderOutput};
 use scene::{Attrs, Chars, Escape, Node, Role, Run, Shape};
@@ -388,7 +392,7 @@ pub struct VariableOptions {
 #[serde(remote = "Self")]
 pub struct Payload {
     pub resolved: Value,
-    pub rows: Vec<serde_json::Map<String, Value>>,
+    pub rows: SharedRows,
     pub width: f64,
     pub height: f64,
     pub background: Option<String>,
@@ -432,7 +436,7 @@ pub struct Payload {
     /// specs) — only a family's own layers arm reads it, and only when a
     /// layer authors a differing `query_name`.
     #[serde(default)]
-    pub datasets: Option<HashMap<String, Vec<serde_json::Map<String, Value>>>>,
+    pub datasets: Option<HashMap<String, SharedRows>>,
     /// The declared type of each column of `rows` and of each dataset; read
     /// through `PayloadSchema::get`, which errors on an undeclared column.
     pub schema: payload_schema::PayloadSchema,
@@ -502,13 +506,13 @@ pub struct Payload {
     /// The `str()` text of each cell the wire tagged (a Decimal, a non-finite
     /// value) in `rows`, by row and column; filled when the payload is parsed.
     #[serde(skip)]
-    pub cell_text: ::bind::rows::CellText,
+    pub cell_text: Arc<::bind::rows::CellText>,
 }
 
 impl Payload {
     /// The query returned no rows, in the chart's own dataset and every other.
     pub(crate) fn is_empty_result(&self) -> bool {
-        self.rows.is_empty() && self.datasets.as_ref().is_none_or(|sets| sets.values().all(Vec::is_empty))
+        self.rows.is_empty() && self.datasets.as_ref().is_none_or(|sets| sets.values().all(|rows| rows.is_empty()))
     }
 
     /// This payload with its rows declared as `row_types`.
@@ -518,7 +522,8 @@ impl Payload {
     }
 
     /// This payload over `resolved` and `rows`, without copying the ones it replaces.
-    pub(crate) fn with_inputs(&self, resolved: Value, rows: Vec<serde_json::Map<String, Value>>) -> Payload {
+    pub(crate) fn with_inputs(&self, resolved: Value, rows: impl Into<SharedRows>) -> Payload {
+        let rows = rows.into();
         let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, variable_options, filter_variables, interactive_controls, link_context, datasets, schema, geometries, measuring, title_shift, is_placeholder, pie_mode, board_composed, authored_height, placement, max_template_output_bytes, cell_text } = self;
         Payload {
             resolved,
@@ -630,7 +635,7 @@ impl<'de> Deserialize<'de> for Payload {
             .map_err(serde::de::Error::custom)?;
         #[cfg(not(test))]
         let mut payload = Payload::deserialize(deserializer)?;
-        payload.cell_text = ::bind::rows::decode_cells(&mut payload.rows).map_err(serde::de::Error::custom)?;
+        payload.cell_text = Arc::new(::bind::rows::decode_cells(&mut payload.rows).map_err(serde::de::Error::custom)?);
         for rows in payload.datasets.iter_mut().flat_map(HashMap::values_mut) {
             ::bind::rows::decode_cells(rows).map_err(serde::de::Error::custom)?;
         }
@@ -695,10 +700,10 @@ fn render_in_scope(
     };
     let needs = labels_expr::needs(&payload.resolved);
     if needs.scales {
-        labels_expr::view::render_passes(&payload.rows, draw)
+        labels_expr::render_passes(&payload.rows, draw)
     } else if needs.data {
-        let _open = labels_expr::view::enter();
-        labels_expr::view::set_rows(&payload.rows)?;
+        let _open = labels_expr::enter();
+        ::layout::labels_expr::view::set_rows(&payload.rows)?;
         draw()
     } else {
         draw()

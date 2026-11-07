@@ -1,0 +1,3 @@
+kind: Fixes
+body: '`dct cloud` output calls the two branches the repository branch and the dbtcharts.com branch instead of trunk and work branch.'
+time: 2026-11-03T20:01:16.084764-09:00

@@ -35,7 +35,7 @@ from dbt_charts.core.render.chart.x_domain_paint_order import (
     XDomainPaintOrder,
     collect_x_domain_paint_orders,
 )
-from dbt_charts.core.render.engine import _render_payload, build_chart_payload
+from dbt_charts.core.render.engine import _render_payload, build_chart_layout
 
 from ..._results import rows_result
 from .test_engine import _BOARD_CTX, _BOARD_RS, _native
@@ -180,9 +180,8 @@ def test_layer_x_values_the_base_does_not_order_land_in_the_paint_order_sink() -
         base,
         chart_style_context=_BOARD_CTX,
     )
-    payload = build_chart_payload(
+    layout = build_chart_layout(
         chart,
-        {"q": rows_result(base), "p": rows_result(projected)},
         width=600.0,
         height=320.0,
         padding=None,
@@ -192,7 +191,11 @@ def test_layer_x_values_the_base_does_not_order_land_in_the_paint_order_sink() -
         is_placeholder=False,
     )
     with _sinks() as sinks:
-        _render_payload(payload)
+        _render_payload(
+            layout,
+            rows_result(base),
+            {"q": rows_result(base), "p": rows_result(projected)},
+        )
     assert sinks.paint_orders == {
         "c1": XDomainPaintOrder(x_field="month", layer_only=("Feb", "Apr", "Jun"))
     }

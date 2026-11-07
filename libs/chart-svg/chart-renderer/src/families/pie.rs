@@ -2179,6 +2179,22 @@ mod tests {
             .collect()
     }
 
+    /// A slice's canvas-colored stroke is a mask over the wedges, not paint: the slices read the
+    /// same on the canvas, and nothing under a slice shows a rim.
+    #[test]
+    fn slices_knock_their_canvas_stroke_out_with_a_mask() {
+        let mut p = legend_pie_payload("right", "start", "vertical");
+        // The border is the canvas it sits on, which a transparent chart background is not.
+        p["resolved"]["background"] = json!("transparent");
+        p["resolved"]["canvas"] = json!("#FFFFFF");
+        let svg = render(&make_payload(p), &test_fonts()).unwrap();
+        assert!(!svg.contains("stroke=\"#FFFFFF\" stroke-width=\"3\""), "no slice keeps its stroke: {svg}");
+        assert_eq!(svg.matches("<mask ").count(), 1, "{svg}");
+        assert_eq!(svg.matches("mask=\"url(#").count(), 1, "{svg}");
+        assert!(svg.contains("id=\"ko0-"), "{svg}");
+        assert!(!svg.contains("knockout-undercoat"), "the canvas is all that is under a slice: {svg}");
+    }
+
     /// Entries are the color scale's domain in row order, each swatch the scale's own color for that
     /// value, stroked in the slice mark's own stroke color
     /// (`encode.ts` `symbols`: the mark's `stroke` flows to the legend

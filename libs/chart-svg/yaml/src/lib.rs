@@ -53,6 +53,7 @@
 mod build;
 mod errors;
 mod key;
+pub mod markdown;
 mod node;
 mod resolve;
 
@@ -62,10 +63,7 @@ pub use node::{Entry, KeyKind, Kind, Node, Span, Value};
 
 /// Parses one YAML document into a [`Node`] whose root is a mapping.
 pub fn parse_node(text: &str) -> Result<Node, Vec<Diagnostic>> {
-    let tree = StringNode::from_str(text).map_err(|e| vec![load_error(text, &e)])?;
-    let root = build::Builder::new(text)
-        .node(&tree, 0)
-        .map_err(|d| vec![d])?;
+    let root = parse_any(text)?;
     match &root.kind {
         Kind::Map(_) => Ok(root),
         Kind::Scalar(Value::Null) => Err(vec![errors::empty()]),
@@ -74,6 +72,16 @@ pub fn parse_node(text: &str) -> Result<Node, Vec<Diagnostic>> {
             python_type(other)
         ))]),
     }
+}
+
+/// Parses one YAML document into a [`Node`] of any kind: the reader of an embedded document, such
+/// as a Markdown fence, that may hold a bare string. The refusals of [`parse_node`] except those of a
+/// root that is not a mapping.
+pub fn parse_any(text: &str) -> Result<Node, Vec<Diagnostic>> {
+    let tree = StringNode::from_str(text).map_err(|e| vec![load_error(text, &e)])?;
+    build::Builder::new(text)
+        .node(&tree, 0)
+        .map_err(|d| vec![d])
 }
 
 fn python_type(kind: &Kind) -> &'static str {

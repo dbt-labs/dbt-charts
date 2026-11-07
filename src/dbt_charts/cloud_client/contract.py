@@ -356,7 +356,7 @@ class BoardSummary(ContractModel):
         description=(
             "Full SHA of the commit whose tree that render read the board "
             "from, in Cloud's own copy of the repository -- on a project "
-            "edited in Cloud that is a work-branch commit, not one the "
+            "edited in Cloud that is a dbtcharts.com branch commit, not one the "
             "caller has locally. It advances when the board's own content "
             "changes, not on every commit: a board a push did not touch is "
             "not normally re-rendered, so it keeps the commit it was last "
@@ -385,8 +385,10 @@ class ProjectSummary(ContractModel):
     repo_label: str = Field(
         description="Credential-free label for the repo the boards come from."
     )
-    trunk_branch: str = Field(description="Branch Cloud pulls from.")
-    work_branch: str = Field(description="Branch Cloud commits edits to.")
+    trunk_branch: str = Field(description="Repository branch Cloud pulls from.")
+    work_branch: str = Field(
+        description="dbtcharts.com branch, where Cloud commits edits."
+    )
     git_subdirectory: str = Field(
         description="Path to the dbt project inside the repo; empty for the root."
     )
@@ -618,7 +620,9 @@ class ProjectStatus(ContractModel):
 
     slug: str = Field(description="URL-safe project identifier.")
     stage: SetupStage = Field(description="This project's own setup stage.")
-    synced: bool = Field(description="Whether the trunk branch has completed a sync.")
+    synced: bool = Field(
+        description="Whether the repository branch has completed a sync."
+    )
     unmapped_source_count: int = Field(
         description=(
             "Declared sources with no connection behind them yet. 0 and "

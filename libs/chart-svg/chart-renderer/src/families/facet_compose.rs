@@ -356,6 +356,9 @@ pub(crate) struct PanelGeometry {
     /// captured regardless of whether THIS panel paints them — the composer
     /// repaints them on whichever panel/edge ends up drawing the axis.
     pub(crate) val_ticks: Vec<(f64, String)>,
+    /// The y the primary axis paints each of `val_ticks`' labels at: its tick's own y, or on an above-gridline axis the
+    /// baseline a fixed gap over the rule it sits on. A ghost's gridlines keep `val_ticks`' rows.
+    pub(crate) val_label_ys: Vec<f64>,
     /// The mirror ghost's own label for each of `val_ticks` when its format
     /// relabels them; empty when the ghost repeats the primary's.
     pub(crate) ghost_labels: Vec<String>,
@@ -412,6 +415,27 @@ fn ghost_label(style: &GhostStyle, anchor: &str, at: (f64, f64), label: &str) ->
             .set("fill", style.val_color.as_str()),
         label,
     )
+}
+
+/// The rows a mirror ghost's gridlines take, and its above-gridline labels sit on: the pixel row of each tick whose
+/// label would paint at `ys` unlifted.
+fn ghost_rows(ys: impl Iterator<Item = f64>, style: &GhostStyle) -> Vec<f64> {
+    let rise = measure::baseline_shift("bottom", style.val_font_size);
+    ys.map(|y| (y - rise - 0.5).round() + 0.5).collect()
+}
+
+/// The gridlines a mirror ghost's above-gridline labels sit on, running from the plot edge `plot_x` out to
+/// the labels' outer edge `outer_x`: the panels' own rules stop at their plot.
+fn ghost_gridlines(grid: &crate::common::AxisGrid, rows: &[f64], plot_x: f64, outer_x: f64) -> Result<Node, String> {
+    let color = crate::common::required_ink(grid.color.as_deref(), "facet", "axis_y.grid.color")?;
+    let width = grid.width.unwrap_or(1.5);
+    Ok(crate::contract::grid_group(rows.iter().map(|&row| crate::contract::rule(Role::Grid, (outer_x, row), (plot_x, row), color, width)).collect()))
+}
+
+/// The y a mirror ghost label paints at for the tick whose unlifted label y is `y`: above its gridline's row, a fixed
+/// gap over the gridline's top edge, else `y`.
+fn ghost_label_y(above: bool, row: f64, y: f64, style: &GhostStyle) -> f64 {
+    if above { crate::common::above_label_y(&[], row, 0.0, style.val_font_size) } else { y }
 }
 
 /// The labels a panel's mirror ghost paints: its own relabeling, else the primary's.
@@ -473,10 +497,11 @@ pub(crate) fn union_embedded_label_ink(
     ink: &mut vega_fit::Bounds,
     label_y: f64,
     font_size: f64,
+    baseline: &str,
     plot: (f64, f64, f64, f64),
 ) {
     let (left, top, right, bottom) = plot;
-    let label_ink = vega_fit::text_ink(0.0, label_y, 0.0, font_size, "right", "middle");
+    let label_ink = vega_fit::text_ink(0.0, label_y, 0.0, font_size, "right", baseline);
     if label_ink.y2 > bottom {
         ink.union(&vega_fit::Bounds::new(left, bottom, right, label_ink.y2));
     }
@@ -1576,6 +1601,7 @@ fn compose_facet_at(
     // The paint itself reads the SAME resolved style the primary painted
     // with, carried on `PanelGeometry`, rather than a second, independent
     // read of the axis style.
+    let above = spec.axis_y.labels_above();
     if ghost_left {
         for row_i in 0..panel_rows_n {
             let slot = row_i * panel_cols_n;
@@ -1587,20 +1613,27 @@ fn compose_facet_at(
                 .mirror_style
                 .as_ref()
                 .expect("has_mirror: true requires every panel to supply its own mirror_style");
-            let mut ink: Vec<Node> = geom
-                .val_ticks
+            let (anchor, label_x) = if above { ("start", ghost_x - widest_of(geom)?) } else { ("end", ghost_x) };
+            let ys: Vec<f64> = geom.val_ticks.iter().map(|(abs_y, _)| canvas_y(dy, geom) + abs_y).collect();
+            let rows = ghost_rows(ys.iter().copied(), style);
+            let mut ink: Vec<Node> = ys
                 .iter()
+                .zip(&rows)
                 .zip(ghost_texts(geom))
-                .map(|((abs_y, _), label)| ghost_label(style, "end", (ghost_x, canvas_y(dy, geom) + abs_y), label))
+                .map(|((&y, &row), label)| ghost_label(style, anchor, (label_x, ghost_label_y(above, row, y, style)), label))
                 .collect();
-            ink.extend(crate::common::value_ticks(
-                &spec.axis_y.ticks,
-                geom.val_tick_marks.iter().map(|mark_y| canvas_y(dy, geom) + mark_y),
-                canvas_x(dx, geom) + 0.5,
-                -1.0,
-                geom.val_tick_size,
-                &[],
-            )?);
+            if above {
+                body.push(ghost_gridlines(&spec.axis_y.grid, &rows, plot_x(dx) + 0.5, label_x)?);
+            } else {
+                ink.extend(crate::common::value_ticks(
+                    &spec.axis_y.ticks,
+                    geom.val_tick_marks.iter().map(|mark_y| canvas_y(dy, geom) + mark_y),
+                    canvas_x(dx, geom) + 0.5,
+                    -1.0,
+                    geom.val_tick_size,
+                    &[],
+                )?);
+            }
             if let Some((text, title_style)) = spec.left_title {
                 ink.extend(crate::common::axis_title_rotated(
                     text,
@@ -1641,7 +1674,8 @@ fn compose_facet_at(
             ink.extend(
                 geom.val_ticks
                     .iter()
-                    .map(|(abs_y, label)| ghost_label(style, axis.label_anchor, (canvas_x(dx, geom) + axis.placed(geom).1, canvas_y(dy, geom) + abs_y), label)),
+                    .zip(&geom.val_label_ys)
+                    .map(|((_, label), label_y)| ghost_label(style, axis.label_anchor, (canvas_x(dx, geom) + axis.placed(geom).1, canvas_y(dy, geom) + label_y), label)),
             );
             ink.extend(crate::common::axis_title_rotated(
                 axis.title,
@@ -1760,19 +1794,31 @@ fn compose_facet_at(
                 .as_ref()
                 .expect("has_mirror: true requires every panel to supply its own mirror_style");
             let anchor_x = plot_x(dx) + panel_w + row_footer_overhang;
-            let mut ink: Vec<Node> = geom
-                .val_ticks
+            let (anchor, label_x) = if above {
+                ("end", anchor_x + 0.5 + primary_reserve + geom.widest_val_tick_label_width)
+            } else {
+                ("start", anchor_x + 0.5 + primary_reserve)
+            };
+            let ys: Vec<f64> = geom.val_ticks.iter().map(|(abs_y, _)| canvas_y(dy, geom) + abs_y).collect();
+            let rows = ghost_rows(ys.iter().copied(), style);
+            let mut ink: Vec<Node> = ys
                 .iter()
-                .map(|(abs_y, label)| ghost_label(style, "start", (anchor_x + 0.5 + primary_reserve, canvas_y(dy, geom) + abs_y), label))
+                .zip(&rows)
+                .zip(&geom.val_ticks)
+                .map(|((&y, &row), (_, label))| ghost_label(style, anchor, (label_x, ghost_label_y(above, row, y, style)), label))
                 .collect();
-            ink.extend(crate::common::value_ticks(
-                &spec.axis_y.ticks,
-                geom.val_tick_marks.iter().map(|mark_y| canvas_y(dy, geom) + mark_y),
-                anchor_x + 0.5,
-                1.0,
-                geom.val_tick_size,
-                &[],
-            )?);
+            if above {
+                body.push(ghost_gridlines(&spec.axis_y.grid, &rows, plot_x(dx) + panel_w + 0.5, label_x)?);
+            } else {
+                ink.extend(crate::common::value_ticks(
+                    &spec.axis_y.ticks,
+                    geom.val_tick_marks.iter().map(|mark_y| canvas_y(dy, geom) + mark_y),
+                    anchor_x + 0.5,
+                    1.0,
+                    geom.val_tick_size,
+                    &[],
+                )?);
+            }
             body.extend(crate::contract::axis_group(
                 crate::contract::AxisChannel::Y,
                 &style.caption.untitled(),

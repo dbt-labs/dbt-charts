@@ -27,7 +27,7 @@ from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.normalized import AreaChart, BarChart
 from dbt_charts.core.compile.models.style.authored import (
-    AxisLabelStylePatch,
+    AxisYLabelStylePatch,
     AxisYStylePatch,
     BarChartStylePatch,
 )
@@ -1118,7 +1118,7 @@ def test_end_to_end_authored_alias_bakes_plain_digits_through_real_resolve():
 
     board = resolve_chart_style_context(get_theme_style())
     patch = BarChartStylePatch(
-        axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="currency"))
+        axis_y=AxisYStylePatch(labels=AxisYLabelStylePatch(format="currency"))
     )
     chart = BarChart(id="t", type="bar", x="month", y="revenue", style=patch)
     resolved = resolve(chart, _NON_COMPACTING_BAR_DATA, chart_style_context=board)
@@ -1176,7 +1176,7 @@ def test_end_to_end_authored_alias_right_edge_splits_prefix():
     patch = LineChartStylePatch(
         axis_y=AxisYStylePatch(
             position="right",
-            labels=AxisLabelStylePatch(format="currency"),
+            labels=AxisYLabelStylePatch(format="currency"),
         )
     )
     # Numeric x so the line chart resolves y as the measure axis.
@@ -1204,7 +1204,7 @@ def test_end_to_end_literal_authored_format_is_not_baked_through_real_resolve():
     must not get the plain-digit bake."""
     board = resolve_chart_style_context(get_theme_style())
     patch = BarChartStylePatch(
-        axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="$~s"))
+        axis_y=AxisYStylePatch(labels=AxisYLabelStylePatch(format="$~s"))
     )
     chart = BarChart(id="t", type="bar", x="month", y="revenue", style=patch)
     resolved = resolve(chart, _NON_COMPACTING_BAR_DATA, chart_style_context=board)
@@ -1925,7 +1925,7 @@ def test_end_to_end_inline_si_spec_builds_ruler_on_an_end_anchored_edge() -> Non
     board = resolve_chart_style_context(get_theme_style())
     patch = LineChartStylePatch(
         axis_y=AxisYStylePatch(
-            position="left", labels=AxisLabelStylePatch(format=".2s")
+            position="left", labels=AxisYLabelStylePatch(format=".2s")
         )
     )
     data = [
@@ -2062,7 +2062,7 @@ def test_end_to_end_percent_alias_bakes_plain_percent_ticks_through_real_resolve
     """
     board = resolve_chart_style_context(get_theme_style())
     patch = BarChartStylePatch(
-        axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="percent"))
+        axis_y=AxisYStylePatch(labels=AxisYLabelStylePatch(format="percent"))
     )
     data = [
         {"month": "Jan", "revenue": 0.1},

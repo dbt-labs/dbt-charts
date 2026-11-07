@@ -47,6 +47,7 @@ from dbt_charts.core.compile.models.style.theme import (
     AxisTicksStyle,
     AxisTitleStyle,
     AxisXStyle,
+    AxisYLabelStyle,
     AxisYStyle,
     BandAnnotationStyle,
     BandAxisStyle,
@@ -150,6 +151,7 @@ AxisLineStylePatch = build_patch_model(AxisLineStyle)
 AxisTitleStylePatch = build_patch_model(AxisTitleStyle)
 AxisLabelStylePatch = build_patch_model(AxisLabelStyle)
 DimensionLabelStylePatch = build_patch_model(DimensionLabelStyle)
+AxisYLabelStylePatch = build_patch_model(AxisYLabelStyle)
 
 
 # ── Axis variant patches ──────────────────────────────────────────────────────

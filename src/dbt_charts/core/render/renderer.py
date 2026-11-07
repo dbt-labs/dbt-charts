@@ -140,7 +140,11 @@ from dbt_charts.core.render.contrast_warning import (
     ContrastRecord,
     collect_contrast_warnings,
 )
-from dbt_charts.core.render.controls import interactive_controls
+from dbt_charts.core.render.controls import (
+    flat_export,
+    interactive_controls,
+    is_flat_export,
+)
 from dbt_charts.core.render.converters import to_html, to_pdf, to_png
 from dbt_charts.core.render.errors import (
     FormatError,
@@ -1152,6 +1156,8 @@ def _render(
             collect_contrast_warnings() as _contrast_warnings,
             collect_painted_italic_families(),
             interactive_controls(options.get("controls", False)),
+            # A host converting an SVG to an image itself opens this scope.
+            flat_export(format in ("png", "pdf") or is_flat_export()),
         ):
             # No board_variables() scope here: render_board_svg opens its own
             # (boards.py), which also covers dct artifact render's replay

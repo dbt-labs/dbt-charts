@@ -283,9 +283,10 @@ class TestSetupSqlConnectionSharing:
         # Pool names the connection by thread id; assert it starts with the pool prefix.
         conn_name = mock_adapter.connection_named.call_args[0][0]
         assert conn_name.startswith("dbt_charts_pool_"), conn_name
-        # Two execute() calls: one at connection setup (timeout SQL), then one
-        # combined SQL with the CREATE TEMP FUNCTION and main SELECT.
-        assert mock_adapter.execute.call_count == 2
+        # Three execute() calls: the timeout SQL at connection setup, the
+        # session zone, then one combined SQL with the CREATE TEMP FUNCTION and
+        # main SELECT.
+        assert mock_adapter.execute.call_count == 3
         sent_sql = mock_adapter.execute.call_args[0][0]  # last call = combined query
         assert "CREATE TEMP FUNCTION my_fn" in sent_sql
         # The row-limit ceiling never rewrites SQL text (bounds the driver's

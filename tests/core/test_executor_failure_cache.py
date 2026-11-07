@@ -24,6 +24,7 @@ from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 from dbt_charts.core.execute.lookup import Ledger, memo_key
 from dbt_charts.core.execute.query_result import QueryResult
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+from dbt_charts.core.text.time_zones import UTC as BOARD_UTC
 
 from .._results import rows_result, rows_schema
 from .._run import Run
@@ -233,7 +234,7 @@ class TestDbtChartsErrorNotCached:
             # Confirm nothing was stored as this key's outcome
             q = result.board.queries["good_query"]
             source_hash, query_hash, variables_hash = compute_cache_key(
-                q, None, result.board.sources
+                q, None, result.board.sources, time_zone=BOARD_UTC
             )
             assert cache.get(source_hash, query_hash, variables_hash) is None
 
@@ -348,7 +349,9 @@ class TestInMemoryErrorShortCircuitsResultCache:
 
         # Simulate: query succeeded, result is in _cache…
         query = executor.board.queries["good_query"]
-        cache_key = compute_cache_key(query, None, executor.board.sources)
+        cache_key = compute_cache_key(
+            query, None, executor.board.sources, time_zone=BOARD_UTC
+        )
         valid_rows = [{"name": "acme-marker-001"}]
         # The memo is keyed by content *plus* the asking query's policy, so seed
         # it through the production key builder — a raw content key would land in

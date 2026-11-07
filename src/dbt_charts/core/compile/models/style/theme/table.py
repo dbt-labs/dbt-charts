@@ -85,6 +85,13 @@ class TableColumnsStyle(BaseModel):
             "0.0 disables headroom."
         ),
     )
+    overflow: Literal["scroll", "fit"] = Field(
+        description="Whether columns past the slot scroll sideways or squeeze to fit.",
+    )
+    freeze: int = Field(
+        ge=0,
+        description="Number of leading columns pinned while the table scrolls sideways.",
+    )
 
 
 class TableHeaderStyle(BaseModel):
@@ -387,6 +394,29 @@ class PaginatorStyle(BaseModel):
     )
 
 
+class TableScrollbarStyle(BaseModel):
+    """Look of the scrollbars a scrolling table draws over its body.
+
+    Drawn inside the SVG, so a static export shows how much of the table is
+    out of view.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    size: float = Field(gt=0, description="Scrollbar thickness in pixels.")
+    inset: float = Field(
+        ge=0, description="Gap between the scrollbar and the table edge in pixels."
+    )
+    thumb_color: Annotated[str, Color()] = Field(description="Scrollbar thumb color.")
+    edge_color: Annotated[str, Color()] = Field(
+        description="Hairline between frozen and scrolling columns.",
+    )
+    track_color: Annotated[str | None, Color(), Absent("no track")] = Field(
+        default=None,
+        description="Scrollbar track color; None draws the thumb alone.",
+    )
+
+
 class TableChartStyle(
     _ChartCardStyleMixinAllOptional,
     _ChartStyleBaseAllOptional,
@@ -480,6 +510,9 @@ class TableChartStyle(
     )
     paginator: PaginatorStyle = Field(
         description="Visual style for the paginator control (chevrons + page numbers)."
+    )
+    scrollbar: TableScrollbarStyle = Field(
+        description="Visual style for the scrollbars of a table that scrolls."
     )
     symbol_mode: Literal["all", "anchors"] = Field(
         description=(

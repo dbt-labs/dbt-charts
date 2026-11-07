@@ -13,7 +13,7 @@ impl<'a> Iterator for Walk<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let (node, map) = self.stack.pop()?;
         // Definitions and clip shapes are not drawn where they sit.
-        if !matches!(node.shape, Shape::Defs(_) | Shape::ClipPath(_) | Shape::Pattern { .. }) {
+        if !matches!(node.shape, Shape::Defs(_) | Shape::ClipPath(_) | Shape::Mask { .. } | Shape::Pattern { .. }) {
             for child in node.children().iter().rev() {
                 self.stack.push((child, map.then_inner(&child.affine())));
             }
@@ -66,7 +66,7 @@ pub fn drawn(nodes: &[Node], keep: impl Fn(&Role) -> bool) -> Vec<Drawn<'_>> {
             }
         }
         // Definitions and clip shapes are not drawn where they sit.
-        if !matches!(node.shape, Shape::Defs(_) | Shape::ClipPath(_) | Shape::Pattern { .. }) {
+        if !matches!(node.shape, Shape::Defs(_) | Shape::ClipPath(_) | Shape::Mask { .. } | Shape::Pattern { .. }) {
             ancestors.push(&node.attrs);
             for child in node.children() {
                 visit(child, map.then_inner(&child.affine()), ancestors, keep, out);

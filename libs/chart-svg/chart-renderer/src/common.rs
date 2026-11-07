@@ -65,6 +65,19 @@ pub fn symbol_radius(size: f64) -> f64 {
     size.sqrt() / 2.0
 }
 
+/// The visible gap a continuous x range keeps between its end marks and the plot edge.
+const X_EDGE_GAP_PX: f64 = 2.0;
+
+/// Pixels a continuous x range keeps between its end data and the plot edge: a mark of
+/// area `point_size`'s radius plus `X_EDGE_GAP_PX`, so the gap holds at every mark size.
+/// Only the pixel range shrinks; the scale's domain, ticks and labels still bound the
+/// data. The edge law scatter, line and area share (scatter reads it for a domain that is
+/// neither authored nor niced, line and area for any unauthored continuous x); an authored
+/// `scale.padding` replaces it.
+pub fn x_edge_pad(point_size: f64) -> f64 {
+    symbol_radius(point_size) + X_EDGE_GAP_PX
+}
+
 /// The largest share of a bar's thickness one corner may take.
 const BAR_CORNER_THICKNESS_SHARE: f64 = 0.25;
 
@@ -448,7 +461,7 @@ impl MirrorGhost {
             .zip(&base)
             .enumerate()
             .map(|(i, (&tv, label))| {
-                crate::labels_expr::speak_value("y", src, tv, label, i, ticks.len()).map_err(|e| format!("axis_y.mirror.expr: {e}"))
+                ::layout::labels_expr::speak_value("y", src, tv, label, i, ticks.len()).map_err(|e| format!("axis_y.mirror.expr: {e}"))
             })
             .collect::<Result<_, _>>()
             .map(Some)
@@ -1778,6 +1791,15 @@ pub fn tick_row(origin: f64, position: f64) -> f64 {
     origin + tick_round(position)
 }
 
+/// The baseline y of an above-gridline value label at `tick` (the row [`tick_row`] snaps its rung to): a fixed gap over
+/// the top edge of the rule it sits on, so a thicker threshold rule painted at the tick lifts its label by the
+/// extra half-width instead of crowding it. Against a gridline of `grid_width` the baseline sits `baseline_shift("bottom")`
+/// over the rule's center, where Vega's own bottom-baseline label would.
+pub fn above_label_y(rules: &[ThresholdRule], tick: f64, grid_width: f64, font_size: f64) -> f64 {
+    let (center, width) = rules.iter().find(|rule| (rule.tick_at - tick).abs() < 1e-6).map_or((tick, grid_width), |rule| (rule.at, rule.width));
+    center - width / 2.0 + grid_width / 2.0 + measure::baseline_shift("bottom", font_size)
+}
+
 /// A gridline or tick ink the resolve stage always fills; its absence refuses
 /// by name rather than painting a guessed color.
 pub fn required_ink<'a>(ink: Option<&'a str>, family: &str, field: &str) -> Result<&'a str, String> {
@@ -1829,6 +1851,12 @@ pub fn rule_reaches((x1, x2): (f64, f64), edge: f64) -> bool {
 /// continued tick meet with no gap.
 pub fn join_rule_to_edges(span: (f64, f64), edges: &[f64]) -> (f64, f64) {
     edges.iter().filter(|&&edge| rule_reaches(span, edge)).fold(span, |(lo, hi), &edge| (lo.min(edge), hi.max(edge)))
+}
+
+/// A gridline or threshold rule's extent `(x1, x2)` run out to every value-axis label `edge`, so it passes under
+/// above-gridline labels to their outer edge.
+pub fn reach_label_edges(span: (f64, f64), edges: &[f64]) -> (f64, f64) {
+    edges.iter().fold(span, |(lo, hi), &edge| (lo.min(edge), hi.max(edge)))
 }
 
 /// A [`ThresholdRule`] a panel carries to the composite that paints its axis.
@@ -1942,6 +1970,18 @@ impl AxisStyle {
     /// extent and the label offset, `axis.js:58-66`).
     pub fn tick_len(&self) -> f64 {
         if self.ticks.visible.unwrap_or(true) { self.ticks.length.unwrap_or(6.0) } else { 0.0 }
+    }
+
+    /// Whether this value axis sets its labels above their gridlines, the gridlines running under them.
+    /// Resolve gives only a quantitative value axis a `position`, so a band axis never answers yes; an
+    /// axis with hidden gridlines or rotated labels keeps its labels centered on the tick.
+    pub fn labels_above(&self) -> bool {
+        self.labels.position.as_deref() == Some("above_gridline") && self.grid.visible.unwrap_or(false) && self.labels.upright()
+    }
+
+    /// The Vega baseline of a value label: `bottom` lifts an above-gridline label clear of its rule.
+    pub fn value_label_baseline(&self) -> &'static str {
+        if self.labels_above() { "bottom" } else { "middle" }
     }
 
     /// Half the stroke of the rule under an x label at a plot edge: the label reaches to the rule's outer edge,
@@ -2516,9 +2556,12 @@ pub struct AxisLabels {
     /// The clock a sub-day axis reads (`24` or `12`; `None` reads the 12-hour one).
     #[serde(default)]
     pub clock: Option<i64>,
+    /// A value axis' `labels.position` (`beside_gridline` or `above_gridline`); read through [`AxisStyle::labels_above`].
+    #[serde(default)]
+    pub position: Option<String>,
     /// Authored VL `labelExpr` (B5) — production compiles it from
     /// `axis_x.labels.expr` and rewrites every category label BEFORE it is
-    /// measured and drawn. Evaluated by [`crate::labels_expr`].
+    /// measured and drawn. Evaluated by [`layout::labels_expr`].
     #[serde(default)]
     pub expr: Option<String>,
 }
@@ -2530,19 +2573,19 @@ impl AxisLabels {
     }
 
     /// What Vega's label mark fixes for these labels, which a `labels.expr` reads off `item`.
-    pub fn item_style(&self) -> Result<crate::labels_expr::view::ItemStyle, String> {
-        use crate::labels_expr::Val;
-        let styled_text = |s: String| crate::labels_expr::Text::new(s).map_err(|e| crate::labels_expr::describe(&e, "axis labels.font"));
+    pub fn item_style(&self) -> Result<::layout::labels_expr::view::ItemStyle, String> {
+        use ::layout::labels_expr::Val;
+        let styled_text = |s: String| ::layout::labels_expr::Text::new(s).map_err(|e| ::layout::labels_expr::describe(&e, "axis labels.font"));
         let font = &self.font;
         let weight = match font.weight.as_ref().ok_or("axis labels.font.weight absent (theme required)")? {
             Value::Number(n) => Val::Num(n.as_f64().ok_or("axis labels.font.weight is not a number")?),
             Value::String(w) => match w.parse() {
                 Ok(n) => Val::Num(n),
-                Err(_) => Val::string(w.clone()).map_err(|e| crate::labels_expr::describe(&e, "axis labels.font.weight"))?,
+                Err(_) => Val::string(w.clone()).map_err(|e| ::layout::labels_expr::describe(&e, "axis labels.font.weight"))?,
             },
             other => return Err(format!("axis labels.font.weight {other} is neither a number nor a string")),
         };
-        Ok(crate::labels_expr::view::ItemStyle {
+        Ok(::layout::labels_expr::view::ItemStyle {
             font: styled_text(font.family.clone().ok_or("axis labels.font.family absent (theme required)")?)?,
             size: font.size.ok_or("axis labels.font.size absent (theme required)")?,
             fill: styled_text(font.color.clone().ok_or("axis labels.font.color absent (theme required)")?)?,
@@ -2576,7 +2619,7 @@ impl AxisLabels {
             Some(spec) => ::bind::formats::locale::d3_format(spec, value).map_err(|e| format!("labels.format {spec:?}: {e}"))?,
             None => label,
         };
-        crate::labels_expr::speak_value(scale, src, value, &label, index, count)
+        ::layout::labels_expr::speak_value(scale, src, value, &label, index, count)
     }
 
     /// `labels.font.case` over text an axis paints. Only `upper` and `lower` change the paint

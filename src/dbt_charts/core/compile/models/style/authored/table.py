@@ -17,6 +17,7 @@ from pydantic import (
     ConfigDict,
     Field,
     field_validator,
+    model_validator,
 )
 
 from dbt_charts.core.compile.models.constraints import (
@@ -80,6 +81,19 @@ class PaginationConfig(BaseModel):
             "sizes the page)."
         ),
     )
+    mode: Literal["pages", "scroll"] = Field(
+        default="pages",
+        description="Page rows with a pager, or scroll them under a pinned header.",
+    )
+
+    @model_validator(mode="after")
+    def _scroll_needs_enabled(self) -> PaginationConfig:
+        if self.mode == "scroll" and not self.enabled:
+            raise ValueError(
+                "pagination.mode: scroll needs pagination.enabled: true; with "
+                "pagination off every row is drawn and nothing scrolls."
+            )
+        return self
 
 
 PixelWidth = Annotated[int, Field(gt=0)] | str | None

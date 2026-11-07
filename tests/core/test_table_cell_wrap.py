@@ -393,7 +393,11 @@ class TestWrapFalsePreservesTruncation:
     """When wrap is disabled (style.table.wrap: false), truncation is used instead."""
 
     def test_wrap_false_emits_ellipsis(self, make_chart):
-        chart = _make_table(make_chart, style={"table": {"wrap": False}})
+        # `fit`: a slot-squeezed single line truncates; `scroll` would widen it.
+        chart = _make_table(
+            make_chart,
+            style={"table": {"wrap": False, "column_layout": {"overflow": "fit"}}},
+        )
         svg = _render(chart, [{"description": _LONG_TEXT}], 300)
         assert _has_ellipsis(svg), "wrap:false must truncate long text with ellipsis"
 

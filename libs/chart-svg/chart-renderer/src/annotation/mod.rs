@@ -16,7 +16,7 @@ pub use axis_map::{AxisMap, Site};
 pub use model::{Annotation, YAxis};
 
 use diagnostic::Diagnostic;
-use crate::labels_expr::colors::{contrast, Color};
+use ::layout::labels_expr::colors::{contrast, Color};
 use measure::FontBook;
 use crate::vega_fit::Bounds;
 use place::{Mark, Placed};

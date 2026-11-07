@@ -35,13 +35,11 @@ use super::table_dates::{strftime, Moment};
 use ::bind::time_axis::Dates;
 use ::bind::temporal::{clock_hour, floor_day, floor_to_bucket_start, next_bucket, TimePart, TimeUnit};
 use d3rs::calendar::{civil_from_days, days_from_civil, weekday, MS_PER_DAY};
-use d3rs::time::{Interval, Unit};
-use jiff::tz::TimeZone;
+use layout::time_ladder::{interval_instants, ladder_zone, min_step_ticks, no_cadence, zone_instants, AuthoredTickCadence, UtcTickInterval};
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 
-use diagnostic::codes;
 use diagnostic::Diagnostic;
 
 use regex::Regex;
@@ -376,8 +374,6 @@ pub fn next_coarser(tu: TimeUnit) -> Option<TimeUnit> {
     }
 }
 
-/// The grains `_TEMPORAL_TICK_INTERVAL` maps to a tick interval.
-const AUTHORED_TICK_GRAINS: [&str; 5] = ["year", "yearquarter", "yearmonth", "yearweek", "yearmonthdate"];
 
 // ── Time-unit detection ───────────────────────────────────────────────────────
 
@@ -936,7 +932,7 @@ pub fn fold_steep(labels: Vec<TemporalLabel>, angle: Option<f64>, format_tu: Tim
 pub fn rewrite_with_expr(
     labels: Vec<TemporalLabel>,
     domain: &[String],
-    expr: &crate::labels_expr::Expr,
+    expr: &::layout::labels_expr::Expr,
     bands: ExprBands,
 ) -> Result<Vec<TemporalLabel>, String> {
     let count = match bands {
@@ -978,11 +974,11 @@ pub fn datum_label(grain: Option<TimeUnit>, day: i64) -> Result<String, String> 
 pub fn speak_labels(
     labels: Vec<TemporalLabel>,
     domain: &Dates,
-    expr: &crate::labels_expr::Expr,
+    expr: &::layout::labels_expr::Expr,
     grain: Option<TimeUnit>,
     ordinal: bool,
 ) -> Result<Vec<TemporalLabel>, String> {
-    use crate::labels_expr::{describe, Tick, Val};
+    use ::layout::labels_expr::{describe, Tick, Val};
     labels
         .into_iter()
         .map(|l| {
@@ -1006,13 +1002,13 @@ pub fn speak_labels(
 /// `ordinal` calendar axis, at the raw band. `Some` is the first throw, described: Vega's whole view fails there,
 /// whichever dates the ticks land on. `Err` is any other failure.
 pub fn first_throw_at_dates(
-    expr: &crate::labels_expr::Expr,
+    expr: &::layout::labels_expr::Expr,
     dates: &[String],
     days: &[f64],
     ordinal: bool,
     label: impl Fn(i64) -> Result<String, String>,
 ) -> Result<Option<String>, String> {
-    use crate::labels_expr::{describe, EvalError, Tick, Val};
+    use ::layout::labels_expr::{describe, EvalError, Tick, Val};
     for (i, date) in dates.iter().enumerate() {
         let day = days[i];
         let (value, text) = if ordinal {
@@ -1030,8 +1026,8 @@ pub fn first_throw_at_dates(
 }
 
 /// [`speak_labels`] for a continuous axis' own ticks.
-pub fn speak_bare(ticks: Vec<BareTick>, expr: &crate::labels_expr::Expr) -> Result<Vec<BareTick>, String> {
-    use crate::labels_expr::{describe, Tick, Val};
+pub fn speak_bare(ticks: Vec<BareTick>, expr: &::layout::labels_expr::Expr) -> Result<Vec<BareTick>, String> {
+    use ::layout::labels_expr::{describe, Tick, Val};
     let n = ticks.len();
     ticks
         .into_iter()
@@ -1086,7 +1082,7 @@ pub fn ordinal_date_labels(
     ladder_w: f64,
     chart_w: f64,
     usable_ratio: Option<f64>,
-    expr: Option<&crate::labels_expr::Expr>,
+    expr: Option<&::layout::labels_expr::Expr>,
     expr_bands: ExprBands,
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
     font_size: f64,
@@ -2385,106 +2381,9 @@ impl BareTick {
     }
 }
 
-/// A d3-time calendar interval with its `every(step)` filter, in the units
-/// this module models: the one an authored `ticks.time_unit` + `step` names
-/// or the default cadence of a grain. Each variant's filter is d3's own: a
-/// field-based interval keeps the instants whose field value divides the
-/// step, so `Day(2)` restarts at the 1st of each month and `Month(3)` is
-/// Jan/Apr/Jul/Oct — not a running stride (d3-time `src/interval.js` `every`).
-/// A week has no field, so `Week(step)` counts weeks from the epoch's first
-/// one (`interval.count(0, date) % step`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UtcTickInterval {
-    Day(i64),
-    Week(i64),
-    Month(i64),
-    Year(i64),
-}
-
-impl UtcTickInterval {
-    /// The d3-time unit and its step; a week starts on `week_start` (0 = Sunday).
-    fn unit_step(self, week_start: u8) -> (Unit, i64) {
-        match self {
-            Self::Day(step) => (Unit::Day, step),
-            Self::Week(step) => (Unit::Week(week_start), step),
-            Self::Month(step) => (Unit::Month, step),
-            Self::Year(step) => (Unit::Year, step),
-        }
-    }
-}
-
-/// The zone a time axis over instants ticks in: the board zone when the axis's values are `aware` (each carries
-/// `Z` or an offset) and the board is outside UTC; `None` otherwise, UTC days, where a naive wall clock reads as
-/// UTC and a calendar bucket is a bare date.
-pub fn ladder_zone(aware: bool) -> Option<jiff::tz::TimeZone> {
-    let zone = ::bind::time_zone::active_time_zone();
-    (aware && zone != jiff::tz::TimeZone::UTC).then_some(zone)
-}
-
-/// The zone and week start a [`ladder_zone`] ticks with: the board's week start in a zone, Sunday's in UTC.
-fn ladder_clock(zone: Option<&TimeZone>) -> (TimeZone, u8) {
-    match zone {
-        Some(zone) => (zone.clone(), ::bind::time_locale::active_week_start()),
-        None => (TimeZone::UTC, 0),
-    }
-}
-
-fn ms_of(day: f64) -> i64 {
-    (day * MS_PER_DAY).round() as i64
-}
-
-/// d3-time's ticks of a time scale (`timeTicks`, [`d3rs::time::ticks`]) for `count` ticks, in fractional days,
-/// every aligned instant of `[lo, hi]`: the day, week, month and year rungs fall on the zone's midnights across its
-/// transitions, and a span finer than the ladder ticks the milliseconds `tickStep` divides.
-pub fn zone_instants(lo: f64, hi: f64, count: usize, zone: Option<&TimeZone>) -> Result<Vec<f64>, String> {
-    let (zone, week_start) = ladder_clock(zone);
-    let ms = d3rs::time::ticks(ms_of(lo), ms_of(hi), count, &zone, week_start)?;
-    Ok(last_of_each_second(&ms))
-}
-
-/// Vega keys an axis tick by its `Date`, whose string stops at the second, so the ticks of one second collapse
-/// into the last of them.
-fn last_of_each_second(ms: &[i64]) -> Vec<f64> {
-    let kept = ms.iter().enumerate().filter(|&(i, &at)| ms.get(i + 1).is_none_or(|&next| next.div_euclid(1000) != at.div_euclid(1000)));
-    kept.map(|(_, &at)| at as f64 / MS_PER_DAY).collect()
-}
-
-/// Every boundary of `unit.every(step)` in `zone` inside `[lo, hi]` (fractional days), as instants in days: d3's
-/// `interval.range(lo, hi + 1ms)`. The ends are rounded to whole milliseconds once, as d3's dates are, so a tick on
-/// an end is never lost to float division.
-pub(crate) fn every_instants(unit: Unit, step: i64, zone: &TimeZone, lo: f64, hi: f64) -> Result<Vec<f64>, String> {
-    let interval = Interval::every(unit, step as f64, zone).expect("a tick interval steps at least 1");
-    // d3 keeps stepping dates JavaScript holds to year 275760; the calendar here ends at year 9999.
-    let range = interval.range(ms_of(lo), ms_of(hi) + 1).map_err(|why| {
-        diagnostic::refuse!("a tick step of {step} {unit:?} reaching past the year 9999 the calendar holds is not supported: {why}")
-    })?;
-    Ok(range.into_iter().map(|at| at as f64 / MS_PER_DAY).collect())
-}
-
-/// Every tick of an authored `interval` inside `[lo, hi]`, as instants: in the [`ladder_zone`], or in UTC.
-pub fn interval_instants(interval: UtcTickInterval, lo: f64, hi: f64, zone: Option<&TimeZone>) -> Result<Vec<f64>, String> {
-    let (zone, week_start) = ladder_clock(zone);
-    let (unit, step) = interval.unit_step(week_start);
-    every_instants(unit, step, &zone, lo, hi)
-}
-
 /// The board time locale's short weekday (`%a`) for a Monday-first index.
 fn weekday_abbr(monday_first: usize) -> Result<String, String> {
     Ok(::bind::time_locale::active_time_locale()?.short_days[(monday_first + 1) % 7].clone())
-}
-
-/// Production's `_TEMPORAL_TICK_INTERVAL` (`type_inference.py:132-138`): the
-/// d3 interval and the table step Vega-Lite's `tickCount: {interval, step}`
-/// names for each bucketed grain. `yearquarter` is a monthly interval whose
-/// table step is 3.
-fn tick_interval_entry(unit: TimeUnit) -> (fn(i64) -> UtcTickInterval, i64) {
-    match unit {
-        TimeUnit::Year => (UtcTickInterval::Year, 1),
-        TimeUnit::YearQuarter => (UtcTickInterval::Month, 3),
-        TimeUnit::YearMonth => (UtcTickInterval::Month, 1),
-        TimeUnit::YearWeek => (UtcTickInterval::Week, 1),
-        TimeUnit::YearMonthDate => (UtcTickInterval::Day, 1),
-    }
 }
 
 /// The d3 interval production asks Vega for when `style.axis_x.ticks.time_unit`
@@ -2506,31 +2405,8 @@ pub fn authored_tick_interval(
     time_unit: &str,
     step: Option<f64>,
 ) -> Result<AuthoredTickCadence, Diagnostic> {
-    let Some(unit) = parse_authored_time_unit(time_unit) else {
-        return Err(Diagnostic::new(
-            &codes::ERR_TICKS_TIME_UNIT_NO_CADENCE,
-            [
-                ("grains", serde_json::json!(AUTHORED_TICK_GRAINS.join(", "))),
-                ("time_unit", serde_json::json!(time_unit)),
-            ],
-        ));
-    };
-    let interval = tick_interval_entry(unit).0;
-    Ok(match step {
-        Some(s) if s < 0.0 => AuthoredTickCadence::UncappedCount(10),
-        Some(s) if s >= 1.0 => AuthoredTickCadence::Interval(interval(s as i64)),
-        _ => AuthoredTickCadence::Interval(interval(1)),
-    })
-}
-
-/// The interval of production's default cadence: with no authored
-/// `ticks.time_unit` and no injected `values`, `tickCount: {interval, step}`
-/// comes from the resolved label grain through the table's own step
-/// (`type_inference.py:1049-1052`), so Vega ticks the calendar boundaries of
-/// that grain whether or not a row sits on them.
-pub fn native_tick_interval(label_tu: TimeUnit) -> UtcTickInterval {
-    let (interval, step) = tick_interval_entry(label_tu);
-    interval(step)
+    let unit = parse_authored_time_unit(time_unit).ok_or_else(|| no_cadence(time_unit))?;
+    Ok(AuthoredTickCadence::authored(unit, step))
 }
 
 /// Every tick of `interval` inside `extent`, in day numbers — the end
@@ -2932,63 +2808,6 @@ fn step_months(y: i32, m: u8, by: u8) -> (i32, u8, u8) {
     (y + total / 12, (total % 12) as u8 + 1, 1)
 }
 
-/// What an axis authors to choose where its ticks fall: production's
-/// `axis.tickCount`, either `{interval, step}` from `ticks.time_unit` or the
-/// bare number from `ticks.count` (`type_inference.py:417-418`,
-/// `:1033-1054`). The two are exclusive (`DimensionTicksStyle`'s
-/// `AtMostOneOf`), and an unauthored axis has neither.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuthoredTickCadence {
-    Interval(UtcTickInterval),
-    Count(usize),
-    /// A count d3 takes as is, with no `tickMinStep` cap: the ten ticks of a
-    /// null interval.
-    UncappedCount(usize),
-}
-
-impl AuthoredTickCadence {
-    /// The ticks of the cadence on a bucketed axis, as instants in days: the scale is UTC and Vega-Lite gives the
-    /// axis the grain's `tickMinStep`, so a number `tickCount` is capped at `floor(span / minStep) + 1`
-    /// (vega-scale `tickCount`), the ladder's 2-day rung strides epoch days (`utcTicks`) and
-    /// a span of a couple of days ticks the hours.
-    pub fn bucketed_ticks(self, grain: TimeUnit, extent: (f64, f64)) -> Result<Vec<f64>, String> {
-        let (lo, hi) = extent;
-        match self {
-            Self::Interval(interval) => interval_instants(interval, lo, hi, None),
-            Self::Count(count) | Self::UncappedCount(count) => {
-                let capped = match self {
-                    Self::Count(_) => count.min(min_step_ticks(hi - lo, tick_min_step_days(grain))),
-                    _ => count,
-                };
-                if capped == 0 {
-                    return Ok(Vec::new());
-                }
-                Ok(last_of_each_second(&d3rs::time::utc_ticks(ms_of(lo), ms_of(hi), capped)?))
-            }
-        }
-    }
-}
-
-/// vega-scale `tickCount`'s cap, `floor(span / minStep || 1) + 1`, with both
-/// lengths in whole milliseconds as JavaScript holds them.
-fn min_step_ticks(span_days: f64, step_days: f64) -> usize {
-    let ratio = (span_days * MS_PER_DAY).round() / (step_days * MS_PER_DAY).round();
-    (if ratio == 0.0 || ratio.is_nan() { 1.0 } else { ratio }).floor() as usize + 1
-}
-
-/// The `tickMinStep` Vega-Lite compiles for a bucketed grain, in days: the
-/// span of one `timeUnit` unit from 2001-01-01 (`datetime(2001, 1, 1) -
-/// datetime(2001, 0, 1)` for a month).
-fn tick_min_step_days(grain: TimeUnit) -> f64 {
-    match grain {
-        TimeUnit::Year => 365.0,
-        TimeUnit::YearQuarter => 90.0,
-        TimeUnit::YearMonth => 31.0,
-        TimeUnit::YearWeek => 7.0,
-        TimeUnit::YearMonthDate => 1.0,
-    }
-}
-
 /// An authored `ticks.count` as the count d3 asks for. The model types it
 /// `int`; d3's ticks of a count below 1 are none.
 pub fn authored_tick_count(count: f64) -> usize {
@@ -3164,6 +2983,9 @@ pub fn temporal_label_half_width(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use d3rs::time::Unit;
+    use jiff::tz::TimeZone;
+    use layout::time_ladder::{every_instants, native_tick_interval};
     use ::bind::temporal::{complete_buckets, complete_ordinal_rows, detect_time_unit, frac_of, infer_vega_type, normalize_labeled_temporal, off_anchor_bucket_start, parse_bucket_string, time_unit_floor, utc_domain_extent, utc_position_fractions, x_is_standard_date, x_is_temporal_candidate, x_values_are_temporal_candidates, VegaType};
     use column_types::ColumnTypes;
     use ::bind::time_axis::testing::{day, dates as on_axis};
@@ -6000,7 +5822,7 @@ mod tests {
 mod speak_tests {
     use super::*;
     use ::bind::time_axis::testing::dates as on_axis;
-    use crate::labels_expr::Expr;
+    use ::layout::labels_expr::Expr;
 
     fn label(domain_idx: usize, row1: &str) -> TemporalLabel {
         TemporalLabel { domain_idx, row1: row1.into(), row2: "ctx".into() }

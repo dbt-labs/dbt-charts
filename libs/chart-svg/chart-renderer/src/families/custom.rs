@@ -1038,7 +1038,7 @@ fn scope_template_ids(children: Vec<Node>, suffix: &str) -> Vec<Node> {
 
 /// Everything one template render reads beyond the resolved chart.
 struct Job {
-    rows: Vec<Map<String, Json>>,
+    rows: crate::SharedRows,
     variables: Map<String, Json>,
     link_context: Option<href::LinkContext>,
     /// The board's font family list, which `text_width()` measures with.

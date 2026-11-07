@@ -1,0 +1,12 @@
+[package]
+name = "model-core"
+version = "0.0.1"
+edition = "2021"
+publish = false
+description = "Runtime of the typed spine: Tri, Engine, FieldTable, merge strategies and the specificity walk. No dbt Charts concepts."
+
+[dependencies]
+diagnostic = { path = "../diagnostic" }
+indexmap = "2"
+serde_json = { version = "1", features = ["preserve_order"] }
+yaml = { path = "../yaml" }

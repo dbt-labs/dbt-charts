@@ -160,7 +160,6 @@ def _base_kwargs(
     top_legend: Literal["compact", "row", "off"] = "off",
     legend_position_overridden_by_width: LegendEdge | None = None,
     radial_legend: bool = False,
-    plot_filled_legend: bool = False,
     legendless: bool = False,
     wrap_legend: bool,
 ) -> dict[str, Any]:
@@ -193,8 +192,6 @@ def _base_kwargs(
     hold a row; "row" leaves the entry count to the renderer.
     radial_legend: True for pie and donut, whose key never overlays
     (``decide_legend_position``'s ``radial``).
-    plot_filled_legend: True for a horizontal bar, whose marks leave no empty
-    plot space for a floating key (``decide_legend_position``'s ``plot_filled``).
     wrap_legend: True when one horizontal row cannot hold the entries; wraps an
     inferred-horizontal legend at compact_columns. An authored direction or
     columns wins.
@@ -234,10 +231,7 @@ def _base_kwargs(
                 normalized.id,
             )
         decided = decide_legend_position(
-            authored_position,
-            top_strip=top_legend != "off",
-            radial=radial_legend,
-            plot_filled=plot_filled_legend,
+            authored_position, top_strip=top_legend != "off", radial=radial_legend
         )
         # The top strip ignores an authored direction.
         direction = decide_legend_direction(

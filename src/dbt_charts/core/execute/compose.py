@@ -51,6 +51,7 @@ from dbt_charts.core.execute.sql_translate import (
     engine_dialect,
     render_in_dialect,
 )
+from dbt_charts.core.text.time_zones import UTC, TimeZoneName
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
@@ -63,13 +64,16 @@ class ResolvedQuery:
 
     ``params`` are bindings, written in the placeholder style the composing
     caller asked for; a backend that cannot bind inlines them itself. Relations
-    are the dbt refs resolved on the way, kept for provenance.
+    are the dbt refs resolved on the way, kept for provenance. ``time_zone`` is
+    the session zone the query runs in: the board's, UTC for a query no board
+    owns.
     """
 
     sql: str
     params: tuple[object, ...]  # type-state: object_annotation — DB-API binds
     setup_sql: tuple[str, ...]
     limit: RowFetchLimit
+    time_zone: TimeZoneName
     resolved_relations: tuple[ResolvedRelation, ...] = ()
 
     def inline(self, dialect_name: str) -> str:
@@ -212,6 +216,7 @@ def compose(
         params=tuple(rendered_params),
         setup_sql=setup_sql,
         limit=resolve_effective_row_limit(query.limit),
+        time_zone=board.regional.time_zone if board is not None else UTC,
         resolved_relations=tuple(relations),
     )
     try:

@@ -733,7 +733,7 @@ pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, D
         }
 
         let bar = |role: Role, x: f64, width: f64, fill: &str| {
-            let rect = Shape::Rect { x, y: row_y, w: width, h: bar_height, rx: sc.border.radius };
+            let rect = Shape::Rect { x, y: row_y, w: width, h: bar_height, rx: crate::common::bar_corner_radius(sc.border.radius, bar_height, width) };
             Node::new(role, Attrs::new().quick("fill", fill), rect)
         };
         content.push(bar(Role::Chrome, (left_padding as i64) as f64, bar_area_width, &sc.bar.background));
@@ -921,12 +921,27 @@ mod tests {
             &fonts(),
         )
         .expect("renders");
-        assert!(svg.contains("<rect x=\"80\" y=\"0\" width=\"38\" height=\"18\" rx=\"8\" fill=\"#e5e7eb\"/>"), "bar track:\n{svg}");
-        assert!(svg.contains("width=\"30.61\" height=\"18\" rx=\"8\" fill=\"#203c65\""), "East fill scales to max:\n{svg}");
+        assert!(svg.contains("<rect x=\"80\" y=\"0\" width=\"38\" height=\"18\" rx=\"4.5\" fill=\"#e5e7eb\"/>"), "bar track:\n{svg}");
+        assert!(svg.contains("width=\"30.61\" height=\"18\" rx=\"4.5\" fill=\"#203c65\""), "East fill scales to max:\n{svg}");
         assert!(svg.contains("y=\"33\""), "second row baseline at 20 + 9 + 4:\n{svg}");
         assert!(svg.contains(">812,000</text>"), "grouped count:\n{svg}");
         assert!(svg.contains("x=\"164\""), "count end-anchored at width - side_padding:\n{svg}");
         assert!(svg.contains("height=\"82\""), "explicit slot height wins:\n{svg}");
+    }
+
+    // A fill narrower than twice the capped radius shrinks its corners to
+    // half its width so they never overlap.
+    #[test]
+    fn narrow_fill_corner_radius_is_half_its_width() {
+        let svg = render(
+            &base_payload(vec![
+                json!({"region": "West", "revenue": 812000}),
+                json!({"region": "East", "revenue": 42842}),
+            ]),
+            &fonts(),
+        )
+        .expect("renders");
+        assert!(svg.contains("width=\"2\" height=\"18\" rx=\"1\" fill=\"#203c65\""), "narrow fill:\n{svg}");
     }
 
     // max_bars truncation paints the "+ N more" indicator and rewrites the

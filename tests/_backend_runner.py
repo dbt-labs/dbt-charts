@@ -97,6 +97,7 @@ class DuckDBRunner:
         return self.backend._pooled_connection(  # noqa: SLF001
             raw,
             self.backend._resolved_path(raw),  # noqa: SLF001
+            "UTC",
         )
 
     def close(self) -> None:

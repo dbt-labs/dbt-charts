@@ -199,6 +199,29 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     // Vega-Lite's default for its own edge.
     let (ghost_default_align, ghost_baseline) = vega_fit::vl_y_label_anchor(y_angle_norm, val_on_right);
     let ghost_align = if y_labels_flipped { y_align } else { ghost_default_align };
+    // Labels above their gridlines sit flush to the gutter's outer edge: a right axis ends there, a left axis
+    // authored `labels.align: left` starts there. A measured own-side axis already anchors on that edge.
+    let y_above = ax_y.labels_above();
+    let y_value_baseline = ax_y.value_label_baseline();
+    let y_flush = y_above && !y_labels_flipped && (val_on_right || ax_y.labels.align.as_deref() == Some("left"));
+    // The value labels' anchor x and align on a plot `pw` wide whose label gutter is `gutter` wide.
+    let y_anchor_at = |pw: f64, gutter: f64| -> (f64, &'static str) {
+        let near = if val_on_right { pw + y_tick_eff + y_label_gap } else { -(y_tick_eff + y_label_gap) };
+        match (y_flush, val_on_right) {
+            (false, _) => (near, y_align),
+            (true, true) => (near + gutter, "right"),
+            (true, false) => (near - gutter, "left"),
+        }
+    };
+    // The mirror ghost's anchor x and align when `ghost_w` is its widest label.
+    let ghost_anchor_at = |pw: f64, ghost_w: f64| -> (f64, &'static str, &'static str) {
+        match (y_above, val_on_right) {
+            (false, true) => (-(y_tick_eff + y_label_gap), ghost_align, ghost_baseline),
+            (false, false) => (pw + y_tick_eff + y_label_gap, ghost_align, ghost_baseline),
+            (true, true) => (-(y_tick_eff + y_label_gap + ghost_w), "left", y_value_baseline),
+            (true, false) => (pw + y_tick_eff + y_label_gap + ghost_w, "right", y_value_baseline),
+        }
+    };
     // How far the labels' ink reaches past their anchor, away from the plot
     // (`s = -bounds.x1` for a left axis): the widest label, or the widest
     // rotated ink about each label's own anchor.
@@ -265,22 +288,19 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
                 b.union(&vega_fit::Bounds::new(x, ph / 2.0 - y_title_w / 2.0, x, ph / 2.0 + y_title_w / 2.0));
             }
             if mirror_active {
-                let x = if val_on_right { -(y_tick_eff + y_label_gap) } else { pw + y_tick_eff + y_label_gap };
+                let ghost_w = ghost_ws.iter().fold(0.0_f64, |w, &lw| w.max(lw.min(y_limit)));
+                let (x, align, baseline) = ghost_anchor_at(pw, ghost_w);
                 for (&lw, &tv) in ghost_ws.iter().zip(&y_ticks) {
                     let y = ph * (1.0 - tv / y_domain_max);
-                    let ink = vega_fit::text_ink(x, y, lw.min(y_limit), y_font_size, ghost_align, ghost_baseline);
+                    let ink = vega_fit::text_ink(x, y, lw.min(y_limit), y_font_size, align, baseline);
                     b.union(&if y_angle == 0.0 { ink } else { ink.rotate(y_angle, x, y) });
                 }
             }
             for ((&lw, &tv), lbl) in y_label_ws.iter().zip(&y_ticks).zip(&y_labels) {
-                let x = if val_on_right {
-                    pw + y_tick_eff + y_label_gap
-                } else {
-                    -(y_tick_eff + y_label_gap)
-                };
+                let (x, align) = y_anchor_at(pw, y_gutter);
                 let y = ph * (1.0 - tv / y_domain_max);
                 if y_angle == 0.0 {
-                    b.union(&vega_fit::text_ink_rows(x, y, lw.min(y_limit), y_font_size, y_align, "middle", crate::text::line_count(lbl)));
+                    b.union(&vega_fit::text_ink_rows(x, y, lw.min(y_limit), y_font_size, align, y_value_baseline, crate::text::line_count(lbl)));
                 } else {
                     let ink = vega_fit::text_ink(x, y, lw.min(y_limit), y_font_size, y_align, y_baseline);
                     b.union(&ink.rotate(y_angle, x, y));
@@ -349,8 +369,8 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     }
     let (plot_w, plot_h) = (m.plot_w, m.plot_h);
     let x_scale = Continuous::linear([bin_start, bin_stop], [0.0, plot_w]);
-    if crate::labels_expr::view::active() {
-        use crate::labels_expr::view::{register_axis, register_linear, AxisSpec, Orient, Span};
+    if ::layout::labels_expr::view::active() {
+        use ::layout::labels_expr::view::{register_axis, register_linear, AxisSpec, Orient, Span};
         register_linear("x", bin_start, bin_stop, Span::Width);
         register_linear("y", 0.0, y_domain_max, Span::Height);
         let x_spec = AxisSpec { orient: Orient::Bottom, offset: x_tick_eff + x_label_pad, shift: 0.0, align: None, baseline: None, angle: 0.0, flush: Some(1.0), style: ax_x.labels.item_style()? };
@@ -372,6 +392,25 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     let y_label_ws = measure.shaped_widths(&y_labels, y_family, y_font_size)?;
     let y_gutter = y_ink_gutter(&y_label_ws, &y_ticks, plot_h);
     let y_pos = |count: f64| plot_h * (1.0 - count / y_domain_max);
+    let ghost_ws = ghost.as_ref().map_or(Ok(Vec::new()), |g| g.widths(&y_ticks, &y_labels, &y_label_ws, measure_ghost))?;
+    let ghost_w = ghost_ws.iter().fold(0.0_f64, |w, &lw| w.max(lw.min(y_limit)));
+    // `label_edge_x` is the gutter's OUTER edge: the label anchor plus/minus the gutter width, carrying the
+    // same +0.5 crisp shift. Under the measured own-side shape the gutter is 0, so the outer edge is the anchor
+    // itself (tick plus `labelPadding`). Line's rail-concat left-axis title uses this identical
+    // `0.5 - pad - tick - gutter` shape (`line.rs`'s `Shape::RailConcat` arm); the right-axis case mirrors it
+    // around `plot_w` with `sign: 1.0`.
+    let (label_edge_x, sign) = if val_on_right {
+        (plot_w + 0.5 + y_tick_eff + y_label_gap + y_gutter, 1.0)
+    } else {
+        (0.5 - y_tick_eff - y_label_gap - y_gutter, -1.0)
+    };
+    // Where above-gridline labels sit flush and the gridlines run out to.
+    let y_label_edges: Vec<f64> = if y_above {
+        let ghost_edge = mirror_active.then(|| ghost_anchor_at(plot_w, ghost_w).0 + 0.5);
+        std::iter::once(label_edge_x).chain(ghost_edge).collect()
+    } else {
+        Vec::new()
+    };
 
     let (group_x, group_y) = frame.origin(&m);
     let mut body = title.nodes(m.title_pos, (group_x, group_y));
@@ -393,6 +432,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
                 } else {
                     (0.5, plot_w + 0.5)
                 };
+                let (x1, x2) = crate::common::reach_label_edges((x1, x2), &y_label_edges);
                 Node::line(Role::Grid, (x1, gy), (x2, gy), ax_y.grid.stroke(gc, gw).num("opacity", go))
             })
             .collect();
@@ -514,7 +554,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     // mirrors the left one exactly, with no breathing room.
     let y_caption = value_axis_caption(y_title_paint, &ax_y.title, ax_y, (0.0, y_domain_max), false)?;
     let y_ticks_nodes = |(tick_x1, tick_x2): (f64, f64)| -> Result<Vec<Node>, String> {
-        if y_tick_eff <= 0.0 {
+        if y_tick_eff <= 0.0 || y_above {
             return Ok(Vec::new());
         }
         let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "histogram", "axis_y.ticks.color")?;
@@ -547,27 +587,12 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
             flat_label(Role::Axis, (x, y + measure::baseline_shift(baseline, y_font_size)), &face, false, &text)
         })
     };
-    let y_label_x = if val_on_right {
-        plot_w + y_tick_eff + y_label_gap + 0.5
-    } else {
-        -(y_tick_eff + y_label_gap) + 0.5
-    };
+    let (y_label_x, y_value_align) = y_anchor_at(plot_w, y_gutter);
+    let y_label_x = y_label_x + 0.5;
     let mut y_items = y_ticks_nodes(if val_on_right { (plot_w, plot_w + y_tick_eff) } else { (-y_tick_eff, 0.0) })?;
     for (&tv, lbl) in y_ticks.iter().zip(y_labels.iter()) {
-        y_items.push(y_label(y_label_x, (y_align, if y_angle == 0.0 { "middle" } else { y_baseline }), tv, lbl)?);
+        y_items.push(y_label(y_label_x, (y_value_align, if y_angle == 0.0 { y_value_baseline } else { y_baseline }), tv, lbl)?);
     }
-    // `label_edge_x` is the gutter's OUTER edge: `y_label_x`'s own INNER
-    // edge (the label anchor, above) plus/minus the gutter width, carrying
-    // the same +0.5 crisp shift. Under the measured own-side shape the
-    // gutter is 0, so the outer edge is the anchor itself (tick plus
-    // `labelPadding`). Line's rail-concat left-axis title uses this identical
-    // `0.5 - pad - tick - gutter` shape (`line.rs`'s `Shape::RailConcat`
-    // arm); the right-axis case mirrors it around `plot_w` with `sign: 1.0`.
-    let (label_edge_x, sign) = if val_on_right {
-        (plot_w + 0.5 + y_tick_eff + y_label_gap + y_gutter, 1.0)
-    } else {
-        (0.5 - y_tick_eff - y_label_gap - y_gutter, -1.0)
-    };
     y_items.extend(crate::common::axis_title_rotated(
         y_title_paint,
         &ax_y.title,
@@ -584,7 +609,8 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     )?);
     if mirror_active {
         let mut ghost_items = y_ticks_nodes(if val_on_right { (-y_tick_eff, 0.0) } else { (plot_w, plot_w + y_tick_eff) })?;
-        let ghost_x = if val_on_right { -(y_tick_eff + y_label_gap) + 0.5 } else { plot_w + y_tick_eff + y_label_gap + 0.5 };
+        let (ghost_x, ghost_align, ghost_baseline) = ghost_anchor_at(plot_w, ghost_w);
+        let ghost_x = ghost_x + 0.5;
         let ghost_texts = ghost.as_ref().map_or(Ok(Vec::new()), |g| g.texts(&y_ticks, &y_labels))?;
         for (&tv, lbl) in y_ticks.iter().zip(ghost_texts.iter()) {
             ghost_items.push(y_label(ghost_x, (ghost_align, ghost_baseline), tv, lbl)?);

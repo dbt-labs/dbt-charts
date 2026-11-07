@@ -32,10 +32,9 @@ _PIE_DATA = [
 ]
 
 
-def _pie_wedges(**slice_overrides: Any) -> list[dict[str, str]]:
-    """The engine-drawn wedges of a pie under a theme whose
-    ``charts.marks.slice`` carries ``slice_overrides``: each wedge's attributes,
-    its path as ``d``."""
+def _pie_svg(**slice_overrides: Any) -> str:
+    """A pie drawn under a theme whose ``charts.marks.slice`` carries
+    ``slice_overrides``."""
     compiled = get_theme_style()
     marks = compiled.charts.marks
     updated_slice = marks.slice.model_copy(update=slice_overrides)
@@ -43,18 +42,38 @@ def _pie_wedges(**slice_overrides: Any) -> list[dict[str, str]]:
         update={"marks": marks.model_copy(update={"slice": updated_slice})}
     )
     chart = PieChart(id="t", type="pie", theta="rev", color="month", query_name="q")
-    svg = render_pie_svg(
+    return render_pie_svg(
         chart, _PIE_DATA, theme=compiled.model_copy(update={"charts": charts})
     )
+
+
+def _attrs(tag: str) -> dict[str, str]:
+    return dict(re.findall(r'([\w-]+)="([^"]*)"', tag))
+
+
+def _pie_wedges(**slice_overrides: Any) -> list[dict[str, str]]:
+    """Each engine-drawn wedge's attributes, its path as ``d``."""
+    svg = _pie_svg(**slice_overrides)
     return [
-        dict(re.findall(r'([\w-]+)="([^"]*)"', wedge))
-        for wedge in re.findall(r'<path [^>]*aria-roledescription="arc mark"', svg)
+        _attrs(w)
+        for w in re.findall(r'<path [^>]*aria-roledescription="arc mark"', svg)
     ]
 
 
 def _stroke(**stroke_overrides: Any) -> list[dict[str, str]]:
+    """Each wedge's outline: its own stroke, or, for a canvas-colored halo the
+    engine knocks out, its outline in the knockout mask."""
     stroke = get_theme_style().charts.marks.slice.stroke
-    return _pie_wedges(stroke=stroke.model_copy(update=stroke_overrides))
+    svg = _pie_svg(stroke=stroke.model_copy(update=stroke_overrides))
+    mask = re.search(r"<mask .*?</mask>", svg)
+    if mask is None:
+        return [
+            _attrs(w)
+            for w in re.findall(r'<path [^>]*aria-roledescription="arc mark"', svg)
+        ]
+    return [
+        _attrs(o) for o in re.findall(r'<path [^>]*stroke="#000"[^>]*>', mask.group(0))
+    ]
 
 
 class TestArcWiring:

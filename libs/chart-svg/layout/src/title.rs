@@ -1,0 +1,216 @@
+//! A chart's title block: its title and subtitle as they draw in the width the
+//! card gives.
+
+use diagnostic::{diag, Diagnostic};
+use measure::shaped::{Font, FontBook};
+
+/// How a title's text fits its limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Overflow {
+    /// One line, cut at the last character that fits, with no ellipsis.
+    Clip,
+    /// One line, ending in an ellipsis when cut.
+    Truncate,
+    /// Two lines, the second ending in an ellipsis when cut.
+    WrapTwo,
+    /// Every wrapped line.
+    Wrap,
+}
+
+/// A title or subtitle as resolved: its text, the face it paints in, its overflow.
+#[derive(Debug, Clone, Copy)]
+pub struct TitleText<'a> {
+    pub text: &'a str,
+    pub font: Font<'a>,
+    pub overflow: Overflow,
+}
+
+/// The gap between a title and a subtitle under it.
+const SUBTITLE_PADDING: f64 = 3.0;
+
+/// One drawn line and its baseline, from the block's top.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Line {
+    pub text: String,
+    pub baseline: f64,
+}
+
+/// What a `cols` row aligns titles by: the block's top to the first baseline,
+/// and the first baseline to the body's top.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TitleMetrics {
+    pub ascent: f64,
+    pub tail: f64,
+}
+
+impl TitleMetrics {
+    /// The band the title takes above the body.
+    pub fn height(&self) -> f64 {
+        self.ascent + self.tail
+    }
+}
+
+/// A title and its subtitle as they draw.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TitleBlock {
+    pub title: Vec<Line>,
+    pub subtitle: Vec<Line>,
+    /// The widest line, never more than the limit.
+    pub width: f64,
+    pub metrics: TitleMetrics,
+    /// `WARN-CHART-TITLE-TRUNCATED` for the title and the subtitle a line cap cut.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// The title block in `avail_w` (the card less its padding). Title and subtitle
+/// each wrap once, in the face they paint in, to the whole-pixel limit, by their
+/// own overflow (quirk class Q2e: no measure in a stand-in face, no second clip).
+/// No limit left draws the text unbroken. Each line pitches by its face's ascent
+/// plus descent, the first baseline at the title's ascent (quirk class Q2d: no
+/// Vega text metrics); the subtitle sits `SUBTITLE_PADDING` under the title and
+/// `offset` separates the block from the body.
+///
+/// `None` when nothing draws: no title (a subtitle needs one), or a blank title in
+/// a wrapping mode with a limit. A blank title in `Clip` or `Truncate`, or with no
+/// limit, keeps its band.
+pub fn title_block(
+    chart_id: &str,
+    title: Option<&TitleText>,
+    subtitle: Option<&TitleText>,
+    offset: f64,
+    avail_w: f64,
+    book: &FontBook,
+) -> Result<Option<TitleBlock>, String> {
+    let Some(title) = title else {
+        return Ok(None);
+    };
+    let limit = avail_w.trunc();
+    let (title_lines, title_cut) = fit(title, limit, book)?;
+    if title_lines.is_empty() {
+        return Ok(None);
+    }
+    let (sub_lines, sub_cut) = match subtitle {
+        Some(sub) => fit(sub, limit, book)?,
+        None => (vec![], false),
+    };
+
+    let mut pen = Pen {
+        top: 0.0,
+        width: 0.0,
+    };
+    let drawn = pen.place(title_lines, &title.font, book)?;
+    let sub_drawn = match subtitle {
+        Some(sub) if !sub_lines.is_empty() => {
+            pen.top += SUBTITLE_PADDING;
+            pen.place(sub_lines, &sub.font, book)?
+        }
+        _ => vec![],
+    };
+    let (top, width) = (pen.top, pen.width);
+    let height = top + offset;
+    let ascent = drawn[0].baseline;
+
+    let mut diagnostics = Vec::new();
+    for (cut, field, text) in [
+        (title_cut, "title", Some(title)),
+        (sub_cut, "subtitle", subtitle),
+    ] {
+        if let (true, Some(text)) = (cut, text) {
+            diagnostics.push(diag::warn_chart_title_truncated(chart_id, field, text.text));
+        }
+    }
+    Ok(Some(TitleBlock {
+        title: drawn,
+        subtitle: sub_drawn,
+        width: if limit > 0.0 { width.min(limit) } else { width },
+        metrics: TitleMetrics {
+            ascent,
+            tail: height - ascent,
+        },
+        diagnostics,
+    }))
+}
+
+/// Stacks lines down from the block's top, tracking the widest.
+struct Pen {
+    top: f64,
+    width: f64,
+}
+
+impl Pen {
+    fn place(
+        &mut self,
+        lines: Vec<String>,
+        font: &Font,
+        book: &FontBook,
+    ) -> Result<Vec<Line>, String> {
+        lines
+            .into_iter()
+            .map(|text| {
+                let run = book.run(&text, font)?;
+                self.width = self.width.max(run.advance);
+                let line = Line {
+                    text,
+                    baseline: self.top + run.ascent,
+                };
+                self.top += run.ascent + run.descent;
+                Ok(line)
+            })
+            .collect()
+    }
+}
+
+/// A text's lines in `limit`, and whether a line cap cut it.
+fn fit(t: &TitleText, limit: f64, book: &FontBook) -> Result<(Vec<String>, bool), String> {
+    if limit <= 0.0 {
+        return Ok((vec![t.text.to_string()], false));
+    }
+    if t.text.trim().is_empty() {
+        let single_line = matches!(t.overflow, Overflow::Clip | Overflow::Truncate);
+        return Ok((
+            if single_line {
+                vec![t.text.to_string()]
+            } else {
+                vec![]
+            },
+            false,
+        ));
+    }
+    if t.overflow == Overflow::Clip {
+        return clip(t, limit, book);
+    }
+    let max_lines = match t.overflow {
+        Overflow::Truncate => Some(1),
+        Overflow::WrapTwo => Some(2),
+        Overflow::Clip | Overflow::Wrap => None,
+    };
+    let wrapped = book.wrap(t.text, &t.font, limit, max_lines)?;
+    Ok((wrapped.lines, wrapped.truncated))
+}
+
+/// The longest prefix of the whitespace-collapsed text that fits `limit`, its
+/// trailing spaces dropped, with no ellipsis; the first character when none fits.
+fn clip(t: &TitleText, limit: f64, book: &FontBook) -> Result<(Vec<String>, bool), String> {
+    let text = t.text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if book.run(&text, &t.font)?.advance <= limit {
+        return Ok((vec![text], false));
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let (mut lo, mut hi) = (1, chars.len() - 1);
+    let mut best = chars[0].to_string();
+    while lo <= hi {
+        let mid = (lo + hi) / 2;
+        let candidate = chars[..mid]
+            .iter()
+            .collect::<String>()
+            .trim_end()
+            .to_string();
+        if book.run(&candidate, &t.font)?.advance <= limit {
+            best = candidate;
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    Ok((vec![best], true))
+}

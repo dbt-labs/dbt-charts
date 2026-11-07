@@ -140,7 +140,6 @@ class FileSourceMaterializer:
                 ":memory:",
                 config={"enable_external_access": "false"},
             )
-            self._conn.execute("SET TimeZone='UTC'")
         return self._conn
 
     def close(self) -> None:
@@ -157,10 +156,12 @@ class FileSourceMaterializer:
         sql: str,
         variables: dict[str, Any],
         source_name: str,
+        time_zone: str,
         params: QueryParams = None,
         strict: bool = True,
     ) -> tuple[list[_JsonRow], dict[str, ColumnType]]:
-        """Load exact file versions once, install aliases, and run author SQL.
+        """Load exact file versions once, install aliases, and run author SQL
+        in the session zone *time_zone*.
 
         Returns the rows and the result's declared column types.
         """
@@ -220,6 +221,7 @@ class FileSourceMaterializer:
 
         with self._lock:
             conn = self._connection()
+            conn.execute("SET TimeZone = ?", [time_zone])
             for table_name, version, relpaths in table_specs:
                 key = (source_hash, table_name)
                 physical = self._physical_name(source_hash, table_name)

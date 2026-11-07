@@ -79,6 +79,8 @@ exclude = [
     # does not read. Imported by `execute/drivers/trino.py`, loaded lazily by
     # `open_driver` like the lake compute driver above.
     "trino",
+    # `requests` ships in the trino extra.
+    "requests",
     # `metricflow-sql` is optional and undeclared; `execute/metricflow.py`
     # imports it only for a source with `metricflow:`.
     "metricflow_sql",
@@ -143,11 +145,10 @@ exclude = [
     # Declared in dbt-charts/pyproject.toml so pip-install pulls it as a
     # direct runtime dep of the bundled mdsvg.
     "nh3",
-    # `cairosvg` is a test-only dev dep (declared in libs/tasks/pyproject.toml,
-    # imported transitively via the shared workspace venv). Used by
+    # `cairosvg` is a test-only dev dep (declared in the root pyproject.toml's
+    # dev group, imported through the shared workspace venv). Used by
     # dbt-charts/tests/core/render/test_svg_root_standalone_export.py to
-    # rasterize a standalone SVG export outside a browser, same role as
-    # libs/tasks/tasks/pr/viz_review.py's rasterization step.
+    # rasterize a standalone SVG export outside a browser.
     "cairosvg",
 ]
 

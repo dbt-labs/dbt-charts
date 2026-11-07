@@ -596,6 +596,7 @@ def _execute_cache_ref_query(
         rendered.params,
         limit=row_fetch_limit.fetch_limit,
         schemas=schemas,
+        time_zone=ctx.board.regional.time_zone,
     )
     rows, truncated_reason = apply_row_limit_truncation(rows, row_fetch_limit)
     return ResultRows(rows, schema), truncated_reason
@@ -946,6 +947,7 @@ def _run_file_source(
                 composed.sql,
                 bound_variables,
                 source_name,
+                composed.time_zone,
                 params=list(composed.params),
                 strict=not query.lenient_variables,
             )

@@ -29,6 +29,7 @@ from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import (
     AxisLabelStylePatch,
     AxisXStylePatch,
+    AxisYLabelStylePatch,
     AxisYStylePatch,
     BandAxisStylePatch,
     DimensionLabelStylePatch,
@@ -103,7 +104,7 @@ def test_board_level_axis_y_si_format_matches_chart_level_render():
     chart_local = _line_chart(
         "chart_level",
         style=LineChartStylePatch(
-            axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="$,.3~s"))
+            axis_y=AxisYStylePatch(labels=AxisYLabelStylePatch(format="$,.3~s"))
         ),
     )
     chart_svg = render_chart(
@@ -161,7 +162,7 @@ def test_chart_local_axis_y_still_wins_over_board_level():
         {"charts": {"axis_y": {"labels": {"format": "$,.3~s"}}}}
     )
     ctx = resolve_chart_style_context(get_theme_style(), board_patch)
-    chart_local = AxisYStylePatch(labels=AxisLabelStylePatch(format="$,.0f"))
+    chart_local = AxisYStylePatch(labels=AxisYLabelStylePatch(format="$,.0f"))
     resolved = resolved_axis_style(
         ctx,
         "axis_y",
@@ -361,7 +362,7 @@ def test_chart_local_axis_quantitative_beats_chart_local_axis_y():
     """On one chart the type slot beats the channel slot, as it does in every tier."""
     ctx = dataclasses.replace(
         resolve_chart_style_context(get_theme_style()),
-        axis_overrides_y=AxisYStylePatch(labels=AxisLabelStylePatch(padding=11)),
+        axis_overrides_y=AxisYStylePatch(labels=AxisYLabelStylePatch(padding=11)),
         axis_overrides_quantitative=QuantitativeAxisStylePatch(
             labels=AxisLabelStylePatch(padding=22)
         ),

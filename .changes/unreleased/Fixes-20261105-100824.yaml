@@ -1,0 +1,3 @@
+kind: Fixes
+body: A band label that moves to avoid a collision now stays centered in its band.
+time: 2026-11-05T10:08:24.635729-08:00

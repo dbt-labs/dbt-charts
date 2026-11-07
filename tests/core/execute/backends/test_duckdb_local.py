@@ -11,7 +11,11 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
+from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
+from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.query_result import resolve_effective_row_limit
 from dbt_charts.core.execute.run import run_query
+from dbt_charts.core.text.time_zones import TimeZoneName
 
 
 def _make_query(sql: str, source: str = "db") -> SqlQuery:
@@ -64,7 +68,9 @@ class TestDuckDBBackendMaxRowsCeiling:
 
         # No dialect-specific rewrite runs — the SQL sent to DuckDB is
         # exactly what the author wrote, and the ceiling still bounds it.
-        assert captured_sql == ["SELECT * FROM range(100)"]
+        assert [sql for sql in captured_sql if "TimeZone" not in sql] == [
+            "SELECT * FROM range(100)"
+        ]
         assert result.error is None
         assert len(result.data) == 3
         assert result.truncated_reason == "max_rows"
@@ -1690,3 +1696,62 @@ class TestDuckDBSqlBuilders:
         )
         assert executed == ["INSTALL h3 FROM 'community'"]
         assert loaded == ["h3"]
+
+
+class TestDuckDBSessionTimeZone:
+    """The query's zone is the connection's session zone, fixed at connect."""
+
+    @staticmethod
+    def _zone_of(
+        backend: DuckDBBackend, source: DuckDBSourceConfig, time_zone: str
+    ) -> str:
+        query = ResolvedQuery(
+            sql="SELECT current_setting('TimeZone') AS z",
+            params=(),
+            setup_sql=(),
+            limit=resolve_effective_row_limit(None),
+            time_zone=TimeZoneName(time_zone),
+        )
+        return backend.execute(source, query).rows[0][0]
+
+    def test_memory_connections_are_pooled_per_zone(self) -> None:
+        backend = DuckDBBackend()
+        source = DuckDBSourceConfig(type="duckdb", path=":memory:")
+        try:
+            assert self._zone_of(backend, source, "America/New_York") == (
+                "America/New_York"
+            )
+            assert self._zone_of(backend, source, "UTC") == "UTC"
+        finally:
+            backend.close()
+
+    def test_a_locked_attach_connection_still_gets_the_zone(
+        self, tmp_path: Path
+    ) -> None:
+        """`attach` locks the connection's configuration, so the zone is set first."""
+        other = tmp_path / "other.duckdb"
+        duckdb.connect(str(other)).close()
+        file_db = tmp_path / "main.duckdb"
+        duckdb.connect(str(file_db)).close()
+        source = DuckDBSourceConfig.model_validate(
+            {
+                "type": "duckdb",
+                "path": str(file_db),
+                "attach": [{"path": str(other), "alias": "o", "read_only": True}],
+            }
+        )
+        backend = DuckDBBackend(data_dir=tmp_path)
+        try:
+            assert self._zone_of(backend, source, "Asia/Tokyo") == "Asia/Tokyo"
+        finally:
+            backend.close()
+
+    def test_the_board_zone_wins_over_an_authored_setting(self) -> None:
+        source = DuckDBSourceConfig.model_validate(
+            {"type": "duckdb", "path": ":memory:", "settings": {"TimeZone": "UTC"}}
+        )
+        backend = DuckDBBackend()
+        try:
+            assert self._zone_of(backend, source, "Europe/Berlin") == "Europe/Berlin"
+        finally:
+            backend.close()

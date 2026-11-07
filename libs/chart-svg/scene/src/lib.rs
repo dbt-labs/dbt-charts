@@ -121,6 +121,12 @@ impl Attrs {
         self
     }
 
+    /// These attributes without the ones called `names`.
+    pub fn without(mut self, names: &[&str]) -> Self {
+        self.0.retain(|(name, ..)| !names.contains(&name.as_ref()));
+        self
+    }
+
     /// `other`'s attributes after these.
     pub fn extend(mut self, other: Attrs) -> Self {
         self.0.extend(other.0);
@@ -243,6 +249,9 @@ pub enum Shape {
     Defs(Vec<Node>),
     /// `<clipPath>`: what a group's `clip-path="url(#id)"` clips to.
     ClipPath(Vec<Node>),
+    /// `<mask>` over the user-space box `region` (`x`, `y`, `width`, `height`): what a group's
+    /// `mask="url(#id)"` shows through, white where it paints and nothing where it is black.
+    Mask { region: (f64, f64, f64, f64), children: Vec<Node> },
     /// `<pattern>` in user space: the `w` by `h` tile its children paint, placed
     /// by `transform` (`patternTransform`) when present, that a `fill="url(#id)"`
     /// repeats; the id rides in the attributes.
@@ -384,7 +393,7 @@ impl Node {
     /// The nodes drawn inside this one, in paint order.
     pub fn children(&self) -> &[Node] {
         match &self.shape {
-            Shape::Group(children) | Shape::Link(children) | Shape::Defs(children) | Shape::ClipPath(children) => children,
+            Shape::Group(children) | Shape::Link(children) | Shape::Defs(children) | Shape::ClipPath(children) | Shape::Mask { children, .. } => children,
             Shape::Pattern { children, .. } => children,
             Shape::Svg { children, .. } => children,
             _ => &[],
@@ -406,7 +415,7 @@ impl Node {
                 .iter()
                 .filter_map(|child| child.bounds().map(|b| b.transformed(&child.affine())))
                 .reduce(Bounds::union),
-            Shape::Defs(_) | Shape::ClipPath(_) | Shape::Pattern { .. } | Shape::LinearGradient { .. } | Shape::Script(_) | Shape::Element(_) | Shape::Chars(_) => None,
+            Shape::Defs(_) | Shape::ClipPath(_) | Shape::Mask { .. } | Shape::Pattern { .. } | Shape::LinearGradient { .. } | Shape::Script(_) | Shape::Element(_) | Shape::Chars(_) => None,
         }
     }
 }

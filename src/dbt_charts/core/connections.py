@@ -452,7 +452,7 @@ def _send_one_statement(source_config: ResolvedSourceConfig, sql: str) -> na.Arr
     from dbt_charts.core.execute.drivers import open_driver
     from dbt_charts.core.execute.query_result import resolve_effective_row_limit
 
-    connection = open_driver(source_config, None)
+    connection = open_driver(source_config, None, "UTC")
     try:
         return connection.execute(sql, resolve_effective_row_limit(1))
     finally:
@@ -690,7 +690,7 @@ def _bulk_rows_via_driver(
     from dbt_charts.core.execute.result import arrow_to_query_result
 
     try:
-        connection = open_driver(source_config, None)
+        connection = open_driver(source_config, None, "UTC")
         try:
             table = connection.execute(sql, row_limit)
         finally:

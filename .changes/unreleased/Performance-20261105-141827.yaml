@@ -1,0 +1,3 @@
+kind: Performance
+body: 'Large tables render faster: query rows are sent to the render engine once per board instead of once per layout pass.'
+time: 2026-11-05T14:18:27.41909-08:00

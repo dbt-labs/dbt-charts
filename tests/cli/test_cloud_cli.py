@@ -69,7 +69,9 @@ from dbt_charts.cloud_client.contract import (
     WhoAmI,
 )
 
-runner = CliRunner()
+# Rich sizes tables from the host terminal; tests that parse table text must
+# not depend on who runs them.
+runner = CliRunner(env={"COLUMNS": "80"})
 
 Route = tuple[str, str]
 

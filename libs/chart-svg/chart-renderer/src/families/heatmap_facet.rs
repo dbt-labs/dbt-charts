@@ -184,7 +184,7 @@ impl HeatmapXAxis {
         let expr = labels_cfg
             .expr
             .as_deref()
-            .map(|expr| crate::labels_expr::Expr::parse(expr).map(|e| e.on("x")).map_err(|e| format!("heatmap: {e:?}")))
+            .map(|expr| ::layout::labels_expr::Expr::parse(expr).map(|e| e.on("x")).map_err(|e| format!("heatmap: {e:?}")))
             .transpose()?;
         // A heatmap collapses `values` to the ticks the ladder keeps.
         let resolved = ordinal_date_labels(
@@ -400,8 +400,8 @@ impl HeatmapXAxis {
     }
 
     /// How the labels lie, for an expression that reads its label `item`.
-    pub(crate) fn item_axis(&self, ax_x: &AxisStyle) -> Result<crate::labels_expr::view::AxisSpec, String> {
-        use crate::labels_expr::view::{anchor, AxisSpec, Orient};
+    pub(crate) fn item_axis(&self, ax_x: &AxisStyle) -> Result<::layout::labels_expr::view::AxisSpec, String> {
+        use ::layout::labels_expr::view::{anchor, AxisSpec, Orient};
         let (align, baseline) = if self.angle == 0.0 { ("center", "top") } else { vega_fit::vl_x_label_anchor(self.angle, true) };
         let (align, baseline) = (Some(anchor(align)?), Some(anchor(baseline)?));
         let (offset, angle) = (self.tick_len + self.label_pad, vega_fit::normalize_angle(self.angle));
@@ -834,6 +834,7 @@ fn render_panel(
         val_tick_size: style.y_tick_len,
         val_tick_marks: if style.own_axis || style.y_tick_len == 0.0 { Vec::new() } else { centers.iter().map(|&(_, cy)| cy).collect() },
         ghost_labels: Vec::new(),
+        val_label_ys: if style.own_axis { Vec::new() } else { centers.iter().map(|&(_, cy)| cy + label_shift).collect() },
         val_ticks: if style.own_axis {
             Vec::new()
         } else {

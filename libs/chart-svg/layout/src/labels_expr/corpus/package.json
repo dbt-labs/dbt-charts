@@ -1,0 +1,10 @@
+{
+  "name": "labels-expr-corpus",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway install for build_corpus.py and the .mjs recorders; its own pnpm root (pnpm-workspace.yaml, pnpm-lock.yaml).",
+  "dependencies": {
+    "vega": "6.2.0",
+    "vega-functions": "6.1.3"
+  }
+}

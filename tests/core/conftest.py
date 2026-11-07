@@ -416,7 +416,9 @@ def typed_via_execute(monkeypatch: pytest.MonkeyPatch) -> None:
     ``execute/test_typed_fetch.py``.
     """
 
-    def fetch(adapter: Any, dialect: str, sql: str, limit: int | None) -> TypedRows:
+    def fetch(
+        adapter: Any, dialect: str, sql: str, limit: int | None, time_zone: str
+    ) -> TypedRows:
         _, table = adapter.execute(sql, auto_begin=False, fetch=True, limit=limit)
         columns = list(table.column_names)
         return TypedRows(

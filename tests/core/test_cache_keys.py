@@ -20,6 +20,7 @@ from dbt_charts.core.execute.duckdb_cache import (
     compute_source_hash,
     compute_variables_hash,
 )
+from dbt_charts.core.text.time_zones import UTC, TimeZoneName
 
 from .._scripted_env import ScriptedBackend, backend_of, scripted_env
 
@@ -269,38 +270,51 @@ class TestComputeCacheKey:
 
     def test_sql_query_matches_primitive_recipe(self):
         q = SqlQuery(sql="SELECT 1", source="dw")
-        source_hash, query_hash, variables_hash = compute_cache_key(q)
+        source_hash, query_hash, variables_hash = compute_cache_key(q, time_zone=UTC)
         assert source_hash == compute_source_hash("dw", board_sources=None)
         assert query_hash == compute_query_hash("SELECT 1")
         assert variables_hash == compute_variables_hash({})
 
     def test_setup_sql_folded_into_query_hash(self):
         q = SqlQuery(sql="SELECT 1", setup_sql="SET x = 1", source="warehouse")
-        assert compute_cache_key(q)[1] == compute_query_hash("SELECT 1\nSET x = 1")
+        assert compute_cache_key(q, time_zone=UTC)[1] == compute_query_hash(
+            "SELECT 1\nSET x = 1"
+        )
 
     def test_incremental_inactive_matches_non_incremental_key(self):
         """A query most people don't use incremental on must hash exactly as
         before the feature existed, so upgrading never busts every cache entry."""
         inactive = SqlQuery(sql="SELECT 1", source="dw")
         assert inactive.incremental is None
-        assert compute_cache_key(inactive)[1] == compute_query_hash("SELECT 1")
+        assert compute_cache_key(inactive, time_zone=UTC)[1] == compute_query_hash(
+            "SELECT 1"
+        )
 
     def test_incremental_active_differs_from_inactive(self):
         active = SqlQuery(sql="SELECT 1", source="dw", incremental="updated_at")
         inactive = SqlQuery(sql="SELECT 1", source="dw")
-        assert compute_cache_key(active)[1] != compute_cache_key(inactive)[1]
+        assert (
+            compute_cache_key(active, time_zone=UTC)[1]
+            != compute_cache_key(inactive, time_zone=UTC)[1]
+        )
 
     def test_incremental_distinct_columns_distinct_keys(self):
         a = SqlQuery(sql="SELECT 1", source="dw", incremental="updated_at")
         b = SqlQuery(sql="SELECT 1", source="dw", incremental="created_at")
-        assert compute_cache_key(a)[1] != compute_cache_key(b)[1]
+        assert (
+            compute_cache_key(a, time_zone=UTC)[1]
+            != compute_cache_key(b, time_zone=UTC)[1]
+        )
 
     def test_incremental_column_named_false_differs_from_inactive(self):
         """A column literally named 'False' must not collide with the
         inactive (None) state — the fold format must be unambiguous."""
         named_false = SqlQuery(sql="SELECT 1", source="dw", incremental="False")
         inactive = SqlQuery(sql="SELECT 1", source="dw")
-        assert compute_cache_key(named_false)[1] != compute_cache_key(inactive)[1]
+        assert (
+            compute_cache_key(named_false, time_zone=UTC)[1]
+            != compute_cache_key(inactive, time_zone=UTC)[1]
+        )
 
     def test_dialect_changes_the_key_only_when_set(self):
         """The same text means different SQL in another dialect, but a query
@@ -308,17 +322,39 @@ class TestComputeCacheKey:
         plain = SqlQuery(sql="SELECT 1", source="dw")
         bigquery = SqlQuery(sql="SELECT 1", source="dw", dialect="bigquery")
         snowflake = SqlQuery(sql="SELECT 1", source="dw", dialect="snowflake")
-        assert compute_cache_key(plain)[1] == compute_query_hash("SELECT 1")
-        assert len({compute_cache_key(q)[1] for q in (plain, bigquery, snowflake)}) == 3
+        assert compute_cache_key(plain, time_zone=UTC)[1] == compute_query_hash(
+            "SELECT 1"
+        )
+        assert (
+            len(
+                {
+                    compute_cache_key(q, time_zone=UTC)[1]
+                    for q in (plain, bigquery, snowflake)
+                }
+            )
+            == 3
+        )
+
+    def test_time_zone_changes_the_key_only_off_utc(self):
+        """The same SQL buckets differently per zone, but a UTC query hashes
+        exactly as before."""
+        q = SqlQuery(sql="SELECT 1", source="dw")
+        assert compute_cache_key(q, time_zone=UTC)[1] == compute_query_hash("SELECT 1")
+        assert (
+            compute_cache_key(q, time_zone=TimeZoneName("America/New_York"))[1]
+            != compute_cache_key(q, time_zone=TimeZoneName("Europe/Berlin"))[1]
+        )
 
     def test_distinct_sql_distinct_key(self):
         assert compute_cache_key(
-            SqlQuery(sql="SELECT 1", source="warehouse")
-        ) != compute_cache_key(SqlQuery(sql="SELECT 2", source="warehouse"))
+            SqlQuery(sql="SELECT 1", source="warehouse"), time_zone=UTC
+        ) != compute_cache_key(
+            SqlQuery(sql="SELECT 2", source="warehouse"), time_zone=UTC
+        )
 
     def test_distinct_source_same_sql_differs_only_in_source_hash(self):
-        a = compute_cache_key(SqlQuery(sql="SELECT 1", source="dw1"))
-        b = compute_cache_key(SqlQuery(sql="SELECT 1", source="dw2"))
+        a = compute_cache_key(SqlQuery(sql="SELECT 1", source="dw1"), time_zone=UTC)
+        b = compute_cache_key(SqlQuery(sql="SELECT 1", source="dw2"), time_zone=UTC)
         assert a[0] != b[0]  # source_hash differs
         assert a[1] == b[1]  # query_hash identical
 
@@ -327,12 +363,12 @@ class TestComputeCacheKey:
             sql="SELECT {{ year }}", variable_dependencies={"year"}, source="warehouse"
         )
         # An unrelated variable must not change the key.
-        assert compute_cache_key(q, {"year": 2024, "other": "a"}) == compute_cache_key(
-            q, {"year": 2024, "other": "b"}
-        )
+        assert compute_cache_key(
+            q, {"year": 2024, "other": "a"}, time_zone=UTC
+        ) == compute_cache_key(q, {"year": 2024, "other": "b"}, time_zone=UTC)
         # A dependency change must.
-        assert compute_cache_key(q, {"year": 2024}) != compute_cache_key(
-            q, {"year": 2025}
+        assert compute_cache_key(q, {"year": 2024}, time_zone=UTC) != compute_cache_key(
+            q, {"year": 2025}, time_zone=UTC
         )
 
     def test_board_sources_resolves_named_source(self):
@@ -340,13 +376,17 @@ class TestComputeCacheKey:
         # keeps two users' same-named sources from colliding.
         cfg = {"type": "postgres", "user": "alice", "host": "db"}
         q = SqlQuery(sql="SELECT 1", source="warehouse")
-        source_hash, _, _ = compute_cache_key(q, board_sources={"warehouse": cfg})
+        source_hash, _, _ = compute_cache_key(
+            q, board_sources={"warehouse": cfg}, time_zone=UTC
+        )
         assert source_hash == compute_source_hash(
             "warehouse", board_sources={"warehouse": cfg}
         )
         # Different resolved identity → different source_hash for the same SQL + name.
         other = {"type": "postgres", "user": "bob", "host": "db"}
-        other_hash, _, _ = compute_cache_key(q, board_sources={"warehouse": other})
+        other_hash, _, _ = compute_cache_key(
+            q, board_sources={"warehouse": other}, time_zone=UTC
+        )
         assert source_hash != other_hash
 
 

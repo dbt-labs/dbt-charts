@@ -244,7 +244,7 @@ pub(super) fn bar_temporal_labels(
     ladder_w: f64,
     chart_w: f64,
     usable_ratio: Option<f64>,
-    expr: Option<&crate::labels_expr::Expr>,
+    expr: Option<&::layout::labels_expr::Expr>,
     fonts: &FontBook,
     font_size: f64,
 ) -> Result<crate::families::temporal::OrdinalDateLabels, String> {

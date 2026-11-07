@@ -492,7 +492,7 @@
         table.setAttribute('data-dbt-bound', 'true');
         var state = {
             table: table,
-            rows: _children(table, 'data-dbt-row').map(_readRow),
+            rows: _children(table.querySelector('[data-dbt-rows]') || table, 'data-dbt-row').map(_readRow),
             pageRows: _numberHook(table, 'data-dbt-page-rows'),
             rowsY: _numberHook(table, 'data-dbt-rows-y'),
             gap: _numberHook(table, 'data-dbt-summary-gap'),
@@ -561,6 +561,8 @@
     function mount(root) {
         var scope = root || document;
         if (_menu && !document.contains(_menu.header)) _closeMenu();
+        /*{# Scroll first: its observer then sees the rows this runtime lays out. #}*/
+        window.dbtTableScroll.mount(scope);
         var tables = Array.prototype.slice.call(scope.querySelectorAll('[data-dbt-table]'));
         if (scope.matches && scope.matches('[data-dbt-table]')) tables.unshift(scope);
         tables.forEach(_bindTable);

@@ -10,6 +10,9 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::OnceLock;
 
+mod shared_rows;
+pub use shared_rows::SharedRows;
+
 use serde::Deserialize;
 use diagnostic::{codes, Diagnostic};
 use serde_json::{json, Map, Value};
@@ -205,7 +208,7 @@ impl CellMismatch {
 /// One query result as the board payload carries it: rows plus their types.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Dataset {
-    pub rows: Vec<Map<String, Value>>,
+    pub rows: SharedRows,
     pub schema: ColumnTypes,
 }
 

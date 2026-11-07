@@ -386,6 +386,10 @@ pub fn err_file_source_unsupported_type(table_name: impl Into<Value>, detail: im
     Diagnostic::new(&codes::ERR_FILE_SOURCE_UNSUPPORTED_TYPE, [("table_name", table_name.into()), ("detail", detail.into())])
 }
 
+pub fn err_filter_date_range_timestamp() -> Diagnostic {
+    Diagnostic::new(&codes::ERR_FILTER_DATE_RANGE_TIMESTAMP, [])
+}
+
 pub fn err_font_registry(message: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_FONT_REGISTRY, [("message", message.into())])
 }
@@ -1022,6 +1026,10 @@ pub fn err_table_format_kind_mismatch(fmt: impl Into<Value>, remedy: impl Into<V
     Diagnostic::new(&codes::ERR_TABLE_FORMAT_KIND_MISMATCH, [("fmt", fmt.into()), ("remedy", remedy.into())])
 }
 
+pub fn err_table_freeze_invalid(chart_id: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_TABLE_FREEZE_INVALID, [("chart_id", chart_id.into()), ("reason", reason.into())])
+}
+
 pub fn err_table_link_filter_unknown(filter_name: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_TABLE_LINK_FILTER_UNKNOWN, [("filter_name", filter_name.into())])
 }
@@ -1566,8 +1574,16 @@ pub fn warn_series_labels_repeat_word(chart_id: impl Into<Value>, authored_key: 
     Diagnostic::new(&codes::WARN_SERIES_LABELS_REPEAT_WORD, [("chart_id", chart_id.into()), ("authored_key", authored_key.into()), ("repeated", repeated.into()), ("labels", labels.into()), ("once", once.into()), ("shortened", shortened.into())])
 }
 
+pub fn warn_session_time_zone_unsupported(source: impl Into<Value>, adapter_type: impl Into<Value>, time_zone: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_SESSION_TIME_ZONE_UNSUPPORTED, [("source", source.into()), ("adapter_type", adapter_type.into()), ("time_zone", time_zone.into())])
+}
+
 pub fn warn_single_chart_redundant_title(title: impl Into<Value>, chart_title: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_SINGLE_CHART_REDUNDANT_TITLE, [("title", title.into()), ("chart_title", chart_title.into())])
+}
+
+pub fn warn_source_time_zone_overridden(source: impl Into<Value>, source_zone: impl Into<Value>, time_zone: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_SOURCE_TIME_ZONE_OVERRIDDEN, [("source", source.into()), ("source_zone", source_zone.into()), ("time_zone", time_zone.into())])
 }
 
 pub fn warn_spark_label_truncated(chart_id: impl Into<Value>, truncation_count: impl Into<Value>) -> Diagnostic {
@@ -1604,6 +1620,10 @@ pub fn warn_table_numeric_align_left(chart_id: impl Into<Value>, column: impl In
 
 pub fn warn_table_page_squeezed(chart_id: impl Into<Value>, drawn_rows: impl Into<Value>, page_rows: impl Into<Value>, total_rows: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_TABLE_PAGE_SQUEEZED, [("chart_id", chart_id.into()), ("drawn_rows", drawn_rows.into()), ("page_rows", page_rows.into()), ("total_rows", total_rows.into())])
+}
+
+pub fn warn_table_scroll_rows_capped(chart_id: impl Into<Value>, total_rows: impl Into<Value>, max_rows: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_TABLE_SCROLL_ROWS_CAPPED, [("chart_id", chart_id.into()), ("total_rows", total_rows.into()), ("max_rows", max_rows.into())])
 }
 
 pub fn warn_table_text_truncated(chart_id: impl Into<Value>, authored_field: impl Into<Value>, truncation_count: impl Into<Value>) -> Diagnostic {

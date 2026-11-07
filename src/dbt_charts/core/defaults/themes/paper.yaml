@@ -102,6 +102,8 @@ style:
     axis_y:
       grid:
         color: chrome[5]  # softer grid for the value axis (overrides default gray)
+      labels:
+        position: above_gridline
     axis_quantitative:
       grid:
         color: chrome[5]

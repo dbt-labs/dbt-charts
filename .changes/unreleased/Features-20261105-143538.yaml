@@ -1,0 +1,3 @@
+kind: Features
+body: Warehouse queries run in the board's regional.time_zone, so SQL date truncation matches printed times
+time: 2026-11-05T14:35:38.086137-08:00

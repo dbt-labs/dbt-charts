@@ -506,6 +506,26 @@ class AxisLabelStyle(BaseModel):
     )
 
 
+class AxisYLabelStyle(AxisLabelStyle):
+    """AxisLabelStyle + y-axis-only label fields.
+
+    Used only by AxisYStyle.labels; structurally absent on AxisXStyle.labels.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    position: Literal["beside_gridline", "above_gridline"] | None = Field(
+        default=None,
+        description=(
+            "Where y-axis labels sit against their gridlines: `beside_gridline` centers "
+            "each label on the end of its gridline; `above_gridline` sets it just above "
+            "the gridline, with the gridline running under it. Applies only "
+            "where value gridlines are horizontal: no effect on a band y axis, "
+            "a horizontal bar, rotated labels, or when gridlines are hidden."
+        ),
+    )
+
+
 class DimensionLabelStyle(AxisLabelStyle):
     """AxisLabelStyle + dimension-axis-only label fields.
 
@@ -1209,6 +1229,10 @@ class AxisYStyle(BaseAxisStyle):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    labels: AxisYLabelStyle = Field(
+        default_factory=AxisYLabelStyle,
+        description="Value axis label style.",
+    )
     position: Annotated[Literal["left", "right", "auto"] | None, SkipInheritSlots()] = (
         Field(
             default=None,

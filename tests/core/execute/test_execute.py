@@ -14,6 +14,7 @@ from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.execute import ExecutionError, QueryError
 from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.plan import make_context
+from dbt_charts.core.text.time_zones import UTC
 
 from ..._run import Run
 from ..._scripted_env import ScriptedBackend, scripted_env
@@ -420,7 +421,7 @@ rows:
         executor.execute_query("my_query")
 
         query = result.board.queries["my_query"]
-        content_key = compute_cache_key(query, {}, result.board.sources)
+        content_key = compute_cache_key(query, {}, result.board.sources, time_zone=UTC)
         # The memo key is the content key plus the asking query's resolved
         # policy: freshness is per-reader, and the slot is warmed from the
         # shared persistent entry, so keying it on content alone would let one

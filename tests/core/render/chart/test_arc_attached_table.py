@@ -923,7 +923,7 @@ def _composed(
 
 def _wheel_center_y(svg: str) -> float:
     match = re.search(
-        r'<g transform="translate\([\d.]+,([\d.]+)\)"><g class="mark-arc', svg
+        r'<g transform="translate\([\d.]+,([\d.]+)\)"><(?:mask |g class="mark-arc)', svg
     )
     assert match is not None, svg
     return float(match.group(1))

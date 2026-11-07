@@ -326,6 +326,10 @@ fn node_into(out: &mut String, node: &Node) {
         Shape::Link(children) => parent_into(out, "a", &[], node, children),
         Shape::Defs(children) => parent_into(out, "defs", &[], node, children),
         Shape::ClipPath(children) => parent_into(out, "clipPath", &[], node, children),
+        Shape::Mask { region: (x, y, w, h), children } => {
+            let units = [("maskUnits", "userSpaceOnUse".to_string()), ("x", geometry(*x)), ("y", geometry(*y)), ("width", geometry(*w)), ("height", geometry(*h))];
+            parent_into(out, "mask", &units, node, children)
+        }
         Shape::Pattern { w, h, transform, children } => {
             let mut tile = vec![("width", geometry(*w)), ("height", geometry(*h))];
             tile.extend(transform.map(|t| ("patternTransform", transform_text(&[t]))));
@@ -449,6 +453,19 @@ mod tests {
         assert_eq!(
             print(&[node]),
             "<text x=\"14\" y=\"0\" text-anchor=\"start\"><title>it&apos;s</title>\n<tspan y=\"30.5\" font-family=\"&apos;Inter&apos;\">a&lt;b</tspan></text>"
+        );
+    }
+
+    #[test]
+    fn a_mask_prints_its_region_and_children() {
+        let mask = Node::new(
+            Role::Chrome,
+            Attrs::new().set("id", "m"),
+            Shape::Mask { region: (-1.0, -1.0, 12.0, 7.0), children: vec![Node::rect(Role::Chrome, (-1.0, -1.0, 12.0, 7.0), Attrs::new().set("fill", "#fff"))] },
+        );
+        assert_eq!(
+            print(&[mask]),
+            "<mask maskUnits=\"userSpaceOnUse\" x=\"-1\" y=\"-1\" width=\"12\" height=\"7\" id=\"m\"><rect x=\"-1\" y=\"-1\" width=\"12\" height=\"7\" fill=\"#fff\"/></mask>"
         );
     }
 

@@ -517,7 +517,7 @@ fn rendered_vega_height(
         None
     };
     let payload = crate::Payload {
-        cell_text: Vec::new(),
+        cell_text: Default::default(),
         max_template_output_bytes: None,
         resolved: chart_json.clone(),
         rows: rows.clone(),
@@ -600,7 +600,7 @@ fn spark_bar_natural_height(
     ctx: &SizingCtx,
 ) -> Result<f64, String> {
     let payload = crate::Payload {
-        cell_text: Vec::new(),
+        cell_text: Default::default(),
         max_template_output_bytes: None,
         resolved: chart_json.clone(),
         rows: dataset.rows.clone(),
@@ -727,7 +727,7 @@ fn get_table_height_from_data(
 ) -> Result<Option<f64>, String> {
     let padding = additive_padding(chart_json, card_padding)?;
     let payload = crate::Payload {
-        cell_text: Vec::new(),
+        cell_text: Default::default(),
         max_template_output_bytes: None,
         resolved: chart_json.clone(),
         rows: dataset.rows.clone(),
@@ -882,7 +882,7 @@ pub fn sized_pie_mode(
         defaults,
     )?;
     let payload = crate::Payload {
-        cell_text: Vec::new(),
+        cell_text: Default::default(),
         max_template_output_bytes: None,
         resolved: chart_json.clone(),
         rows: dataset.rows.clone(),
@@ -946,10 +946,10 @@ pub fn resolve_chart_item_height(
     // kpi/table/spark_bar).
     if chart_type == "callout" {
         let payload = crate::Payload {
-            cell_text: Vec::new(),
+            cell_text: Default::default(),
             max_template_output_bytes: None,
             resolved: chart_json.clone(),
-            rows: Vec::new(),
+            rows: Default::default(),
             width,
             height: 0.0,
             background: Some(ctx.chart_bg.to_string()),

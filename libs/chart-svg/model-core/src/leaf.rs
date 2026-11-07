@@ -1,0 +1,308 @@
+use crate::{Engine, Merge, Scalar, Tri, TypeExpr};
+use indexmap::IndexMap;
+
+/// A slot nothing was written to: unset, or a patch whose every slot is. A merge skips an empty
+/// upper slot, so merging a small patch costs its own size, not the tree's.
+pub trait Empty {
+    fn is_empty(&self) -> bool;
+}
+
+impl<T> Empty for Option<T> {
+    fn is_empty(&self) -> bool {
+        self.is_none()
+    }
+}
+
+impl<T> Empty for Tri<T> {
+    fn is_empty(&self) -> bool {
+        matches!(self, Tri::Unset)
+    }
+}
+
+impl<V> Empty for IndexMap<String, V> {
+    fn is_empty(&self) -> bool {
+        IndexMap::is_empty(self)
+    }
+}
+
+/// The leaves a patch sets, by authored path (`charts.font.size`): the dirty set an incremental
+/// cascade starts from. An absent field set to `null` is a set leaf; a map is one leaf per key.
+pub trait SetLeaves {
+    fn set_leaves(&self, at: &str, f: &mut dyn FnMut(&str));
+}
+
+impl<T> SetLeaves for Option<T> {
+    fn set_leaves(&self, at: &str, f: &mut dyn FnMut(&str)) {
+        if self.is_some() {
+            f(at);
+        }
+    }
+}
+
+impl<V> SetLeaves for IndexMap<String, V> {
+    fn set_leaves(&self, at: &str, f: &mut dyn FnMut(&str)) {
+        for k in self.keys() {
+            f(&crate::join(at, k));
+        }
+    }
+}
+
+/// A layer slot that merges an upper layer into itself.
+pub trait Slot {
+    fn merge(&mut self, upper: Self);
+}
+
+impl<T> Slot for Option<T> {
+    /// Override: a set upper replaces.
+    fn merge(&mut self, upper: Self) {
+        if upper.is_some() {
+            *self = upper;
+        }
+    }
+}
+
+impl<T> Slot for Tri<T> {
+    /// Unset keeps lower; null and value replace.
+    fn merge(&mut self, upper: Self) {
+        if !matches!(upper, Tri::Unset) {
+            *self = upper;
+        }
+    }
+}
+
+impl<S: Slot> Slot for IndexMap<String, S> {
+    /// By key: a key in both is replaced whole by the upper entry, a new key is added.
+    fn merge(&mut self, upper: Self) {
+        for (k, v) in upper {
+            self.insert(k, v);
+        }
+    }
+}
+
+/// A map field marked `merge = deep`: a key in both merges its entries field by field.
+pub fn merge_map_deep<S: Slot>(lower: &mut IndexMap<String, S>, upper: IndexMap<String, S>) {
+    for (k, v) in upper {
+        match lower.get_mut(&k) {
+            Some(entry) => entry.merge(v),
+            None => {
+                lower.insert(k, v);
+            }
+        }
+    }
+}
+
+/// The value inside a twin: `T` for a leaf's `Option<T>`, the twin itself for a model's.
+/// It types the `Tri` slot of an `Option<T>` field with `absent`, whether `T` is a leaf or a model.
+pub trait Lift {
+    type Value;
+    fn lift(self) -> Option<Self::Value>;
+    /// The set slot holding `v`.
+    fn put(v: Self::Value) -> Self;
+    /// The leaves a set value holds: itself for a leaf, its set leaves for a model.
+    fn leaves(v: &Self::Value, at: &str, f: &mut dyn FnMut(&str));
+}
+
+impl<T> Lift for Option<T> {
+    type Value = T;
+    fn lift(self) -> Option<T> {
+        self
+    }
+    fn put(v: T) -> Self {
+        Some(v)
+    }
+    fn leaves(_: &T, at: &str, f: &mut dyn FnMut(&str)) {
+        f(at);
+    }
+}
+
+impl<V: Lift> Lift for IndexMap<String, V>
+where
+    Self: SetLeaves,
+{
+    type Value = Self;
+    fn lift(self) -> Option<Self> {
+        Some(self)
+    }
+    fn put(v: Self) -> Self {
+        v
+    }
+    fn leaves(v: &Self, at: &str, f: &mut dyn FnMut(&str)) {
+        v.set_leaves(at, f);
+    }
+}
+
+/// How two set values of a [`Lift`] twin combine: a leaf's replaces, a model's patch merges deep.
+pub trait Fold: Lift {
+    fn fold(lower: &mut Self::Value, upper: Self::Value);
+}
+
+impl<T> Fold for Option<T> {
+    fn fold(lower: &mut T, upper: T) {
+        *lower = upper;
+    }
+}
+
+/// Merge an `Option<T>` field with `absent`: unset keeps lower, null sets the
+/// absent state, a value applies `T`'s strategy (replace for a leaf, deep for a model).
+pub fn merge_nullable<T: Leaf>(
+    lower: &mut Tri<<T::Patch as Lift>::Value>,
+    upper: Tri<<T::Patch as Lift>::Value>,
+) where
+    T::Patch: Fold,
+{
+    match (&mut *lower, upper) {
+        (_, Tri::Unset) => {}
+        (Tri::Value(l), Tri::Value(u)) => <T::Patch as Fold>::fold(l, u),
+        (_, upper) => *lower = upper,
+    }
+}
+
+/// Merge a `Patch<T>` slot: unset keeps lower, null replaces, and a value merges deep into a
+/// lower value, so two layers that each author part of an overlay both survive.
+pub fn merge_patch_slot<P: Slot>(lower: &mut Tri<P>, upper: Tri<P>) {
+    match (&mut *lower, upper) {
+        (_, Tri::Unset) => {}
+        (Tri::Value(l), Tri::Value(u)) => l.merge(u),
+        (_, upper) => *lower = upper,
+    }
+}
+
+/// How a spine type appears as a field of a twin. Derived by `Model`;
+/// implemented here for scalars and containers.
+pub trait Leaf {
+    /// The whole value in authored form; what `merge = override` replaces with.
+    type Whole;
+    type Authored: Default + Lift;
+    type Patch: Slot + Default + Lift + Empty + SetLeaves;
+    /// The strategy used when a field does not declare one.
+    const MERGE: Merge;
+    /// The type as written, for the field table.
+    const EXPR: TypeExpr;
+}
+
+macro_rules! scalar {
+    ($($t:ty => $s:ident),*) => {$(
+        impl Leaf for $t {
+            type Whole = $t;
+            type Authored = Option<$t>;
+            type Patch = Option<$t>;
+            const MERGE: Merge = Merge::Override;
+            const EXPR: TypeExpr = TypeExpr::Scalar(Scalar::$s);
+        }
+    )*};
+}
+crate::build_leaf!(bool, i32, i64, u32, u64, usize, f32, f64, String);
+scalar!(bool => Bool, i32 => Int, i64 => Int, u32 => Int, u64 => Int, usize => Int, f32 => Float, f64 => Float, String => Str);
+
+impl<T: Leaf> Leaf for Vec<T> {
+    type Whole = Vec<T::Whole>;
+    type Authored = Option<Vec<T::Whole>>;
+    type Patch = Option<Vec<T::Whole>>;
+    const MERGE: Merge = Merge::Override;
+    const EXPR: TypeExpr = TypeExpr::List(&T::EXPR);
+}
+
+impl<T: Leaf, R: Leaf> Leaf for Engine<T, R> {
+    type Whole = Engine<T, R>;
+    type Authored = Option<Engine<T, R>>;
+    type Patch = Option<Engine<T, R>>;
+    const MERGE: Merge = Merge::Override;
+    const EXPR: TypeExpr = TypeExpr::Engine(&T::EXPR, &R::EXPR);
+}
+
+impl<T: Leaf, R: Leaf> crate::Build for Engine<T, R> {
+    fn build(slot: Self::Patch, at: &str) -> Result<Self, crate::Unset> {
+        slot.ok_or_else(|| crate::Unset {
+            paths: vec![at.to_string()],
+        })
+    }
+    fn build_authored(slot: Self::Authored, at: &str) -> Result<Self, crate::Unset> {
+        slot.ok_or_else(|| crate::Unset {
+            paths: vec![at.to_string()],
+        })
+    }
+}
+
+impl<V: Leaf> Leaf for IndexMap<String, V> {
+    type Whole = IndexMap<String, V::Whole>;
+    type Authored = IndexMap<String, V::Authored>;
+    type Patch = IndexMap<String, V::Patch>;
+    const MERGE: Merge = Merge::ByKey;
+    const EXPR: TypeExpr = TypeExpr::Map(&V::EXPR);
+}
+
+/// A newtype with a facet name over a scalar (`Color`, `Url`, ...): a leaf
+/// whose schema carries `x-dbt-facet`. `from_scalar!` lets `FromNode` read it.
+#[macro_export]
+macro_rules! facet {
+    ($t:ty, $name:literal, $base:ident) => {
+        impl $crate::Leaf for $t {
+            type Whole = $t;
+            type Authored = Option<$t>;
+            type Patch = Option<$t>;
+            const MERGE: $crate::Merge = $crate::Merge::Override;
+            const EXPR: $crate::TypeExpr = $crate::TypeExpr::Facet($name, $crate::Scalar::$base);
+        }
+        $crate::build_leaf!($t);
+    };
+    ($t:ty, $name:literal, $base:ident, $keywords:expr) => {
+        impl $crate::Leaf for $t {
+            type Whole = $t;
+            type Authored = Option<$t>;
+            type Patch = Option<$t>;
+            const MERGE: $crate::Merge = $crate::Merge::Override;
+            const EXPR: $crate::TypeExpr = $crate::TypeExpr::Keyed(
+                &$keywords,
+                &$crate::TypeExpr::Facet($name, $crate::Scalar::$base),
+            );
+        }
+        $crate::build_leaf!($t);
+    };
+}
+
+/// A boxed model: the twins are boxed too, so a deep model (`Style`, tens of KiB per twin) can be a
+/// field of a shallow one without the shallow one's stack frames paying for it.
+impl<T: Leaf> Leaf for Box<T> {
+    type Whole = Box<T::Whole>;
+    type Authored = Box<T::Authored>;
+    type Patch = Box<T::Patch>;
+    const MERGE: Merge = T::MERGE;
+    const EXPR: TypeExpr = T::EXPR;
+}
+
+impl<S: Slot> Slot for Box<S> {
+    fn merge(&mut self, upper: Self) {
+        (**self).merge(*upper);
+    }
+}
+
+impl<E: Empty> Empty for Box<E> {
+    fn is_empty(&self) -> bool {
+        (**self).is_empty()
+    }
+}
+
+impl<S: SetLeaves> SetLeaves for Box<S> {
+    fn set_leaves(&self, at: &str, f: &mut dyn FnMut(&str)) {
+        (**self).set_leaves(at, f);
+    }
+}
+
+impl<L: Lift> Lift for Box<L> {
+    type Value = Box<L::Value>;
+    fn lift(self) -> Option<Self::Value> {
+        (*self).lift().map(Box::new)
+    }
+    fn put(v: Self::Value) -> Self {
+        Box::new(L::put(*v))
+    }
+    fn leaves(v: &Self::Value, at: &str, f: &mut dyn FnMut(&str)) {
+        L::leaves(v, at, f);
+    }
+}
+
+impl<F: Fold> Fold for Box<F> {
+    fn fold(lower: &mut Self::Value, upper: Self::Value) {
+        F::fold(lower, *upper);
+    }
+}

@@ -20,7 +20,7 @@ use d3rs::calendar::{civil_from_days, days_from_civil};
 use diagnostic::Diagnostic;
 use ::bind::time_axis::{TimeAxis, Unreadable};
 use ::bind::x_type::{Grain, XResolution};
-use crate::labels_expr::Expr;
+use ::layout::labels_expr::Expr;
 use measure::FontBook;
 
 use ::bind::wide::RAW_X;
@@ -476,7 +476,7 @@ impl TimeX {
             axis.tick_under_labels();
         }
         if let Some(src) = r.style.axis_x.labels.expr.as_deref() {
-            let expr = Expr::parse(src).map(|e| e.on("x")).map_err(|e| crate::labels_expr::describe(&e, src))?;
+            let expr = Expr::parse(src).map(|e| e.on("x")).map_err(|e| ::layout::labels_expr::describe(&e, src))?;
             axis.speak(expr, &self.ladder)?;
         }
         Ok(axis)

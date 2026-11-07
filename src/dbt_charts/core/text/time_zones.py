@@ -26,3 +26,5 @@ else:
     TimeZoneName = StrEnum(
         "TimeZoneName", [(name, name) for name in sorted(TIME_ZONE_NAMES)]
     )
+
+UTC: Final = TimeZoneName("UTC")

@@ -318,6 +318,15 @@
   doc: Fired when a Jinja template in a query or pre-query raises a rendering error. Check
     the template syntax and ensure all referenced values and filters are available.
   docs_topic: queries
+- code: ERR-FILTER-DATE-RANGE-TIMESTAMP
+  level: error
+  title: filter_date_range was passed the retired timestamp argument
+  template: A column with a time zone dates in the board's `regional.time_zone` when
+    passed bare, so drop `timestamp=`. A naive column that stores UTC passes `is_naive_utc=true`.
+  doc: Fired when `filter_date_range` is called with `timestamp=`. The argument was replaced
+    by `is_naive_utc=true`, which dates a naive timestamp column that stores UTC in the board
+    zone. A timestamp column with a zone needs no argument.
+  docs_topic: variables
 - code: ERR-TEMPLATE-OUTPUT-TOO-LARGE
   level: error
   title: Board render's cumulative template output exceeded the cap

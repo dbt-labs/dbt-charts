@@ -40,8 +40,8 @@ from dbt_charts.core.compile.models.chart.normalized import (
     ScatterChart,
 )
 from dbt_charts.core.compile.models.style.authored import (
-    AxisLabelStylePatch,
     AxisXStylePatch,
+    AxisYLabelStylePatch,
     AxisYStylePatch,
     BarChartStylePatch,
     DimensionLabelStylePatch,
@@ -259,7 +259,7 @@ class TestNumberFormatOnCategoryYAxisRaises:
             x="hours",
             y="team",
             style=ScatterChartStylePatch(
-                axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="currency"))
+                axis_y=AxisYStylePatch(labels=AxisYLabelStylePatch(format="currency"))
             ),
         )
         data = [
@@ -281,7 +281,7 @@ class TestNumberFormatOnCategoryYAxisRaises:
             x="m1",
             y="region",
             style=HeatmapChartStylePatch(
-                axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="currency"))
+                axis_y=AxisYStylePatch(labels=AxisYLabelStylePatch(format="currency"))
             ),
         )
         with pytest.raises(ChartDataError) as exc:
@@ -412,7 +412,7 @@ class TestNumberFormatOnCategoryYAxisRaises:
             # measure names can make an inert format take effect.
             y=["2023", "2024"],
             style=HeatmapChartStylePatch(
-                axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="currency"))
+                axis_y=AxisYStylePatch(labels=AxisYLabelStylePatch(format="currency"))
             ),
         )
         with pytest.raises(ChartDataError) as exc:
@@ -496,7 +496,7 @@ class TestLegalFormatsAreUntouched:
             x="hours",
             y="team",
             style=ScatterChartStylePatch(
-                axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="%b %Y"))
+                axis_y=AxisYStylePatch(labels=AxisYLabelStylePatch(format="%b %Y"))
             ),
         )
         data = [

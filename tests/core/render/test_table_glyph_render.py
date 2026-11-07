@@ -384,7 +384,10 @@ class TestGlyphWidthIsReserved:
                     ]
                 }
             },
-            style={"columns": dict.fromkeys(columns, {})},
+            style={
+                "column_layout": {"overflow": "fit"},
+                "columns": dict.fromkeys(columns, {}),
+            },
         )
         data = [dict.fromkeys(columns, "ACT NOW")]
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)

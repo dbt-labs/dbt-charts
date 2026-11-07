@@ -64,6 +64,10 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # classified with the warehouse's own errors by the caller.
         ("drivers/trino.py", "_set"),
         ("drivers/trino.py", "arrow_column_type"),
+        # drivers/_trino_client.py — refusals raise inside the client's request;
+        # the caller classifies them with the client's errors.
+        ("drivers/_trino_client.py", "SourceHostSession.send"),
+        ("drivers/_trino_client.py", "_DirectRequest.process"),
         # backends/duckdb_local.py
         ("backends/duckdb_local.py", "DuckDBBackend._connect"),
         # duckdb_config.py

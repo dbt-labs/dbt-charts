@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use column_types::{ColumnType, ColumnTypes, Dataset};
-use diagnostic::{codes, Diagnostic};
+use diagnostic::{codes, diag, Diagnostic};
 use indexmap::IndexMap;
 use serde_json::json;
 
@@ -22,15 +22,17 @@ pub type ChartFieldValues = IndexMap<String, Vec<String>>;
 /// Fewer charts than this have no cross-chart consistency problem to solve.
 const MIN_CHARTS_FOR_BINDING: usize = 2;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 pub struct CategoryColorScale {
     pub field: String,
     /// Value to palette slot, in domain order.
     pub slots: IndexMap<String, usize>,
     /// Pins naming a color outside the palette: the value still owns a slot
     /// (its companion ink indexes it) but paints this literal.
+    #[serde(default)]
     pub overrides: IndexMap<String, String>,
     /// Pins whose value no chart draws; they claim no slot.
+    #[serde(default)]
     pub unseen_pins: IndexMap<String, String>,
 }
 
@@ -136,6 +138,55 @@ pub fn plan_category_colors(
         scales.insert(field.to_string(), seats.into_scale(field, palette)?);
     }
     Ok(scales)
+}
+
+/// The palette slot `value` owns under `scale`, valid for a palette of `palette_len` swatches
+/// (`_slot_for`). The plan seats every value any chart draws for the field, so a missing one is a
+/// defect upstream; a slot past a scope's shorter palette is production's `ChartDataError`, never
+/// a silent wrap.
+pub fn slot_for(scale: &CategoryColorScale, value: &str, palette_len: usize) -> Result<usize, String> {
+    let slot = *scale.slots.get(value).ok_or_else(|| {
+        format!("`{value}` has no palette slot in the board's `{}` category-color scale.", scale.field)
+    })?;
+    if slot >= palette_len {
+        return Err(format!(
+            "`{value}` needs palette slot {slot} for the board's `{}` category-color scale, but this chart's palette has only {palette_len} swatches.",
+            scale.field
+        ));
+    }
+    Ok(slot)
+}
+
+/// The fill `value` paints under `scale`: its pin literal, else its palette slot (`color_at`).
+pub fn color_at(scale: &CategoryColorScale, value: &str, palette: &[String]) -> Result<String, String> {
+    match scale.overrides.get(value) {
+        Some(pinned) => Ok(pinned.clone()),
+        None => Ok(palette[slot_for(scale, value, palette.len())?].clone()),
+    }
+}
+
+/// The swatch of an unplanned series at `position` in its chart's series order, wrapping past the
+/// palette's end as an ordinal scale cycles a short range.
+pub fn position_fill(palette: &[String], position: usize) -> Result<&str, String> {
+    position
+        .checked_rem(palette.len())
+        .map(|slot| palette[slot].as_str())
+        .ok_or_else(|| "a series color read an empty palette".to_string())
+}
+
+/// The fill each of `series` paints (`series_colors`): its pin literal or board-wide slot under
+/// `scale`, else, where the board binds no scale for the field, the palette slot of its position
+/// in `series`.
+pub fn series_colors(series: &[String], palette: &[String], scale: Option<&CategoryColorScale>) -> Result<Vec<String>, Diagnostic> {
+    series
+        .iter()
+        .enumerate()
+        .map(|(position, value)| match scale {
+            None => position_fill(palette, position).map(str::to_string),
+            Some(scale) => color_at(scale, value, palette),
+        })
+        .collect::<Result<_, String>>()
+        .map_err(diag::err_internal)
 }
 
 /// A field's pins and values, laid out for seating.

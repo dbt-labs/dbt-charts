@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct import hex writes the bundle without renders when the API key cannot list project runs.
+time: 2026-11-08T00:38:34.029854-08:00

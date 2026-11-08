@@ -342,6 +342,10 @@ pub fn err_endpoint_labels_unorderable_sort(chart_id: impl Into<Value>, sort_by:
     Diagnostic::new(&codes::ERR_ENDPOINT_LABELS_UNORDERABLE_SORT, [("chart_id", chart_id.into()), ("sort_by", sort_by.into())])
 }
 
+pub fn err_engine_needs_data(query: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_ENGINE_NEEDS_DATA, [("query", query.into())])
+}
+
 pub fn err_engine_refused(message: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_ENGINE_REFUSED, [("message", message.into())])
 }

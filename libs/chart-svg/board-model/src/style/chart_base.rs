@@ -57,8 +57,8 @@ pub struct TitledChartStyleBase {
 pub struct ChartCardStyleMixin {
     /// Chart-level font overrides. Absent: the chart draws in the board's font
     /// (`style.charts.font`).
-    #[model(absent = "the chart draws in the board's font (style.charts.font)")]
-    pub font: Option<FontStyle>,
+    #[model(inherit_slot = "Style.charts.font")]
+    pub font: FontStyle,
 }
 
 /// Families with their own geometry and a legend: cartesian, radial and geo.
@@ -96,7 +96,7 @@ pub struct LegendedChartStyleBase {
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct SideLegendedChartStyleBase {
     /// Chart legend style, a sparse override of `ChartsStyle.legend`.
-    #[model(local)]
+    #[model(local, default_empty)]
     pub legend: Patch<SideLegendStyle>,
 }
 
@@ -198,6 +198,7 @@ pub struct GeoChartStyle {
     #[model(inherit = "Style.charts.max_height")]
     pub max_height: f64,
     /// Geo color: static paint or gradient scale only (no categorical arm).
+    #[model(default_empty)]
     pub color: StaticGradientColorStyle,
     #[flatten]
     pub card: ChartCardStyleMixin,
@@ -205,5 +206,6 @@ pub struct GeoChartStyle {
     #[model(inherit_slot = "Style.charts.border")]
     pub border: BorderStyle,
     /// Background map layer; no source = no topo layer.
+    #[model(default_empty)]
     pub basemap: BasemapStyle,
 }

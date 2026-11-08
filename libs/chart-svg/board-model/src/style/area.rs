@@ -20,6 +20,7 @@ use model_derive::Model;
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct AreaLineStyle {
     /// Area top-edge line stroke style.
+    #[model(fill_at(to = "color", value = "auto"), fill_at(to = "width", value = "auto"))]
     pub stroke: StrokeStyle,
     /// Halo stroke width multiplier relative to stroke.width; 0 disables the halo.
     pub halo_multiplier: f64,

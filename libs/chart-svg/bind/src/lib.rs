@@ -43,15 +43,17 @@ use std::collections::HashSet;
 
 pub use board::bind;
 
+use board::ChartStyles;
 use board_model::board::{items, Board, BoardBody, LayoutItem};
 use board_model::chart::{Chart, ChartBase, ChartQuery, ColorColumn};
-use board_model::ids::{ChartId, ItemId};
+use board_model::ids::{ChartId, ItemId, QueryId};
 use board_model::primitives::PaletteChoice;
+use board_model::style::style::Style;
 use category_colors::{
     observe, plan_category_colors, CategoryColorScale, ChartFieldValues, Observed, Pins,
 };
 use channels::{bind_channels, style_gradient, Channels};
-use column_types::QueryDatasets;
+use column_types::{Dataset, QueryDatasets};
 use diagnostic::{diag, Diagnostic};
 use indexmap::IndexMap;
 
@@ -66,21 +68,10 @@ pub struct BoundBoard {
     pub channels: IndexMap<ChartId, Result<Channels, Diagnostic>>,
 }
 
-/// The board's categorical palette as colors, off its total style (`board.chart_style_context.palette`).
-/// Resolving a palette name to its colors is the cascade's; a name that arrives here is a defect.
-fn palette(board: &Board) -> Result<Vec<String>, Diagnostic> {
-    let style = board
-        .body
-        .style
-        .as_deref()
-        .ok_or_else(|| diag::err_internal("a normalized board carries its total style"))?;
-    let categorical = style
-        .charts
-        .color
-        .categorical
-        .as_ref()
-        .ok_or_else(|| diag::err_internal("the total style carries `charts.color.categorical`"))?;
-    match &categorical.palette {
+/// A palette as colors. Resolving a palette name to its colors is the cascade's; a name that
+/// arrives here is a defect.
+pub fn colors_of(palette: &PaletteChoice) -> Result<Vec<String>, Diagnostic> {
+    match palette {
         PaletteChoice::Colors(colors) => Ok(colors.iter().map(|c| c.as_str().to_string()).collect()),
         PaletteChoice::Name(name) => Err(diag::err_internal(format!(
             "the palette {name:?} reached bind unresolved"
@@ -88,28 +79,45 @@ fn palette(board: &Board) -> Result<Vec<String>, Diagnostic> {
     }
 }
 
-/// A chart that names a category with its `color:`: the query it reads and the field.
+/// The categorical palette of a scope's total style as colors (`charts.color.categorical`).
+pub fn palette_of(style: &Style) -> Result<Vec<String>, Diagnostic> {
+    let categorical = style
+        .charts
+        .color
+        .categorical
+        .as_ref()
+        .ok_or_else(|| diag::err_internal("the total style carries `charts.color.categorical`"))?;
+    colors_of(&categorical.palette)
+}
+
+/// The root board's palette: the plan seats every chart's values from it, and a nested board
+/// repaints a slot from its own palette.
+fn palette(board: &Board) -> Result<Vec<String>, Diagnostic> {
+    let style = board
+        .body
+        .style
+        .as_deref()
+        .ok_or_else(|| diag::err_internal("a normalized board carries its total style"))?;
+    palette_of(style)
+}
+
+/// A chart that names a category with its `color:`: the dataset it reads and the field.
 pub struct Encoding<'a> {
-    pub query: &'a str,
+    pub dataset: &'a Dataset,
     pub field: &'a str,
 }
 
-/// The board-wide category color plan over what each encoding's dataset draws. An encoding
-/// whose query returned no dataset is skipped; a field that one chart cannot seat is
-/// unbound for every chart, since a scale that cannot seat what one chart draws cannot
-/// safely bind for any.
+/// The board-wide category color plan over what each encoding's dataset draws. A field that
+/// one chart cannot seat is unbound for every chart, since a scale that cannot seat what one
+/// chart draws cannot safely bind for any.
 pub fn seat(
     encodings: &[Encoding<'_>],
-    data: &QueryDatasets,
     pins: &Pins,
     palette: &[String],
 ) -> Result<Vec<CategoryColorScale>, Diagnostic> {
     let mut observations: Vec<ChartFieldValues> = Vec::new();
     let mut disqualified: HashSet<&str> = HashSet::new();
-    for Encoding { query, field } in encodings {
-        let Some(dataset) = data.get(*query) else {
-            continue;
-        };
+    for Encoding { dataset, field } in encodings {
         match observe(dataset, field, pins.contains_key(*field))? {
             Observed::Disqualified => {
                 disqualified.insert(field);
@@ -125,30 +133,44 @@ pub fn seat(
     Ok(scales.into_values().collect())
 }
 
+/// The board-wide category color plan over every placed chart's `color:` field, each read from
+/// the dataset `dataset` returns for its query. A chart whose query returned no dataset is
+/// skipped.
+pub fn plan_colors<'a>(
+    board: &Board,
+    dataset: impl Fn(&QueryId) -> Option<&'a Dataset>,
+) -> Result<Vec<CategoryColorScale>, Diagnostic> {
+    let mut encodings = Vec::new();
+    for (_, _, chart) in placed_charts(board)? {
+        if let (Some(field), Some(dataset)) = (color_field(chart), query_id(chart)?.and_then(&dataset)) {
+            encodings.push(Encoding { dataset, field });
+        }
+    }
+    if encodings.is_empty() {
+        return Ok(Vec::new());
+    }
+    seat(&encodings, &authored_pins(board), &palette(board)?)
+}
+
 /// Binds a normalized board to the rows its queries returned and their declared
 /// column types. A chart's color column that a dataset does not declare is an error.
 pub fn bind_board(
     board: &Board,
+    styles: &ChartStyles,
     data: &QueryDatasets,
 ) -> Result<BoundBoard, Diagnostic> {
-    let charts = placed_charts(board)?;
-    let mut encodings = Vec::new();
-    for (_, chart) in &charts {
-        if let (Some(field), Some(query)) = (color_field(chart), query_name(chart)?) {
-            encodings.push(Encoding { query, field });
-        }
-    }
-    let category_colors = seat(&encodings, data, &authored_pins(board), &palette(board)?)?;
+    let category_colors = plan_colors(board, |query| data.get(query.name().as_str()))?;
     let categorical: HashSet<&str> = category_colors
         .iter()
         .map(|scale| scale.field.as_str())
         .collect();
     let mut channels = IndexMap::new();
-    for (id, chart) in charts {
-        if let Some(dataset) = query_name(chart)?.and_then(|query| data.get(query)) {
+    for (id, at, chart) in placed_charts(board)? {
+        if let Some(dataset) = query_id(chart)?.and_then(|query| data.get(query.name().as_str())) {
+            let gradient = style_gradient(chart, styles.own_at(&at)?);
             channels.insert(
                 id.clone(),
-                bind_channels(chart, dataset, &categorical, style_gradient(chart)),
+                bind_channels(chart, dataset, &categorical, gradient),
             );
         }
     }
@@ -184,23 +206,20 @@ pub fn authored_pins(board: &Board) -> Pins {
 /// The charts the board renders, in layout order, one per chart: a chart placed twice
 /// draws the same values both times, and counting it twice would carry a single-chart
 /// board over the two-chart threshold.
-fn placed_charts(board: &Board) -> Result<Vec<(&ChartId, &Chart)>, Diagnostic> {
+pub(crate) fn placed_charts(board: &Board) -> Result<Vec<(&ChartId, ItemId, &Chart)>, Diagnostic> {
     fn walk<'a>(
         board: &'a Board,
         body: &'a BoardBody,
         at: &ItemId,
-        out: &mut Vec<(&'a ChartId, &'a Chart)>,
+        out: &mut Vec<(&'a ChartId, ItemId, &'a Chart)>,
     ) -> Result<(), Diagnostic> {
         for placement in items(body, at) {
             match placement.item {
-                LayoutItem::Chart { id, .. } if !out.iter().any(|(seen, _)| *seen == id) => {
+                LayoutItem::Chart { id, .. } if !out.iter().any(|(seen, ..)| *seen == id) => {
                     let chart = board.body.charts.get(id.as_str()).ok_or_else(|| {
-                        diag::err_internal(format!(
-                            "layout places chart {} but the board defines none",
-                            id.as_str()
-                        ))
+                        diag::err_unknown_chart(id.as_str(), board.body.charts.keys().map(String::as_str).collect::<Vec<_>>())
                     })?;
-                    out.push((id, chart));
+                    out.push((id, placement.id.clone(), chart));
                 }
                 LayoutItem::Chart { .. } => {}
                 LayoutItem::Board(nested) => walk(board, &nested.body, &placement.id, out)?,
@@ -232,12 +251,19 @@ fn base(chart: &Chart) -> Option<&ChartBase> {
     })
 }
 
-/// The query a chart reads. Normalize hoists every query; one still in its authored
-/// form is an internal error: it breaks normalize's contract.
-fn query_name(chart: &Chart) -> Result<Option<&str>, Diagnostic> {
+/// The name of the query `chart` reads, as `bind_board` looks its dataset up; `None` for a chart
+/// that reads none.
+pub fn query_name(chart: &Chart) -> Result<Option<&str>, Diagnostic> {
+    Ok(query_id(chart)?.map(|id| id.name().as_str()))
+}
+
+/// The hoisted query a chart reads; `None` for a callout or a chart that names no query.
+/// Normalize hoists every query; one still in its authored form is an internal error: it
+/// breaks normalize's contract.
+pub fn query_id(chart: &Chart) -> Result<Option<&QueryId>, Diagnostic> {
     match base(chart).and_then(|base| base.query.as_ref()) {
         None => Ok(None),
-        Some(ChartQuery::Hoisted(id)) => Ok(Some(id.name().as_str())),
+        Some(ChartQuery::Hoisted(id)) => Ok(Some(id)),
         Some(_) => Err(diag::err_internal(
             "a chart query that normalize has not hoisted reached bind",
         )),

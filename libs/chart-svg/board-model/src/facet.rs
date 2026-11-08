@@ -342,6 +342,96 @@ impl model_core::Leaf for FontWeightValue {
 }
 model_core::build_leaf!(FontWeightValue);
 
+const FONT_WEIGHT_NAMES: [&str; 11] = [
+    "normal", "bold", "100", "200", "300", "400", "500", "600", "700", "800", "900",
+];
+
+const FONT_WEIGHT_LITERALS: [model_core::Value; 20] = {
+    use model_core::Value::{Int, Str};
+    [
+        Str("normal"),
+        Str("bold"),
+        Str("100"),
+        Str("200"),
+        Str("300"),
+        Str("400"),
+        Str("500"),
+        Str("600"),
+        Str("700"),
+        Str("800"),
+        Str("900"),
+        Int(100),
+        Int(200),
+        Int(300),
+        Int(400),
+        Int(500),
+        Int(600),
+        Int(700),
+        Int(800),
+        Int(900),
+    ]
+};
+
+const FONT_WEIGHT_MESSAGE: &str = "Input should be 'normal', 'bold', '100', '200', '300', '400', '500', '600', '700', '800', '900', 100, 200, 300, 400, 500, 600, 700, 800 or 900";
+
+/// A font weight from Python's closed `FontWeight` literal: `normal`, `bold`, a hundreds name or
+/// the hundreds number. Where a weight is any name or number, it is a [`FontWeightValue`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct FontWeight(pub FontWeightValue);
+
+impl TryFrom<&str> for FontWeight {
+    type Error = String;
+    fn try_from(v: &str) -> Result<Self, String> {
+        if FONT_WEIGHT_NAMES.contains(&v) {
+            return Ok(Self(FontWeightValue::Name(v.to_string())));
+        }
+        Err(FONT_WEIGHT_MESSAGE.to_string())
+    }
+}
+
+impl TryFrom<f64> for FontWeight {
+    type Error = String;
+    fn try_from(v: f64) -> Result<Self, String> {
+        let hundreds = (100..=900).step_by(100).any(|n| f64::from(n) == v);
+        if hundreds {
+            return Ok(Self(FontWeightValue::Number(v)));
+        }
+        Err(FONT_WEIGHT_MESSAGE.to_string())
+    }
+}
+
+impl model_core::ReadScalar for FontWeight {
+    fn read(node: &model_core::Node, cx: &mut model_core::Cx) -> Option<Self> {
+        let read = if let Ok(Some(n)) = cx.attempt(|cx| f64::read(node, cx)) {
+            Self::try_from(n)
+        } else {
+            Self::try_from(String::read(node, cx)?.as_str())
+        };
+        read.map_err(|e| cx.invalid(node.span, e)).ok()
+    }
+}
+
+impl model_core::FromNode for FontWeight {
+    fn authored(node: &model_core::Node, cx: &mut model_core::Cx) -> Self::Authored {
+        <Self as model_core::ReadScalar>::read(node, cx)
+    }
+    fn patch(node: &model_core::Node, cx: &mut model_core::Cx) -> Self::Patch {
+        <Self as model_core::ReadScalar>::read(node, cx)
+    }
+    fn whole(node: &model_core::Node, cx: &mut model_core::Cx) -> Option<Self::Whole> {
+        <Self as model_core::ReadScalar>::read(node, cx)
+    }
+}
+
+impl model_core::Leaf for FontWeight {
+    type Whole = FontWeight;
+    type Authored = Option<FontWeight>;
+    type Patch = Option<FontWeight>;
+    const MERGE: model_core::Merge = model_core::Merge::Override;
+    const EXPR: model_core::TypeExpr = model_core::TypeExpr::Literals(&FONT_WEIGHT_LITERALS);
+}
+model_core::build_leaf!(FontWeight);
+
 fn is_ident(s: &str) -> bool {
     let mut cs = s.chars();
     matches!(cs.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')

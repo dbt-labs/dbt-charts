@@ -8,6 +8,7 @@ use board_model::chart::KpiChart;
 use board_model::ids::ChartId;
 use board_model::facet::FormatName;
 use board_model::query::Query;
+use board_model::style::kpi::KpiChartStyle;
 use column_types::{ColumnType, Dataset};
 use diagnostic::{diag, refuse, Diagnostic};
 use indexmap::IndexMap;
@@ -18,15 +19,15 @@ use crate::formats::{column_format, Formats, Kind, Notation, Tiers};
 use crate::model::{Body, Failure, Kpi};
 use crate::run::RunResult;
 
-/// Binds `chart` to its query's one row. A row count or a column production fails on is that
+/// Binds `chart` to its query's one row, with the `style` of the placement it is bound at. A row count or a column production fails on is that
 /// chart's error card; a query that returned no rows is refused, since production also reports a
 /// zero-rows warning this stage does not raise.
-pub fn bind_kpi(id: &ChartId, chart: &KpiChart, board: &Board, run: &RunResult) -> Result<Body, Diagnostic> {
-    refuse_unmodeled(chart, board, run)?;
+pub fn bind_kpi(id: &ChartId, chart: &KpiChart, style: &KpiChartStyle, board: &Board, run: &RunResult) -> Result<Body, Diagnostic> {
+    refuse_unmodeled(chart, style, board, run)?;
     let Some(ChartQuery::Hoisted(query)) = &chart.base.query else {
         return Err(diag::err_internal(format!("chart {id} has no hoisted query")));
     };
-    let dataset: &Dataset = run.datasets.get(query).ok_or_else(|| diag::err_internal(format!("query {query} has no dataset")))?;
+    let dataset: &Dataset = run.datasets.get(query).ok_or_else(|| diag::err_engine_needs_data(query.to_string()).with_sink_param("chart_id", json!(id.as_str())))?;
     let Some(value) = &chart.value else {
         return Err(Diagnostic::refused(refuse!("a KPI that names no `value` is not supported")));
     };
@@ -51,7 +52,7 @@ pub fn bind_kpi(id: &ChartId, chart: &KpiChart, board: &Board, run: &RunResult) 
         return failure(diag::err_kpi_value_column_not_found(id.as_str(), column));
     };
     let value = number(cell, dataset.schema.get(column).map_err(Diagnostic::from)?)?;
-    let compact = &chart.style.value.compact;
+    let compact = &style.value.compact;
     let compacted = if value.abs() >= compact.threshold { compact.spec.as_str() } else { "" };
     let format = column_format(Kind::Number, Tiers::default(), Formats::new(None), Some(compacted), Some(Notation::Narrative), &[value])?;
     let lanes = format.paint_lanes(&NumberLocale::en_us(), value)?;
@@ -67,7 +68,7 @@ fn declared_formats(query: &Query) -> &IndexMap<String, FormatName> {
 }
 
 /// Every chart field, style and board fact that changes what the card says and is not modeled.
-fn refuse_unmodeled(chart: &KpiChart, board: &Board, run: &RunResult) -> Result<(), Diagnostic> {
+fn refuse_unmodeled(chart: &KpiChart, style: &KpiChartStyle, board: &Board, run: &RunResult) -> Result<(), Diagnostic> {
     let unmodeled = [
         (chart.glyph.is_some(), "a KPI `glyph`"),
         (chart.good.is_some(), "a KPI `good`"),
@@ -75,7 +76,7 @@ fn refuse_unmodeled(chart: &KpiChart, board: &Board, run: &RunResult) -> Result<
         (chart.background.is_some(), "a KPI `background` channel"),
         (!chart.formatting.conditional_formatting.is_empty(), "a KPI `conditional_formatting`"),
         (chart.base.link.is_some(), "a KPI `link`"),
-        (chart.style.value.format.is_some(), "a KPI `style.value.format`"),
+        (style.value.format.is_some(), "a KPI `style.value.format`"),
         (board.regional.is_some() || run.env.locale != "en-US", "a number locale other than en-US"),
     ];
     match unmodeled.iter().find(|(set, _)| *set) {

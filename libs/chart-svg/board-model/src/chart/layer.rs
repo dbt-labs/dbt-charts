@@ -108,7 +108,7 @@ pub struct LayerBase {
     #[model(absent = "the y column name")]
     pub label: Option<String>,
     /// Column whose values split this layer into colored series; bare column name only. Paint belongs under the layer's `style.marks`.
-    #[model(absent = "the layer is one series")]
+    #[model(absent = "the layer is one series", arm_pattern)]
     pub color: Option<ColorColumn>,
     /// This layer's own y axis: which side it sits on, its title, scale, ticks, grid.
     #[model(absent = "the layer shares the chart's y axis")]
@@ -119,7 +119,10 @@ pub struct LayerBase {
 }
 
 /// A bar-type layer on a cartesian chart.
+///
+/// A written `y_start` is never `null` (the schema states it; [`BarLayer`]'s reader refuses it).
 #[derive(Debug, Clone, PartialEq, Model)]
+#[model(constraint(not_null(y_start)))]
 pub struct BarLayer {
     #[flatten]
     pub base: LayerBase,
@@ -127,7 +130,7 @@ pub struct BarLayer {
     #[model(absent = "the theme's bar layer style", local)]
     pub style: Option<Patch<BarLayerStyle>>,
     /// Column each bar starts from instead of zero (waterfall, range, Gantt, lollipop). Same kind as y: both numeric, or both dates.
-    #[model(absent = "bars start at zero")]
+    #[model(absent = "bars start at zero", arm_pattern)]
     pub y_start: Option<NonBlankColumn>,
 }
 

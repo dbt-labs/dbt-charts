@@ -82,6 +82,30 @@ pub enum SparkSpec {
     Block(<SparkConfig as Leaf>::Whole),
 }
 
+/// A block's colors are its `color` and the plain-string colors beside it: the `thresholds` values
+/// and the `background`. Each resolves as a token slot does; a string that is no token stays.
+impl model_core::TokenBlock for SparkSpec {
+    fn resolve_block(
+        &mut self,
+        f: &mut dyn FnMut(&str) -> Result<Option<String>, String>,
+    ) -> Result<(), String> {
+        let Self::Block(block) = self else {
+            return Ok(());
+        };
+        model_core::TokenSlot::resolve_tokens(&mut block.color, f)?;
+        let mut plain: Vec<&mut String> = block.thresholds.values_mut().flatten().collect();
+        if let model_core::Tri::Value(background) = &mut block.background {
+            plain.push(background);
+        }
+        for text in plain {
+            if let Some(resolved) = f(text)? {
+                *text = resolved;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl ReadScalar for SparkSpec {
     fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
         if matches!(node.kind, model_core::Kind::Map(_)) {
@@ -227,8 +251,8 @@ pub struct TableHeaderStyle {
     #[model(inherit_slot = "Style.charts.table.font")]
     pub font: FontStyle,
     /// Compact-tier font overrides applied when body size ≤11px.
-    #[model(absent = "no compact override")]
-    pub font_compact: Option<FontStyle>,
+    #[model(absent = "no compact override", local)]
+    pub font_compact: Option<Patch<FontStyle>>,
     /// Header background color. Themes may set a fill (cream, dark) when
     /// paper-warmth or contrast demands it.
     #[model(absent = "no fill")]
@@ -245,8 +269,8 @@ pub struct TableRowRoleStyle {
     /// Line above rows with this role.
     pub divider: DividerStyle,
     /// Per-role font style override.
-    #[model(absent = "the default row font")]
-    pub font: Option<FontStyle>,
+    #[model(absent = "the default row font", local)]
+    pub font: Option<Patch<FontStyle>>,
     /// Per-role row background color.
     #[model(absent = "no fill")]
     pub background: Option<Color>,
@@ -716,6 +740,7 @@ pub struct TableChartStyle {
     #[model(inherit_slot = "Style.charts.border")]
     pub border: BorderStyle,
     /// Table color: static text paint or gradient scale only (no categorical arm).
+    #[model(default_empty)]
     pub color: StaticGradientColorStyle,
     /// Outer table padding in pixels.
     pub outer_padding: f64,
@@ -736,6 +761,7 @@ pub struct TableChartStyle {
     /// Client-side pagination defaults for table charts.
     pub pagination: PaginationConfig,
     /// Table-level column defaults applied to every column.
+    #[model(default_empty)]
     pub column_defaults: TableColumnDefaultsConfig,
     /// Per-column display configuration keyed by column name (label, format, width, etc.).
     #[model(default_empty)]

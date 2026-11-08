@@ -5,13 +5,14 @@
 
 use board_model::chart::CalloutChart;
 use board_model::primitives::Tone;
+use board_model::style::callout::CalloutChartStyle;
 use diagnostic::{refuse, Diagnostic};
 
 use crate::model::{Body, Callout};
 
-/// Binds `chart` to its authored text.
-pub fn bind_callout(chart: &CalloutChart) -> Result<Body, Diagnostic> {
-    if chart.style.tone != Tone::Info {
+/// Binds `chart` to its authored text, with the `style` of the placement it is bound at.
+pub fn bind_callout(chart: &CalloutChart, style: &CalloutChartStyle) -> Result<Body, Diagnostic> {
+    if style.tone != Tone::Info {
         return Err(Diagnostic::refused(refuse!("a callout `tone` other than info is not supported")));
     }
     let message = text(chart.message.as_str(), "message")?;

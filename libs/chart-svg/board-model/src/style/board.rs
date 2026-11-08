@@ -6,7 +6,7 @@
 //! `extends`), `reject_named_root_font`, `font_weight_as_css` and
 //! `VALID_FONT_WEIGHTS` (consumers of a resolved weight, not model shape).
 
-use crate::facet::{Color, FontFamily, FontWeightValue};
+use crate::facet::{Color, FontFamily, FontWeight, FontWeightValue};
 use crate::primitives::{BorderStyle, DividerStyle, TextBaseline};
 use crate::rule::Auto;
 use crate::string_enum;
@@ -309,13 +309,9 @@ pub struct TextBlockquoteStyle {
 
 /// Inline **bold** text runs in markdown prose, distinct from heading weight.
 #[derive(Debug, Clone, PartialEq, Model)]
-#[model(constraint(value_in(
-    weight, "normal", "bold", "100", "200", "300", "400", "500", "600", "700", "800", "900", 100,
-    200, 300, 400, 500, 600, 700, 800, 900
-)))]
 pub struct TextBoldStyle {
     /// CSS font-weight for bold text runs and bold table cells.
-    pub weight: FontWeightValue,
+    pub weight: FontWeight,
 }
 
 /// Top and bottom margin for a prose block role, in line-height units.

@@ -129,6 +129,36 @@ impl<T: crate::FromNode<Patch = Option<T>>> FillDefault for Tri<T> {
     }
 }
 
+/// A union leaf with a block of settings that holds colors (a column's `spark:`): it resolves the
+/// colors of its block, which are not fields the walk reaches.
+pub trait TokenBlock {
+    fn resolve_block(
+        &mut self,
+        f: &mut dyn FnMut(&str) -> Result<Option<String>, String>,
+    ) -> Result<(), String>;
+}
+
+impl<T: TokenBlock> TokenBlock for Option<T> {
+    fn resolve_block(
+        &mut self,
+        f: &mut dyn FnMut(&str) -> Result<Option<String>, String>,
+    ) -> Result<(), String> {
+        self.as_mut().map_or(Ok(()), |t| t.resolve_block(f))
+    }
+}
+
+impl<T: TokenBlock> TokenBlock for Tri<T> {
+    fn resolve_block(
+        &mut self,
+        f: &mut dyn FnMut(&str) -> Result<Option<String>, String>,
+    ) -> Result<(), String> {
+        match self {
+            Tri::Value(t) => t.resolve_block(f),
+            Tri::Unset | Tri::Null => Ok(()),
+        }
+    }
+}
+
 /// A list of colors; a different trait from [`TokenSlot`] only because `Option<Vec<C>>` overlaps
 /// `Option<C>` for the compiler.
 pub trait TokenListSlot {
@@ -461,6 +491,8 @@ struct ColorSite {
     list: bool,
     /// A field that may hold a query column's name instead of a color.
     column: bool,
+    /// A union leaf with a block of settings that holds colors: it resolves its own.
+    block: bool,
 }
 
 fn is_column_ref(ty: &TypeExpr) -> bool {
@@ -498,6 +530,23 @@ fn is_color_leaf(ty: &TypeExpr) -> bool {
         | TypeExpr::List(inner)
         | TypeExpr::Engine(inner, _) => is_color_leaf(inner),
         TypeExpr::Either(a, b) => is_color_leaf(a) || is_color_leaf(b),
+        _ => false,
+    }
+}
+
+/// Whether a leaf is a union with a block that holds colors (a model read whole, such as a column's
+/// `spark:`: a chart type alone, or a block of settings): the colors inside the block are not fields the walk
+/// reaches, so the leaf resolves its own, through `TokenBlock`.
+fn is_block_leaf(ty: &TypeExpr) -> bool {
+    match ty {
+        TypeExpr::Keyed(_, inner) | TypeExpr::Option(inner) | TypeExpr::Patch(inner) => {
+            is_block_leaf(inner)
+        }
+        TypeExpr::Either(a, b) => [a, b].iter().any(|t| {
+            matches!(t, TypeExpr::Ref(_, info)
+                if info().kind == ModelKind::Struct
+                    && info().fields.iter().any(|f| is_color_leaf(f.ty)))
+        }),
         _ => false,
     }
 }
@@ -625,7 +674,7 @@ fn font_walk(
             }
         }
         let color_map = matches!(ty, TypeExpr::Map(inner) if is_color_leaf(inner));
-        if is_color_leaf(f.ty) || color_map {
+        if is_color_leaf(f.ty) || color_map || is_block_leaf(f.ty) {
             let mut at = access.clone();
             at.push(Step {
                 field: f.name.to_string(),
@@ -639,6 +688,7 @@ fn font_walk(
                 access: at,
                 list: is_list(f.ty),
                 column: is_column_ref(f.ty),
+                block: is_block_leaf(f.ty),
             });
             logical.pop();
             continue;
@@ -1202,10 +1252,12 @@ pub fn emit(
                 let mut opens = Vec::new();
                 let at = access("style", &site.access, true, true, "c", &mut opens);
                 let p = below(root.name, &site.path);
-                let tr = if site.list {
-                    "TokenListSlot"
+                let (tr, method) = if site.block {
+                    ("TokenBlock", "resolve_block")
+                } else if site.list {
+                    ("TokenListSlot", "resolve_tokens")
                 } else {
-                    "TokenSlot"
+                    ("TokenSlot", "resolve_tokens")
                 };
                 let resolver = if site.column {
                     "resolve_column"
@@ -1221,7 +1273,7 @@ pub fn emit(
                 let pad = "        ".repeat(opens.len() + 1);
                 let _ = writeln!(
                     body,
-                    "{pad}if let Err(why) = ::model_core::{tr}::resolve_tokens(&mut {at}, &mut |s| {hook}::{resolver}(&ctx, s)) {{ refused.push(::model_core::Refused {{ at: \"{p}\", why }}); }}"
+                    "{pad}if let Err(why) = ::model_core::{tr}::{method}(&mut {at}, &mut |s| {hook}::{resolver}(&ctx, s)) {{ refused.push(::model_core::Refused {{ at: \"{p}\", why }}); }}"
                 );
                 for j in (0..opens.len()).rev() {
                     let _ = writeln!(body, "{}}}", "        ".repeat(j + 1));

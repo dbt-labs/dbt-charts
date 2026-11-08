@@ -21,9 +21,9 @@ pub struct LineChart {
     #[model(absent = "the line follows x")]
     pub connect: Option<String>,
     /// Extra marks on one shared x, each with its own type.
-    #[model(fill = fill_empty)]
+    #[model(fill = fill_empty, nullable)]
     pub layers: Vec<CartesianLayer>,
     /// Rules, bands, notes and trends drawn on the chart.
-    #[model(fill = fill_empty)]
+    #[model(fill = fill_empty, nullable)]
     pub annotations: Vec<Annotation>,
 }

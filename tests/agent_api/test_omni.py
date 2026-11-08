@@ -233,8 +233,11 @@ def test_missing_api_key_names_the_variable(
 ) -> None:
     monkeypatch.delenv("OMNI_API_KEY")
 
-    with pytest.raises(BundleError, match="OMNI_API_KEY"):
+    with pytest.raises(BundleError, match="OMNI_API_KEY") as exc:
         import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+
+    assert "API Keys" in str(exc.value)
+    assert ".env" in str(exc.value)
 
 
 def test_bare_id_without_base_url_names_the_setting(http: Any, tmp_path: Path) -> None:
@@ -288,15 +291,158 @@ def test_plan_without_query_timezone_fails(
         import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
 
 
-def test_layout_tile_without_a_saved_query_fails(
+def test_layout_tile_without_a_saved_query_is_named_and_the_rest_is_written(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    saved = json.loads(_fixture("queries.json"))
+    saved["queries"] = [
+        q for q in saved["queries"] if q["queryIdentifierMapKey"] != "1"
+    ]
     routes = _routes(_fixture("export.json"))
+    routes[("GET", f"/v1/documents/{DOC}/queries")] = lambda r: json.dumps(
+        saved
+    ).encode()
+    _install(monkeypatch, routes)
+
+    import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    assert "- **missing** `1`" in outline
+    assert (tmp_path / "b" / "queries/2.sql").exists()
+
+
+def test_dashboard_whose_every_tile_lacks_a_saved_query_fails_naming_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    export = json.loads(_fixture("export.json"))
+    export["dashboard"]["metadata"]["layouts"]["lg"] = [
+        t for t in export["dashboard"]["metadata"]["layouts"]["lg"] if t["i"] != "txt-1"
+    ]
+    routes = _routes(json.dumps(export).encode())
     routes[("GET", f"/v1/documents/{DOC}/queries")] = lambda r: b'{"queries": []}'
     _install(monkeypatch, routes)
 
-    with pytest.raises(BundleError, match="tile 1"):
-        import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+    with pytest.raises(
+        BundleError, match=r"1 \(no saved query\).*2 \(no saved query\)"
+    ):
+        import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+
+def test_a_failed_job_with_no_error_type_aborts_the_import(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    routes = _routes(_fixture("export.json"))
+    plan = routes[("POST", "/v1/query/run")]
+    failed = b'{"job_id": "j", "status": "FAILED", "error_type": null, "error_message": "x"}\n'
+    routes[("POST", "/v1/query/run")] = lambda r: (
+        failed if _body(r)["query"]["fields"][0] == "orders.total_revenue" else plan(r)
+    )
+    _install(monkeypatch, routes)
+
+    with pytest.raises(BundleError, match="did not plan"):
+        import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+
+def test_every_plan_error_type_leaves_the_tile_unplanned(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    routes = _routes(_fixture("export.json"))
+    plan = routes[("POST", "/v1/query/run")]
+    failed = (
+        b'{"job_id": "j", "status": "FAILED", "error_type": "PLAN_MISSING_MODEL_OBJECT", '
+        b'"error_message": "No such field orders.gone"}\n'
+    )
+    routes[("POST", "/v1/query/run")] = lambda r: (
+        failed if _body(r)["query"]["fields"][0] == "orders.total_revenue" else plan(r)
+    )
+    _install(monkeypatch, routes)
+
+    import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    assert (
+        "    - sql: none, Omni could not plan it: No such field orders.gone" in outline
+    )
+    assert (tmp_path / "b" / "queries/2.sql").exists()
+
+
+def test_a_kpi_whose_value_run_fails_is_kept_without_a_values_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    routes = _routes(_fixture("export.json"))
+    routes[("POST", f"/v1/documents/{DOC}/queries/1/run")] = _fail_with(408)
+    _install(monkeypatch, routes)
+
+    import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    assert "    - values: none, Omni could not run it: HTTP 408" in outline
+    assert (tmp_path / "b" / "queries/1.sql").exists()
+    assert not list((tmp_path / "b").glob("kpi/*"))
+    assert (tmp_path / "b" / "queries/2.sql").exists()
+
+
+def test_a_render_that_does_not_finish_is_named_and_the_bundle_is_written(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    routes = _routes(_fixture("export.json"))
+    routes[("GET", f"/v1/dashboards/{DOC}/download/j1/status")] = lambda r: (
+        b'{"status": "in_progress"}'
+    )
+    _install(monkeypatch, routes)
+    monkeypatch.setattr(module, "POLL_LIMIT", 2)
+
+    import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    assert "## Not fetched: Omni failed to export these" in outline
+    assert "- `png/dashboard.png`: Omni render j1 did not finish in time" in outline
+    assert not list((tmp_path / "b").glob("png/*"))
+    assert (tmp_path / "b" / "queries/1.sql").exists()
+
+
+def test_a_render_already_in_progress_is_named_and_the_bundle_is_written(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    routes = _routes(_fixture("export.json"))
+
+    def busy(request: urllib.request.Request) -> bytes:
+        raise urllib.error.HTTPError(
+            request.full_url,
+            409,
+            "Conflict",
+            Message(),
+            io.BytesIO(
+                b'{"detail": "A download is already in progress", '
+                b'"existing_job_id": "old-7", "status": "EXECUTING"}'
+            ),
+        )
+
+    routes[("POST", f"/v1/dashboards/{DOC}/download")] = busy
+    _install(monkeypatch, routes)
+
+    import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    assert (
+        "- `png/dashboard.png`: Omni render already in progress (job old-7)" in outline
+    )
+    assert not list((tmp_path / "b").glob("png/*"))
+    assert (tmp_path / "b" / "queries/1.sql").exists()
+
+
+def test_a_failed_job_that_is_not_a_plan_error_aborts_the_import(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    routes = _routes(_fixture("export.json"))
+    routes[("POST", "/v1/query/run")] = lambda r: (
+        b'{"job_id": "j", "status": "FAILED", "error_type": "TIMEOUT", '
+        b'"error_message": "warehouse busy"}\n'
+    )
+    _install(monkeypatch, routes)
+
+    with pytest.raises(BundleError, match="did not plan"):
+        import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
 
 
 def test_list_returns_only_dashboards_across_pages(
@@ -398,7 +544,7 @@ def _fail_with(code: int) -> Handler:
 @pytest.mark.parametrize(
     ("route", "code"),
     [
-        (("POST", f"/v1/dashboards/{DOC}/download"), 409),
+        (("POST", f"/v1/dashboards/{DOC}/download"), 500),
         (("POST", "/v1/query/run"), 429),
     ],
 )
@@ -445,48 +591,135 @@ def test_source_json_flags_kpi_values_as_display_formatted(
     assert source["kpi_values"] == "display_formatted"
 
 
-def test_unsupported_container_tile_fails_naming_it(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def _page_export(children: list[dict[str, Any]]) -> bytes:
     export = json.loads(_fixture("export.json"))
+    export["dashboard"]["metadata"]["layouts"] = {"lg": []}
     export["dashboard"]["metadata"]["containers"] = [
         {
             "name": "Page",
             "containerType": "page",
             "instanceKey": "page-a",
-            "container": {
-                "instanceKey": "page-a-root",
-                "children": [{"type": "inline-map", "instanceKey": "k1"}],
-            },
+            "container": {"instanceKey": "page-a-root", "children": children},
         }
     ]
-    _install(monkeypatch, _routes(json.dumps(export).encode()))
+    return json.dumps(export).encode()
+
+
+def test_divider_tile_is_listed_without_a_query(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    children = [
+        {"id": "1", "type": "query", "as": "chart"},
+        {"type": "inline-divider", "id": "d1"},
+    ]
+    _install(monkeypatch, _routes(_page_export(children)))
+
+    import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    assert "- **divider** `d1` — page layout" in outline
+    assert (tmp_path / "b" / "queries/1.sql").exists()
+    assert not (tmp_path / "b" / "queries/d1.sql").exists()
+
+
+def test_unknown_tile_type_is_named_and_the_rest_of_the_bundle_is_written(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    children = [
+        {"type": "inline-map", "id": "m1", "title": "Stores"},
+        {"id": "1", "type": "query", "as": "chart"},
+    ]
+    _install(monkeypatch, _routes(_page_export(children)))
+
+    import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    assert "- **unsupported** `m1` 'Stores' — page layout" in outline
+    assert "    - unsupported tile type 'inline-map': left out" in outline
+    assert (tmp_path / "b" / "queries/1.sql").exists()
+
+
+def test_dashboard_with_no_representable_tile_fails_naming_the_types(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    children = [
+        {"type": "inline-map", "instanceKey": "k1"},
+        {"type": "inline-divider", "id": "d1"},
+    ]
+    _install(monkeypatch, _routes(_page_export(children)))
 
     with pytest.raises(BundleError, match="inline-map"):
         import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
 
 
-def test_tiles_outside_a_page_container_fail_naming_the_container_type(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("container_type", ["grid", "stack"])
+def test_top_level_container_outside_a_page_is_listed_as_a_section(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, container_type: str
 ) -> None:
-    export = json.loads(_fixture("export.json"))
+    export = json.loads(_page_export([]))
     export["dashboard"]["metadata"]["containers"] = [
         {
-            "name": "Page",
-            "containerType": "page",
-            "instanceKey": "page-a",
-            "container": {"instanceKey": "page-a-root", "children": []},
-        },
-        {
-            "instanceKey": "side",
-            "containerType": "stack",
+            "instanceKey": "g1",
+            "containerType": container_type,
             "children": [{"id": "1", "type": "query", "as": "chart"}],
         },
+        {"instanceKey": "empty", "containerType": "stack", "children": []},
     ]
     _install(monkeypatch, _routes(json.dumps(export).encode()))
 
-    with pytest.raises(BundleError, match="stack"):
-        import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+    import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    assert outline.count("## Page: Dashboard") == 1
+    assert "`1` 'Closed Won'" in outline
+    assert (tmp_path / "b" / "png/dashboard.png").exists()
+
+
+def test_a_tile_omni_cannot_plan_is_named_and_the_others_are_written(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    routes = _routes(_fixture("export.json"))
+    plan = routes[("POST", "/v1/query/run")]
+    failed = (
+        b'{"job_id": "j", "status": "FAILED", "error_type": "PLAN", '
+        b'"error_message": "Filter on field gone.field not found"}\n'
+    )
+    routes[("POST", "/v1/query/run")] = lambda r: (
+        failed if _body(r)["query"]["fields"][0] == "orders.total_revenue" else plan(r)
+    )
+    _install(monkeypatch, routes)
+
+    import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    assert (
+        "    - sql: none, Omni could not plan it: Filter on field gone.field not found"
+        in outline
+    )
+    assert (tmp_path / "b" / "queries/2.sql").exists()
+    assert not (tmp_path / "b" / "queries/1.sql").exists()
+    assert not list((tmp_path / "b").glob("kpi/*"))
+    assert (tmp_path / "b" / "source.json").exists()
+
+
+def test_table_calc_without_a_label_is_listed_by_its_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    saved = json.loads(_fixture("queries.json"))
+    for query in saved["queries"]:
+        for calc in query["query"]["calculations"]:
+            del calc["label"]
+    routes = _routes(_fixture("export.json"))
+    routes[("GET", f"/v1/documents/{DOC}/queries")] = lambda r: json.dumps(
+        saved
+    ).encode()
+    _install(monkeypatch, routes)
+
+    import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    assert "table calc: calc_1" in outline
+    assert "table calc: calc_1 '" not in outline
 
 
 def test_list_names_the_key_omni_left_out(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -626,3 +859,75 @@ def test_unlisted_chart_option_still_reaches_the_outline(
     import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
 
     assert "brandNew: on" in tile_block((tmp_path / "outline.md").read_text(), "2")
+
+
+TWO_STEP = (
+    "-- step 1, run on Snowflake\n"
+    'SELECT "A", SUM("B") AS "S" FROM "T" GROUP BY 1\n'
+    "\n"
+    "-- step 2, run on DuckDB\n"
+    "-- use result of step 1 as step_ref__1\n"
+    'SELECT "A", "S" * 2 AS "calc_1"\nFROM "step_ref__1"\nORDER BY "A"\n'
+)
+
+
+def _import_with_sql(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sql: str) -> Path:
+    routes = _routes(_fixture("export.json"))
+    first, second = _fixture("plan_2.ndjson").splitlines()
+    plan = json.loads(second)
+    plan["summary"]["display_sql"] = sql
+    reply = first + b"\n" + json.dumps(plan).encode() + b"\n"
+    routes[("POST", "/v1/query/run")] = lambda r: reply
+    _install(monkeypatch, routes)
+    return import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+
+def test_two_step_sql_splits_into_warehouse_file_and_duckdb_post_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    out = _import_with_sql(monkeypatch, tmp_path, TWO_STEP)
+
+    warehouse = (out / "queries/1.sql").read_text()
+    assert warehouse.strip() == 'SELECT "A", SUM("B") AS "S" FROM "T" GROUP BY 1'
+    post = (out / "queries/1.post.sql").read_text()
+    assert post.startswith("SELECT")
+    assert 'FROM "step_ref__1"' in post
+    assert "step 1" not in post and "step 2" not in post
+    assert (
+        "    - post-step: queries/1.post.sql (DuckDB over step 1's result as "
+        "`step_ref__1`: SELECT, FROM, ORDER BY)"
+    ) in (out / "outline.md").read_text()
+
+
+def test_two_step_sql_with_crlf_line_endings_still_splits(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    out = _import_with_sql(monkeypatch, tmp_path, TWO_STEP.replace("\n", "\r\n"))
+    assert (out / "queries/1.post.sql").exists()
+    assert "step 2" not in (out / "queries/1.sql").read_text()
+
+
+def test_single_step_sql_is_written_unchanged_with_no_post_step(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    out = _import_with_sql(monkeypatch, tmp_path, "SELECT 1")
+
+    assert (out / "queries/1.sql").read_text() == "SELECT 1"
+    assert not list(out.glob("queries/*.post.sql"))
+    assert "post-step" not in (out / "outline.md").read_text()
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        TWO_STEP.replace("run on DuckDB", "run on Spark"),
+        TWO_STEP.replace("-- use result of step 1 as step_ref__1\n", ""),
+        TWO_STEP + "\n-- step 3, run on DuckDB\nSELECT 1\n",
+        TWO_STEP.replace("-- step 1, run on Snowflake\n", ""),
+    ],
+)
+def test_unrecognized_step_shape_fails_naming_the_tile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sql: str
+) -> None:
+    with pytest.raises(BundleError, match=r"tile `\d+`.*two-step"):
+        _import_with_sql(monkeypatch, tmp_path, sql)

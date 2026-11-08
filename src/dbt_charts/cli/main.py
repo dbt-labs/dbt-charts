@@ -1801,7 +1801,9 @@ def import_hex(
 
     Reads HEX_API_TOKEN from the environment (one token per workspace). Hex has
     no whole-app screenshot, so png/ holds one render per chart cell of the
-    latest run, and an app without chart cells is refused.
+    latest run. When the key cannot list the project's runs, or a render fails,
+    the bundle is still written and outline.md names the missing renders under
+    "Not fetched".
 
     \b
     Examples:

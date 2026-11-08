@@ -12,7 +12,6 @@ from __future__ import annotations
 import csv
 import io
 import json
-import os
 import re
 import time
 import urllib.error
@@ -27,6 +26,7 @@ from dbt_charts.agent_api.source_bundle import (
     compact,
     option_lines,
     public_url,
+    require_env,
     slug,
     staged_bundle,
     url_origin,
@@ -99,11 +99,13 @@ def _send(
 
 
 def _login(api_base: str) -> str:
-    credentials: dict[str, str] = {}
-    for key in ("LOOKER_CLIENT_ID", "LOOKER_CLIENT_SECRET"):
-        if not os.environ.get(key):
-            raise BundleError(f"set {key} to import from Looker")
-        credentials[key] = os.environ[key]
+    origin = api_base.removesuffix(API_SUFFIX).removesuffix(":19999")
+    credentials = require_env(
+        ("LOOKER_CLIENT_ID", "LOOKER_CLIENT_SECRET"),
+        where=f"{origin}/account → API Keys → New API Key (a Looker admin may "
+        "need to enable API keys for your user)",
+        command="dct import looker <dashboard URL>",
+    )
     body = urllib.parse.urlencode(
         {
             "client_id": credentials["LOOKER_CLIENT_ID"],

@@ -604,8 +604,11 @@ def test_missing_credentials_name_the_variable(
 ) -> None:
     monkeypatch.delenv(missing)
 
-    with pytest.raises(BundleError, match=missing):
+    with pytest.raises(BundleError, match=missing) as exc:
         _run(tmp_path)
+
+    assert "Administration → Developer Access" in str(exc.value)
+    assert ".env" in str(exc.value)
 
 
 def test_missing_base_url_names_the_variable(http: Any, tmp_path: Path) -> None:

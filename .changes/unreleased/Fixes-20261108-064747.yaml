@@ -1,0 +1,3 @@
+kind: Fixes
+body: The board-migrate skill keeps a KPI tile's exact digits, never invents data for an unreadable table, renders every tab, and finishes its own build.
+time: 2026-11-08T06:47:47.725803-08:00

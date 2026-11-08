@@ -41,6 +41,8 @@ pub enum TypeExpr {
     Either(&'static TypeExpr, &'static TypeExpr),
     /// A boolean constant: the only value a flag takes (`Literal[True]`).
     Const(bool),
+    /// A closed set of JSON scalars of any kind, as one `Literal[..]` lists them: `"bold"`, `700`.
+    Literals(&'static [Value]),
     /// A fixed-length array of positional types: a pair, a rectangle.
     Tuple(&'static [&'static TypeExpr]),
     /// The payload of a unit variant.
@@ -60,8 +62,10 @@ pub struct Keywords {
     pub min_items: Option<u64>,
     /// `maxItems` of a list-valued newtype.
     pub max_items: Option<u64>,
-    /// The keywords stay in the arm that states them (`Literal[..] | Duration`, where the pattern is
-    /// the string arm's own) instead of moving beside the field's `anyOf`.
+    /// `minLength` of a string newtype.
+    pub min_length: Option<u64>,
+    /// The pattern stays in the arm that states it (`Literal[..] | Duration`, where the pattern is
+    /// the string arm's own) instead of moving beside the field's `anyOf`; the other keywords still move.
     pub in_arm: bool,
 }
 
@@ -74,6 +78,17 @@ pub enum InEngine {
 }
 
 impl Keywords {
+    /// No keywords: the base to add one to.
+    pub const NONE: Self = Self {
+        pattern: None,
+        in_engine: InEngine::Same,
+        bounds: Bounds::NONE,
+        min_items: None,
+        max_items: None,
+        min_length: None,
+        in_arm: false,
+    };
+
     pub const fn pattern(pattern: &'static str) -> Self {
         Self {
             pattern: Some(pattern),
@@ -81,6 +96,7 @@ impl Keywords {
             bounds: Bounds::NONE,
             min_items: None,
             max_items: None,
+            min_length: None,
             in_arm: false,
         }
     }
@@ -92,6 +108,7 @@ impl Keywords {
             bounds,
             min_items: None,
             max_items: None,
+            min_length: None,
             in_arm: false,
         }
     }
@@ -103,6 +120,7 @@ impl Keywords {
             bounds: Bounds::NONE,
             min_items: Some(min_items),
             max_items: None,
+            min_length: None,
             in_arm: false,
         }
     }
@@ -115,11 +133,18 @@ impl Keywords {
             bounds: Bounds::NONE,
             min_items: Some(n),
             max_items: Some(n),
+            min_length: None,
             in_arm: false,
         }
     }
 
-    /// Keep these keywords in their arm of a union.
+    /// A string of at least `n` characters.
+    pub const fn at_least_chars(mut self, n: u64) -> Self {
+        self.min_length = Some(n);
+        self
+    }
+
+    /// Keep the pattern in its arm of a union.
     pub const fn in_arm(mut self) -> Self {
         self.in_arm = true;
         self
@@ -148,6 +173,7 @@ impl PartialEq for TypeExpr {
             (Self::OneOf(a), Self::OneOf(b)) => a == b,
             (Self::Tuple(a), Self::Tuple(b)) => a == b,
             (Self::Const(a), Self::Const(b)) => a == b,
+            (Self::Literals(a), Self::Literals(b)) => a == b,
             (Self::Unit, Self::Unit) => true,
             _ => false,
         }
@@ -162,7 +188,7 @@ pub struct Attrs {
     /// `omit`: an `Option<T>` the layers may leave unset, whose authored twin is `T`'s own, so
     /// `null` is refused as for a plain field. Names what `None` means.
     pub omit: Option<&'static str>,
-    /// `default_empty`: a map or list the layers leave unset builds empty.
+    /// `default_empty`: a map, list or model the layers leave unset builds empty.
     pub default_empty: bool,
     pub inherit: Option<&'static str>,
     pub inherit_slot: Option<&'static str>,
@@ -187,6 +213,11 @@ pub struct Attrs {
     pub keys: bool,
     pub flatten: bool,
     pub role: Option<&'static str>,
+    /// Python constrains the string inside its arm (`Annotated[str, StringConstraints(pattern=..)] |
+    /// None`), so the schema keeps the pattern in that arm instead of beside the `anyOf`.
+    pub arm_pattern: bool,
+    /// `min_items = N` on a list: the least it may hold, as Python's `min_length`; null is unset.
+    pub min_items: Option<u64>,
 }
 
 /// A field of a struct, or a variant of an enum. `name` is the authored key:
@@ -217,6 +248,8 @@ pub enum ConstraintKind {
     Unique,
     AtLeastOneOf,
     AtMostOneOf,
+    /// The field, when written, is not `null`; it need not be written.
+    NotNull,
 }
 
 /// A JSON scalar value in a constraint.

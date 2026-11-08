@@ -1,0 +1,3 @@
+kind: Features
+body: The skill dct init installs names the BI tools board-migrate imports from, board-migrate walks you through putting API keys in a .env file, and a missing key error says where to create the key and how to load it.
+time: 2026-11-05T14:13:03.661061-09:00

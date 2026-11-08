@@ -42,6 +42,8 @@ pub enum Ty {
     Patch(Box<Ty>),
     /// A boolean constant.
     Const(bool),
+    /// A closed set of JSON scalars.
+    Literals(Vec<crate::Value>),
     /// A fixed-length array of positional types.
     Tuple(Vec<Ty>),
     /// A facet or unit with the keywords its declaration carries.

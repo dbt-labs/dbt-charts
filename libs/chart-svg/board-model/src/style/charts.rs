@@ -133,7 +133,7 @@ pub struct ChartsStyle {
     #[model(local)]
     pub axis_quantitative: Patch<QuantitativeAxisStyle>,
     /// Band (category) axis style overrides applied after axis_x/axis_y. Unset fields fall back to style.charts.axis.
-    #[model(local)]
+    #[model(local, default_empty)]
     pub axis_band: Patch<BandAxisStyle>,
     /// Vega-Lite view dimensions and border.
     pub view: ViewStyle,

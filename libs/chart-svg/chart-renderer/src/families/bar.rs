@@ -687,7 +687,7 @@ impl BarResolved {
             .filter_map(|row| row_num(row, &field).map(|v| (row_str(row, &field), color.fill(v))))
             .collect();
         self.category_colors.retain(|scale| scale.field != field);
-        self.category_colors.push(crate::common::CategoryColorScale { field, slots: Default::default(), overrides });
+        self.category_colors.push(crate::common::CategoryColorScale { field, slots: Default::default(), overrides, unseen_pins: Default::default() });
         self.style.endpoint_labels.visible = false;
         self.numeric_color = Some(color);
         Ok(())

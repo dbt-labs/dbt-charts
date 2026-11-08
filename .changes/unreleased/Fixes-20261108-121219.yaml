@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct import omni keeps going when a KPI's value query times out or Omni reports any planning error.
+time: 2026-11-08T12:12:19.146907-08:00

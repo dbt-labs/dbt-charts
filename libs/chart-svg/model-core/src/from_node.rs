@@ -166,14 +166,24 @@ pub fn read_tag(
     None
 }
 
-/// A `keys` enum: the variant is spelled by which of `keys` is present.
-/// Returns the index of the one present; more than one is an error.
-pub fn read_keys(m: &mut MapRead, cx: &mut Cx, keys: &[&str]) -> Option<usize> {
+/// A `keys` enum: the variant is spelled by which of `keys` is present. A key of a variant with a
+/// payload that holds null is unset, as Python reads `X | None`; a unit variant is spelled by
+/// holding null (`units[i]`). Returns the index of the one present; more than one is an error.
+pub fn read_keys(m: &mut MapRead, cx: &mut Cx, keys: &[&str], units: &[bool]) -> Option<usize> {
     for k in keys {
         m.ask(k);
     }
-    let present: Vec<usize> = (0..keys.len())
-        .filter(|&i| keys.get(i).is_some_and(|k| m.has(k)))
+    let present: Vec<usize> = keys
+        .iter()
+        .zip(units)
+        .enumerate()
+        .filter(|&(_, (k, unit))| {
+            let null = m
+                .entry(k)
+                .is_some_and(|e| matches!(e.value.kind, Kind::Scalar(Value::Null)));
+            m.has(k) && (*unit || !null)
+        })
+        .map(|(i, _)| i)
         .collect();
     match present.as_slice() {
         [one] => Some(*one),
@@ -203,6 +213,31 @@ pub fn read_or_empty<T>(node: &Node, cx: &mut Cx, read: fn(&Node, &mut Cx) -> T)
             kind: Kind::Map(Default::default()),
         };
         return read(&empty, cx);
+    }
+    read(node, cx)
+}
+
+/// A `nullable` list: null is unset (Python's `list[..] | None`), and a list shorter than `min`
+/// is refused with pydantic's `min_length` text.
+pub fn read_list<T: Default>(
+    node: &Node,
+    cx: &mut Cx,
+    min: u64,
+    read: fn(&Node, &mut Cx) -> T,
+) -> T {
+    if matches!(node.kind, Kind::Scalar(Value::Null)) {
+        return T::default();
+    }
+    if let Kind::Seq(items) = &node.kind {
+        let n = items.len() as u64;
+        if n < min {
+            let s = if min == 1 { "" } else { "s" };
+            cx.invalid(
+                node.span,
+                format!("List should have at least {min} item{s} after validation, not {n}"),
+            );
+            return T::default();
+        }
     }
     read(node, cx)
 }

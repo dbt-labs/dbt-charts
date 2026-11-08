@@ -265,7 +265,7 @@ pub fn compact_style(style: &Style, overrides: &Overrides) -> Result<MdsvgStyle,
         h6_size: Some(sizes[5]),
         heading_font_weight: heading_weight,
         heading_line_height: Some(style.title.font.line_height),
-        bold_font_weight: Weight::of(&text.bold.weight).attr(),
+        bold_font_weight: Weight::of(&text.bold.weight.0).attr(),
         avoid_runts: true,
         ..MdsvgStyle::default()
     })

@@ -2,12 +2,10 @@
 //! disagreement with Python, or when no case ran; run by `bind_sweep.py`. A case is
 //! `{board, datasets, plan, charts}`: `board` names the corpus board, `plan` holds the category
 //! color plan Python makes and what it plans from (pins, palette, each chart's color field), and
-//! `charts` holds, per placed chart, its bound channels (`tests/oracle/channels.rs`) and, for a
-//! cartesian family, the channel type Python gives its `x`/`y` fields over the datasets and its
-//! recorded style walks (`chart_svg_dev/_bind_walks.py`, replayed by `tests/oracle/walks.rs`).
-//! The channels are compared over the `Board` Rust normalize compiles from the same corpus board,
-//! which no board reaches yet (the fill pass and `CompiledBoard::board()`); until then they are
-//! counted.
+//! `charts` holds, per placed chart and for a cartesian family, the channel type Python gives its
+//! `x`/`y` fields over the datasets and its recorded style walks (`chart_svg_dev/_bind_walks.py`,
+//! replayed by `tests/oracle/walks.rs`). Each chart's bound channels, also recorded, are compared
+//! by engine's `check_channels` example, over the `Board` Rust normalize compiles.
 
 use bind::category_colors::{CategoryColorScale, Pins};
 use bind::channel_type::{classify, ChannelType};
@@ -22,14 +20,9 @@ use std::collections::BTreeMap;
 #[allow(dead_code)]
 #[path = "../tests/oracle/walks.rs"]
 mod walks;
-#[allow(dead_code)]
-#[path = "../tests/oracle/channels.rs"]
-mod channels;
 
 #[derive(Deserialize)]
 struct Case {
-    #[allow(dead_code)]
-    board: String,
     datasets: QueryDatasets,
     plan: Plan,
     charts: IndexMap<String, ChartOracle>,
@@ -102,12 +95,14 @@ fn check_plan(case: &Case) -> Result<bool, String> {
     let encodings: Vec<Encoding> = plan
         .encodings
         .iter()
-        .map(|e| Encoding {
-            query: &e.query,
-            field: &e.field,
+        .filter_map(|e| {
+            Some(Encoding {
+                dataset: case.datasets.get(&e.query)?,
+                field: &e.field,
+            })
         })
         .collect();
-    let got = seat(&encodings, &case.datasets, &plan.pins, &plan.palette);
+    let got = seat(&encodings, &plan.pins, &plan.palette);
     match (&plan.expected, got) {
         (Expected::Scales(want), Ok(got)) => {
             let got: Vec<Scale> = got.iter().map(scale).collect();
@@ -148,8 +143,6 @@ fn scale(s: &CategoryColorScale) -> Scale {
 #[derive(Deserialize)]
 struct ChartOracle {
     query: Option<String>,
-    #[allow(dead_code)]
-    channels: channels::Oracle,
     #[serde(default)]
     types: IndexMap<String, TypeOracle>,
     walk: Option<walks::Case>,
@@ -180,7 +173,7 @@ fn main() {
         .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .collect();
     paths.sort();
-    let (mut failed, mut types, mut type_refusals, mut plans, mut channel_sets) = (0, 0, 0, 0, 0);
+    let (mut failed, mut types, mut type_refusals, mut plans) = (0, 0, 0, 0);
     let mut tally = walks::Tally::default();
     for path in &paths {
         let text = std::fs::read_to_string(path).expect("read case");
@@ -201,7 +194,6 @@ fn main() {
             }
         }
         for (id, want) in &case.charts {
-            channel_sets += 1;
             let dataset = want
                 .query
                 .as_deref()
@@ -233,7 +225,6 @@ fn main() {
         }
     }
     println!("{} cases: {plans} plan, {failed} failed", paths.len());
-    println!("{channel_sets} channel sets recorded, none compared: no corpus board compiles to a Board yet");
     println!(
         "charts: {types} channel types equal ({type_refusals} refused by name); {} axis decisions equal; \
          {} planted-format probes equal; {} planted legend/title probes equal; {} layer-mark probes equal",

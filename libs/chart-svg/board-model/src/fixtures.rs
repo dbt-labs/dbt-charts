@@ -4,6 +4,8 @@
 
 mod board;
 pub use board::*;
+mod sql;
+pub use sql::{Opaque, Recorded};
 
 use crate::chart::callout::CalloutChart;
 use crate::chart::ChartQuery;
@@ -219,9 +221,12 @@ pub fn resolved_style_over(
 /// Where Rust resolves a leaf Python leaves `None`, Python's expected patch is projected to the
 /// effective value before the comparison. One rule per leaf:
 ///
-/// - a chart family's `color.categorical.single_series_palette`: every Python consumer reads the
-///   family's own when set and `charts.color.categorical.single_series_palette` otherwise
-///   (shared.py's `effective_single_series_palette`).
+/// - a chart family's `color.categorical.single_series_palette` (pie included): every Python
+///   consumer reads the family's own when set and `charts.color.categorical.single_series_palette`
+///   otherwise (shared.py's `effective_single_series_palette`).
+/// - a map family's chart-level `font` (`geoshape`, `point_map`): no Python consumer reads the
+///   family-root font's own leaves, and the chart draws in `charts.font`, so an unset leaf is that
+///   font's.
 /// - the bar value labels' `font` (global, then each bar family): a label with no font of its own
 ///   paints in the text mark's (`charts.marks.text.font`). `family`, `color`, `size` and `weight`
 ///   are what Vega-Lite's text config reads from it (vega_lite/mapping.py:128-145,
@@ -230,6 +235,20 @@ pub fn resolved_style_over(
 pub fn project_effective_tiers(want: &mut <Style as Leaf>::Patch) {
     project_single_series_ink(want);
     project_bar_label_font(want);
+    project_map_font(want);
+}
+
+fn project_map_font(want: &mut <Style as Leaf>::Patch) {
+    // The leaves the family sets keep their value over the enclosing font's.
+    let enclosing = want.charts.font.clone();
+    for font in [
+        &mut want.charts.geoshape.geo.card.font,
+        &mut want.charts.point_map.geo.card.font,
+    ] {
+        let mut merged = enclosing.clone();
+        merged.merge(font.clone());
+        *font = merged;
+    }
 }
 
 fn project_bar_label_font(want: &mut <Style as Leaf>::Patch) {
@@ -269,6 +288,7 @@ fn project_single_series_ink(want: &mut <Style as Leaf>::Patch) {
         &mut want.charts.scatter.cartesian.painted.color,
         &mut want.charts.histogram.cartesian.painted.color,
         &mut want.charts.heatmap.cartesian.painted.color,
+        &mut want.charts.pie.color,
     ];
     for color in &mut families {
         match &mut color.categorical {

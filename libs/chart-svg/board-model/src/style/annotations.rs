@@ -103,6 +103,7 @@ impl model_core::Leaf for AnnotationFontWeight {
             },
             min_items: None,
             max_items: None,
+            min_length: None,
             in_arm: false,
         },
         &model_core::TypeExpr::Either(

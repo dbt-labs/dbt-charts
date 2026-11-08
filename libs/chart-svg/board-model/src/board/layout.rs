@@ -87,11 +87,11 @@ impl Leaf for LayoutItem {
     type Patch = Option<LayoutItemAuthored>;
     const MERGE: Merge = Merge::Override;
     const EXPR: TypeExpr = TypeExpr::Either(
-        &<ChartId as Leaf>::EXPR,
+        &<NestedBoard as Leaf>::EXPR,
         &TypeExpr::Either(
-            &<NestedBoard as Leaf>::EXPR,
+            &<Chart as Leaf>::EXPR,
             &TypeExpr::Either(
-                &<Chart as Leaf>::EXPR,
+                &<ChartId as Leaf>::EXPR,
                 &TypeExpr::Map(&<Chart as Leaf>::EXPR),
             ),
         ),
@@ -161,8 +161,16 @@ impl FromNode for LayoutItem {
 
 /// A grid cell: what it holds and where it sits, in grid units (not pixels).
 #[derive(Debug, Clone, PartialEq, Model)]
+#[model(constraint(
+    range(col_span, ge = 0),
+    range(row_span, ge = 0),
+    range(width, ge = 0),
+    range(height, ge = 0)
+))]
+#[allow(clippy::duplicated_attributes)]
 pub struct GridItem {
     /// Chart name or nested board to place in this grid cell.
+    #[model(arm_pattern)]
     pub item: LayoutItem,
     /// Column position (0-indexed).
     #[model(absent = "auto-placed")]

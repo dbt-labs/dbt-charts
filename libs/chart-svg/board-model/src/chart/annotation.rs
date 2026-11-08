@@ -8,8 +8,8 @@
 //! category) depends on the axis it lands on, which `bind` knows.
 //!
 //! Dissolved into parse: `NoteAnchor`'s range check (a note takes a scalar anchor, a type error).
-//! A note's x/y pairing and `enclose` / `connector` / `max_width` rules are `constraint`s except
-//! the pairing, which reads whether an anchor is `min()` or `max()`: [`NoteAnnotation::pairing`].
+//! A note's x/y pairing and `enclose` / `connector` / `max_width` rules are `constraint`s; the
+//! pairing is also checked on an authored note by [`NoteAnnotation::pairing`].
 
 use crate::facet::{facet, Facet};
 use crate::string_enum;
@@ -319,7 +319,13 @@ impl ReadScalar for AnchorScalar {
 }
 union_leaf!(
     AnchorScalar,
-    ::model_core::TypeExpr::Facet("anchor_scalar", ::model_core::Scalar::Str)
+    ::model_core::TypeExpr::Either(
+        &::model_core::TypeExpr::Scalar(::model_core::Scalar::Float),
+        &::model_core::TypeExpr::Either(
+            &::model_core::TypeExpr::Scalar(::model_core::Scalar::Int),
+            &::model_core::TypeExpr::Scalar(::model_core::Scalar::Str),
+        ),
+    )
 );
 
 /// A span on one axis; a missing bound runs to the axis edge.
@@ -437,6 +443,8 @@ facet!(
     AnnotationText = "annotation_text",
     annotation_text,
     model_core::Keywords::pattern(r"^[^\n\r]*\S[^\n\r]*$")
+        .in_arm()
+        .at_least_chars(1)
 );
 
 fn non_empty(v: &str) -> Result<String, String> {
@@ -449,7 +457,8 @@ fn non_empty(v: &str) -> Result<String, String> {
 facet!(
     /// A non-empty column name.
     ColumnName = "non_empty",
-    non_empty
+    non_empty,
+    model_core::Keywords::NONE.at_least_chars(1)
 );
 
 /// Which series a computed anchor or trend is computed for.
@@ -475,7 +484,10 @@ impl ReadScalar for SeriesSelection {
 }
 union_leaf!(
     SeriesSelection,
-    ::model_core::TypeExpr::Facet("series_selection", ::model_core::Scalar::Str)
+    ::model_core::TypeExpr::Either(
+        &::model_core::TypeExpr::OneOf(&["each", "total"]),
+        &::model_core::TypeExpr::List(&::model_core::TypeExpr::Scalar(::model_core::Scalar::Str)),
+    )
 );
 
 /// Fields every annotation kind takes.
@@ -536,8 +548,13 @@ pub struct BandAnnotation {
 #[derive(Debug, Clone, PartialEq, Model)]
 #[allow(clippy::duplicated_attributes)]
 #[model(
+    constraint(requires(y, when(set(x), not_call(x, "min", "max")))),
+    constraint(requires(x, when(set(y), not_call(y, "min", "max")))),
     constraint(forbids(enclose, when(is_in(x, null), is_in(y, null)))),
-    constraint(forbids(connector, when(is_in(x, null), is_in(y, null)))),
+    constraint(forbids(
+        connector,
+        when(is_in(x, null), is_in(y, null), not_in(connector, null))
+    )),
     constraint(forbids(
         "style.marks.text.position",
         when(is_in(enclose, "rect"), is_in(connector, null))
@@ -616,8 +633,8 @@ pub struct ChartTotal {
 
 impl NoteAnnotation {
     /// A note takes both x and y, or neither; only `min()` and `max()` can derive the other
-    /// coordinate. The rule reads which function an anchor is, which no `constraint` kind does
-    /// with a total value's anchor type, so it is checked on the authored note.
+    /// coordinate. The schema states the rule as a `constraint`; this reads it off the authored
+    /// note, whose anchors are typed.
     pub fn pairing(note: &Authored<NoteAnnotation>) -> Vec<Diagnostic> {
         let extreme = |a: &Tri<NoteAnchor>| {
             matches!(a, Tri::Value(NoteAnchor(AnchorScalar::Aggregate(g)))

@@ -25,6 +25,31 @@ fn args(t: &Type) -> Option<(String, Vec<&Type>)> {
     Some((seg.ident.to_string(), tys))
 }
 
+/// A Rust primitive or `String`: a type with no empty value of its own.
+fn is_primitive(t: &Type) -> bool {
+    let Type::Path(p) = t else { return false };
+    p.path.get_ident().is_some_and(|i| {
+        matches!(
+            i.to_string().as_str(),
+            "f32"
+                | "f64"
+                | "bool"
+                | "String"
+                | "char"
+                | "usize"
+                | "isize"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "i8"
+                | "i16"
+                | "i32"
+                | "i64"
+        )
+    })
+}
+
 fn is_map(t: &Type) -> bool {
     args(t).is_some_and(|(n, _)| n == "IndexMap")
 }
@@ -136,10 +161,11 @@ fn slot_of(
     doc: &str,
     unit: bool,
 ) -> Result<Slot> {
-    if a.default_empty && !args(ty).is_some_and(|(n, _)| n == "IndexMap" || n == "Vec") {
+    if a.default_empty && (args(ty).is_some_and(|(n, _)| n == "Option") || is_primitive(ty)) {
         return Err(Error::new_spanned(
             ty,
-            "`default_empty` is for a map or a list: the built value is the empty container",
+            "`default_empty` is for a map, a list or a model: the built value is the empty value; \
+             an `Option` is `absent` and a scalar takes a `fill`",
         ));
     }
     let mut asserts = Vec::new();
@@ -266,19 +292,37 @@ fn slot_of(
     let fills_at = a.fills_at.iter().map(|(t, v)| quote!((#t, #v)));
     let wrapped = args(ty)
         .is_some_and(|(n, _)| matches!(n.as_str(), "Patch" | "Option" | "Vec" | "IndexMap"));
-    if a.nullable && (wrapped || a.flatten || a.keys || a.accept.is_some() || a.absent.is_some()) {
+    let filled_list = a.fill.is_some() && args(ty).is_some_and(|(n, _)| n == "Vec");
+    if a.min_items.is_some() && !filled_list {
+        return Err(Error::new_spanned(
+            ty,
+            "`min_items` is for a list with a `fill`",
+        ));
+    }
+    if a.nullable
+        && ((wrapped && !filled_list)
+            || a.flatten
+            || a.keys
+            || a.accept.is_some()
+            || a.absent.is_some())
+    {
         return Err(Error::new_spanned(
             ty,
             "`nullable` is for a plain model field: not `Patch`, `Option`, a list or a map, and not with `flatten`, `keys`, `accept` or `absent`",
         ));
     }
-    let (local, nested_drop, null_empty, directive, keys, flatten) = (
+    let min_items = match a.min_items {
+        Some(n) => quote!(Some(#n)),
+        None => quote!(None),
+    };
+    let (local, nested_drop, null_empty, directive, keys, flatten, arm_pattern) = (
         a.local,
         a.nested_drop,
         a.nullable,
         a.directive,
         a.keys,
         a.flatten,
+        a.arm_pattern,
     );
     let field = quote! {
         ::model_core::Field {
@@ -287,7 +331,7 @@ fn slot_of(
                 absent: #absent, omit: #omit, default_empty: #default_empty, inherit: #inherit, inherit_slot: #inherit_slot,
                 links: &[#(#links),*], links_at: &[#(#links_at),*], fills_at: &[#(#fills_at),*], local: #local, nested_drop: #nested_drop, nullable: #null_empty,
                 fill: #fill, fill_value: #fill_value, accept: #accept, directive: #directive, keys: #keys,
-                flatten: #flatten, role: #role,
+                flatten: #flatten, role: #role, arm_pattern: #arm_pattern, min_items: #min_items,
             },
         }
     };
@@ -714,7 +758,9 @@ fn build_impl(name: &Ident, authored: &Ident, patch: &Ident, reads: &[Read]) -> 
                         ::model_core::Tri::Null => { unset.push((#path).to_string()); None }
                     };)
                 }
-                _ if r.fa.default_empty => {
+                _ if r.fa.default_empty
+                    && args(ty).is_some_and(|(n, _)| n == "IndexMap" || n == "Vec") =>
+                {
                     let defaulted = if authored_side {
                         quote!(build_defaulted_authored)
                     } else {
@@ -835,6 +881,14 @@ fn read_stmt(f: &Read, patch: bool) -> TokenStream {
         (_, Some(alt), _) => {
             return quote!(if let Some(Some(v)) = cx.field(m, #key, |n, cx| ::model_core::read_accept::<#ty, #alt>(n, cx)) { out.#id = Some(v); });
         }
+        _ if fa.nullable && is_list(ty) => {
+            let min = fa.min_items.unwrap_or(0);
+            if patch {
+                quote!(::model_core::read_list(n, cx, #min, <#ty as ::model_core::FromNode>::patch))
+            } else {
+                quote!(::model_core::read_list(n, cx, #min, <#ty as ::model_core::FromNode>::authored))
+            }
+        }
         _ if fa.nullable => {
             if patch {
                 quote!(::model_core::read_or_empty(n, cx, <#ty as ::model_core::FromNode>::patch))
@@ -848,6 +902,10 @@ fn read_stmt(f: &Read, patch: bool) -> TokenStream {
         _ => quote!(<#ty as ::model_core::FromNode>::#node_fn(n, cx)),
     };
     quote!(if let Some(v) = cx.field(m, #key, |n, cx| #read) { out.#id = v; })
+}
+
+fn is_list(ty: &Type) -> bool {
+    args(ty).is_some_and(|(n, _)| n == "Vec")
 }
 
 fn struct_from_node(
@@ -1016,8 +1074,9 @@ fn enum_from_node(
                     quote!(#i => cx.field(m, #k, |n, cx| <#t as ::model_core::FromNode>::whole(n, cx)).flatten().map(#authored::#id))
                 }
             });
+            let units = arms.iter().map(|a| a.unit);
             quote! {
-                    match ::model_core::read_keys(m, cx, &[#(#keys),*])? {
+                    match ::model_core::read_keys(m, cx, &[#(#keys),*], &[#(#units),*])? {
                         #(#cases,)*
                         _ => None,
                     }

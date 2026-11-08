@@ -43,11 +43,8 @@ impl ReadScalar for ChartQuery {
 union_leaf!(
     ChartQuery,
     TypeExpr::Either(
-        &TypeExpr::Scalar(Scalar::Str),
-        &TypeExpr::Either(
-            &<QueryRef as Leaf>::EXPR,
-            &TypeExpr::Ref("Query", <Query as Model>::info)
-        )
+        &TypeExpr::Ref("Query", <Query as Model>::info),
+        &TypeExpr::Either(&<QueryRef as Leaf>::EXPR, &TypeExpr::Scalar(Scalar::Str))
     )
 );
 

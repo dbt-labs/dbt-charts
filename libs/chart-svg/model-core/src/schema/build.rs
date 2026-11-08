@@ -37,6 +37,17 @@ pub enum SchemaError {
     },
     /// The root is not a struct.
     RootNotStruct(&'static str),
+    /// `default_empty` on a scalar, enum or facet: only a map, a list or a model has an empty value.
+    DefaultEmptyNotAContainer {
+        model: &'static str,
+        field: &'static str,
+    },
+    /// `default_empty` on a model that does not build from an empty patch.
+    DefaultEmptyNeedsFields {
+        model: &'static str,
+        field: &'static str,
+        missing: &'static str,
+    },
 }
 
 impl Schema {
@@ -63,7 +74,63 @@ impl Schema {
         };
         schema.check_flatten()?;
         schema.check_constraints()?;
+        schema.check_default_empty()?;
         Ok(schema)
+    }
+
+    /// A `default_empty` field holding a model is "unset builds to the model's empty value", so the
+    /// model must build from an empty patch: every key of it is filled by something.
+    fn check_default_empty(&self) -> Result<(), SchemaError> {
+        for m in self.models.values() {
+            let Body::Struct { fields, .. } = &m.body else {
+                continue;
+            };
+            for f in fields.iter().filter(|f| f.attrs.default_empty) {
+                // A `Patch` slot is a sparse overlay: unset is the empty overlay, which needs no
+                // total value of the model it overlays.
+                let held = match &f.ty {
+                    Ty::Patch(_) => continue,
+                    t => t,
+                };
+                let n = match held {
+                    Ty::Ref(n) => n,
+                    Ty::Map(_) | Ty::List(_) => continue,
+                    _ => {
+                        return Err(SchemaError::DefaultEmptyNotAContainer {
+                            model: m.name,
+                            field: f.key,
+                        })
+                    }
+                };
+                let Some(child) = self.models.get(n) else {
+                    return Err(SchemaError::DefaultEmptyNeedsFields {
+                        model: m.name,
+                        field: f.key,
+                        missing: "(a model the schema does not hold)",
+                    });
+                };
+                if !matches!(child.body, Body::Struct { .. }) {
+                    return Err(SchemaError::DefaultEmptyNeedsFields {
+                        model: m.name,
+                        field: f.key,
+                        missing: child.name,
+                    });
+                }
+                if let Some(p) = self
+                    .flat(child)
+                    .props
+                    .iter()
+                    .find(|p| super::json::needs_saying(p))
+                {
+                    return Err(SchemaError::DefaultEmptyNeedsFields {
+                        model: m.name,
+                        field: f.key,
+                        missing: p.key,
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     fn check_flatten(&self) -> Result<(), SchemaError> {
@@ -157,6 +224,8 @@ static NO_ATTRS: Attrs = Attrs {
     keys: false,
     flatten: false,
     role: None,
+    arm_pattern: false,
+    min_items: None,
 };
 
 fn lower_model(
@@ -266,6 +335,7 @@ fn lower(
                 .collect::<Result<_, _>>()?,
         ),
         TypeExpr::Const(b) => Ty::Const(*b),
+        TypeExpr::Literals(v) => Ty::Literals(v.to_vec()),
         TypeExpr::Unit => Ty::Unit,
         TypeExpr::List(i) => Ty::List(Box::new(lower(owner, f, i, infos)?)),
         TypeExpr::Map(i) => Ty::Map(Box::new(lower(owner, f, i, infos)?)),

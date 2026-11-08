@@ -1,5 +1,6 @@
 //! The laws the cartesian families share: plain chart text, number cells, the house axis format,
-//! the grid's threshold rules, a ticks count, a chart's dataset and a fixed ladder's rung text.
+//! the grid's threshold rules, a ticks count, a chart's dataset, a `color:` field's series and a
+//! fixed ladder's rung text.
 //! Each refuses what the bind does not model yet by name, for every family alike.
 
 use std::cell::RefCell;
@@ -13,10 +14,14 @@ use color::Rgba;
 use column_types::Dataset;
 use diagnostic::{diag, refuse, Diagnostic};
 use model_core::Engine;
+use serde_json::json;
 
+use crate::category_colors::{series_colors, CategoryColorScale};
+use crate::channel_type::{classify, ChannelType};
 use crate::formats::locale::d3_format;
 use crate::formats::{resolve_format_parts, Formats, ResolvedFormat};
-use crate::model::{Key, ValueDomain};
+use crate::model::{Key, Legend, LegendEntry, Paint, Series, SeriesKey, ValueAxis, ValueDomain, Zero};
+use crate::rows::color_domain_of;
 use crate::plot::domain::{self, Count};
 use crate::run::RunResult;
 use crate::style::axis::AxisLadder;
@@ -108,7 +113,7 @@ pub fn dataset<'a>(
     }
     run.datasets
         .get(query)
-        .ok_or_else(|| diag::err_internal(format!("chart {} has neither a dataset nor an execute error", id.as_str())))
+        .ok_or_else(|| diag::err_engine_needs_data(query.to_string()).with_sink_param("chart_id", json!(id.as_str())))
 }
 
 /// A fixed ladder's rung text (a column of labels when `column_forming`), as production labels a
@@ -172,4 +177,107 @@ pub fn linear_domain(
     domain
         .map_err(|invalid| diag::err_internal(format!("cartesian {context} is invalid: {invalid:?}")))?
         .ok_or_else(|| diag::err_internal(format!("cartesian {context} has no value to span")))
+}
+
+/// The measure axis over `values`, baked as production bakes a vertical cartesian measure axis:
+/// headroom, count and the step floor of its format. `mark` is what draws it, which decides when
+/// the scale rounds unless `nice` forces it.
+pub fn measure_axis(
+    ladder: &AxisLadder<'_>,
+    zero: Zero,
+    values: &[f64],
+    format: ResolvedFormat,
+    mark: domain::Mark,
+    nice: Option<bool>,
+) -> Result<ValueAxis, Diagnostic> {
+    let axis = domain::Axis {
+        zero,
+        headroom: ladder.headroom().unwrap_or(0.0),
+        count: count(ladder)?,
+        values: None,
+        domain: None,
+        min_step: d3rs::numeral_scale::tick_min_step_for_format(&format.spec),
+        independent: false,
+        nice,
+        mark,
+    };
+    let domain = linear_domain(&axis, values, &format, true, "y domain")?;
+    Ok(ValueAxis { domain, format })
+}
+
+/// Whether the rule at zero draws: the grid's threshold rules do, and zero is in the domain,
+/// whether the zero verdict anchors it there or the data crosses it.
+pub fn zero_rule(ladder: &AxisLadder<'_>, zero: Zero, values: &[f64]) -> Result<bool, Diagnostic> {
+    let in_domain = matches!(zero, Zero::Anchored | Zero::Pinned(true)) || spans_zero(values);
+    Ok(threshold_rules(ladder)? && in_domain)
+}
+
+/// Whether the data reaches zero from both sides or touches it.
+pub fn spans_zero(values: &[f64]) -> bool {
+    let lo = values.iter().copied().fold(f64::INFINITY, f64::min);
+    let hi = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    lo <= 0.0 && 0.0 <= hi
+}
+
+/// The series of a `color:` field: one per value, and the series each row belongs to.
+#[derive(Debug)]
+pub struct ColorSeries {
+    pub series: Vec<Series>,
+    /// Each row's index into `series`.
+    pub of_row: Vec<usize>,
+}
+
+impl ColorSeries {
+    /// The legend naming every series, in series order, under `title`.
+    pub fn legend(&self, title: String) -> Legend {
+        let entries = self.series.iter().enumerate().map(|(series, s)| LegendEntry { series, label: s.display.clone() });
+        Legend { title: Some(title), entries: entries.collect() }
+    }
+}
+
+/// The series of the nominal `color:` field `field`, whose cell in each row is `keys`. The series
+/// run in the order production sorts a color domain (`color_domain_of`), and each paints what
+/// [`series_colors`] gives it over `palette`, the palette of the scope that draws the chart: the
+/// plan's seat for its value, or its position when the board binds no scale for the field. `canvas` is what the label ink
+/// reads against.
+pub fn color_series(
+    field: &str,
+    dataset: &Dataset,
+    keys: &[Key],
+    scales: &[CategoryColorScale],
+    palette: &[String],
+    canvas: Rgba,
+) -> Result<ColorSeries, Diagnostic> {
+    if classify(&dataset.schema, &dataset.rows, Some(field), false)? != ChannelType::Nominal {
+        return Err(unsupported(refuse!("a cartesian `color:` that is quantitative or temporal is not supported")));
+    }
+    let texts = keys
+        .iter()
+        .map(|key| match key {
+            Key::Text(text) => Ok(text),
+            Key::Null => Err(unsupported(refuse!("a cartesian row with a null `color:` is not supported"))),
+            _ => Err(unsupported(refuse!("a cartesian `color:` that is not text is not supported"))),
+        })
+        .collect::<Result<Vec<_>, Diagnostic>>()?;
+    let domain = color_domain_of(&dataset.rows, field);
+    let fills = series_colors(&domain, palette, scales.iter().find(|scale| scale.field == field))?;
+    let series = domain
+        .iter()
+        .zip(&fills)
+        .map(|(value, literal)| {
+            let fill = color::parse_css_color(literal).map_err(diag::err_internal)?;
+            let ink = color::label_ink(&hex(fill), &hex(canvas)).map_err(diag::err_internal)?;
+            Ok(Series {
+                key: SeriesKey::Value(Key::Text(value.clone())),
+                display: value.clone(),
+                paint: Paint::Solid(fill),
+                ink: color::parse_css_color(&ink).map_err(diag::err_internal)?,
+            })
+        })
+        .collect::<Result<Vec<_>, Diagnostic>>()?;
+    let of_row = texts
+        .into_iter()
+        .map(|text| domain.binary_search(text).expect("the domain holds every row's value"))
+        .collect();
+    Ok(ColorSeries { series, of_row })
 }

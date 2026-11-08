@@ -21,10 +21,10 @@
 //! with `links(leaf = "path", ..)`, `link_at(to = "a.b", from = "path")` and
 //! `fill_at(to = "a.b", value = <literal>)` (a link or fill for a node below the field at this
 //! mount only: one shared type mounted at different tiers), `local`, `nested = drop`, `fill = fn` or `fill = <literal>` (a constant the schema states as `default`),
-//! `accept = Type`, `directive`, `keys`, `nullable`, `role = ..`; a bare `#[flatten]`
+//! `accept = Type`, `directive`, `keys`, `arm_pattern`, `nullable`, `role = ..`; a bare `#[flatten]`
 //! composes a mixin. A struct or enum takes `#[model(constraint(kind(key, ..)))]`
 //! with kind `requires | forbids | value_in | items_match | range | unique |
-//! at_least_one_of | at_most_one_of`, and optional `when(set(k), is_in(k, ..), ..)`,
+//! at_least_one_of | at_most_one_of | not_null`, and optional `when(set(k), is_in(k, ..), ..)`,
 //! `nonempty(..)`, `auto(..)`, `pattern = ".."`, `gt/ge/lt/le = n`; an enum takes
 //! `tag = "type"` to read its variants by a tag key. A struct takes `shorthand = "key"`: a bare
 //! string where the struct is expected reads as `{key: string}`, and the schema offers it as a
@@ -38,7 +38,7 @@
 //! and null, `Some(patch)` for a value.
 //! `omit` on `Option<T>` (a scalar or a model, not a map) is a field that may be left out and builds `None`, but
 //! whose twins are `T`'s own, so an authored `null` is refused as for any plain field; `absent` is
-//! the field whose `null` is a value. `default_empty` on a map or list builds empty when unset.
+//! the field whose `null` is a value. `default_empty` on a map, a list or a model builds empty when unset; a model must build from an empty patch (`Schema::of` refuses one with a key nothing fills), and a `Patch` slot is its own empty overlay.
 //! Anything else is a compile error. All are recorded in the field table;
 //! `keys`, `flatten`, `accept`, `shorthand`, `tag` and `fill = fn` (an absent tag, inferred from the keys
 //! present) also drive the generated `FromNode`; the rest wait for the passes that read them.

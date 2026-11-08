@@ -55,8 +55,9 @@ impl CalloutStyle {
     /// `style` (`build_resolved_callout_chart`). Each color left as `by_tone` takes its tone's
     /// `{tone}.{role}` palette color (bg, border, solid, text); any other is the author's, which the
     /// style cascade has already resolved (`palette::hook::resolve`: a palette token or a bare theme
-    /// role becomes its color, a hex or CSS name stays). A word the cascade left that names no color,
-    /// or a token it left unresolved, is refused by name rather than printed into the SVG. Every font
+    /// role becomes its color, a hex or CSS name stays). A word the cascade left that names no color
+    /// is refused by name rather than printed into the SVG; a token it left unresolved is a bug in
+    /// the style the caller passed (a chart's own tokens are resolved in `CompiledBoard.placed`). Every font
     /// stack carries the board's emoji family.
     pub fn of(chart: &CalloutChartStyle, style: &Style) -> Result<Self, Diagnostic> {
         let tone = chart.tone.as_str();
@@ -65,7 +66,10 @@ impl CalloutStyle {
                 let token = format!("{tone}.{role}");
                 return palette::color(&token).map_err(|e| diag::err_internal(format!("the callout's `{token}` color does not resolve: {e}")));
             }
-            if dbt_charts_color::is_color_token(value) || dbt_charts_color::is_unknown_color_name(value) {
+            if dbt_charts_color::is_color_token(value) {
+                return Err(diag::err_internal(format!("the callout color {value} is a token the cascade left unresolved")));
+            }
+            if dbt_charts_color::is_unknown_color_name(value) {
                 return Err(Diagnostic::refused(refuse!("a callout color that is not a resolved color is not supported")));
             }
             Ok(value.to_string())
@@ -89,7 +93,7 @@ impl CalloutStyle {
             },
             padding: Padding { top: pad.top, right: pad.right, bottom: pad.bottom, left: pad.left },
             section_gap: chart.section_gap,
-            bold_font_weight: Weight::of(&style.text.bold.weight).attr(),
+            bold_font_weight: Weight::of(&style.text.bold.weight.0).attr(),
             code_family: code_family(style)?,
             title: element(&chart.title, "solid")?,
             message: element(&chart.message, "text")?,

@@ -429,6 +429,7 @@ pub struct BarMarkStyle {
 #[model(constraint(range(disconnected_width, gt = 0, le = 1)))]
 pub struct LineMarkStyle {
     /// Line stroke style.
+    #[model(fill_at(to = "color", value = "auto"), fill_at(to = "width", value = "auto"))]
     pub stroke: StrokeStyle,
     /// Line interpolation curve, one of a fixed set.
     #[model(fill = "linear")]
@@ -542,7 +543,7 @@ pub struct RectMarkStyle {
     #[model(fill = "auto")]
     pub opacity: Engine<Fraction, Auto>,
     /// Mark stroke style.
-    #[model(absent = "no stroke")]
+    #[model(absent = "no stroke", fill_at(to = "color", value = "auto"), fill_at(to = "width", value = "auto"))]
     pub stroke: Option<StrokeStyle>,
 }
 
@@ -553,7 +554,7 @@ pub struct CircleMarkStyle {
     #[model(fill = 1.0)]
     pub opacity: Engine<Fraction, Auto>,
     /// Mark stroke style.
-    #[model(local, absent = "no stroke")]
+    #[model(local, absent = "no stroke", fill_at(to = "color", value = "auto"), fill_at(to = "width", value = "auto"))]
     pub stroke: Option<StrokeStyle>,
 }
 

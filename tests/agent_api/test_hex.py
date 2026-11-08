@@ -331,11 +331,12 @@ def test_no_chart_render_means_no_bundle(http: Any, tmp_path: Path) -> None:
         import_hex(PID, out=tmp_path, base_url=BASE, force=False)
 
 
-def test_failed_chart_image_names_the_cell(http: Any, tmp_path: Path) -> None:
+def test_failed_chart_image_is_named_not_fetched(http: Any, tmp_path: Path) -> None:
     del http[("GET", f"/projects/{PID}/runs/{RUN}/cells/ch1/image")]
 
-    with pytest.raises(BundleError, match="ch1"):
-        import_hex(PID, out=tmp_path, base_url=BASE, force=False)
+    import_hex(PID, out=tmp_path, base_url=BASE, force=False)
+
+    _assert_unrendered(tmp_path, "HTTP 404")
 
 
 def test_unsupported_chart_spec_is_an_error(http: Any, tmp_path: Path) -> None:
@@ -356,10 +357,52 @@ def test_unsupported_chart_spec_is_an_error(http: Any, tmp_path: Path) -> None:
         import_hex(PID, out=tmp_path, base_url=BASE, force=False)
 
 
-def test_no_completed_run_is_an_error(http: Any, tmp_path: Path) -> None:
+def _forbidden(query: dict[str, str]) -> bytes:
+    body = io.BytesIO(json.dumps({"message": "Not authorized"}).encode())
+    raise urllib.error.HTTPError("u", 403, "Forbidden", Message(), body)
+
+
+def _assert_unrendered(root: Path, reason: str) -> None:
+    outline = (root / "outline.md").read_text()
+    assert "render: none, Hex could not provide it: " in outline
+    assert "## Not fetched: Hex failed to produce these" in outline
+    assert "`png/ch1.png`" in outline
+    assert reason in outline
+    assert not (root / "png").exists()
+    assert "queries/sql1.sql" in _files(root)
+
+
+def test_forbidden_run_listing_writes_the_bundle_without_renders(
+    http: Any, tmp_path: Path
+) -> None:
+    http[("GET", f"/projects/{PID}/runs")] = _forbidden
+
+    import_hex(PID, out=tmp_path, base_url=BASE, force=False)
+
+    _assert_unrendered(tmp_path, "HTTP 403")
+    source = json.loads((tmp_path / "source.json").read_text())
+    assert source["project_id"] == PID
+    assert "run_id" not in source
+    assert not [r for r in http["seen"] if "/cells/" in r.full_url]
+
+
+def test_no_completed_run_writes_the_bundle_without_renders(
+    http: Any, tmp_path: Path
+) -> None:
     http[("GET", f"/projects/{PID}/runs")] = _json({"runs": []})
 
-    with pytest.raises(BundleError, match="completed run"):
+    import_hex(PID, out=tmp_path, base_url=BASE, force=False)
+
+    _assert_unrendered(tmp_path, "no completed run")
+
+
+def test_other_run_listing_failure_still_raises(http: Any, tmp_path: Path) -> None:
+    def boom(query: dict[str, str]) -> bytes:
+        raise urllib.error.HTTPError("u", 500, "Boom", Message(), io.BytesIO())
+
+    http[("GET", f"/projects/{PID}/runs")] = boom
+
+    with pytest.raises(BundleError, match="HTTP 500"):
         import_hex(PID, out=tmp_path, base_url=BASE, force=False)
 
 
@@ -390,8 +433,11 @@ def test_missing_token_names_the_variable(
 ) -> None:
     monkeypatch.delenv("HEX_API_TOKEN")
 
-    with pytest.raises(BundleError, match="HEX_API_TOKEN"):
+    with pytest.raises(BundleError, match="HEX_API_TOKEN") as exc:
         import_hex(PID, out=tmp_path, base_url=BASE, force=False)
+
+    assert "API key" in str(exc.value)
+    assert ".env" in str(exc.value)
 
 
 def test_rate_limit_is_retried(http: Any, tmp_path: Path) -> None:
@@ -486,9 +532,9 @@ def test_failed_build_leaves_the_existing_bundle_untouched(
     out = tmp_path / "b"
     import_hex(PID, out=out, base_url=BASE, force=False)
     before = {p: p.read_bytes() for p in out.rglob("*") if p.is_file()}
-    del http[("GET", f"/projects/{PID}/runs/{RUN}/cells/ch1/image")]
+    http[("POST", "/projects/export")] = _json({"filename": "x", "content": "cells: ["})
 
-    with pytest.raises(BundleError, match="ch1"):
+    with pytest.raises(yaml.YAMLError):
         import_hex(PID, out=out, base_url=BASE, force=True)
 
     assert {p: p.read_bytes() for p in out.rglob("*") if p.is_file()} == before
@@ -510,24 +556,37 @@ def test_url_credentials_query_and_fragment_are_not_written(
     assert source["url"] == f"https://hex.test/acme/hex/{PID}"
 
 
-def test_unsupported_cell_type_raises_naming_the_cell(
+def test_app_with_only_unsupported_cells_raises_naming_them(
     http: Any, tmp_path: Path
 ) -> None:
-    http[("POST", "/projects/export")] = _json(
-        {
-            "filename": "t.hex.yaml",
-            "content": yaml.safe_dump(
-                {
-                    "meta": {"title": "T"},
-                    "cells": [_cell("MAP", "map1", "Stores")],
-                    "appLayout": {"tabs": []},
-                }
-            ),
-        }
+    http[("POST", "/projects/export")] = _export_with(
+        [_cell("MAP", "map1", "Stores"), _cell("BLOCK", "blk1", None)],
+        [_tab({"type": "CELL", "cellId": "map1"}, {"type": "CELL", "cellId": "blk1"})],
     )
 
-    with pytest.raises(BundleError, match=r"map1.*Stores.*MAP"):
+    with pytest.raises(BundleError, match=r"map1.*Stores.*MAP.*blk1.*BLOCK"):
         import_hex(PID, out=tmp_path / "b", base_url=BASE, force=False)
+
+
+def test_unsupported_cell_is_listed_unmigrated_and_the_rest_is_written(
+    http: Any, tmp_path: Path
+) -> None:
+    http[("POST", "/projects/export")] = _export_with(
+        [
+            _cell("SQL", "s", None, source="select 1", resultVariableName="d"),
+            _cell("MAP", "map1", "Stores"),
+            _cell("BLOCK", "blk1", None),
+            _cell("CHARTV2", "ch1", None, chartSpec={"type": "layered", "layers": []}),
+        ],
+        [_tab({"type": "CELL", "cellId": cid}) for cid in ("map1", "s", "ch1")],
+    )
+
+    import_hex(PID, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b/outline.md").read_text()
+    assert "- **unmigrated** map1 'Stores' \u2014 MAP: not representable" in outline
+    assert "- **unmigrated** blk1 (untitled) \u2014 BLOCK: not representable" in outline
+    assert (tmp_path / "b/queries/s.sql").read_text() == "select 1"
 
 
 def test_list_normalizes_titles_and_names_a_missing_key(http: Any) -> None:
@@ -575,7 +634,7 @@ def test_pagination_cursor_is_url_quoted(
     assert [p.id for p in list_hex_projects(BASE)] == ["a"]
 
 
-def test_explore_400_with_another_message_is_an_error(
+def test_explore_400_with_another_message_is_not_fetched(
     http: Any, tmp_path: Path
 ) -> None:
     def refuse(query: dict[str, str]) -> bytes:
@@ -583,8 +642,12 @@ def test_explore_400_with_another_message_is_an_error(
 
     http[("GET", f"/projects/{PID}/runs/{RUN}/cells/ex1/image")] = refuse
 
-    with pytest.raises(BundleError, match="ex1.*Invalid width"):
-        import_hex(PID, out=tmp_path / "b", base_url=BASE, force=False)
+    import_hex(PID, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b/outline.md").read_text()
+    assert "`png/ex1.png`: Hex GET" in outline
+    assert "Invalid width" in outline
+    assert (tmp_path / "b/png/ch1.png").read_bytes() == PNG
 
 
 def _export_with(
@@ -614,13 +677,40 @@ def test_non_cell_app_element_raises_naming_the_tab(http: Any, tmp_path: Path) -
         import_hex(PID, out=tmp_path / "b", base_url=BASE, force=False)
 
 
-def test_dangling_cell_id_raises_naming_tab_and_cell(http: Any, tmp_path: Path) -> None:
+def test_only_dangling_placements_raise_naming_tab_and_cell(
+    http: Any, tmp_path: Path
+) -> None:
     http[("POST", "/projects/export")] = _export_with(
         [], [_tab({"type": "CELL", "cellId": "ghost"})]
     )
 
     with pytest.raises(BundleError, match="Main.*ghost"):
         import_hex(PID, out=tmp_path / "b", base_url=BASE, force=False)
+
+
+def test_dangling_placement_is_listed_missing_and_the_rest_is_written(
+    http: Any, tmp_path: Path
+) -> None:
+    sql = _cell("SQL", "s", None, source="select 1", resultVariableName="d")
+    http[("POST", "/projects/export")] = _export_with(
+        [
+            sql,
+            _cell("CHARTV2", "ch1", None, chartSpec={"type": "layered", "layers": []}),
+        ],
+        [
+            _tab(
+                {"type": "CELL", "cellId": "ghost"},
+                {"type": "CELL", "cellId": "s"},
+                {"type": "CELL", "cellId": "ch1"},
+            )
+        ],
+    )
+
+    import_hex(PID, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b/outline.md").read_text()
+    assert "- **missing** ghost \u2014 not in the project's export" in outline
+    assert (tmp_path / "b/queries/s.sql").read_text() == "select 1"
 
 
 def test_metric_without_a_label_or_title_raises_naming_the_cell(

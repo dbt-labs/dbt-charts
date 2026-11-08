@@ -285,6 +285,17 @@ class TestBoardMigrateSkill:
         ):
             assert heading in prompt, heading
 
+    def test_keys_live_in_a_dotenv_the_user_fills(self) -> None:
+        """`dct import` reads keys from the environment only. The agent writes
+        the empty `.env`, the user pastes the values, and the agent never reads
+        them back."""
+        prompt = load_shared_prompt("board-migrate", surface="cli")
+
+        assert "### API keys" in prompt
+        assert "the project's own instructions for keys" in prompt
+        assert "git check-ignore .env" in prompt
+        assert "set -a; . ./.env; set +a" in prompt
+
     def test_description_does_not_claim_in_project_duplication(self) -> None:
         """This skill rebuilds a *foreign* dashboard from another tool — two
         phases, inline fake data, a warning banner. Its trigger list used to

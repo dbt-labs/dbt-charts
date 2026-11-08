@@ -15,6 +15,7 @@ from dbt_charts.agent_api.source_bundle import (
     check_layout,
     compact,
     option_lines,
+    require_env,
     staged_bundle,
 )
 
@@ -134,3 +135,31 @@ def test_option_lines_keep_meaning_and_drop_styling_and_hex_colors() -> None:
 
 def test_compact_prints_a_yaml_date_as_written() -> None:
     assert compact({"start": datetime.date(2026, 1, 1)}) == '{"start":"2026-01-01"}'
+
+
+def test_require_env_names_every_missing_key_and_how_to_set_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DCT_TEST_ID", raising=False)
+    monkeypatch.delenv("DCT_TEST_SECRET", raising=False)
+
+    with pytest.raises(BundleError) as exc:
+        require_env(
+            ("DCT_TEST_ID", "DCT_TEST_SECRET"),
+            where="Acme → Settings → API keys",
+            command="dct import acme <URL>",
+        )
+
+    message = str(exc.value)
+    assert "DCT_TEST_ID and DCT_TEST_SECRET are not set" in message
+    assert "Acme → Settings → API keys" in message
+    assert "DCT_TEST_SECRET='...'" in message
+    assert "set -a; . ./.env; set +a; dct import acme <URL>" in message
+
+
+def test_require_env_returns_the_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DCT_TEST_ID", "id")
+
+    assert require_env(("DCT_TEST_ID",), where="x", command="y") == {
+        "DCT_TEST_ID": "id"
+    }

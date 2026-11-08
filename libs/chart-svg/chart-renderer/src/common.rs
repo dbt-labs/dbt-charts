@@ -5151,18 +5151,9 @@ pub struct ScaleTarget {
     pub arm_mode: String,
 }
 
-/// Board-wide value→palette-slot binding for one categorical field —
-/// mirrors production's `CategoryColorScale` (`compile/models/style/theme/
-/// category_colors.py`), deserialized straight off the resolved chart's
-/// `category_colors` list. `unseen_pins` is warning-only bookkeeping no
-/// renderer reads, so it isn't modeled here.
-#[derive(Deserialize)]
-pub struct CategoryColorScale {
-    pub field: String,
-    pub slots: std::collections::HashMap<String, usize>,
-    #[serde(default)]
-    pub overrides: std::collections::HashMap<String, String>,
-}
+/// Board-wide value→palette-slot binding for one categorical field, deserialized straight off the
+/// resolved chart's `category_colors` list. Bind owns it and the laws that read it.
+pub use ::bind::category_colors::{color_at as category_color, CategoryColorScale};
 
 /// The board-wide scale for `field`, if this chart's own (already-narrowed)
 /// `category_colors` list carries one — mirrors `category_scale_for`.
@@ -5171,33 +5162,6 @@ pub fn category_scale_for<'a>(
     field: &str,
 ) -> Option<&'a CategoryColorScale> {
     category_colors.iter().find(|s| s.field == field)
-}
-
-fn slot_for(scale: &CategoryColorScale, value: &str, palette_len: usize) -> Result<usize, String> {
-    let slot = *scale.slots.get(value).ok_or_else(|| {
-        format!(
-            "`{value}` has no palette slot in the board's `{}` category-color scale.",
-            scale.field
-        )
-    })?;
-    if slot >= palette_len {
-        return Err(format!(
-            "`{value}` needs palette slot {slot} for the board's `{}` category-color \
-             scale, but this chart's palette has only {palette_len} swatches.",
-            scale.field
-        ));
-    }
-    Ok(slot)
-}
-
-/// The FILL `value` paints under `scale`: its override, else its palette
-/// slot — mirrors `color_at`.
-pub fn category_color(scale: &CategoryColorScale, value: &str, palette: &[String]) -> Result<String, String> {
-    if let Some(hex) = scale.overrides.get(value) {
-        return Ok(hex.clone());
-    }
-    let slot = slot_for(scale, value, palette.len())?;
-    Ok(palette[slot].clone())
 }
 
 /// [`category_color`] as a [`crate::pattern::Paint`]: the tile of the value's palette slot when
@@ -5212,7 +5176,7 @@ pub fn category_paint(
     if !plan.is_active() {
         return Ok(crate::pattern::Paint::Color(hue));
     }
-    plan.category(slot_for(scale, value, palette.len())?, &hue)
+    plan.category(::bind::category_colors::slot_for(scale, value, palette.len())?, &hue)
 }
 
 /// The INK `value`'s fill pairs with: the palette slot's companion, except a
@@ -5233,7 +5197,7 @@ pub fn category_ink(
                 format!("`{value}` is pinned to {pinned}, which has no entry in pin_companions.")
             });
     }
-    let slot = slot_for(scale, value, companions.len())?;
+    let slot = ::bind::category_colors::slot_for(scale, value, companions.len())?;
     Ok(companions[slot].clone())
 }
 
@@ -5262,18 +5226,11 @@ pub fn series_color(
         .iter()
         .position(|s| s == value)
         .ok_or_else(|| format!("internal error — {value:?} not in this chart's own color domain"))?;
-    let hue = palette_slot(palette, idx)?;
+    let hue = ::bind::category_colors::position_fill(palette, idx)?;
     if !plan.is_active() {
         return Ok(crate::pattern::Paint::Color(hue.to_string()));
     }
     plan.category(idx, hue)
-}
-
-/// Slot `idx` of a series palette, wrapping past its end as Vega's ordinal scale cycles a short range.
-fn palette_slot(palette: &[String], idx: usize) -> Result<&str, String> {
-    idx.checked_rem(palette.len())
-        .map(|slot| palette[slot].as_str())
-        .ok_or_else(|| "internal error — a series color read an empty palette; Payload::series_palette never hands one out".to_string())
 }
 
 /// The companion ink `value`'s fill pairs with, mirroring
@@ -5302,7 +5259,7 @@ pub fn series_ink(
     let slot = idx.checked_rem(palette.len()).unwrap_or(idx);
     match companions.get(slot) {
         Some(ink) => Ok(ink.clone()),
-        None => palette_slot(palette, idx).map(str::to_string),
+        None => ::bind::category_colors::position_fill(palette, idx).map(str::to_string),
     }
 }
 

@@ -20,7 +20,8 @@ use model_derive::Model;
     constraint(forbids(tooltip, when(set(layers)))),
     constraint(forbids(tooltip, when(set(y_start)))),
     constraint(forbids(y_start, when(is_in("style.stack", "zero", "normalize", "center")))),
-    constraint(forbids(y_start, when(list(y))))
+    constraint(forbids(y_start, when(list(y)))),
+    constraint(not_null(y_start))
 )]
 #[allow(clippy::duplicated_attributes)]
 pub struct BarChart {
@@ -37,10 +38,10 @@ pub struct BarChart {
     #[model(nullable)]
     pub style: BarChartStyle,
     /// Extra marks on one shared x, each with its own type. Not supported when type: histogram: a histogram bins x and aggregates to a count, so there is no shared y measure for an overlay to plot against.
-    #[model(fill = fill_empty)]
+    #[model(fill = fill_empty, nullable)]
     pub layers: Vec<CartesianLayer>,
     /// Rules, bands, notes and trends drawn on the chart. Not supported when type: histogram.
-    #[model(fill = fill_empty)]
+    #[model(fill = fill_empty, nullable)]
     pub annotations: Vec<Annotation>,
 }
 

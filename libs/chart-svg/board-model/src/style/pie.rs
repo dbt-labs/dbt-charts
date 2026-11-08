@@ -37,7 +37,9 @@ pub struct PieChartStyle {
     /// Maximum chart height in pixels.
     #[model(inherit = "Style.charts.max_height")]
     pub max_height: f64,
-    /// Chart color: static mark paint, categorical palette, and/or gradient scale.
+    /// Chart color: static mark paint, categorical palette, and/or gradient scale. Only the
+    /// single-series ink is the enclosing tier's when unset; the rest of the slot is local.
+    #[model(inherit_slot = "Style.charts.color")]
     pub color: ColorStyle,
     /// Hole-to-disk ratio 0–1 (inner radius / outer radius). 0 is a solid pie. A `type: donut` chart reads `charts.donut` over this.
     pub inner_radius: Fraction,

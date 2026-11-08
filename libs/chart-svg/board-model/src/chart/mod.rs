@@ -173,6 +173,28 @@ impl ChartAuthored {
 }
 
 impl ChartAuthored {
+    /// The display text a chart's public id is slugged from: a KPI's `label`, every other
+    /// family's `title` (Python's `generate_inline_chart_id`).
+    pub fn id_text(&self) -> &model_core::Tri<DisplayText> {
+        match self {
+            Self::Scatter(c) => &c.cartesian.shared.title,
+            Self::Bar(c) | Self::Histogram(c) => &c.cartesian.shared.title,
+            Self::Line(c) => &c.cartesian.shared.title,
+            Self::Area(c) => &c.cartesian.shared.title,
+            Self::Heatmap(c) => &c.cartesian.shared.title,
+            Self::Kpi(c) => &c.label,
+            Self::Pie(c) | Self::Donut(c) => &c.radial.shared.title,
+            Self::SparkBar(c) => &c.shared.title,
+            Self::Table(c) => &c.shared.title,
+            Self::Geoshape(c) | Self::Map(c) => &c.geo.shared.title,
+            Self::PointMap(c) | Self::BubbleMap(c) => &c.geo.shared.title,
+            Self::Custom(c) => &c.shared.title,
+            Self::Callout(c) => &c.title,
+        }
+    }
+}
+
+impl ChartAuthored {
     /// The `query:` slot of every layer, for the families that draw layers (bar, line, area and
     /// scatter): where normalize swaps a layer's query name for its hoisted id.
     pub fn layer_queries_mut(&mut self) -> Vec<&mut model_core::Tri<LayerQuery>> {
@@ -193,6 +215,87 @@ impl ChartAuthored {
                 layer::CartesianLayerAuthored::Scatter(l) => &mut l.base.query,
             })
             .collect()
+    }
+}
+
+impl ChartAuthored {
+    /// The hoisted queries the chart reads: its own and each layer's.
+    pub fn hoisted_queries(&self) -> Vec<crate::ids::QueryId> {
+        let mut chart = self.clone();
+        let own = chart.query_mut().and_then(|q| match q {
+            model_core::Tri::Value(ChartQuery::Hoisted(id)) => Some(id.clone()),
+            _ => None,
+        });
+        let layers = chart
+            .layer_queries_mut()
+            .into_iter()
+            .filter_map(|q| match q {
+                model_core::Tri::Value(LayerQuery::Hoisted(id)) => Some(id.clone()),
+                _ => None,
+            });
+        own.into_iter().chain(layers).collect()
+    }
+}
+
+impl ChartAuthored {
+    /// Every field that renders Jinja for display (Python's `display_texts`): a KPI's label and
+    /// its support label, a callout's title and message, any other family's title and subtitle,
+    /// and a cartesian layer's label.
+    pub fn display_texts(&self) -> Vec<&str> {
+        use model_core::{first_set, Tri};
+        fn text(t: Tri<&DisplayText>) -> Option<&str> {
+            first_set([t]).map(DisplayText::as_str)
+        }
+        fn shared(s: &SharedChartFieldsAuthored) -> Vec<&str> {
+            [text(s.title.as_ref()), text(s.subtitle.as_ref())]
+                .into_iter()
+                .flatten()
+                .collect()
+        }
+        let mut out = match self {
+            Self::Scatter(c) => shared(&c.cartesian.shared),
+            Self::Bar(c) | Self::Histogram(c) => shared(&c.cartesian.shared),
+            Self::Line(c) => shared(&c.cartesian.shared),
+            Self::Area(c) => shared(&c.cartesian.shared),
+            Self::Heatmap(c) => shared(&c.cartesian.shared),
+            Self::Pie(c) | Self::Donut(c) => shared(&c.radial.shared),
+            Self::SparkBar(c) => shared(&c.shared),
+            Self::Table(c) => shared(&c.shared),
+            Self::Geoshape(c) | Self::Map(c) => shared(&c.geo.shared),
+            Self::PointMap(c) | Self::BubbleMap(c) => shared(&c.geo.shared),
+            Self::Custom(c) => shared(&c.shared),
+            Self::Kpi(c) => [
+                text(c.label.as_ref()),
+                first_set([c.support.as_ref()]).and_then(|s| text(s.label.as_ref())),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+            Self::Callout(c) => [
+                text(c.title.as_ref()),
+                c.message.as_ref().map(DisplayText::as_str),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        };
+        let layers = match self {
+            Self::Scatter(c) => &c.layers,
+            Self::Bar(c) => &c.layers,
+            Self::Line(c) => &c.layers,
+            Self::Area(c) => &c.layers,
+            _ => return out,
+        };
+        out.extend(layers.iter().flatten().filter_map(|layer| {
+            let label = match layer {
+                layer::CartesianLayerAuthored::Bar(l) => &l.base.label,
+                layer::CartesianLayerAuthored::Line(l) => &l.base.label,
+                layer::CartesianLayerAuthored::Area(l) => &l.base.label,
+                layer::CartesianLayerAuthored::Scatter(l) => &l.base.label,
+            };
+            first_set([label.as_ref()]).map(String::as_str)
+        }));
+        out
     }
 }
 
@@ -282,8 +385,16 @@ impl model_core::ReadScalar for ChartLink {
         }
     }
 }
-// The schema states the URL and block arms, stricter than the model, which also takes `false`.
-union_leaf!(ChartLink, <LinkSpec as model_core::Leaf>::EXPR);
+union_leaf!(
+    ChartLink,
+    model_core::TypeExpr::Either(
+        &model_core::TypeExpr::Ref("Link", <crate::primitives::Link as model_core::Model>::info),
+        &model_core::TypeExpr::Either(
+            &model_core::TypeExpr::Literals(&[model_core::Value::Bool(false)]),
+            &<crate::facet::Url as model_core::Leaf>::EXPR,
+        ),
+    )
+);
 
 /// Fields every chart family takes.
 #[derive(Debug, Clone, PartialEq, Model)]
@@ -301,7 +412,7 @@ pub struct ChartBase {
     #[model(directive, absent = "always drawn")]
     pub visible: Option<Visible>,
     /// Codes of render warnings to suppress for this chart.
-    #[model(fill = fill_empty)]
+    #[model(fill = fill_empty, nullable)]
     pub warnings_ignore: Vec<ChartWarningCode>,
 }
 
@@ -322,7 +433,7 @@ pub struct SharedChartFields {
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct TooltipFields {
     /// Query columns to add to the hover card, after the chart's own rows. Each entry is a column name or `{column, label, format}`.
-    #[model(fill = fill_empty)]
+    #[model(fill = fill_empty, nullable, min_items = 1)]
     pub tooltip: Vec<TooltipField>,
 }
 

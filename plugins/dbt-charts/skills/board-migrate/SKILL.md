@@ -28,8 +28,8 @@ overwrite project files, the bundle, or anything you did not create.
 A **source bundle** is a directory with one layout for every tool.
 If the user already has a bundle, use it. For any other tool,
 either write a small fetcher against its API that emits the layout below, or
-work from screenshots (§ Sources → Screenshots). Never paste credentials into a
-file, commit or chat.
+work from screenshots (§ Sources → Screenshots). Never write a credential
+value into a file, commit or chat yourself.
 
 ## Bundle layout
 
@@ -115,9 +115,16 @@ it, and say why in the chart's `notes:`. "The source does it" is not a reason.
   baseline, one axis) or small multiples.
 - Precision: keep a source format only when its precision means something
   (a rate to one decimal); otherwise use the built-in name for the kind
-  (`currency_compact`, `integer`, `percent`).
+  (`currency_compact`, `integer`, `percent`). A KPI tile is the exception:
+  its number is the content, so it keeps the source's digits (`currency_whole`,
+  `integer`) and is compact only when the source itself abbreviates.
 - No invisible layers or helper columns to fake a feature (an axis floor, stack
   totals). Note the gap instead.
+- Never invent data. A table the warehouse will not read, a query that fails,
+  a value you can only see in the screenshot: the chart stays blocked with a
+  `notes:` naming what is missing. No typed-in values, no `UNNEST([STRUCT(...)])`
+  or `generator` rows, no "placeholder" or "fake data" banners. A board that
+  shows a number must have run the query that produced it.
 - `warnings_ignore` needs a reason in `notes:`. Fix copy-edit warnings by fixing
   the text.
 - YAML in block style: every mapping key on its own line, never an inline
@@ -176,6 +183,10 @@ Render after every tile (`get_skill('chart')` owns the build-validate loop —
 one tile at a time, never one-shot). Then render the whole board with
 `render_board` and compare its chart list with the source's tiles.
 
+Build the board in this session. If you hand pieces to sub-agents, wait for
+every one and assemble its work before you finish; a session that ends with
+work pending leaves an unfinished board.
+
 Close phase 1 with a tally: "8 sections, 41 tiles — 41 rebuilt." A tile you
 cannot represent is **flagged to the user now, never silently dropped**.
 
@@ -226,7 +237,8 @@ Each rule is one a reviewed migration showed being broken.
   `notes:` or a plain text tile, a README page is a text tile. The finished
   board has no `callout`.
 - Formats: the built-in name for the value's kind (`currency_compact`,
-  `integer`, `percent`, `id`), keeping the source's precision only when it
+  `integer`, `percent`, `id`) on charts; a KPI headline keeps the source's
+  digits (`currency_whole`, `integer`). Keep the source's precision only when it
   means something. The source's `value_format_name`/`formatString` tells you
   the kind and the unit, not the exact print. Currency stays currency and a rate
   stays a percent; a plain count or a date takes no `format:`. Never write the
@@ -407,6 +419,10 @@ passes offered.
 - `source.json` `query_timezones` is pass 1's source timezone.
 - Topics and the semantic model carry joins the SQL only reflects; read the
   compiled SQL, and note the dbt model it should read from.
+- `queries/<id>.sql` is the warehouse query, runnable as is. A tile with a
+  `post-step:` outline line also has `queries/<id>.post.sql`, DuckDB over that
+  result (`step_ref__1`): the tile's final shape is computed there, so fold its
+  logic into your own SQL.
 
 ### Screenshots
 - Say up front what a screenshot cannot tell: controls empty by default, hidden

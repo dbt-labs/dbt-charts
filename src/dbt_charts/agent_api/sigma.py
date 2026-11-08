@@ -9,7 +9,6 @@ for the run and is never written anywhere.
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 import urllib.error
@@ -26,6 +25,7 @@ from dbt_charts.agent_api.source_bundle import (
     compact,
     option_lines,
     public_url,
+    require_env,
     slug,
     staged_bundle,
 )
@@ -67,15 +67,18 @@ class _Sigma:
                 "the Sigma API base depends on your cloud region: pass --base-url "
                 "or set SIGMA_API_BASE (e.g. https://aws-api.sigmacomputing.com)"
             )
-        for key in ("SIGMA_CLIENT_ID", "SIGMA_CLIENT_SECRET"):
-            if not os.environ.get(key):
-                raise BundleError(f"set {key} to import from Sigma")
+        credentials = require_env(
+            ("SIGMA_CLIENT_ID", "SIGMA_CLIENT_SECRET"),
+            where="Sigma → Administration → Developer Access → Create New "
+            "(client credentials with REST API access; a Sigma admin creates them)",
+            command="dct import sigma <workbook URL>",
+        )
         self.api_base = base_url.rstrip("/")
         body = urllib.parse.urlencode(
             {
                 "grant_type": "client_credentials",
-                "client_id": os.environ["SIGMA_CLIENT_ID"],
-                "client_secret": os.environ["SIGMA_CLIENT_SECRET"],
+                "client_id": credentials["SIGMA_CLIENT_ID"],
+                "client_secret": credentials["SIGMA_CLIENT_SECRET"],
             }
         ).encode()
         token = json.loads(_send(self.api_base, "POST", "auth/token", {}, body))

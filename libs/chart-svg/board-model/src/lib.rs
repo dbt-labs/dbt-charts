@@ -203,6 +203,8 @@ macro_rules! string_enum {
                             keys: false,
                             flatten: false,
                             role: None,
+                            arm_pattern: false,
+                            min_items: None,
                         },
                     }),+],
                     constraints: &[],

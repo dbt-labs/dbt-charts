@@ -16,5 +16,5 @@ it: it is the board grammar and how to check a board. If `dct` is missing,
 
 Other skills, only when the task is one (`dct skills <name>`): `styling` (a
 look change), `report-design` (a written report), `custom-chart-build` (a shape
-no chart type draws), `board-migrate` (a dashboard from another BI tool or a
-screenshot), `cloud-setup`, `mcp-setup`.
+no chart type draws), `board-migrate` (a Looker, Sigma, Hex or Omni dashboard,
+or a screenshot), `cloud-setup`, `mcp-setup`.

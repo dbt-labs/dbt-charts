@@ -16,10 +16,13 @@ use board_model::chart::layer::CartesianLayer;
 use board_model::chart::{CartesianChartFields, Chart, ColorColumn, Columns};
 use board_model::facet::Channel as ColumnName;
 use board_model::primitives::ScaleTargetConfig;
+use board_model::style::style::Style;
+use model_core::Patch;
 use column_types::Dataset;
 use diagnostic::Diagnostic;
 use serde_json::Value;
 
+use crate::style::set;
 use crate::wide::{WIDE_LABEL_FIELD, WIDE_SERIES_SEPARATOR};
 
 /// How many rows decide whether a color column is a magnitude ramp.
@@ -51,21 +54,24 @@ pub struct Channels {
     pub background: Option<Channel>,
 }
 
-/// The gradient a chart's `style.color` sets (`None`: it sets none). A family with no
+/// The gradient a chart's own `style.color` authors (`None`: it authors none). `own` is the
+/// chart's `style:` alone as a board-style layer; the scale is the chart's total one, which
+/// folds the authored gradient over the theme's. The theme's family-level gradient alone is not
+/// the chart's: a heatmap that authors none binds its `color:` as a series, as Python does. A
+/// geo family's gradient paints its `value:`, not a `color:` channel, and a family with no
 /// `color:` channel has no color style.
-pub fn style_gradient(chart: &Chart) -> Option<&ScaleTargetConfig> {
-    let color = match chart {
-        Chart::Bar(c) | Chart::Histogram(c) => &c.style.cartesian.painted.color,
-        Chart::Line(c) => &c.style.cartesian.painted.color,
-        Chart::Area(c) => &c.style.cartesian.painted.color,
-        Chart::Scatter(c) => &c.style.cartesian.painted.color,
-        Chart::Heatmap(c) => &c.style.cartesian.painted.color,
-        Chart::Pie(c) | Chart::Donut(c) => &c.style.color,
-        Chart::Geoshape(c) | Chart::Map(c) => return c.style.geo.color.gradient.as_ref(),
-        Chart::PointMap(c) | Chart::BubbleMap(c) => return c.style.geo.color.gradient.as_ref(),
-        Chart::Kpi(_) | Chart::SparkBar(_) | Chart::Table(_) | Chart::Callout(_) | Chart::Custom(_) => return None,
+pub fn style_gradient<'a>(chart: &'a Chart, own: &Patch<Style>) -> Option<&'a ScaleTargetConfig> {
+    let charts = &own.charts;
+    let (authored, total) = match chart {
+        Chart::Bar(c) | Chart::Histogram(c) => (&charts.bar.cartesian.painted.color.base.gradient, &c.style.cartesian.painted.color.base.gradient),
+        Chart::Line(c) => (&charts.line.cartesian.painted.color.base.gradient, &c.style.cartesian.painted.color.base.gradient),
+        Chart::Area(c) => (&charts.area.cartesian.painted.color.base.gradient, &c.style.cartesian.painted.color.base.gradient),
+        Chart::Scatter(c) => (&charts.scatter.cartesian.painted.color.base.gradient, &c.style.cartesian.painted.color.base.gradient),
+        Chart::Heatmap(c) => (&charts.heatmap.cartesian.painted.color.base.gradient, &c.style.cartesian.painted.color.base.gradient),
+        Chart::Pie(c) | Chart::Donut(c) => (&charts.pie.color.base.gradient, &c.style.color.base.gradient),
+        Chart::Geoshape(_) | Chart::Map(_) | Chart::PointMap(_) | Chart::BubbleMap(_) | Chart::Kpi(_) | Chart::SparkBar(_) | Chart::Table(_) | Chart::Callout(_) | Chart::Custom(_) => return None,
     };
-    color.base.gradient.as_ref()
+    set(authored).and(total.as_ref())
 }
 
 /// What a chart authors of its channels.

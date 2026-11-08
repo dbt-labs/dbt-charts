@@ -40,6 +40,10 @@ impl fmt::Display for ThemeError {
 
 impl std::error::Error for ThemeError {}
 
+/// The fragment every theme folds over. It is in [`THEME_SOURCES`] to be folded, but it is not a
+/// theme a board can name or run under: it states no color a chart needs.
+pub const BASE_THEME: &str = "_base";
+
 /// Whether `name` is a built-in theme stem (`_base` and the diagnostics themes included).
 pub fn is_built_in(name: &str) -> bool {
     THEME_SOURCES.iter().any(|(n, _)| *n == name)

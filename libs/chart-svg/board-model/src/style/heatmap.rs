@@ -12,10 +12,7 @@ use model_derive::Model;
 /// Heatmap-family mark overrides.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct HeatmapChartMarksStyle {
-    /// Rect mark overrides; inherits from global. A stroke that leaves its color out strokes in
-    /// `auto` (Python's `AutoUnset`), here only: `StrokeStyle` is shared with marks that state
-    /// other colors.
-    #[model(fill_at(to = "stroke.color", value = "auto"))]
+    /// Rect mark overrides; inherits from global.
     pub rect: RectMarkStyle,
     /// Text mark overrides; inherits from global.
     pub text: TextMarkStyle,

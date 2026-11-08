@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -99,6 +100,23 @@ def option_lines(
 
 class BundleError(Exception):
     """An import could not produce a complete bundle."""
+
+
+def require_env(names: Sequence[str], *, where: str, command: str) -> dict[str, str]:
+    """Return the named environment variables, or raise one error that says
+    where to get every missing key and how to load it."""
+    missing = [name for name in names if not os.environ.get(name)]
+    if missing:
+        verb = "is" if len(missing) == 1 else "are"
+        them = "it" if len(names) == 1 else "them"
+        lines = "\n".join(f"  {name}='...'" for name in names)
+        raise BundleError(
+            f"{' and '.join(missing)} {verb} not set. Get {them} from {where}. "
+            f"Then export {them} in your shell, or put {them} in a gitignored .env file "
+            f"(single quotes keep $ and spaces):\n{lines}\n"
+            f"and load it in the same command: set -a; . ./.env; set +a; {command}"
+        )
+    return {name: os.environ[name] for name in names}
 
 
 class SourceBundle:

@@ -9,7 +9,7 @@ pub struct FieldAttrs {
     pub absent: Option<String>,
     /// `omit = ".."` on an `Option<T>`: the field may be left out; its twins are `T`'s own.
     pub omit: Option<String>,
-    /// `default_empty`: a map or list left unset builds empty.
+    /// `default_empty`: a map, list or model left unset builds empty.
     pub default_empty: bool,
     pub merge: Option<String>,
     pub inherit: Option<String>,
@@ -32,6 +32,8 @@ pub struct FieldAttrs {
     pub keys: bool,
     pub flatten: bool,
     pub role: Option<String>,
+    pub arm_pattern: bool,
+    pub min_items: Option<u64>,
 }
 
 pub fn doc(attrs: &[Attribute]) -> String {
@@ -77,6 +79,9 @@ pub fn field(attrs: &[Attribute]) -> Result<FieldAttrs> {
                     "default_empty" => a.default_empty = true,
                     "inherit" => a.inherit = Some(string(&m)?),
                     "inherit_slot" => a.inherit_slot = Some(string(&m)?),
+                    "min_items" => {
+                        a.min_items = Some(m.value()?.parse::<syn::LitInt>()?.base10_parse()?);
+                    }
                     "role" => {
                         let v = m.value()?.call(Ident::parse_any)?;
                         a.role = Some(v.to_string());
@@ -170,6 +175,7 @@ pub fn field(attrs: &[Attribute]) -> Result<FieldAttrs> {
                     "nullable" => a.nullable = true,
                     "directive" => a.directive = true,
                     "keys" => a.keys = true,
+                    "arm_pattern" => a.arm_pattern = true,
                     _ => return Err(m.error("unknown `model` attribute")),
                 }
                 Ok(())
@@ -330,10 +336,11 @@ fn constraint(span: Span, kind: &str, args: Vec<Item>) -> Result<TokenStream> {
         "unique" => "Unique",
         "at_least_one_of" => "AtLeastOneOf",
         "at_most_one_of" => "AtMostOneOf",
+        "not_null" => "NotNull",
         _ => {
             return Err(Error::new(
                 span,
-                "a constraint is `requires`, `forbids`, `value_in`, `items_match`, `range`, `unique`, `at_least_one_of` or `at_most_one_of`",
+                "a constraint is `requires`, `forbids`, `value_in`, `items_match`, `range`, `unique`, `at_least_one_of`, `at_most_one_of` or `not_null`",
             ))
         }
     };
@@ -386,7 +393,7 @@ fn constraint(span: Span, kind: &str, args: Vec<Item>) -> Result<TokenStream> {
         }
     };
     match kind {
-        "requires" | "forbids" | "unique" if fields.is_empty() => {
+        "requires" | "forbids" | "unique" | "not_null" if fields.is_empty() => {
             return Err(Error::new(span, format!("`{kind}` names at least one key")))
         }
         "at_least_one_of" | "at_most_one_of" if fields.len() < 2 => {

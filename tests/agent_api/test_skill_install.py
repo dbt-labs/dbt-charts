@@ -65,6 +65,11 @@ def test_stub_leaves_the_check_loop_to_the_chart_page() -> None:
         assert command not in text
 
 
+def test_stub_names_the_migrator_tools() -> None:
+    body = stub_skill_text().split("---", 2)[2]
+    assert "`board-migrate` (a Looker, Sigma, Hex or Omni dashboard" in body
+
+
 def test_stub_names_only_shipped_skills() -> None:
     text = stub_skill_text()
     named = set(re.findall(r"`([a-z-]+)`", text.split("---", 2)[2]))

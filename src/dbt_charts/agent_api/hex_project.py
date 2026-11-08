@@ -7,7 +7,8 @@ and is never written anywhere. The API base comes from ``--base-url`` /
 
 The bundle is built from the published app's export (``project.hex.yaml``: cells,
 chart specs, input parameters, app layout) plus a PNG per chart cell from the
-latest completed run. Hex offers no whole-app screenshot, no run-result data
+latest completed run; a key that cannot list runs, or a project with none, still
+gets the bundle, with each chart's render named under "Not fetched". Hex offers no whole-app screenshot, no run-result data
 endpoint (so ``kpi/`` stays empty) and no render for non-chart cells.
 """
 
@@ -15,7 +16,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import re
 import time
 import urllib.error
@@ -33,6 +33,7 @@ from dbt_charts.agent_api.source_bundle import (
     SourceBundle,
     option_lines,
     public_url,
+    require_env,
     staged_bundle,
     url_origin,
 )
@@ -124,11 +125,14 @@ def _error_detail(exc: urllib.error.HTTPError) -> str:
 
 class _Hex:
     def __init__(self, api_base: str) -> None:
-        if not os.environ.get("HEX_API_TOKEN"):
-            raise BundleError("set HEX_API_TOKEN to import from Hex")
+        token = require_env(
+            ("HEX_API_TOKEN",),
+            where="Hex → Settings → API keys → New API key",
+            command="dct import hex <project URL>",
+        )["HEX_API_TOKEN"]
         self.api_base = api_base
         self.headers = {
-            "Authorization": f"Bearer {os.environ['HEX_API_TOKEN']}",
+            "Authorization": f"Bearer {token}",
             "User-Agent": USER_AGENT,
         }
 
@@ -205,6 +209,22 @@ def _name(cell: dict[str, Any]) -> str:
     return repr(title) if title else "(untitled)"
 
 
+SUPPORTED_CELL_TYPES = frozenset(
+    {
+        "SQL",
+        "CHARTV2",
+        "EXPLORE",
+        "METRIC",
+        "PIVOT",
+        "TABLE_DISPLAY",
+        "FILTER",
+        "CODE",
+        "MARKDOWN",
+        "TEXT",
+        "COLLAPSIBLE",
+        "INPUT",
+    }
+)
 _SERIES_SHOWN = ("type", "dataFrameColumns", "axis")
 
 
@@ -320,13 +340,16 @@ def _cell_lines(cell: dict[str, Any]) -> list[str]:
         )
     if kind in ("TEXT", "COLLAPSIBLE", "INPUT"):
         return []
-    raise BundleError(
-        f"Hex cell {cell['cellId']} {_name(cell)} has unsupported type {kind!r}"
-    )
+    raise AssertionError(f"cell type {kind!r} is not in SUPPORTED_CELL_TYPES")
 
 
 def _describe(cell: dict[str, Any], render: str | None) -> list[str]:
     kind = cell["cellType"]
+    if kind not in SUPPORTED_CELL_TYPES:
+        return [
+            f"- **unmigrated** {cell['cellId']} {_name(cell)} \u2014 {kind}: "
+            "not representable"
+        ]
     head = f"- **{kind}** `{cell['cellId']}` {_name(cell)}"
     if kind == "CODE":
         head += ": UNMIGRATED (Python cell)"
@@ -355,10 +378,17 @@ def import_hex(
     ``out`` and moved into place once complete; a non-empty ``out`` is refused
     unless ``force``.
 
+    A chart render Hex cannot provide (the key cannot list the project's runs,
+    HTTP 403; the project has no completed run; or one cell's image request
+    fails) is named in outline.md under "Not fetched" and its ``png/`` file is
+    omitted; the rest of the bundle is written. An app tab that places a cell
+    the export lacks lists it as ``missing`` in the outline, and a cell type the
+    importer cannot represent is listed as ``unmigrated``.
+
     Raises:
-        BundleError: on a missing token, any failed request, a project with no
-            completed run, or an incomplete bundle (for example an app with no
-            renderable chart cell), or a cell type the importer cannot represent.
+        BundleError: on a missing token, any other failed request, or an
+            app that places no cell the export contains and the importer can
+            represent.
     """
     project_id, api_base = parse_ref(ref, base_url=base_url)
     out = out or Path(f"hex-{project_id}")
@@ -371,17 +401,33 @@ def import_hex(
         )
     )
     document = yaml.safe_load(exported["content"])
-    runs = hex_api.get_json(
-        f"/projects/{project_id}/runs?limit=1&statusFilter=COMPLETED"
-    )
-    if not runs["runs"]:
-        raise BundleError(f"Hex project {project_id} has no completed run to render")
-    run = runs["runs"][0]
-    url = public_url(ref if ref.startswith("http") else run["runUrl"])
+    run = _latest_run(hex_api, project_id)
+    if ref.startswith("http"):
+        url = public_url(ref)
+    elif isinstance(run, dict):
+        url = public_url(run["runUrl"])
+    else:
+        url = url_origin(urllib.parse.urlsplit(api_base))
     with staged_bundle(out, tool="hex", url=url, raw=RAW, force=force) as bundle:
         bundle.write(RAW, exported["content"])
         _fill_bundle(hex_api, bundle, document, project_id, run, url)
     return out
+
+
+def _latest_run(hex_api: _Hex, project_id: str) -> dict[str, Any] | str:
+    """The latest completed run, or why there is none: a key that cannot list
+    runs (HTTP 403) or a project that has never completed one."""
+    try:
+        runs = hex_api.get_json(
+            f"/projects/{project_id}/runs?limit=1&statusFilter=COMPLETED"
+        )
+    except _HexHTTPError as exc:
+        if exc.code != 403:
+            raise
+        return str(exc)
+    if not runs["runs"]:
+        return f"Hex project {project_id} has no completed run"
+    return runs["runs"][0]
 
 
 def _fill_bundle(
@@ -389,15 +435,16 @@ def _fill_bundle(
     bundle: SourceBundle,
     document: dict[str, Any],
     project_id: str,
-    run: dict[str, Any],
+    run: dict[str, Any] | str,
     url: str,
 ) -> None:
-    workspace = urllib.parse.urlsplit(run["runUrl"]).path.strip("/").split("/")[0]
+    workspace = urllib.parse.urlsplit(url).path.strip("/").split("/")[0]
     cells = {c["cellId"]: c for c in _walk(document["cells"])}
-    placed: list[tuple[str, list[tuple[str, dict[str, Any]]]]] = []
+    placed: list[tuple[str, list[tuple[str, str]]]] = []
     seen: set[str] = set()
+    first_missing: str | None = None
     for tab in document["appLayout"]["tabs"]:
-        lines: list[tuple[str, dict[str, Any]]] = []
+        lines: list[tuple[str, str]] = []
         for row in tab["rows"]:
             for column in row["columns"]:
                 where = f"cols {column['start']}-{column['end']}"
@@ -408,33 +455,56 @@ def _fill_bundle(
                             f"{tab['name']!r} is not supported"
                         )
                     cell_id = element["cellId"]
-                    if cell_id not in cells:
-                        raise BundleError(
+                    if cell_id in cells:
+                        seen.add(cell_id)
+                    elif first_missing is None:
+                        first_missing = (
                             f"Hex app tab {tab['name']!r} places cell {cell_id}, "
                             "which is not in the project"
                         )
-                    seen.add(cell_id)
-                    lines.append((where, cells[cell_id]))
+                    lines.append((where, cell_id))
         placed.append((tab["name"], lines))
+    if first_missing and not seen:
+        raise BundleError(first_missing)
+    unsupported = [
+        f"{c['cellId']} {_name(c)} ({c['cellType']})"
+        for c in cells.values()
+        if c["cellType"] not in SUPPORTED_CELL_TYPES
+    ]
+    if unsupported and not any(
+        cells[c]["cellType"] in SUPPORTED_CELL_TYPES for c in seen
+    ):
+        raise BundleError(
+            "Hex app places no cell the importer can represent; unsupported: "
+            + ", ".join(unsupported)
+        )
 
     renders: dict[str, str] = {}
+    not_fetched: dict[str, str] = {}
     for cell_id in seen:
         cell = cells[cell_id]
         if cell["cellType"] not in ("CHARTV2", "EXPLORE"):
             continue
-        path = f"/projects/{project_id}/runs/{run['runId']}/cells/{cell_id}/image?{CHART_SIZE}"
-        try:
-            image = hex_api.get_json(path)
-        except _HexHTTPError as exc:
-            # Explore cells shown as tables have no chart to export.
-            if (
-                cell["cellType"] == "EXPLORE"
-                and exc.code == 400
-                and "not a chart visualization" in exc.detail
-            ):
-                renders[cell_id] = "no render: Hex exports only chart cells"
-                continue
-            raise BundleError(f"render of cell {cell_id} failed: {exc}") from None
+        image = None
+        failure = run if isinstance(run, str) else None
+        if isinstance(run, dict):
+            path = f"/projects/{project_id}/runs/{run['runId']}/cells/{cell_id}/image?{CHART_SIZE}"
+            try:
+                image = hex_api.get_json(path)
+            except _HexHTTPError as exc:
+                # Explore cells shown as tables have no chart to export.
+                if (
+                    cell["cellType"] == "EXPLORE"
+                    and exc.code == 400
+                    and "not a chart visualization" in exc.detail
+                ):
+                    renders[cell_id] = "no render: Hex exports only chart cells"
+                    continue
+                failure = str(exc)
+        if image is None:
+            renders[cell_id] = f"render: none, Hex could not provide it: {failure}"
+            not_fetched[f"png/{cell_id}.png"] = str(failure)
+            continue
         bundle.write(f"png/{cell_id}.png", base64.b64decode(image["imageBase64"]))
         renders[cell_id] = f"render: png/{cell_id}.png"
 
@@ -446,8 +516,14 @@ def _fill_bundle(
     body: list[str] = []
     for tab_name, tab_cells in placed:
         body += [f"### Tab: {tab_name}", ""]
-        for where, cell in tab_cells:
-            body += [f"{where}:", *_describe(cell, renders.get(cell["cellId"]))]
+        for where, cell_id in tab_cells:
+            if cell_id in cells:
+                described = _describe(cells[cell_id], renders.get(cell_id))
+            else:
+                described = [
+                    f"- **missing** {cell_id} \u2014 not in the project's export"
+                ]
+            body += [f"{where}:", *described]
         body.append("")
     unplaced = [c for c in cells.values() if c["cellId"] not in seen]
     if unplaced:
@@ -461,7 +537,7 @@ def _fill_bundle(
             [
                 f"# {document['meta']['title']}",
                 "",
-                f"Hex: {url} (workspace {workspace})",
+                f"Hex: {url}{f' (workspace {workspace})' if workspace else ''}",
                 "",
                 "## Input parameters",
                 "",
@@ -470,14 +546,23 @@ def _fill_bundle(
                 "## App",
                 "",
                 *body,
+                *(
+                    [
+                        "## Not fetched: Hex failed to produce these",
+                        "",
+                        *(f"- `{path}`: {why}" for path, why in not_fetched.items()),
+                        "",
+                    ]
+                    if not_fetched
+                    else []
+                ),
             ]
         ),
     )
-    bundle.finish(
-        extra={
-            "workspace": workspace,
-            "project_id": project_id,
-            "project_version": run["projectVersion"],
-            "run_id": run["runId"],
-        }
-    )
+    extra: dict[str, str | list[str]] = {"project_id": project_id}
+    if workspace:
+        extra["workspace"] = workspace
+    if isinstance(run, dict):
+        extra["project_version"] = run["projectVersion"]
+        extra["run_id"] = run["runId"]
+    bundle.finish(extra=extra, missing_images=list(not_fetched))

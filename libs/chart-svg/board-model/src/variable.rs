@@ -8,14 +8,13 @@
 //! - `input: auto` is [`Engine`]'s `Auto` rule over the concrete [`InputType`]; the board's
 //!   data and `options` decide which control `auto` is.
 //! - `query` and `options.query` name a query (`options.query` may instead hold SQL text:
-//!   [`OptionsQuery`]). An inline `query:` definition is hoisted by
-//!   the refs pass into the board's `queries` and the variable keeps its name; that
-//!   accept arm belongs with the board's `QueryOrRef`, not here.
+//!   [`OptionsQuery`]); `query` may instead hold an inline query definition: [`VariableQuery`].
+//!   Normalize hoists either into the board's `queries` and the variable keeps the name.
 //! - `presets` holds daterange preset names. Python checks each against the preset grammar
 //!   (`parse_daterange_preset`); no Rust parser of that grammar exists yet, so the check stays
 //!   with the template pass that gains one (as for `style::variables`).
-//! - `min`, `max` and `step` are `f64`: YAML `.inf` and `.nan` are refused when the `Node`
-//!   is built, which is `_bounds_are_finite`.
+//! - `min`, `max` and `step` are `int | float` (`unit::Number`): YAML `.inf` and `.nan` are
+//!   refused when the `Node` is built, which is `_bounds_are_finite`.
 //!
 //! Left off the spine: `input_auto_detected`, `authored_fields`, `defined_in_other_file`,
 //! `variable_dependencies` (derived: `BoardIndex`) and `INTERNAL_VARIABLE_FIELDS`
@@ -24,13 +23,15 @@
 use crate::board::value::SingleRowBoolProbe;
 use crate::facet::DisplayText;
 use crate::ids::QueryName;
+use crate::query::Query;
 use crate::rule::Auto;
 use crate::string_enum;
 use model_core::{
-    Build, Cx, Engine, FromNode, Leaf, Merge, Model as _, Node, ReadScalar, Scalar, TypeExpr,
+    Build, Cx, Engine, FromNode, Leaf, Merge, Model, Node, ReadScalar, Scalar, TypeExpr,
 };
 use model_derive::Model;
 use serde_json::{Number, Value};
+use yaml::Kind;
 
 string_enum!(
     /// A concrete control; `auto` is the [`Auto`] rule.
@@ -107,7 +108,10 @@ impl Leaf for StaticOptions {
     const MERGE: Merge = Merge::Override;
     const EXPR: TypeExpr = TypeExpr::Either(
         &TypeExpr::List(&TypeExpr::Scalar(Scalar::Str)),
-        &TypeExpr::List(&TypeExpr::Scalar(Scalar::Float)),
+        &TypeExpr::List(&TypeExpr::Either(
+            &TypeExpr::Scalar(Scalar::Int),
+            &TypeExpr::Scalar(Scalar::Float),
+        )),
     );
 }
 model_core::build_leaf!(StaticOptions);
@@ -165,6 +169,50 @@ impl Leaf for OptionsQuery {
     const EXPR: TypeExpr = TypeExpr::Scalar(Scalar::Str);
 }
 model_core::build_leaf!(OptionsQuery);
+
+/// A variable's `query`: a query name, or a query defined in place (Python's
+/// `_normalize_var_query` types a mapping by its keys). Normalize moves an inline query into
+/// `queries` and the variable keeps the name.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VariableQuery {
+    /// A query name, as written.
+    Name(QueryName),
+    /// A query defined in place.
+    Inline(Box<<Query as Leaf>::Whole>),
+}
+
+impl ReadScalar for VariableQuery {
+    fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
+        match &node.kind {
+            Kind::Map(_) => <Query as FromNode>::whole(node, cx).map(|q| Self::Inline(Box::new(q))),
+            _ => QueryName::read(node, cx).map(Self::Name),
+        }
+    }
+}
+
+impl FromNode for VariableQuery {
+    fn authored(node: &Node, cx: &mut Cx) -> Self::Authored {
+        Self::read(node, cx)
+    }
+    fn patch(node: &Node, cx: &mut Cx) -> Self::Patch {
+        Self::read(node, cx)
+    }
+    fn whole(node: &Node, cx: &mut Cx) -> Option<Self::Whole> {
+        Self::read(node, cx)
+    }
+}
+
+impl Leaf for VariableQuery {
+    type Whole = VariableQuery;
+    type Authored = Option<VariableQuery>;
+    type Patch = Option<VariableQuery>;
+    const MERGE: Merge = Merge::Override;
+    const EXPR: TypeExpr = TypeExpr::Either(
+        &TypeExpr::Ref("Query", <Query as Model>::info),
+        &<QueryName as Leaf>::EXPR,
+    );
+}
+model_core::build_leaf!(VariableQuery);
 
 /// Where a select's options come from.
 #[derive(Debug, Clone, PartialEq, Model)]
@@ -231,11 +279,11 @@ impl Leaf for Enabled {
     type Patch = Option<Enabled>;
     const MERGE: Merge = Merge::Override;
     const EXPR: TypeExpr = TypeExpr::Either(
+        &TypeExpr::Ref("SingleRowBoolProbe", SingleRowBoolProbe::info),
         &TypeExpr::Either(
             &TypeExpr::Scalar(Scalar::Bool),
             &TypeExpr::Scalar(Scalar::Str),
         ),
-        &TypeExpr::Ref("SingleRowBoolProbe", SingleRowBoolProbe::info),
     );
 }
 model_core::build_leaf!(Enabled);
@@ -341,7 +389,7 @@ pub struct Variable {
     pub column: Option<String>,
     /// Query name for populating options.
     #[model(absent = "no option query")]
-    pub query: Option<QueryName>,
+    pub query: Option<VariableQuery>,
     /// Dropdown values come from a query column, or (rarely) a written-out list.
     #[model(absent = "no options")]
     pub options: Option<VariableOptions>,
@@ -350,13 +398,13 @@ pub struct Variable {
     pub data_type: Option<VariableDataType>,
     /// Minimum value for number, slider and range inputs.
     #[model(absent = "no minimum")]
-    pub min: Option<f64>,
+    pub min: Option<crate::unit::Number>,
     /// Maximum value for number, slider and range inputs.
     #[model(absent = "no maximum")]
-    pub max: Option<f64>,
+    pub max: Option<crate::unit::Number>,
     /// Step size for number, slider and range inputs.
     #[model(absent = "the input's own step")]
-    pub step: Option<f64>,
+    pub step: Option<crate::unit::Number>,
     /// SQL operator used when generating filter expressions (e.g., '=', 'IN', 'LIKE').
     #[model(absent = "chosen from the input type")]
     pub operator: Option<String>,

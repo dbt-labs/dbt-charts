@@ -132,6 +132,13 @@ pub struct SupportTableSpec(pub <SupportTable as Leaf>::Whole);
 
 impl ReadScalar for SupportTableSpec {
     fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
+        if matches!(&node.kind, Kind::Seq(items) if items.is_empty()) {
+            cx.invalid(
+                node.span,
+                "List should have at least 1 item after validation, not 0",
+            );
+            return None;
+        }
         if matches!(node.kind, Kind::Seq(_)) {
             let map = [(
                 "entries".to_string(),
@@ -152,7 +159,28 @@ union_leaf!(
     SupportTableSpec,
     ::model_core::TypeExpr::Either(
         &::model_core::TypeExpr::Ref("SupportTable", <SupportTable as ::model_core::Model>::info),
-        &::model_core::TypeExpr::Facet("support_table_entries", ::model_core::Scalar::Str),
+        &::model_core::TypeExpr::Keyed(
+            &::model_core::Keywords::at_least_items(1),
+            &::model_core::TypeExpr::List(&::model_core::TypeExpr::Either(
+                &::model_core::TypeExpr::Ref(
+                    "SupportTableSource",
+                    <SupportTableSource as ::model_core::Model>::info
+                ),
+                &::model_core::TypeExpr::Either(
+                    &::model_core::TypeExpr::Ref(
+                        "SupportTableAggregate",
+                        <SupportTableAggregate as ::model_core::Model>::info
+                    ),
+                    &::model_core::TypeExpr::Either(
+                        &::model_core::TypeExpr::Ref(
+                            "SupportTablePerSeries",
+                            <SupportTablePerSeries as ::model_core::Model>::info
+                        ),
+                        &::model_core::TypeExpr::Scalar(::model_core::Scalar::Str),
+                    ),
+                ),
+            )),
+        ),
     )
 );
 

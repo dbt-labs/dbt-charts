@@ -1,17 +1,61 @@
-//! What the SQL seam hands back for one query (spec § 16, D-18), as plain data.
+//! What the SQL seam hands back for one query (spec § 16, D-18), as plain data, and the trait a
+//! host implements to produce it.
 //!
-//! Compile asks a host-injected `SqlAnalysis` (first the Python host over sqlglot, later a
-//! Rust one) to analyze a query's SQL and gets an [`Analysis`] back. This module is the
-//! result only: no parser, no trait object, nothing that reads SQL. Normalize puts the
-//! pieces where they belong (`parse_error` and the output columns into `BoardIndex`, the
-//! lints into the diagnostics, the lineage where `bind` reads it); a fixture carries an
-//! `Analysis` by value so `bind` can be built without a SQL parser.
+//! Compile hands a host-injected [`SqlAnalysis`] (first the Python host over sqlglot, later a
+//! Rust one) each SQL query's [`SqlRequest`] and gets a [`SqlOutcome`] back. This module holds no
+//! parser and reads no SQL. Normalize puts the pieces where they belong (the parse error and the
+//! output columns into the query's facts, the lints and the guard's verdict into refusals, the
+//! lineage where `bind` reads it); a fixture carries an `Analysis` by value so `bind` can be built
+//! without a SQL parser.
 //!
-//! Every position is SQL-local: relative to the query's own text, the coordinates
-//! `stamp_diagnostics` offsets into the board file.
+//! Every position is SQL-local: relative to the query's own text, the coordinates a board-file
+//! host offsets into the file.
 
 use crate::facet::FormatName;
-use diagnostic::Diagnostic;
+use crate::query::{QueryDialect, SourceName};
+
+/// One SQL query as the host sees it: exactly the authored text, Jinja intact. The host builds the
+/// skeleton, and resolves the source to a dialect (profiles are host configuration).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SqlRequest<'a> {
+    pub sql: &'a str,
+    /// Analyzed separately, under the source's dialect only.
+    pub setup_sql: Option<&'a str>,
+    pub source: Option<&'a SourceName>,
+    /// The query's authored `dialect:`. It describes `sql` only and wins over the source's.
+    pub dialect: Option<QueryDialect>,
+}
+
+/// What a host says about one request.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SqlOutcome {
+    Analyzed(Analysis),
+    /// Python's `query.parse_error`: only when no fatal finding applies (no fatal lint on `sql` or
+    /// `setup_sql`, no mutating guard on `sql`, no mutating `setup_sql`) and the dialect resolved
+    /// and the parser gave a position. A host that cannot decide all of that returns `Analyzed`.
+    ParseError(ParseError),
+    /// This host does not analyze SQL; compile refuses the board, naming why.
+    Refused(String),
+}
+
+/// The SQL seam. Pure in the request: positions are SQL-local and nothing else is read.
+pub trait SqlAnalysis {
+    fn analyze(&self, request: &SqlRequest) -> SqlOutcome;
+
+    /// Every request of one compile, so a host with a round-trip cost pays it once.
+    fn analyze_all(&self, requests: &[SqlRequest]) -> Vec<SqlOutcome> {
+        requests.iter().map(|r| self.analyze(r)).collect()
+    }
+}
+
+/// The analyzer of a caller that has none: every SQL query is refused by name.
+pub struct Refused;
+
+impl SqlAnalysis for Refused {
+    fn analyze(&self, _: &SqlRequest) -> SqlOutcome {
+        SqlOutcome::Refused("this host has no SQL analyzer".to_string())
+    }
+}
 
 /// A Jinja span of the template, replaced by a stand-in so the rest parses as SQL.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,19 +77,34 @@ pub struct Skeleton {
     pub placeholders: Vec<Placeholder>,
 }
 
-/// The select-only guard's verdict on the skeleton.
+/// A guard's verdict on a skeleton: `select_only` for `sql`, the setup allowlist (temporary
+/// functions, tables and views; DuckDB macros) for `setup_sql`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SelectOnly {
-    /// Read-only: a SELECT-family statement, or a BigQuery temp-function script ending in one.
-    Select,
-    /// A statement that writes, or DML hidden in a CTE or subquery. Execute re-checks the
-    /// rendered SQL and stays the authoritative guard.
+pub enum Guard {
+    /// Within the allowlist.
+    Allowed,
+    /// A statement the allowlist refuses, or DML hidden in a CTE or subquery. Execute re-checks
+    /// the rendered SQL and stays the authoritative guard.
     Mutating {
         node_kind: String,
         fragment_preview: String,
     },
-    /// The skeleton could not be parsed; the guard defers to execute.
+    /// The skeleton could not be parsed, or the dialect gave no position worth showing; the
+    /// guard defers to execute.
     Undetermined,
+}
+
+/// An authoring mistake `sql_authoring_lint` finds. Every one refuses the board.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Lint {
+    /// A literal backslash-n from single-quoted YAML that is the cause of a parse failure.
+    LiteralNewlines,
+    /// `date '{{ var }}'` on a dialect that binds the variable as a parameter.
+    DateLiteralVariable {
+        /// Lowercased: `date`, `time` or `timestamp`.
+        keyword: String,
+        variable: String,
+    },
 }
 
 /// Where a SQL parse error sits, in SQL-local coordinates.
@@ -100,17 +159,28 @@ pub struct ScopeAlias {
     pub relation: Relation,
 }
 
-/// Everything the SQL seam says about one query.
+/// What the host says about a `setup_sql`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupAnalysis {
+    pub guard: Guard,
+    pub lints: Vec<Lint>,
+}
+
+/// Everything the SQL seam says about one query it could analyze.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Analysis {
     pub skeleton: Skeleton,
-    pub select_only: SelectOnly,
-    /// Set when the skeleton failed to parse and the failure is worth reporting.
-    pub parse_error: Option<ParseError>,
-    /// Authoring lints (`sql_authoring_lint`), already as diagnostics.
-    pub lints: Vec<Diagnostic>,
-    /// Empty when the query is not a single SELECT-family statement.
+    pub select_only: Guard,
+    pub lints: Vec<Lint>,
+    /// `Some` exactly when the request had a `setup_sql`.
+    pub setup: Option<SetupAnalysis>,
+    /// The projections the host could name; empty when the query is not a single SELECT-family
+    /// statement. A projection it cannot name (`*`, an unaliased aggregate, a Jinja expression)
+    /// is dropped, not guessed at.
     pub outputs: Vec<OutputColumn>,
+    /// Whether `outputs` names every projection of every branch (the design panel's `complete`).
+    /// When false, `outputs` is a partial list and absence from it proves nothing.
+    pub outputs_complete: bool,
     /// The aliases in scope at the top of the query.
     pub scope: Vec<ScopeAlias>,
 }

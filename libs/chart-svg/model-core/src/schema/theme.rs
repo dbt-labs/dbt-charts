@@ -17,6 +17,8 @@ pub enum Supply {
     /// The mount is under an `inherit_slot` or `Patch` field and the theme does not state it
     /// there: another layer fills it.
     Cascade,
+    /// The base does not state it there, and every built-in theme (folded over the base) does.
+    Themes,
     /// Nothing states it there.
     Unset,
 }
@@ -53,18 +55,45 @@ impl Schema {
         self.theme_walk(theme).supply
     }
 
+    /// `base` with each mount the base leaves `Unset` marked `Themes` when every supply in
+    /// `per_theme` (one per built-in theme, each walked over the base) states it there.
+    pub fn with_themes(base: ThemeSupply, per_theme: &[ThemeSupply]) -> ThemeSupply {
+        let mut out = base;
+        for (model, keys) in &mut out {
+            for (key, mounts) in keys {
+                for (path, source) in mounts.iter_mut() {
+                    let stated = |t: &ThemeSupply| {
+                        t.get(model)
+                            .and_then(|k| k.get(key))
+                            .and_then(|m| m.iter().find(|(p, _)| p == path))
+                            .is_some_and(|(_, s)| *s == Supply::Theme)
+                    };
+                    if *source == Supply::Unset
+                        && !per_theme.is_empty()
+                        && per_theme.iter().all(stated)
+                    {
+                        *source = Supply::Themes;
+                    }
+                }
+            }
+        }
+        out
+    }
+
     fn theme_walk(&self, theme: &J) -> Walked {
         let mut w = Walked::default();
-        self.walk_theme(&self.root, theme, "", false, &mut Vec::new(), &mut w);
+        self.walk_theme(&self.root, theme, "", false, &[], &mut Vec::new(), &mut w);
         w
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn walk_theme<'a>(
         &'a self,
         model: &'a str,
         theme: &J,
         at: &str,
         cascade: bool,
+        fills: &[String],
         stack: &mut Vec<&'a str>,
         w: &mut Walked,
     ) {
@@ -90,7 +119,21 @@ impl Schema {
                         || matches!(p.ty, Ty::Option(t, _) if matches!(**t, Ty::Patch(_)));
                     w.note(m.name, p.key, at, stated.is_some(), cascade);
                     let empty = J::Null;
-                    self.walk_theme(n, stated.unwrap_or(&empty), &path, under, stack, w)
+                    let below = format!("{}.", p.key);
+                    let fills: Vec<String> = p
+                        .field
+                        .attrs
+                        .fills_at
+                        .iter()
+                        .map(|(to, _)| to.to_string())
+                        .chain(
+                            fills
+                                .iter()
+                                .filter_map(|f| f.strip_prefix(&below))
+                                .map(String::from),
+                        )
+                        .collect();
+                    self.walk_theme(n, stated.unwrap_or(&empty), &path, under, &fills, stack, w)
                 }
                 Ty::Map(_) | Ty::Keys(_) => {}
                 _ => {
@@ -105,7 +148,8 @@ impl Schema {
                             ));
                         }
                     }
-                    w.note(m.name, p.key, at, stated.is_some(), cascade);
+                    let mount_fill = fills.iter().any(|f| f == p.key);
+                    w.note(m.name, p.key, at, stated.is_some(), cascade || mount_fill);
                     if let Some(v) = stated.cloned().or(filled) {
                         w.values.insert(path, v);
                     }

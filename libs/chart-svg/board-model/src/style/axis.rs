@@ -283,7 +283,17 @@ impl ReadScalar for ScaleDomain {
         }
     }
 }
-scalar_leaf!(ScaleDomain, "scale_domain", Float);
+const DOMAIN_BOUND: TypeExpr = TypeExpr::Either(
+    &TypeExpr::Either(
+        &TypeExpr::Scalar(Scalar::Int),
+        &TypeExpr::Scalar(Scalar::Float),
+    ),
+    &TypeExpr::Scalar(Scalar::Str),
+);
+scalar_leaf!(
+    ScaleDomain,
+    TypeExpr::Tuple(&[&DOMAIN_BOUND, &DOMAIN_BOUND])
+);
 
 /// The y-axis `mirror`: `false` (as good as unset), the primary axis's label drawn on both edges, or
 /// the mirrored edge relabeled by `format` or `expr`.

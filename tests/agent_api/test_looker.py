@@ -238,8 +238,13 @@ def test_missing_credentials_name_the_variable(
 ) -> None:
     monkeypatch.delenv("LOOKER_CLIENT_SECRET")
 
-    with pytest.raises(BundleError, match="LOOKER_CLIENT_SECRET"):
+    with pytest.raises(BundleError, match="LOOKER_CLIENT_SECRET") as exc:
         import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+
+    message = str(exc.value)
+    assert "https://acme.looker.test/account" in message
+    assert "New API Key" in message
+    assert "set -a; . ./.env; set +a" in message
 
 
 def test_bare_id_without_base_url_is_an_error(http: Any, tmp_path: Path) -> None:

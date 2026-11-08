@@ -11,7 +11,7 @@ use board_model::chart::{Columns, ScatterChart};
 use board_model::ids::ChartId;
 use board_model::style::font::SymbolShape;
 use board_model::style::marks::LabelVisible;
-use model_core::Engine;
+use model_core::{Engine, Patch};
 use board_model::style::style::Style;
 use diagnostic::{diag, refuse, Diagnostic};
 
@@ -128,7 +128,7 @@ fn value_axis(
     if baked == Baked::X {
         let target = count(ladder)?.unwrap_or(Count::Auto).target();
         // Production fits an x to its data only clear of zero; a fit across zero stays niced.
-        if zero == Zero::Free && !spans_zero(values) {
+        if zero == Zero::Free && !cartesian::spans_zero(values) {
             let data = (domain.extent.lo(), domain.extent.hi());
             let (lo, hi) = domain::nice_clear_of_data(data.0, data.1, data, target, None);
             domain.bounds = Bounds { extent: Extent::new(lo, hi).map_err(internal(context))?, reason: BoundsReason::ClearOfData };
@@ -153,12 +153,6 @@ fn x_ladder(target: usize, domain: &ValueDomain, format: &ResolvedFormat, values
     Ok(Ladder::Fixed(FixedLadder::new(rungs, bounds).map_err(internal("x ladder"))?))
 }
 
-fn spans_zero(values: &[f64]) -> bool {
-    let lo = values.iter().copied().fold(f64::INFINITY, f64::min);
-    let hi = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    lo <= 0.0 && 0.0 <= hi
-}
-
 /// `chart` bound over its run, in the style of `body`, the board body that places it. No rows is
 /// [`Body::Empty`] in the chart's frame, once the chart's own style has passed the refusals.
 pub fn bind(
@@ -166,6 +160,7 @@ pub fn bind(
     chart: &ScatterChart,
     board: &Board,
     body: &BoardBody,
+    own: &Patch<Style>,
     run: &RunResult,
     derived: &DerivedChart,
 ) -> Result<BoundChart, Diagnostic> {
@@ -191,7 +186,7 @@ pub fn bind(
         Some(Columns::One(y)) => y.as_str(),
         _ => return Err(diag::err_internal("normalize requires a scatter's `y:`")),
     };
-    let tiers = StyleTiers { own: Tier::from(&chart.style), family: Tier::from(&*style.charts.scatter), charts: &style.charts };
+    let tiers = StyleTiers { own: Tier::from(&*own.charts.scatter), family: Tier::from(&*style.charts.scatter), charts: &style.charts };
     let x_ladder = AxisLadder::new(AxisName::X, ChannelType::Quantitative, &tiers, None, false)?;
     let y_ladder = AxisLadder::new(AxisName::Y, ChannelType::Quantitative, &tiers, None, false)?;
     if let Some(leaf) = x_ladder.unwalked_leaf().or_else(|| y_ladder.unwalked_leaf()) {
@@ -257,9 +252,9 @@ pub fn bind(
         .collect::<Result<Vec<_>, _>>()?;
 
     let baselines = Baselines {
-        zero: threshold_rules(&y_ladder)? && (matches!(y_zero, Zero::Anchored | Zero::Pinned(true)) || spans_zero(&y_values)),
+        zero: cartesian::zero_rule(&y_ladder, y_zero, &y_values)?,
         unity: false,
-        x_threshold: threshold_rules(&x_ladder)? && spans_zero(&x_values),
+        x_threshold: threshold_rules(&x_ladder)? && cartesian::spans_zero(&x_values),
     };
     let fill = derived.single_series_fill;
     let ink = color::label_ink(&hex(fill), &hex(derived.frame.canvas)).map_err(diag::err_internal)?;

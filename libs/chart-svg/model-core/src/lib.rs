@@ -52,11 +52,11 @@ pub use build::{
 pub use cascade::{CascadeError, Csr, Resolved, Tables};
 pub use from_node::{
     map_node, parse, parse_patch, read_accept, read_enum, read_keys, read_map, read_null,
-    read_nullable, read_nullable_patch, read_or_empty, read_patch_tri, read_tag, scalar_node,
+    read_list, read_nullable, read_nullable_patch, read_or_empty, read_patch_tri, read_tag, scalar_node,
     shorthand, FromMap, FromNode, InferTag, ReadScalar, Shorthand,
 };
 pub use inherit::{
-    fill_literal, FillDefault, FillFrom, FillTry, InheritError, Refused, TokenListSlot, TokenSlot,
+    fill_literal, FillDefault, FillFrom, FillTry, InheritError, Refused, TokenBlock, TokenListSlot, TokenSlot,
 };
 pub use leaf::{
     merge_map_deep, merge_nullable, merge_patch_slot, tri_to_authored, tri_to_patch, Empty, Fold,

@@ -15,12 +15,13 @@ pub const CROSS_FIELD_RULE: &str = "x-dbt-charts-cross-field-rule";
 
 const EMPTY: [&str; 0] = [];
 
-/// Marks an arm whose keywords stay in it; [`hoist`] removes the mark, so a type that sets it must be
+/// Marks an arm whose pattern stays in it; [`hoist`] removes the mark, so a type that sets it must be
 /// an arm of its property's union.
 const IN_ARM: &str = "x-in-arm";
 
 /// The keywords a facet or unit declares.
-const KEYWORDS: [&str; 7] = [
+const KEYWORDS: [&str; 8] = [
+    "minLength",
     "minItems",
     "maxItems",
     "pattern",
@@ -120,6 +121,9 @@ fn keywords(k: &Keywords, rule: bool) -> Map<String, J> {
     if let Some(n) = k.max_items {
         o.insert("maxItems".into(), json!(n));
     }
+    if let Some(n) = k.min_length {
+        o.insert("minLength".into(), json!(n));
+    }
     o
 }
 
@@ -137,7 +141,7 @@ fn one_scalar(prop: &Map<String, J>) -> bool {
 /// `Field(pattern=..)` and `Field(ge=..)` beside the `anyOf` of `X | None` or `X | "auto"`, not
 /// inside one arm. Arms are built from one facet or unit each, so a keyword is not stated twice.
 /// A tuple's own length stays in its arm.
-fn hoist(j: J) -> J {
+fn hoist(j: J, arm_pattern: bool) -> J {
     let J::Object(mut o) = j else { return j };
     let Some(J::Array(arms)) = o.get_mut("anyOf") else {
         return J::Object(o);
@@ -149,11 +153,12 @@ fn hoist(j: J) -> J {
             if a.contains_key("prefixItems") {
                 continue;
             }
-            // A union arm that states its own keywords keeps them (`Literal[..] | Duration`).
-            if a.remove(IN_ARM).is_some() {
-                continue;
-            }
+            // A union arm keeps its own pattern (`Literal[..] | Duration`); its other keywords move.
+            let keeps_pattern = a.remove(IN_ARM).is_some() || arm_pattern;
             for k in KEYWORDS {
+                if keeps_pattern && k == "pattern" {
+                    continue;
+                }
                 if let Some(v) = a.remove(k) {
                     up.insert(k.to_string(), v);
                 }
@@ -328,6 +333,9 @@ fn constraint(c: &Constraint) -> Option<J> {
             json!({"anyOf": c.fields.iter().map(|k| set(k)).collect::<Vec<_>>()})
         }
         ConstraintKind::AtMostOneOf => at_most_one(c.fields, c.nonempty, c.auto),
+        ConstraintKind::NotNull => json!({
+            "allOf": c.fields.iter().map(|k| at(k, json!({"not": {"type": "null"}}), false)).collect::<Vec<_>>()
+        }),
         ConstraintKind::Requires => when(
             c.when,
             json!({"allOf": c.fields.iter().map(|k| set(k)).collect::<Vec<_>>()}),
@@ -476,6 +484,7 @@ impl Emit<'_> {
                 "maxItems": items.len(),
             }),
             Ty::Const(b) => json!({"enum": [b]}),
+            Ty::Literals(v) => json!({"enum": v.iter().map(value).collect::<Vec<_>>()}),
             Ty::Unit => json!({"type": "null"}),
             // A `keys` field is expanded into its variants by the struct.
             Ty::Keys(_) => json!({}),
@@ -485,11 +494,14 @@ impl Emit<'_> {
     /// A property: its type, the description with the inherit note, extensions.
     fn prop(&self, key_ty: &Ty, f: &SchemaField, doc: &str) -> J {
         let a = f.attrs;
-        let mut j = hoist(if a.nullable {
-            any_of(vec![self.ty(key_ty), json!({"type": "null"})])
-        } else {
-            self.ty(key_ty)
-        });
+        let mut j = hoist(
+            if a.nullable {
+                any_of(vec![self.ty(key_ty), json!({"type": "null"})])
+            } else {
+                self.ty(key_ty)
+            },
+            a.arm_pattern,
+        );
         let note = match (a.inherit_slot, a.inherit) {
             (Some(p), _) => format!("Unset fields fall back to `{p}`."),
             (None, Some(p)) => format!("Falls back to `{p}`."),
@@ -502,6 +514,9 @@ impl Emit<'_> {
             .collect::<Vec<_>>()
             .join(" ");
         let J::Object(o) = &mut j else { return j };
+        if let Some(n) = a.min_items {
+            o.insert("minItems".into(), json!(n));
+        }
         if !desc.is_empty() {
             o.insert("description".into(), json!(desc));
         }
@@ -542,18 +557,9 @@ impl Emit<'_> {
     /// Whether an authored document must say `p`: the spine cannot fill it from a fallback,
     /// a `fill` or the slot it mirrors.
     fn needs(&self, owner: &SchemaModel, p: &Prop) -> bool {
-        let a = p.field.attrs;
-        !(p.keyed
-            || matches!(p.field.ty, Ty::Option(..))
-            || a.fill.is_some()
-            || a.fill_value.is_some()
-            || a.default_empty
-            || a.omit.is_some()
-            || a.directive
-            || a.inherit.is_some()
-            || a.inherit_slot.is_some()
-            || (self.mirrored.contains(owner.name)
-                && !matches!(owner.body, Body::Struct { complete: true, .. })))
+        needs_saying(p)
+            && !(self.mirrored.contains(owner.name)
+                && !matches!(owner.body, Body::Struct { complete: true, .. }))
     }
 
     fn model(&self, m: &SchemaModel) -> J {
@@ -710,4 +716,19 @@ impl Emit<'_> {
         }
         J::Object(o)
     }
+}
+
+/// Whether `p` has nothing of its own to fill it: no `Option`, `fill`, `default_empty`, `omit`,
+/// `directive`, `inherit` or `inherit_slot`, and not a variant of a `keys` field.
+pub(super) fn needs_saying(p: &Prop) -> bool {
+    let a = p.field.attrs;
+    !(p.keyed
+        || matches!(p.field.ty, Ty::Option(..))
+        || a.fill.is_some()
+        || a.fill_value.is_some()
+        || a.default_empty
+        || a.omit.is_some()
+        || a.directive
+        || a.inherit.is_some()
+        || a.inherit_slot.is_some())
 }

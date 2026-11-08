@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct import omni writes a tile's warehouse query and its DuckDB post-step as separate files, so the SQL runs as written.
+time: 2026-11-08T11:29:10.427831-08:00

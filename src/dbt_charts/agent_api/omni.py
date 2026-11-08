@@ -11,7 +11,6 @@ dashboard filter defaults (those are listed in the outline).
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 import urllib.error
@@ -28,6 +27,7 @@ from dbt_charts.agent_api.source_bundle import (
     compact,
     option_lines,
     public_url,
+    require_env,
     staged_bundle,
 )
 
@@ -40,6 +40,14 @@ RATE_LIMIT_SECONDS = 10.0
 RATE_LIMIT_RETRIES = 12
 # Container children that are controls, not tiles; filters are read from filterConfig.
 NON_TILE_TYPES = ("filter", "control", "inline-page-switcher")
+_STEP_MARKER = re.compile(r"^-- step (\d+), run on (\w+)\r?$", re.MULTILINE)
+_USE_RESULT = re.compile(r"-- use result of step 1 as (\w+)\r?\n")
+_POST_CLAUSES = re.compile(
+    r"^(SELECT|FROM|PIVOT|UNPIVOT|WHERE|GROUP BY|HAVING|QUALIFY|ORDER BY|LIMIT)\b",
+    re.MULTILINE,
+)
+# Purely decorative children: listed in the outline, no query behind them.
+DIVIDER_TYPES = ("inline-divider",)
 # Saved-query keys that are identity, Omni internals, or shown as their own lines.
 QUERY_NON_OPTION_KEYS = frozenset(
     {
@@ -145,13 +153,35 @@ def _origin(base_url: str | None) -> str:
     return base_url.rstrip("/")
 
 
+class _Unplannable(BundleError):
+    """Omni refused to plan one saved query; the bundle can name it and go on."""
+
+
+class _HttpFailure(BundleError):
+    """Omni answered a request with an HTTP error status."""
+
+    def __init__(self, method: str, path: str, code: int, detail: str) -> None:
+        self.status = f"HTTP {code} {detail}".strip()
+        super().__init__(f"Omni {method} {path} failed: {self.status}")
+        self.code = code
+        self.detail = detail
+
+
+class _RenderUnavailable(BundleError):
+    """Omni's page render did not finish or is already running; the bundle can
+    name the image and go on."""
+
+
 class _Omni:
     def __init__(self, origin: str) -> None:
-        if not os.environ.get("OMNI_API_KEY"):
-            raise BundleError("set OMNI_API_KEY to import from Omni")
+        key = require_env(
+            ("OMNI_API_KEY",),
+            where="Omni → Settings → API Keys (an Omni admin creates them)",
+            command="dct import omni <dashboard URL>",
+        )["OMNI_API_KEY"]
         self.origin = origin
         self.headers = {
-            "Authorization": f"Bearer {os.environ['OMNI_API_KEY']}",
+            "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
         }
 
@@ -173,9 +203,7 @@ class _Omni:
             except urllib.error.HTTPError as exc:
                 if exc.code != 429:
                     detail = exc.read().decode(errors="replace")[:300]
-                    raise BundleError(
-                        f"Omni {method} {path} failed: HTTP {exc.code} {detail}"
-                    ) from None
+                    raise _HttpFailure(method, path, exc.code, detail) from None
                 time.sleep(RATE_LIMIT_SECONDS)
             except urllib.error.URLError as exc:
                 raise BundleError(
@@ -192,6 +220,11 @@ class _Omni:
             "POST", "/v1/query/run", {"query": query, "planOnly": True}
         )
         jobs = [json.loads(line) for line in reply.decode().splitlines() if line]
+        for job in jobs:
+            if job.get("status") == "FAILED" and (
+                job.get("error_type") or ""
+            ).startswith("PLAN"):
+                raise _Unplannable(job["error_message"])
         planned = [j for j in jobs if "summary" in j]
         if len(planned) != 1 or planned[0]["status"] != "PLANNED":
             raise BundleError(f"Omni did not plan the query: {reply.decode()[:300]}")
@@ -206,7 +239,16 @@ class _Omni:
         body: dict[str, Any] = {"format": "png"}
         if page:
             body["containerPages"] = [page]
-        job = json.loads(self.request("POST", path, body))["job_id"]
+        try:
+            started = self.request("POST", path, body)
+        except _HttpFailure as exc:
+            if exc.code != 409:
+                raise
+            busy = json.loads(exc.detail)["existing_job_id"]
+            raise _RenderUnavailable(
+                f"Omni render already in progress (job {busy})"
+            ) from None
+        job = json.loads(started)["job_id"]
         for _ in range(POLL_LIMIT):
             status = self.get_json(f"{path}/{job}/status")
             if status["status"] == "complete":
@@ -214,7 +256,7 @@ class _Omni:
             if status["status"] == "error":
                 raise BundleError(f"Omni download {job} failed: {status.get('error')}")
             time.sleep(POLL_SECONDS)
-        raise BundleError(f"Omni download {job} did not finish in time")
+        raise _RenderUnavailable(f"Omni render {job} did not finish in time")
 
 
 @dataclass(frozen=True)
@@ -267,7 +309,12 @@ def _describe(spec: dict[str, Any]) -> str:
 
 
 def _walk(node: dict[str, Any], path: list[str]) -> Iterator[tuple[str, str]]:
-    """Yield ``(tile_id, where)``; text tiles yield ``("text:<content>", where)``."""
+    """Yield ``(tile_id, where)``.
+
+    Text tiles yield ``("text:<content>", where)``, dividers
+    ``("divider:<id>", where)`` and tiles of an unknown type
+    ``("unsupported:<json [type, id, title]>", where)``.
+    """
     for child in node.get("children", []):
         where = " > ".join(path)
         if child.get("type") == "query":
@@ -277,11 +324,44 @@ def _walk(node: dict[str, Any], path: list[str]) -> Iterator[tuple[str, str]]:
             yield f"text:{child['content']}", where
         elif "children" in child:
             yield from _walk(child, [*path, child.get("name") or "(unnamed)"])
+        elif child.get("type") in DIVIDER_TYPES:
+            yield f"divider:{child.get('id') or child.get('instanceKey') or ''}", where
         elif child.get("type") not in NON_TILE_TYPES:
-            raise BundleError(
-                f"unsupported tile type {child.get('type')!r} "
-                f"(id {child.get('id') or child.get('instanceKey')}) in {where or 'page layout'}"
+            ident = child.get("id") or child.get("instanceKey")
+            yield (
+                f"unsupported:{json.dumps([child.get('type'), ident, child.get('title')])}",
+                where,
             )
+
+
+def _split_steps(tile_id: str, sql: str) -> tuple[str, str | None, str | None]:
+    """Split Omni's two-step SQL into ``(warehouse step, DuckDB post-step, the name
+    the post-step reads step 1's result as)``.
+
+    Omni plans a tile that needs a client-side calculation as a warehouse
+    query followed by a DuckDB query over its result, in one text, each
+    introduced by a ``-- step N, run on X`` marker. SQL with no marker is one
+    step and comes back unchanged.
+    """
+    markers = list(_STEP_MARKER.finditer(sql))
+    if not markers:
+        return sql, None, None
+    if not (
+        len(markers) == 2
+        and markers[0].start() == 0
+        and (markers[0][1], markers[1][1], markers[1][2]) == ("1", "2", "DuckDB")
+        and (use := _USE_RESULT.match(sql, markers[1].end() + 1))
+    ):
+        raise BundleError(
+            f"Omni tile `{tile_id}`: SQL has step markers "
+            f"{[m[0] for m in markers]} but is not a two-step warehouse query "
+            "followed by a DuckDB query over its result; cannot split it"
+        )
+    return (
+        sql[markers[0].end() : markers[1].start()].strip() + "\n",
+        sql[use.end() :].strip() + "\n",
+        use[1],
+    )
 
 
 def _title(text: str) -> str:
@@ -299,8 +379,23 @@ def import_omni(
     unless ``force``.
 
     Raises:
-        BundleError: on a missing key, any failed request, a failed render, an
-            unsupported tile, or an incomplete bundle.
+        BundleError: on a missing key, any failed request, a failed render, a
+            dashboard with no tile the bundle can represent, or an incomplete
+            bundle. A divider is listed in ``outline.md``; a tile of a type the
+            bundle cannot represent, or whose saved query is missing, is named
+            there as left out, a tile whose query Omni cannot plan (any
+            ``PLAN*`` error type) is named without SQL, and a KPI whose value
+            run Omni answers with an HTTP error is named without values, and a page
+            image whose render does not finish, or whose dashboard already has a
+            render running (HTTP 409), is listed under ``Not fetched``
+            (the png requirement is waived); the import continues.
+            A tile Omni plans as a warehouse query plus a DuckDB query over its
+            result gets ``queries/<id>.sql`` (the warehouse step, runnable as
+            is) and ``queries/<id>.post.sql`` (the DuckDB step), named by a
+            ``post-step`` line in the outline; a marker shape that is not that
+            two-step form fails naming the tile.
+            Tiles in a top-level container outside any page are listed under a
+            ``Dashboard`` section.
     """
     dashboard_id, origin = parse_ref(ref, base_url=base_url)
     out = out or Path(f"omni-{_slug(dashboard_id)}")
@@ -339,16 +434,16 @@ def _fill_bundle(
     # Absent (not empty) on dashboards that use the plain grid layout.
     if metadata.get("containers"):
         pages = []
+        loose: list[tuple[str, str]] = []
         for p in metadata["containers"]:
             if p["containerType"] == "page":
                 pages.append(
                     (p["name"], p["instanceKey"], list(_walk(p["container"], [])))
                 )
-            elif any(_walk(p, [])):
-                raise BundleError(
-                    f"tiles in a top-level {p['containerType']!r} container "
-                    "outside any page are not supported"
-                )
+            else:
+                loose += _walk(p, [p["name"]] if p.get("name") else [])
+        if loose:
+            pages.append(("Dashboard", None, loose))
     else:
         grid = sorted(metadata["layouts"]["lg"], key=lambda t: (t["y"], t["x"]))
         placed = [
@@ -369,17 +464,40 @@ def _fill_bundle(
     timezones: set[str] = set()
     fetched: set[str] = set()
     tiles: list[str] = []
+    left_out: list[str] = []
+    represented = 0
     for name, _, placements in pages:
         if name:
             tiles += ["", f"## Page: {name}", ""]
         for tile_id, where in placements:
+            if tile_id.startswith("divider:"):
+                ident = tile_id.removeprefix("divider:")
+                tiles.append(
+                    f"- **divider**{f' `{ident}`' if ident else ''} — "
+                    f"{where or 'page layout'}"
+                )
+                continue
+            if tile_id.startswith("unsupported:"):
+                kind, ident, title = json.loads(tile_id.removeprefix("unsupported:"))
+                left_out.append(str(kind))
+                tiles += [
+                    f"- **unsupported**{f' `{ident}`' if ident else ''}"
+                    f"{f' {title!r}' if title else ''} — {where or 'page layout'}",
+                    f"    - unsupported tile type {kind!r}: left out",
+                ]
+                continue
             if tile_id.startswith("text:"):
+                represented += 1
                 tiles.append(f"- **text** {_title(tile_id[5:])!r} — {where}")
                 continue
             if tile_id not in saved:
-                raise BundleError(
-                    f"layout tile {tile_id} has no saved query in the document"
-                )
+                left_out.append(f"{tile_id} (no saved query)")
+                tiles += [
+                    f"- **missing** `{tile_id}` — {where or 'page layout'}",
+                    "    - sql: none, the document has no saved query for this tile",
+                ]
+                continue
+            represented += 1
             if tile_id in fetched:
                 continue
             fetched.add(tile_id)
@@ -387,25 +505,47 @@ def _fill_bundle(
             presentation = presentations[query["id"]]
             chart = presentation["visConfig"]["chartType"]
             tiles.append(f"- **{chart}** `{tile_id}` {query['name']!r} — {where}")
-            sql, timezone = omni.plan(query["query"])
-            timezones.add(timezone)
             bundle.write(f"queries/{tile_id}.json", json.dumps(query, indent=2))
+            try:
+                sql, timezone = omni.plan(query["query"])
+            except _Unplannable as exc:
+                tiles.append(f"    - sql: none, Omni could not plan it: {exc}")
+                continue
+            timezones.add(timezone)
+            sql, post_sql, step_name = _split_steps(tile_id, sql)
             bundle.write(f"queries/{tile_id}.sql", sql)
             tiles += [
                 f"    - {line}"
                 for line in _tile_lines(tile_id, query, presentation, metadata)
             ]
+            if post_sql is not None:
+                bundle.write(f"queries/{tile_id}.post.sql", post_sql)
+                clauses = dict.fromkeys(_POST_CLAUSES.findall(post_sql))
+                tiles.append(
+                    f"    - post-step: queries/{tile_id}.post.sql "
+                    f"(DuckDB over step 1's result as `{step_name}`: "
+                    f"{', '.join(clauses)})"
+                )
             if chart == "kpi":
                 kpi_file = f"kpi/{_slug(query['name'])}-{tile_id}.csv"
-                bundle.write(
-                    kpi_file,
-                    omni.request(
+                try:
+                    values = omni.request(
                         "POST",
                         f"/v1/documents/{dashboard_id}/queries/{tile_id}/run",
                         {"resultType": "csv"},
-                    ),
-                )
+                    )
+                except _HttpFailure as exc:
+                    tiles.append(
+                        f"    - values: none, Omni could not run it: {exc.status}"
+                    )
+                    continue
+                bundle.write(kpi_file, values)
                 tiles.append(f"    - values: {kpi_file}")
+    if left_out and not represented:
+        raise BundleError(
+            "dashboard has no tile the bundle can represent; left out: "
+            + ", ".join(sorted(set(left_out)))
+        )
     tiles += [
         f"- **hidden** `{key}` {saved[key]['name']!r} — not on the dashboard, not fetched"
         for key in metadata["hiddenTiles"]
@@ -417,6 +557,13 @@ def _fill_bundle(
         for key in collection["filterOrder"]
         for spec in [collection["filterConfig"][key]]
     ]
+    not_fetched: list[tuple[str, str]] = []
+    for name, instance_key, _ in pages:
+        png = f"png/{_slug(name)}.png" if name else "png/dashboard.png"
+        try:
+            bundle.write(png, omni.render_png(dashboard_id, instance_key))
+        except _RenderUnavailable as exc:
+            not_fetched.append((png, str(exc)))
     bundle.write(
         "outline.md",
         "\n".join(
@@ -432,18 +579,26 @@ def _fill_bundle(
                 "## Tiles",
                 *tiles,
                 "",
+                *(
+                    [
+                        "## Not fetched: Omni failed to export these",
+                        "",
+                        *(f"- `{png}`: {error}" for png, error in not_fetched),
+                        "",
+                    ]
+                    if not_fetched
+                    else []
+                ),
             ]
         ),
     )
 
-    for name, instance_key, _ in pages:
-        png = f"png/{_slug(name)}.png" if name else "png/dashboard.png"
-        bundle.write(png, omni.render_png(dashboard_id, instance_key))
     bundle.finish(
+        missing_images=[png for png, _ in not_fetched],
         extra={
             "query_timezones": sorted(timezones),
             "kpi_values": "display_formatted",
-        }
+        },
     )
 
 
@@ -468,7 +623,9 @@ def _tile_lines(
         for s in spec["sorts"]
     ]
     lines += [
-        f"table calc: {c['calc_name']} {c['label']!r}" + _calc_rest(c)
+        f"table calc: {c['calc_name']}"
+        + (f" {c['label']!r}" if "label" in c else "")
+        + _calc_rest(c)
         for c in spec["calculations"]
     ]
     lines += [f"filter: {field} {_describe(f)}" for field, f in spec["filters"].items()]

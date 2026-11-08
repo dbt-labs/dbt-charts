@@ -19,6 +19,6 @@ pub struct CalloutChart {
     #[model(fill = fill_style, nullable)]
     pub style: CalloutChartStyle,
     /// Codes of render warnings to suppress for this chart.
-    #[model(fill = fill_empty)]
+    #[model(fill = fill_empty, nullable)]
     pub warnings_ignore: Vec<ChartWarningCode>,
 }

@@ -79,7 +79,10 @@ impl ReadScalar for Columns {
 }
 union_leaf!(
     Columns,
-    ::model_core::TypeExpr::Facet("columns", ::model_core::Scalar::Str)
+    ::model_core::TypeExpr::Either(
+        &::model_core::TypeExpr::Scalar(::model_core::Scalar::Str),
+        &::model_core::TypeExpr::List(&::model_core::TypeExpr::Scalar(::model_core::Scalar::Str)),
+    )
 );
 
 macro_rules! number_list {

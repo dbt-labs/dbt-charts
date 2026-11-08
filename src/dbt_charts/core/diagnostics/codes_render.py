@@ -1943,6 +1943,17 @@ ERR_ENGINE_REFUSED = REGISTRY.register(
     )
 )
 
+ERR_ENGINE_NEEDS_DATA = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ENGINE-NEEDS-DATA",
+        domain="render",
+        title="the render engine was given no result for a query",
+        message_template="The render engine was given no result for the query {query}",
+        doc="Fired when the Rust render engine draws a chart whose query has neither a result nor an execute error in the run it was given. The host runs every query before it renders, so this names a host that did not, not a mistake in the board.",
+        docs_topic="charts",
+    )
+)
+
 ERR_CUSTOM_RENDER = REGISTRY.register(
     ErrorCode(
         code="ERR-CUSTOM-RENDER",

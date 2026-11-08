@@ -3,13 +3,14 @@
 //! `format_variable_display_value`, `format_date_label`) decides the same facts. Data only: where a
 //! control sits and what it measures to is layout's.
 //!
-//! What this slice does not model is refused by name: an `input: auto` (the widget the options'
-//! data refine it to), a multiselect, a daterange, a radio and the aliases of the inputs it does
-//! draw, a select whose options a query answers, an `enabled:` that is not a literal, and a value
-//! a widget does not show.
+//! Compile settles `input: auto` to a widget, so an unsettled one is an internal error. What this
+//! slice does not model is refused by name: a multiselect, a daterange, a radio and the aliases of
+//! the inputs it does draw, a select whose options a query answers, an `enabled:` that is not a
+//! literal, and a value a widget does not show.
 
 use board_model::board::BoardBody;
 use board_model::style::style::Style;
+use board_model::unit::Number;
 use board_model::variable::{Enabled, InputType, StaticOptions, Variable};
 use board_model::variable_value::{Atom, VariableValue};
 use d3rs::py_float::float_repr;
@@ -168,7 +169,11 @@ fn control(
 ) -> Result<Control, Diagnostic> {
     let input = match &variable.input {
         Engine::Value(input) => *input,
-        Engine::Rule(_) => return Err(not_modeled("auto")),
+        Engine::Rule(_) => {
+            return Err(diag::err_internal(format!(
+                "variable `{name}` reached bind with `input: auto`, which compile settles"
+            )));
+        }
     };
     let widget = match input {
         InputType::Text => Widget::Text,
@@ -254,9 +259,9 @@ fn control(
             control.placeholder = placeholder;
             if widget == Widget::Number {
                 control.bounds = Bounds::Authored {
-                    min: variable.min,
-                    max: variable.max,
-                    step: variable.step,
+                    min: variable.min.map(Number::get),
+                    max: variable.max.map(Number::get),
+                    step: variable.step.map(Number::get),
                 };
             }
         }
@@ -274,9 +279,9 @@ fn control(
         }
         Widget::Slider => {
             let defaults = &style.variables.input.range;
-            let min = variable.min.unwrap_or(defaults.default_min);
-            let max = variable.max.unwrap_or(defaults.default_max);
-            let step = variable.step.unwrap_or(defaults.default_step);
+            let min = variable.min.map_or(defaults.default_min, Number::get);
+            let max = variable.max.map_or(defaults.default_max, Number::get);
+            let step = variable.step.map_or(defaults.default_step, Number::get);
             // A slider always shows a position; with nothing committed that is the low end.
             let at = match current {
                 None => min,

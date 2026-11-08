@@ -53,7 +53,7 @@ facet!(
     |v| Ok(v.to_string())
 );
 
-fn literal_text(v: &str) -> Result<String, String> {
+pub fn literal_text(v: &str) -> Result<String, String> {
     if ["{{", "{%", "{#"].iter().any(|t| v.contains(t)) {
         return Err("schema fields must be literal strings; Jinja templates ({{ }}, {% %}, {# #}) are not supported.".into());
     }

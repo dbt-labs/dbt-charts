@@ -2111,6 +2111,14 @@
   doc: Fired when the Rust render engine meets a chart shape it does not model yet. It names
     an engine gap, not a mistake in the board.
   docs_topic: charts
+- code: ERR-ENGINE-NEEDS-DATA
+  level: error
+  title: the render engine was given no result for a query
+  template: 'The render engine was given no result for the query {query}'
+  doc: Fired when the Rust render engine draws a chart whose query has neither a result nor
+    an execute error in the run it was given. The host runs every query before it renders, so
+    this names a host that did not, not a mistake in the board.
+  docs_topic: charts
 - code: ERR-CUSTOM-RENDER
   level: error
   title: Custom chart template failed to render

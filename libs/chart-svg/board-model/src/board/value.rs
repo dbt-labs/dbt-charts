@@ -208,10 +208,10 @@ impl Leaf for Visible {
     type Patch = Option<VisibleAuthored>;
     const MERGE: Merge = Merge::Override;
     const EXPR: TypeExpr = TypeExpr::Either(
-        &TypeExpr::Scalar(Scalar::Bool),
+        &<SingleRowBoolProbe as Leaf>::EXPR,
         &TypeExpr::Either(
+            &TypeExpr::Scalar(Scalar::Bool),
             &TypeExpr::Scalar(Scalar::Str),
-            &<SingleRowBoolProbe as Leaf>::EXPR,
         ),
     );
 }

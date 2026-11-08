@@ -494,6 +494,8 @@ pub enum Mark {
     },
     /// One bar per datum, from `y0` to `y1` at its band position.
     Bars,
+    /// One path per series through its datums in x order; a `defined: false` datum breaks the path.
+    Lines,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

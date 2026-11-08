@@ -278,6 +278,23 @@ where
         })
     }
 
+    /// `upper` with its color tokens resolved as [`Resolved::apply`] resolves them: against this
+    /// style's layers under `upper`. The layer on its own, for a host that ranks it above the tiers
+    /// below it. Color tokens only: named fonts (`extends`) are not expanded here, as `apply`
+    /// expands them on its way to the total.
+    pub fn resolved_layer(&self, upper: &T::Patch) -> Result<T::Patch, CascadeError> {
+        let mut raw = self.raw.clone();
+        (*raw).merge(upper.clone());
+        self.resolve_tokens(&raw, upper)
+    }
+
+    /// The one law: `upper`'s color tokens resolve against `raw`, the layers with `upper` over them.
+    fn resolve_tokens(&self, raw: &T::Patch, upper: &T::Patch) -> Result<T::Patch, CascadeError> {
+        let mut upper = upper.clone();
+        (self.tables.resolve_colors)(&mut upper, raw).map_err(CascadeError::Refused)?;
+        Ok(upper)
+    }
+
     /// Resolve `upper` over this style: what a full recompute of `folded` merged with `upper`
     /// gives, at the cost of what `upper` changes.
     pub fn apply(&self, upper: &T::Patch) -> Result<Self, CascadeError> {
@@ -303,8 +320,7 @@ where
         }
         let mut raw = self.raw.clone();
         (*raw).merge(upper.clone());
-        let mut upper = upper.clone();
-        (t.resolve_colors)(&mut upper, &raw).map_err(CascadeError::Refused)?;
+        let upper = self.resolve_tokens(&raw, upper)?;
         let mut folded = self.folded.clone();
         (*folded).merge(upper.clone());
         let mut inherited = self.inherited.clone();

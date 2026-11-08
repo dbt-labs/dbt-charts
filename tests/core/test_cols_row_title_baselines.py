@@ -64,8 +64,9 @@ charts:
     y: revenue
     color: region
     style:
-      endpoint_labels:
-        visible: true
+      legend:
+        position:
+          edge: endpoints
   donut: {{title: Donut title, query: parts, type: pie, theta: revenue, color: region}}
   stat: {{label: Big number, query: q, type: kpi, value: revenue}}
 rows:

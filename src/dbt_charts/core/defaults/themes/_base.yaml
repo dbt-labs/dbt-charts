@@ -456,7 +456,7 @@ style:
       # block at resolve time, so board-level patches on
       # `style.axis.*` reach axis_y through the same path.
       # "auto" → "right" by default; flips to "left" when endpoint labels are
-      # on the right edge (line charts with style.line.endpoint_labels.visible).
+      # on the right edge (line charts with legend.position.edge: endpoints).
       # Also serves the categorical-orient role for horizontal bar's swapped
       # categorical axis (categorical_orient was deleted 2026-08 trim).
       position: auto
@@ -899,9 +899,8 @@ style:
       # A vertical bar's labels anchor to the last column's per-series stack
       # midpoints; a horizontal bar's take the top-row rail instead. Resolve
       # turns this back off wherever the rail cannot name every series — see
-      # _bar_endpoint_labels_for_stack.
+      # _bar_rail_for_stack.
       endpoint_labels:
-        visible: auto
         label_offset: 6.0
         height: 20.0
       grouped:
@@ -917,7 +916,6 @@ style:
     # leaning on a side legend.
     line:
       endpoint_labels:
-        visible: auto
         label_offset: 6.0
         height: 20.0
 
@@ -928,7 +926,6 @@ style:
       # Authors who want a stacked area chart opt in via ``chart.style.stack: "zero"``.
       stack: none
       endpoint_labels:
-        visible: auto
         label_offset: 6.0
         height: 20.0
       axis_y:

@@ -420,6 +420,45 @@ ERR_BAR_Y_NOT_NUMERIC = REGISTRY.register(
     )
 )
 
+ERR_CHART_CHANNELS_UNBOUND = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CHART-CHANNELS-UNBOUND",
+        domain="compile",
+        title="Chart names no channel and its query's columns fit no positional shape",
+        message_template="Chart {chart_id!r} ({chart_type}) names no {channels}, so its query's columns bind by position: {shapes}. {outcome}",
+        fix_template="Name the family's channels, or select only the columns the chart plots.",
+        doc="Fired when a chart names none of its channels and the query's column count fits none of the family's positional shapes (for a bar, line or area: 2 columns bind `x`, `y`; 3 bind `x`, `color`, `y`), or, for a pie or donut, the query returned no rows to bind from. Positional binding reads column order only, dimensions first and the measure last, never a column's name or type.",
+        summary="Fired when a chart names no channel and its query's column count fits no positional shape.",
+        docs_topic="charts",
+    )
+)
+
+ERR_CHART_CHANNELS_INCOMPLETE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CHART-CHANNELS-INCOMPLETE",
+        domain="compile",
+        title="Chart names some of its channels but not the rest",
+        message_template="Chart {chart_id!r} ({chart_type}) names {named} but not {missing}. A family's channels are named together: {required}.",
+        fix_template="Name the rest of the set too, or name no column so the query's columns bind by position.",
+        doc="Fired when a chart names one of its channels (`x`, `y`, `color`, `theta`, ...) and leaves a required sibling unnamed: a `y` with no `x`, a `color` with no `x` and `y`. A field that names a column outside the set (`layers`, `y_start`, `connect`, `multiples`, `tooltip`) counts as naming one: binding the rest by position would read that column again. So does a `sort`, `support_table` or the chart's own mark `labels.field` (a board or theme cascade is not read) naming a column other than the measure once the query's columns fill an optional channel. Name the set, or name none of it and the query's columns bind by position.",
+        summary="Fired when a chart names some of its channels and leaves a required one unnamed.",
+        docs_topic="charts",
+    )
+)
+
+ERR_CHART_CHANNELS_NO_QUERY = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CHART-CHANNELS-NO-QUERY",
+        domain="compile",
+        title="Chart names no channel and has no query to bind them from",
+        message_template="Chart {chart_id!r} ({chart_type}) names no {channels} and has no query, so there are no columns to bind by position.",
+        fix_template="Give the chart a `query:`.",
+        doc="Fired when a chart names none of its channels and has no query: positional binding reads the query's columns, and there are none. Any family that binds by position reaches it; a pie, donut or KPI names its one channel (`theta:`, `value:`) to pass instead.",
+        summary="Fired when a chart names no channel and has no query to bind its columns from.",
+        docs_topic="charts",
+    )
+)
+
 ERR_LAYER_BASELINE_ON_DATE_MEASURE = REGISTRY.register(
     ErrorCode(
         code="ERR-LAYER-BASELINE-ON-DATE-MEASURE",
@@ -985,6 +1024,30 @@ ERR_THEME_AND_EXTENDS = REGISTRY.register(
         doc="Fired when a board or board fragment authors both `theme:` and `extends:`. `theme: X` is sugar for `extends: X`, so the two would compete for one slot. List the theme first in `extends:`, lowest priority, ahead of the boards it already extends.",
         summary="Fired when a board authors both `theme:` and `extends:`.",
         docs_topic="board",
+    )
+)
+
+ERR_LEGEND_ALIGN_WITH_ENDPOINTS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LEGEND-ALIGN-WITH-ENDPOINTS",
+        domain="compile",
+        title="Legend align does not apply to endpoint labels",
+        message_template="`legend.position.align` is set beside `edge: endpoints`, which names each series on the chart instead of placing a legend along an edge, so there is nothing to align. Remove `align`, or use a side edge (`left`, `right`, `top` or `bottom`).",
+        doc="Fired when one `legend.position` mapping authors `edge: endpoints` and an `align` other than `auto`. Endpoint labels ignore an `align` inherited from another tier or file, but it must still name a placement the legend supports.",
+        summary="Fired when `align` is authored beside `edge: endpoints`.",
+        docs_topic="charts",
+    )
+)
+
+ERR_LEGEND_OVERLAY_WITH_ENDPOINTS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LEGEND-OVERLAY-WITH-ENDPOINTS",
+        domain="compile",
+        title="Legend overlay does not apply to endpoint labels",
+        message_template="`legend.position.overlay` is set beside `edge: endpoints`, which names each series on the chart in a strip of its own instead of placing a legend. Remove `overlay`.",
+        doc="Fired when one `legend.position` mapping authors `edge: endpoints` and an `overlay` other than `auto`. Endpoint labels ignore an `overlay` inherited from another tier or file, but it must still name a placement the legend supports.",
+        summary="Fired when `overlay` is authored beside `edge: endpoints`.",
+        docs_topic="charts",
     )
 )
 

@@ -154,7 +154,7 @@ fn apply_identity_moves(
         .all
         .moves
         .iter()
-        .filter(|m| m.old_path == m.new_path)
+        .filter(|m| m.old_path == m.new_path && m.rewrite_in_document.is_none())
         .collect();
     if !identity
         .iter()
@@ -163,9 +163,10 @@ fn apply_identity_moves(
         return Ok(());
     }
     let mut work = doc.clone();
+    let authored = doc.to_json();
     let mut local = Applied::default();
     for m in identity {
-        apply_move(&mut work, m, &mut local)?;
+        apply_move(&mut work, m, &authored, &mut local)?;
     }
     *doc = work;
     out.notices.append(&mut local.notices);
@@ -262,13 +263,7 @@ fn migrate_mapping(
             break;
         };
         apply_map_key_deletions(&mut result, &mkds, &mut out);
-        let mut keys = owned_keys(&result);
-        for m in &moves {
-            if m.old_path.iter().all(|p| p == "*" || keys.contains(p)) {
-                apply_move(&mut result, m, &mut out)?;
-                keys = owned_keys(&result);
-            }
-        }
+        step_moves(&mut result, &moves, &mut out)?;
         apply_deletions(&mut result, &deletions, &mut out);
         for c in &conds {
             apply_conditional_move(&mut result, c, &mut out)?;
@@ -283,8 +278,16 @@ fn migrate_mapping(
             "Recognized schema {recognized} and applied its migration, but the result still fails the current schema at {why}."
         ))));
     }
+    dedupe(&mut out.notices);
     out.notices.push(IN_MEMORY.to_string());
     Ok(Some((result, out)))
+}
+
+/// Keeps each notice's first report: a position two moves reach (a tab's chart,
+/// by its plain and its `tabs` move) owes the author one.
+fn dedupe(notices: &mut Vec<String>) {
+    let mut seen = HashSet::new();
+    notices.retain(|n| seen.insert(n.clone()));
 }
 
 fn owned_keys(doc: &Node) -> HashSet<String> {
@@ -321,6 +324,9 @@ fn transition_applies(
     keys: &HashSet<String>,
 ) -> bool {
     for m in reg.moves_from(identifier) {
+        if m.rewrites_in_document_in_place() {
+            continue;
+        }
         if m.old_path.iter().all(|p| p == "*" || keys.contains(p))
             && !move_source_locations(doc, m).is_empty()
         {
@@ -469,6 +475,7 @@ pub fn plan_text(node: &Node, stop_target: Option<&str>) -> Result<TextPlan, Tex
             "Recognized schema {recognized} and applied its migration, but the result still fails the current schema at {why}."
         )));
     }
+    dedupe(&mut out.notices);
     Ok(TextPlan::Planned {
         node: staged,
         edits: out.edits,
@@ -476,15 +483,18 @@ pub fn plan_text(node: &Node, stop_target: Option<&str>) -> Result<TextPlan, Tex
     })
 }
 
+/// One boundary's moves, each fired where its old path's keys are present.
+/// Every document-aware rewrite reads the document as the moves began.
 fn step_moves(
     doc: &mut Node,
     moves: &[&crate::decl::Move],
     out: &mut Applied,
 ) -> Result<(), MigrationError> {
+    let authored = doc.to_json();
     let mut keys = owned_keys(doc);
     for m in moves {
         if m.old_path.iter().all(|p| p == "*" || keys.contains(p)) {
-            apply_move(doc, m, out)?;
+            apply_move(doc, m, &authored, out)?;
             keys = owned_keys(doc);
         }
     }

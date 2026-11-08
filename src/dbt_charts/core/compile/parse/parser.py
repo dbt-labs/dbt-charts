@@ -35,7 +35,10 @@ from dbt_charts.core.compile.models.board.authored import (
     AUTHORED_BOARD_ADAPTER,
     AuthoredBoard,
 )
-from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
+from dbt_charts.core.compile.models.factories import (
+    AUTHORED_INPUT,
+    MERGED_AUTHORED_INPUT,
+)
 from dbt_charts.core.utils import BoardLoader, UniqueKeyLoader
 
 # This module only sees raw content, so the file is unknown here; the compiler
@@ -275,14 +278,20 @@ def _empty_document_error() -> ParseError:
     return err
 
 
-def parse_mapping(parsed_data: dict[str, Any], content: str = "") -> AuthoredBoard:
+def parse_mapping(
+    parsed_data: dict[str, Any],  # type-state: explicit_any — raw parsed YAML
+    content: str = "",
+    *,
+    merged: bool = False,
+) -> AuthoredBoard:
     """Convert an already-parsed YAML mapping into an ``AuthoredBoard``.
 
     Shared by ``parse_yaml`` (string entry) and the meta-merge path in
     ``compile_file`` (which builds the mapping by deep-merging meta under the
     board, so there is no source string to re-parse). ``content`` is only used to
     enrich validation errors with line context; pass the original board text when
-    available, else leave empty.
+    available, else leave empty. ``merged`` marks a mapping folded from several
+    files, each already validated on its own.
 
     The mapping must already be migrated to the current grammar
     (``prepare_board_mapping``, on the raw document before any merge).
@@ -293,7 +302,7 @@ def parse_mapping(parsed_data: dict[str, Any], content: str = "") -> AuthoredBoa
 
     try:
         return AUTHORED_BOARD_ADAPTER.validate_python(
-            parsed_data, context=AUTHORED_INPUT
+            parsed_data, context=MERGED_AUTHORED_INPUT if merged else AUTHORED_INPUT
         )
     except PydanticValidationError as e:
         # compiler._parse_error_to_diagnostics re-reads e.__cause__ as a

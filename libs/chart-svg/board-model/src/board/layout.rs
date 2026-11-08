@@ -1,12 +1,13 @@
 //! How a board arranges what it holds: `rows` / `cols` / `grid` / `tabs`, spelled as
 //! sibling authored keys, and the items they place.
 //!
-//! An item is a chart by [`ChartId`] or a nested board. Inline chart definitions are not a
-//! third arm: normalize hoists them into `Board.charts` under a tree-position id and the
-//! layout holds that id.
+//! An item is a chart by [`ChartId`] or a nested board. An inline chart is a third arm of the
+//! authored form only (`LayoutItemAuthored::InlineChart`): normalize hoists it into
+//! `Board.charts` under a tree-position id and the built layout holds that id.
 
 use crate::board::value::{Length, Visible};
 use crate::board::BoardBody;
+use crate::chart::Chart;
 use crate::facet::{DisplayText, Markdown};
 use crate::ids::{ChartId, ItemId};
 use crate::string_enum;
@@ -59,7 +60,12 @@ pub struct NestedBoard {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum LayoutItem {
-    Chart(ChartId),
+    /// A chart by id, and whether this placement draws it. A bare name places it always drawn;
+    /// normalize moves an authored chart's `visible:` here.
+    Chart {
+        id: ChartId,
+        visible: Option<Visible>,
+    },
     Board(NestedBoard),
 }
 
@@ -69,6 +75,10 @@ pub enum LayoutItem {
 pub enum LayoutItemAuthored {
     Chart(ChartId),
     Board(<NestedBoard as Leaf>::Whole),
+    /// A chart written in place: a mapping with a `type`, or `{name: {type: ..}}` (Python keeps
+    /// the name for nothing: the hoisted id is the item's position). Not buildable until
+    /// normalize hoists it.
+    InlineChart(Box<<Chart as Leaf>::Whole>),
 }
 
 impl Leaf for LayoutItem {
@@ -76,7 +86,16 @@ impl Leaf for LayoutItem {
     type Authored = Option<LayoutItemAuthored>;
     type Patch = Option<LayoutItemAuthored>;
     const MERGE: Merge = Merge::Override;
-    const EXPR: TypeExpr = TypeExpr::Either(&<ChartId as Leaf>::EXPR, &<NestedBoard as Leaf>::EXPR);
+    const EXPR: TypeExpr = TypeExpr::Either(
+        &<ChartId as Leaf>::EXPR,
+        &TypeExpr::Either(
+            &<NestedBoard as Leaf>::EXPR,
+            &TypeExpr::Either(
+                &<Chart as Leaf>::EXPR,
+                &TypeExpr::Map(&<Chart as Leaf>::EXPR),
+            ),
+        ),
+    );
 }
 
 impl Build for LayoutItem {
@@ -88,10 +107,14 @@ impl Build for LayoutItem {
             None => Err(Unset {
                 paths: vec![at.to_string()],
             }),
-            Some(LayoutItemAuthored::Chart(id)) => Ok(Self::Chart(id)),
+            Some(LayoutItemAuthored::Chart(id)) => Ok(Self::Chart { id, visible: None }),
             Some(LayoutItemAuthored::Board(b)) => {
                 build_payload::<NestedBoard>(b, at).map(Self::Board)
             }
+            // The hoisted chart is a `Chart { id, .. }`; an unhoisted one has no id to hold.
+            Some(LayoutItemAuthored::InlineChart(_)) => Err(Unset {
+                paths: vec![at.to_string()],
+            }),
         }
     }
 }
@@ -108,9 +131,23 @@ impl FromNode for LayoutItem {
             Kind::Scalar(Value::Str(_)) => {
                 <ChartId as FromNode>::whole(node, cx).map(LayoutItemAuthored::Chart)
             }
-            Kind::Map(_) => {
-                <NestedBoard as FromNode>::whole(node, cx).map(LayoutItemAuthored::Board)
-            }
+            Kind::Map(m) if m.contains_key("type") => <Chart as FromNode>::whole(node, cx)
+                .map(|c| LayoutItemAuthored::InlineChart(Box::new(c))),
+            Kind::Map(m) => match m.iter().next() {
+                // A lone key that is no board key names a chart. Python takes the chart arm whenever the board arm
+                // fails, so `{title: {type: ..}}` is a chart there and a refused board here.
+                Some((name, entry))
+                    if m.len() == 1
+                        && matches!(entry.value.kind, Kind::Map(_))
+                        && !<NestedBoard as FromNode>::keys()
+                            .iter()
+                            .any(|k| k == name.as_str()) =>
+                {
+                    <Chart as FromNode>::whole(&entry.value, cx)
+                        .map(|c| LayoutItemAuthored::InlineChart(Box::new(c)))
+                }
+                _ => <NestedBoard as FromNode>::whole(node, cx).map(LayoutItemAuthored::Board),
+            },
             _ => {
                 cx.mismatch(node, "a chart name or a nested board");
                 None

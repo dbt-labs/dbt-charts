@@ -11,9 +11,12 @@
 //! sub-unit votes, alignment), a literal spec prints its own characters.
 
 pub mod locale;
+mod lanes;
 mod paint;
 
-use diagnostic::Diagnostic;
+pub use lanes::Lanes;
+
+use diagnostic::{diag, Diagnostic};
 use indexmap::IndexMap;
 use serde::Deserialize;
 use std::fmt;
@@ -23,7 +26,7 @@ use std::sync::LazyLock;
 /// redefine into a strftime spec before a slot can ask for one.
 const GRAIN_NAMES: [&str; 4] = ["date_month", "date_quarter", "date_week", "date_year"];
 /// `PREDEFINED_TEXT_NAMES`: names with no spec, for text a surface may link.
-const TEXT_NAMES: [&str; 2] = ["email", "url"];
+pub const TEXT_NAMES: [&str; 2] = ["email", "url"];
 /// `_ENGINE_FORMATS`: the names that bake the analytic register into themselves.
 const ANALYTIC_NAMES: [&str; 2] = ["compact", "currency_compact"];
 
@@ -137,6 +140,16 @@ impl<'a> Formats<'a> {
 
     fn get(&self, name: &str) -> Option<&'a Alias> {
         self.0?.get(name)
+    }
+
+    /// Whether the board's `style.formats` defines `name`.
+    pub fn defines(&self, name: &str) -> bool {
+        self.get(name).is_some()
+    }
+
+    /// The notation the alias `name` sets, when it is a mapping that sets one.
+    pub fn alias_notation(&self, name: &str) -> Option<Notation> {
+        self.config(Some(name))?.notation
     }
 
     /// The mapping `spec` names, if its target is one.
@@ -528,6 +541,41 @@ pub fn column_format(
     format.notation = format.notation.or(notation);
     vote_sub_unit(&mut format, formats, values)?;
     Ok(format)
+}
+
+/// `ALL_PREDEFINED_NAMES`: the engine's number, time and text format names.
+pub fn is_predefined_name(name: &str) -> bool {
+    use d3rs::predefined_formats::{PREDEFINED_NATIVE, PREDEFINED_SPECS, PREDEFINED_TIME_SPECS};
+    PREDEFINED_SPECS.iter().any(|spec| spec.name == name)
+        || PREDEFINED_NATIVE.contains(&name)
+        || PREDEFINED_TIME_SPECS.iter().any(|(spec, _)| *spec == name)
+        || TEXT_NAMES.contains(&name)
+}
+
+/// `_check_percent_range`'s threshold: a share or rate past it is a forgotten ÷100.
+const PERCENT_RANGE_THRESHOLD: f64 = 10.0;
+
+/// `format_value`: one number through `format` over the board's default for a
+/// number: an engine native as its own digits and unit, else the d3 spec the value
+/// takes (its sub-unit sibling below 1), in the format's notation or, for an engine
+/// house format, the analytic register. A non-delta percent of 10 or more is
+/// `ERR-PERCENT-RANGE`.
+pub fn format_value(
+    value: f64,
+    format: &AuthoredFormat,
+    formats: Formats<'_>,
+    locale: &locale::NumberLocale,
+) -> Result<String, Diagnostic> {
+    let parts = column_format(Kind::Number, Tiers { own: Some(format), ..Tiers::default() }, formats, None, None, &[])?;
+    if let Some((number, unit)) = d3rs::native::predefined_native(&parts.spec, value).map_err(Diagnostic::refused)? {
+        return Ok(format!("{}{number}{unit}{}", parts.prefix, parts.suffix));
+    }
+    let spec = sub_unit_spec_for_value(parts.raw.as_deref(), &parts.spec, value, formats)?;
+    if spec.ends_with('%') && !spec.starts_with('+') && value.abs() >= PERCENT_RANGE_THRESHOLD {
+        return Err(diag::err_percent_range(value, spec));
+    }
+    let notation = parts.notation.or(parts.is_house().then_some(Notation::Analytic));
+    parts.paint_as(locale, &spec, notation, value)
 }
 
 /// `declared_format`: the format name a query's `formats:` gives every one of

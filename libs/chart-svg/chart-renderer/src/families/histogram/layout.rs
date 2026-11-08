@@ -455,7 +455,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
             let bottom = y_pos(below);
             let top = y_pos(end);
             let Some(mark) = &segment.mark else { continue };
-            let aria = crate::contract::aria_attrs(Some(&mark.label), crate::contract::ItemRole::Bar)?;
+            let aria = ::layout::contract::aria_attrs(Some(&mark.label), ::layout::contract::ItemRole::Bar)?;
             let role = Role::Mark { layer: 0, series: None, datum: Some(datum) };
             let rect = stack_segment((left, right - left), (top, bottom), (stack_top, corner), (role, mark.fill.as_deref()), aria);
             marks.push(crate::href::linked(r.link_open.anchor(mark.href.as_deref()), rect));
@@ -474,7 +474,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
             }
         }
     }
-    plot.push(crate::contract::mark_group("rect", "marks", marks)?);
+    plot.push(::layout::contract::mark_group("rect", "marks", marks)?);
     if mirror_active {
         let rules: Vec<crate::contract::GhostRule> = ghosts
             .iter()

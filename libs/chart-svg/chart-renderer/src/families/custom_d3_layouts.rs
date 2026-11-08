@@ -10,7 +10,7 @@ use d3rs::sankey::{Align, Sankey};
 use d3rs::shape::link_horizontal;
 use d3rs::stack::{Offset, Order};
 use d3rs::symbol::SymbolType;
-use crate::scene_path::scene_path;
+use ::layout::scene_path::scene_path;
 use d3rs::vega_schemes;
 use minijinja::value::{Object, ObjectRepr, Rest, Value, ValueKind};
 use minijinja::{Error, State};

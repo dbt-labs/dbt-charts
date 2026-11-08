@@ -355,7 +355,7 @@ fn midnight_count(first: i64, last: i64) -> i64 {
 
 /// `strftime` of the instant `at`'s wall clock, in the board's time locale.
 fn clock_text(at: f64, spec: &str) -> Result<String, String> {
-    super::table_dates::strftime(super::temporal::clock_moment(at)?, spec)
+    ::bind::table_dates::strftime(super::temporal::clock_moment(at)?, spec)
 }
 
 /// `%p` lowered, in the board's time locale.
@@ -409,7 +409,7 @@ impl Vocab {
 fn date_text(at: f64, spec: &str) -> Result<String, String> {
     let (y, m, d) = civil_from_days(at.floor() as i64);
     let year = u32::try_from(y).map_err(|_| format!("year {y} out of range"))?;
-    super::table_dates::strftime(super::table_dates::Moment::midnight(year, u32::from(m), u32::from(d)), spec)
+    ::bind::table_dates::strftime(::bind::table_dates::Moment::midnight(year, u32::from(m), u32::from(d)), spec)
 }
 
 /// The tooltip header of timed rows spanning at most two days: the time of day, with the date where the rows

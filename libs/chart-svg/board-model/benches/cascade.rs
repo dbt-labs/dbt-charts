@@ -7,8 +7,7 @@ use model_core::Resolved;
 use serde_json::{json, Value};
 use std::hint::black_box;
 
-#[path = "../tests/it/inherit/generated.rs"]
-mod generated;
+use board_model::cascade as generated;
 #[path = "../tests/it/inherit/root.rs"]
 mod root;
 

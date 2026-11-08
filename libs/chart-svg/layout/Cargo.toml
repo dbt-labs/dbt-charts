@@ -7,16 +7,26 @@ description = "The layout stage: a bound board and fonts to scene nodes. Every p
 
 [dependencies]
 diagnostic = { path = "../diagnostic" }
+display-text = { path = "../display-text" }
+mdsvg = { path = "../mdsvg" }
 measure = { path = "../measure" }
 bind = { path = "../bind" }
+board-model = { path = "../board-model" }
+model-core = { path = "../model-core" }
 d3rs = { path = "../d3rs" }
+dbt-charts-color = { path = "../color" }
 fancy-regex = "0.19.2"
+indexmap = "2"
 jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bundle-always"] }
 libm = "0.2.16"
 regex = "1"
 scene = { path = "../scene" }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+md-5 = "0.11.0"
+print = { path = "../print" }
 
 [dev-dependencies]
+board-model = { path = "../board-model", features = ["fixtures"] }
 bind = { path = "../bind", features = ["test-support"] }
 diagnostic = { path = "../diagnostic", features = ["test-support"] }
+

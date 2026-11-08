@@ -90,9 +90,3 @@ def test_silent_when_no_layer_has_y() -> None:
 
 def test_silent_without_pinned_layer() -> None:
     assert _detect(LineLayer(type="line", y="headcount")) == []
-
-
-def test_unset_base_y_names_no_column_and_no_related_path() -> None:
-    (w,) = _detect(_pinned(), y=None)
-    assert "separate from the base chart's measure." in w.message
-    assert not w.related

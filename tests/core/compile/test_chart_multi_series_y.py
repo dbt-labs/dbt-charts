@@ -12,7 +12,9 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.authored import AuthoredChart
+from dbt_charts.core.compile.resolve.chart.positional import bind_channels
 
 _chart_patch_adapter = TypeAdapter(AuthoredChart)
 
@@ -56,12 +58,18 @@ def test_rejects_layers_with_multi_field_y(chart_type: str):
 
 
 @pytest.mark.parametrize("fields", [{}, {"color": "region"}, {"y": []}, {"y": ""}])
-def test_bar_rejects_x_without_y(fields: dict[str, object]):
-    """A bar with an x and no measure has nothing to draw. Left to the
-    emitter, it hands Vega-Lite a null field and dies as ERR-INTERNAL; an
-    empty list or name reaches the resolver's own validation error instead."""
-    with pytest.raises(ValidationError, match="Bar chart: x requires a y field"):
-        _validate(type="bar", x="month", **fields)
+def test_bar_with_x_and_no_measure_parses_and_fails_to_bind(
+    fields: dict[str, object], make_chart
+):
+    """A bar with an x and no measure has nothing to draw. Parse accepts it, so
+    a board can be edited one channel at a time; the binder refuses it before
+    the engine ever sees a null field, an empty list or name included."""
+    _validate(type="bar", x="month", **fields)
+    with pytest.raises(CompilationError, match="but not `y`"):
+        bind_channels(
+            make_chart("bar", **{"x": "month", "y": None, **fields}),
+            ["month", "revenue"],
+        )
 
 
 def test_bar_without_x_or_y_still_parses():
@@ -74,9 +82,12 @@ def test_histogram_with_x_and_no_y_still_parses():
     assert chart.type == "histogram"
 
 
-def test_bar_rejects_multi_field_y_without_x():
-    with pytest.raises(ValidationError, match="require an x field"):
-        _validate(type="bar", y=["revenue", "cost"])
+def test_bar_with_a_multi_field_y_and_no_x_parses_and_fails_to_bind(make_chart):
+    _validate(type="bar", y=["revenue", "cost"])
+    with pytest.raises(CompilationError, match="names `y` but not `x`"):
+        bind_channels(
+            make_chart("bar", x=None, y=["revenue", "cost"]), ["month", "revenue"]
+        )
 
 
 @pytest.mark.parametrize(

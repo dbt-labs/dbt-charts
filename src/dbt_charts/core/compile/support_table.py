@@ -262,9 +262,9 @@ def apply_measure_format_to_support_table(
 ) -> ChartSupportTable:
     """Inherit measure_format into support_table entries reading y_field with no authored format.
 
-    Shared by normalize_chart()'s _build_cartesian() — both need to
-    push the chart's resolved measure format into support_table entries that don't
-    author their own. InheritSlot cannot do this: that mechanism is specific to
+    Called where a chart resolves, with the y its rows bound, to push the
+    chart's measure format into support_table entries that don't author their
+    own. InheritSlot cannot do this: that mechanism is specific to
     the Style model tree, and the condition "only entries reading y_field
     inherit" is a cross-field identity check (entry.source == y_field), not a
     structural position.

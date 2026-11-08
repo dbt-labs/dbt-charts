@@ -21,13 +21,16 @@ _MULTI_SERIES_DATA: list[dict[str, Any]] = [
 def _board_style_with_endpoint_labels(
     chart_type: str, enabled: bool, model_copy_at: Any
 ) -> Any:
-    """Board style with endpoint_labels.visible set for the given chart type.
+    """Board style with the endpoint rail on (`auto`) or off (a top legend) for the given chart type.
 
     Seeds charts.legend.visible: auto explicitly, so these tests observe
     resolve's endpoint-label legend suppression rather than a theme pin.
     """
     from dbt_charts.core.compile.config import get_theme_style
-    from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
+    from dbt_charts.core.compile.models.style.authored import (
+        EndpointLabelsConfig,
+        LegendStylePatch,
+    )
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
     with_legend = model_copy_at(
@@ -36,8 +39,13 @@ def _board_style_with_endpoint_labels(
     seed = model_copy_at(
         with_legend,
         f"charts.{chart_type}.endpoint_labels",
-        EndpointLabelsConfig(
-            visible="auto" if enabled else False, label_offset=5.0, height=20.0
+        EndpointLabelsConfig(label_offset=5.0, height=20.0),
+    )
+    seed = model_copy_at(
+        seed,
+        f"charts.{chart_type}.legend",
+        LegendStylePatch.model_validate(
+            {"position": {"edge": "auto" if enabled else "top"}}
         ),
     )
     return resolve_chart_style_context(seed)

@@ -17,6 +17,9 @@ sub-objects.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -379,3 +382,50 @@ def test_merge_onto_base_rejects_base_without_type_across_layers():
     patch = ScaleContinuousStylePatch(log={"base": 2.0})
     with pytest.raises(ValidationError, match="log.base"):
         merge_onto_base(base, patch)
+
+
+_QUERY_AND_CHART = """
+queries:
+  q:
+    type: values
+    columns: [d, v]
+    values:
+      - ["2024-01-01", 1]
+charts:
+  c:
+    query: q
+    type: line
+    x: d
+    y: v
+rows:
+  - c
+"""
+
+
+def _charts_scale(path: str, leaf: str) -> str:
+    """A `style.charts` block setting one `scale.continuous` leaf under `path`."""
+    lines = ["style", "charts", *path.split("."), "scale", "continuous"]
+    nested = "".join(f"{'  ' * depth}{key}:\n" for depth, key in enumerate(lines))
+    return nested + f"{'  ' * len(lines)}{leaf}\n"
+
+
+@pytest.mark.parametrize("path", ["axis_x", "line.axis_x"])
+def test_a_temporal_type_and_a_domain_from_two_files_is_refused_at_its_path(
+    in_memory_project: Callable, path: str
+) -> None:
+    """The fold of meta.yml onto the board judges the pair, naming the full key."""
+    from dbt_charts.core.compile.compiler import compile_file
+
+    project = in_memory_project(
+        Path("/tmp/test-scale-domain-two-files"),
+        {
+            "charts/meta.yml": _charts_scale(path, "type: temporal"),
+            "charts/board.yml": _charts_scale(path, "domain: [1, 2]")
+            + _QUERY_AND_CHART,
+        },
+    )
+
+    result = compile_file(project.path("charts/board.yml").read_board())
+
+    [error] = result.errors
+    assert f"style.charts.{path}.scale.continuous" in error.message

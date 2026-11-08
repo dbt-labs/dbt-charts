@@ -171,16 +171,22 @@ pub enum CartesianLayer {
     Scatter(ScatterLayer),
 }
 
+/// A bare `y_start:` is null, which must not read as "start at zero". The spine's `absent` field
+/// takes null as its absent state, so the authored twin is where it is still seen. Python's one
+/// `Y_START_NOT_NULL` rule serves the bar layer and the bar chart alike.
+pub fn y_start_not_null(y_start: &Tri<NonBlankColumn>) -> Vec<Diagnostic> {
+    if matches!(y_start, Tri::Null) {
+        return vec![diag::err_validation_field(
+            "y_start",
+            "Value error, y_start names no column; remove it for bars that start at zero.",
+        )];
+    }
+    Vec::new()
+}
+
 impl BarLayer {
-    /// A bare `y_start:` is null, which must not read as "start at zero". The spine's `absent`
-    /// field takes null as its absent state, so the authored twin is where it is still seen.
+    /// [`y_start_not_null`] on a bar layer.
     pub fn null_y_start(layer: &Authored<BarLayer>) -> Vec<Diagnostic> {
-        if matches!(layer.y_start, Tri::Null) {
-            return vec![diag::err_validation_field(
-                "y_start",
-                "y_start names no column; remove it for bars that start at zero.",
-            )];
-        }
-        Vec::new()
+        y_start_not_null(&layer.y_start)
     }
 }

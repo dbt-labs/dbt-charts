@@ -14,7 +14,12 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.compile.compiler import compile, compile_file
+from dbt_charts.core.compile.compiler import (
+    _bound_x_projection,
+    compile,
+    compile_file,
+    validate_compiled_queries,
+)
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 
 # source: warehouse matches the named registry the threading test supplies.
@@ -534,3 +539,34 @@ def test_duplicate_variable_name_from_an_imported_board_says_so(
     assert error.code == "ERR-DUPLICATE-VARIABLE-NAME"
     assert "variables.v and an imported board" in error.message
     assert error.path is None
+
+
+@pytest.mark.parametrize(
+    ("chart_type", "sql"),
+    [
+        ("bar", "SELECT ((("),
+        ("bar", "SELECT 1 AS a, 2 AS b, 3 AS c, 4 AS d"),
+        ("histogram", "PIVOT t ON a USING sum(b)"),
+    ],
+    ids=["unparseable", "no-shape-for-four-columns", "not-a-select"],
+)
+def test_a_shorthand_chart_over_sql_the_lint_cannot_read_skips_the_x_lint(
+    chart_type: str, sql: str
+) -> None:
+    """The lint reads the x a shorthand chart binds from the query's projections
+    when it can; otherwise it has no x to check and the compile goes on."""
+    result = compile(
+        "source: examples_db\n"
+        f"queries:\n  q:\n    dialect: duckdb\n    sql: {sql}\n"
+        f"charts:\n  c:\n    type: {chart_type}\n    query: q\n"
+        "rows:\n  - c\n"
+    )
+    assert result.success, result.errors
+    assert result.board is not None
+    assert (
+        _bound_x_projection(
+            chart_type, result.query_registry["q"], result.board.sources
+        )
+        is None
+    )
+    validate_compiled_queries(result)

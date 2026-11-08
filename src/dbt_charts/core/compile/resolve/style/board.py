@@ -37,7 +37,6 @@ from dbt_charts.core.compile.models.primitives import (
     parse_box_shadow,
 )
 from dbt_charts.core.compile.models.style.authored import (
-    EndpointLabelsConfig,
     PaginationConfig,
     StylePatch,
     SupportTableStylePatch,
@@ -688,16 +687,8 @@ class ConcreteFamilyDefaults:
 def concrete_family_defaults(
     chart_context: ChartStyleContext,
 ) -> ConcreteFamilyDefaults:
-    """An `auto` endpoint rail is on, and an `auto` support-table ink is the
-    table's neutral color."""
+    """An `auto` support-table ink is the table's neutral color."""
     from dbt_charts.core.compile.support_table import bake_neutral_ink  # noqa: PLC0415
-
-    def rail_on(config: EndpointLabelsConfig) -> EndpointLabelsConfig:
-        return (
-            config.model_copy(update={"visible": True})
-            if config.visible == "auto"
-            else config
-        )
 
     def table(style: SupportTableStyle) -> SupportTableStyle:
         return bake_neutral_ink(style)[0]
@@ -720,23 +711,12 @@ def concrete_family_defaults(
             else merge_onto_base(pie, chart_context.donut)
         ),
         support_table=table(chart_context.support_table),
-        bar=bar.model_copy(
-            update={
-                "support_table": family_table(bar.support_table),
-                "endpoint_labels": rail_on(bar.endpoint_labels),
-            }
-        ),
+        bar=bar.model_copy(update={"support_table": family_table(bar.support_table)}),
         line=line.model_copy(
-            update={
-                "support_table": family_table(line.support_table),
-                "endpoint_labels": rail_on(line.endpoint_labels),
-            }
+            update={"support_table": family_table(line.support_table)}
         ),
         area=area.model_copy(
-            update={
-                "support_table": family_table(area.support_table),
-                "endpoint_labels": rail_on(area.endpoint_labels),
-            }
+            update={"support_table": family_table(area.support_table)}
         ),
         heatmap=heatmap.model_copy(
             update={"support_table": family_table(heatmap.support_table)}

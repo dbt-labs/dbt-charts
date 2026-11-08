@@ -6,7 +6,7 @@
 
 use d3rs::format::{format, format_float, parse_parts, vega_tick_format};
 
-use super::table_dates::{strftime, Moment};
+use ::bind::table_dates::{strftime, Moment};
 use super::temporal::{axis_time_format, time_unit_specifier, LabelUnit};
 use ::bind::temporal::{VegaType};
 use ::bind::temporal::{TimeUnit};

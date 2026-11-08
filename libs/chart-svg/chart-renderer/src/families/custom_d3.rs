@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use d3rs::scale::{Band, Continuous, Transform};
 use d3rs::shape::Curve;
-use crate::scene_path::scene_path;
+use ::layout::scene_path::scene_path;
 use scene::{PathCommand, PathData};
 use d3rs::format::{tick_format, spec_width};
 use minijinja::value::{Kwargs, Object, ObjectRepr, Rest, Value, ValueKind};

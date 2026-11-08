@@ -19,14 +19,15 @@
 //!   the shapes exclusive; normalize's `fill` of `rows` consumes them.
 //! - Left off the spine: `variable_dependencies`, `parse_error` (derived, `BoardIndex` and
 //!   `SqlAnalysis`), `lenient_variables` (execute's working state), `limit` (never authored),
-//!   `source_description` (derived), and the resolved `cache` policy.
-//!   Authored `cache:` waits for the `cache.py` port (the same type sits on boards and sources).
+//!   `source_description` (derived), and the resolved `cache` policy; the authored `cache:` layer
+//!   is [`crate::cache`]'s.
 //!
 //! Dissolved validators: `_validate_incremental` is [`Incremental`]'s read;
 //! `SchemaQuery._no_jinja` is [`LiteralText`]; the schema query's `Requires` rules are
 //! `requires` constraints; `normalize_query_value` is the query union's tag inference
 //! plus the board's `QueryOrRef` accept arm (bare SQL string, `{ref}`), not ported here.
 
+use crate::cache::CacheLayer;
 use crate::facet::{facet, DisplayText, Facet, FormatName};
 use crate::names::WarningCode;
 use crate::string_enum;
@@ -160,6 +161,9 @@ pub struct QueryBase {
     /// Diagnostic codes to suppress for this query (e.g., ['WARN-MISSING-JOIN-PREDICATE', 'WARN-REAGGREGATION']).
     #[model(absent = "suppresses nothing")]
     pub ignore: Option<Vec<WarningCode>>,
+    /// Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references.
+    #[model(absent = "the policy inherited from the source and project scopes")]
+    pub cache: Option<CacheLayer>,
     /// A column's format, set once on its query, only where the default would misread (currency, percent, a unit); counts and plain numbers need none. Every chart showing the column follows it; a chart sets its own only to differ. A d3 spec is rejected. No entry leaves the column on the default for its kind.
     pub formats: IndexMap<String, FormatName>,
     /// Column used as the monotonic watermark for incremental refresh: the executor fetches only rows after the prior watermark and merges them with the cached result. `incremental: false` opts this query out of a board's incremental setting. Inherits from the board-level incremental setting when omitted.

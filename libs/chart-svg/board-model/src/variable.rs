@@ -7,7 +7,8 @@
 //!
 //! - `input: auto` is [`Engine`]'s `Auto` rule over the concrete [`InputType`]; the board's
 //!   data and `options` decide which control `auto` is.
-//! - `query` and `options.query` name a query. An inline `query:` definition is hoisted by
+//! - `query` and `options.query` name a query (`options.query` may instead hold SQL text:
+//!   [`OptionsQuery`]). An inline `query:` definition is hoisted by
 //!   the refs pass into the board's `queries` and the variable keeps its name; that
 //!   accept arm belongs with the board's `QueryOrRef`, not here.
 //! - `presets` holds daterange preset names. Python checks each against the preset grammar
@@ -23,14 +24,13 @@
 use crate::board::value::SingleRowBoolProbe;
 use crate::facet::DisplayText;
 use crate::ids::QueryName;
-use crate::query::Cell;
 use crate::rule::Auto;
 use crate::string_enum;
 use model_core::{
     Build, Cx, Engine, FromNode, Leaf, Merge, Model as _, Node, ReadScalar, Scalar, TypeExpr,
 };
 use model_derive::Model;
-use serde_json::Value;
+use serde_json::{Number, Value};
 
 string_enum!(
     /// A concrete control; `auto` is the [`Auto`] rule.
@@ -112,15 +112,69 @@ impl Leaf for StaticOptions {
 }
 model_core::build_leaf!(StaticOptions);
 
+/// A select's `options.query`: a query name, or SQL text the author wrote in its place (Python's
+/// `promote_inline_option_queries` tells them apart by a pattern, with no registry). Normalize
+/// moves SQL text into `queries` and the variable keeps the name, so a variable that has been
+/// through normalize holds only names. `Sql` holds the text stripped, as Python builds its query.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OptionsQuery {
+    /// A query name, as written (`queries.` prefix included).
+    Name(QueryName),
+    /// SQL text.
+    Sql(String),
+}
+
+/// Python's `_QUERY_NAME_RE`: `^(?:queries\.)?[a-zA-Z_][a-zA-Z0-9_]*$`.
+fn is_query_name(text: &str) -> bool {
+    let name = text.strip_prefix("queries.").unwrap_or(text);
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+impl ReadScalar for OptionsQuery {
+    fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
+        let text = String::read(node, cx)?;
+        let trimmed = text.trim();
+        if trimmed.is_empty() || is_query_name(trimmed) {
+            return QueryName::read(node, cx).map(Self::Name);
+        }
+        Some(Self::Sql(trimmed.to_string()))
+    }
+}
+
+impl FromNode for OptionsQuery {
+    fn authored(node: &Node, cx: &mut Cx) -> Self::Authored {
+        Self::read(node, cx)
+    }
+    fn patch(node: &Node, cx: &mut Cx) -> Self::Patch {
+        Self::read(node, cx)
+    }
+    fn whole(node: &Node, cx: &mut Cx) -> Option<Self::Whole> {
+        Self::read(node, cx)
+    }
+}
+
+impl Leaf for OptionsQuery {
+    type Whole = OptionsQuery;
+    type Authored = Option<OptionsQuery>;
+    type Patch = Option<OptionsQuery>;
+    const MERGE: Merge = Merge::Override;
+    const EXPR: TypeExpr = TypeExpr::Scalar(Scalar::Str);
+}
+model_core::build_leaf!(OptionsQuery);
+
 /// Where a select's options come from.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct VariableOptions {
     /// Option values that are not in the data, written out: all strings or all numbers. Numeric options type the value the control sends back as a number unless data_type says otherwise.
     #[model(absent = "options come from the query")]
     pub r#static: Option<StaticOptions>,
-    /// Query name whose result rows provide option values.
+    /// Query name whose result rows provide option values, or the SQL text itself.
     #[model(absent = "no option query")]
-    pub query: Option<QueryName>,
+    pub query: Option<OptionsQuery>,
     /// Column in the query result to use as option values.
     #[model(absent = "no option column")]
     pub column: Option<String>,
@@ -192,6 +246,66 @@ crate::style::axis::non_empty_list!(
     String
 );
 
+/// A variable's `default:` as written: JSON, except that an unquoted YAML date stays a
+/// [`DefaultValue::Date`] and does not become text, since Python holds it as a `date`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DefaultValue {
+    Null,
+    Bool(bool),
+    Number(Number),
+    Text(String),
+    /// An unquoted `YYYY-MM-DD`.
+    Date(String),
+    /// A timestamp with a time of day, which no variable input takes.
+    DateTime(String),
+    List(Vec<DefaultValue>),
+    /// A mapping, kept as JSON; no input takes one either.
+    Map(Value),
+}
+
+impl DefaultValue {
+    fn of(node: &Node) -> Self {
+        use yaml::{Kind, Value as Y};
+        match &node.kind {
+            Kind::Scalar(Y::Null) => Self::Null,
+            Kind::Scalar(Y::Bool(b)) => Self::Bool(*b),
+            Kind::Scalar(Y::Number(n)) => Self::Number(n.clone()),
+            Kind::Scalar(Y::Str(s)) => Self::Text(s.clone()),
+            Kind::Scalar(Y::Timestamp(s)) if s.len() == 10 => Self::Date(s.clone()),
+            Kind::Scalar(Y::Timestamp(s)) => Self::DateTime(s.clone()),
+            Kind::Seq(items) => Self::List(items.iter().map(Self::of).collect()),
+            Kind::Map(_) => Self::Map(node.to_json()),
+        }
+    }
+}
+
+impl ReadScalar for DefaultValue {
+    fn read(node: &Node, _: &mut Cx) -> Option<Self> {
+        Some(Self::of(node))
+    }
+}
+
+impl FromNode for DefaultValue {
+    fn authored(node: &Node, cx: &mut Cx) -> Self::Authored {
+        Self::read(node, cx)
+    }
+    fn patch(node: &Node, cx: &mut Cx) -> Self::Patch {
+        Self::read(node, cx)
+    }
+    fn whole(node: &Node, cx: &mut Cx) -> Option<Self::Whole> {
+        Self::read(node, cx)
+    }
+}
+
+impl Leaf for DefaultValue {
+    type Whole = DefaultValue;
+    type Authored = Option<DefaultValue>;
+    type Patch = Option<DefaultValue>;
+    const MERGE: Merge = Merge::Override;
+    const EXPR: TypeExpr = TypeExpr::Scalar(Scalar::Json);
+}
+model_core::build_leaf!(DefaultValue);
+
 /// Variable definition: a dynamic value for queries and charts, bound to a user input or fixed.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct Variable {
@@ -206,7 +320,7 @@ pub struct Variable {
     pub notes: Option<DisplayText>,
     /// Value used when no URL param or --var sets one; a dropdown starts at "All", so omit it there. Quote one containing `: `. A daterange takes `[start, end]` or a rolling preset such as `last_90_days`.
     #[model(absent = "no default")]
-    pub default: Option<Cell>,
+    pub default: Option<DefaultValue>,
     /// daterange only: the picker's preset menu, in order, replacing `style.variables.presets`. Each is a preset name (`last_30_days`, `previous_3_quarters`, `this_fiscal_quarter`); `default` need not be one.
     #[model(absent = "the menu in style.variables.presets")]
     pub presets: Option<Presets>,

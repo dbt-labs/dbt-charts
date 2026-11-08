@@ -3,7 +3,9 @@
 //! `marks.rule` is `RuleMarkStyle | None` under `SkipInheritSlots(cascade=True)`; as in
 //! `heatmap`, its `None` only meant "copy the global rule mark", so the field is the total model.
 
-use crate::style::chart_base::{CartesianChartStyle, QuantitativeAxisChartStyleMixin};
+use crate::style::chart_base::{
+    CartesianChartStyle, QuantitativeAxisChartStyleMixin, SideLegendedChartStyleBase,
+};
 use crate::style::marks::{BarMarkStyle, RuleMarkStyle};
 use model_derive::Model;
 
@@ -21,6 +23,8 @@ pub struct HistogramChartMarksStyle {
 pub struct HistogramChartStyle {
     #[flatten]
     pub quantitative: QuantitativeAxisChartStyleMixin,
+    #[flatten]
+    pub legended: SideLegendedChartStyleBase,
     #[flatten]
     pub cartesian: CartesianChartStyle,
     /// Maximum number of bins for auto-binning.

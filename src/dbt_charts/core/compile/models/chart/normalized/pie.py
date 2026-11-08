@@ -20,7 +20,8 @@ class PieChart(_SharedChartFields, _FieldLabelsField, _TooltipFields, _PatternFi
     is_donut: bool = Field(
         default=False, description="Authored as `type: donut`; styled by `donut`."
     )
-    theta: str = Field(description="Field mapped to arc angle (required).")
+    # None until resolve binds it from the query's columns by position.
+    theta: str | None = Field(default=None, description="Field mapped to arc angle.")
     color: str | None = Field(default=None, description="Field mapped to arc color.")
     total: ChartTotal | None = Field(
         default=None, description="Donut center total config."

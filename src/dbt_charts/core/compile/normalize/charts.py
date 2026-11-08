@@ -48,7 +48,6 @@ from dbt_charts.core.compile.models.chart.normalized import (
 )
 from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
 from dbt_charts.core.compile.models.primitives import (
-    FormatConfig,
     LinkOpen,
     split_link,
 )
@@ -63,7 +62,6 @@ from dbt_charts.core.compile.normalize.queries import (
 )
 from dbt_charts.core.compile.normalize.variables import synthetic_query_name
 from dbt_charts.core.compile.parse.parser import looks_like_sql
-from dbt_charts.core.compile.support_table import apply_measure_format_to_support_table
 from dbt_charts.core.compile.template.custom_template import (
     INLINE_TEMPLATE_NAME,
     TEMPLATE_FILE_SUFFIX,
@@ -516,16 +514,11 @@ def normalize_chart(
                 board_cache=board_cache,
             )
         case "pie":
-            theta = authored.theta
-            if not theta:
-                raise CompilationError(
-                    f"Chart '{chart_id}' (pie) requires 'theta' field."
-                )
             return PieChart(
                 **base,
                 **shared,
                 type="pie",
-                theta=theta,
+                theta=authored.theta,
                 field_labels=authored.field_labels,
                 tooltip=authored.tooltip if authored.tooltip is not None else [],
                 color=authored.color,
@@ -537,15 +530,10 @@ def normalize_chart(
                 is_donut=is_donut,
             )
         case "kpi":
-            value = authored.value
-            if not value:
-                raise CompilationError(
-                    f"Chart '{chart_id}' (kpi) requires 'value' field."
-                )
             return KpiChart(
                 **base,
                 type="kpi",
-                value=value,
+                value=authored.value,
                 label=authored.label or "",
                 support=authored.support,
                 glyph=authored.glyph,
@@ -741,26 +729,11 @@ def _build_cartesian(
     aspect_ratio: float | None = None
     promo_min_height: float | None = None
     promo_max_height: float | None = None
-    measure_format: str | FormatConfig | None = None
     if authored_style is not None:
         aspect_ratio = authored_style.aspect_ratio
         promo_min_height = authored_style.min_height
         promo_max_height = authored_style.max_height
-        if (
-            authored_style.axis_y is not None
-            and authored_style.axis_y.labels is not None
-            and authored_style.axis_y.labels.format
-        ):
-            measure_format = authored_style.axis_y.labels.format
     support_table = authored.support_table
-    if (
-        support_table is not None
-        and measure_format is not None
-        and isinstance(authored.y, str)
-    ):
-        support_table = apply_measure_format_to_support_table(
-            support_table, measure_format, authored.y
-        )
     layers = extra.get("layers")
     if layers and query_registry is not None:
         _promote_layer_inline_queries(

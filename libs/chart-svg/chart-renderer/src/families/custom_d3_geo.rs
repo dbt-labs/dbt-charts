@@ -15,7 +15,7 @@ use d3rs::geojson::GeoJson;
 use minijinja::value::{Object, ObjectRepr, Rest, Value, ValueKind};
 use minijinja::{Error, State};
 
-use crate::scene_path::scene_path;
+use ::layout::scene_path::scene_path;
 use super::custom::invalid;
 use super::custom_d3::{bind, extent, finite, floats, items, non_negative_or, pair};
 use super::geo::vega::{VegaConstructor, VegaProjection, VEGA_PROJECTIONS};

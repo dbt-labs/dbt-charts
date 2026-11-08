@@ -19,6 +19,7 @@ from dbt_charts.core.compile.schema.renderers.json_schema import (
     render_yaml_schema,
 )
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
+    PACKAGE_SCHEMA_DIR,
     canonical_schema_bytes,
     compute_current_schema,
     load_yaml_schema_catalog,
@@ -1174,3 +1175,12 @@ def test_grammar_drops_exactly_the_cross_field_rules() -> None:
     assert catalog.grammar_for(catalog.dev.version) is catalog.grammar_for(
         catalog.dev.version
     )
+
+
+def test_the_dev_grammar_the_migrate_crate_embeds_is_the_live_one() -> None:
+    """The Rust engine migrates to `dev.json`; a stale copy would migrate boards
+    to a grammar the models no longer accept. Regenerate with
+    `just gen-dev-grammar`."""
+    committed = PACKAGE_SCHEMA_DIR.joinpath("dev.json").read_bytes()
+
+    assert committed == structural_schema_bytes(compute_current_schema())

@@ -1,7 +1,7 @@
 """TDD tests for the endpoint-labels primitive on the bar family.
 
 Mirrors the line/area implementation: a multi-series column chart with
-``style.bar.endpoint_labels.visible: true`` emits an ``hconcat`` with the
+``style.bar.legend.position.edge: endpoints`` emits an ``hconcat`` with the
 chart pane on the left and a series-label pane on the right. Anchor
 computation is per-family:
 
@@ -41,17 +41,23 @@ def seed_with_bar_endpoint_labels(model_copy_at):
     no-wrap regression test is checking for).
     """
     from dbt_charts.core.compile.config import get_theme_style
-    from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
+    from dbt_charts.core.compile.models.style.authored import (
+        EndpointLabelsConfig,
+        LegendStylePatch,
+    )
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
     def _build(enabled: bool, label_offset: float = 5.0):
         seed = model_copy_at(
             get_theme_style("stark"),
             "charts.bar.endpoint_labels",
-            EndpointLabelsConfig(
-                visible="auto" if enabled else False,
-                label_offset=label_offset,
-                height=20.0,
+            EndpointLabelsConfig(label_offset=label_offset, height=20.0),
+        )
+        seed = model_copy_at(
+            seed,
+            "charts.bar.legend",
+            LegendStylePatch.model_validate(
+                {"position": {"edge": "auto" if enabled else "top"}}
             ),
         )
         return resolve_chart_style_context(seed)
@@ -82,7 +88,7 @@ def resolve_bar_chart(make_chart, seed_with_bar_endpoint_labels):
         if author_asked:
             # The chart's own patch, not the board seed: only this outranks the
             # shape-based disqualifiers in _bar_endpoint_labels_for_stack.
-            style["endpoint_labels"] = {"visible": True}
+            style["legend"] = {"position": {"edge": "endpoints"}}
         if style:
             kwargs["style"] = style
         chart = make_chart("bar", x="date", y="value", **kwargs)
@@ -113,7 +119,6 @@ def test_all_themes_compile_with_bar_endpoint_labels_field(compiled_themes):
         cfg = ctx.bar.endpoint_labels
         assert cfg is not None
         # Field is present and typed; we don't pin theme literal values.
-        assert cfg.visible in (True, False, "auto")
         assert isinstance(cfg.label_offset, float)
 
 
@@ -136,7 +141,7 @@ def test_negative_values_raise_registered_code_not_err_internal(resolve_bar_char
     """The defense-in-depth raise for a direct, non-default construction
     (endpoint_labels forced back on after resolve's auto-disable) must carry
     a registered code, not the ERR-INTERNAL fallback, and its fix must name
-    the field's full authored path (`style.endpoint_labels.visible`), not
+    the field's full authored path (`style.legend.position.edge`), not
     the bare `endpoint_labels.visible` that doesn't exist at the chart root.
     """
     from dbt_charts.core.diagnostics.codes_render import (
@@ -163,7 +168,7 @@ def test_negative_values_raise_registered_code_not_err_internal(resolve_bar_char
         _render(rc, data)
     err = exc_info.value
     assert err.code is ERR_ENDPOINT_LABELS_NEGATIVE_STACK
-    assert "style.endpoint_labels.visible" in str(err)
+    assert "style.legend.position.edge" in str(err)
 
 
 # ---------------------------------------------------------------------------

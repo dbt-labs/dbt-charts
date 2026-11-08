@@ -18,6 +18,9 @@ from dbt_charts.core.compile.format_value import (
 )
 from dbt_charts.core.compile.merge import to_padding_style
 from dbt_charts.core.compile.models.chart.authored import ConditionalRule
+from dbt_charts.core.compile.models.chart.authored.kpi import (
+    default_rule_beside_good,
+)
 from dbt_charts.core.compile.models.chart.normalized import (
     CalloutChart,
     KpiChart,
@@ -61,6 +64,9 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_compile import ERR_VALIDATION_FIELD
+from dbt_charts.core.diagnostics.codes_render import ERR_KPI_NO_DATA
 from dbt_charts.core.text.predefined_formats import PREDEFINED_TEXT_NAMES
 from dbt_charts.core.utils import coerce_numeric_cell
 
@@ -79,6 +85,11 @@ def _resolve_kpi(
     automatic_link_candidate: AutomaticLinkCandidate,
     display_text: ChartDisplayText = None,
 ) -> ResolvedKpiChart:
+    value = normalized.value
+    if value is None:
+        # resolve() binds value from the rows; only a zero-row result still
+        # arrives without one, and that fails the way it fails a named KPI.
+        raise ChartDataError.from_code(ERR_KPI_NO_DATA, chart_id=normalized.id)
     primary = _with_color_tokens(normalized.style, chart_style_context)
     # The chart-local context re-runs inherit, so a chart's own `style.font`
     # reaches every slot font.
@@ -87,7 +98,7 @@ def _resolve_kpi(
     )
     channels = _channels_for(normalized, data)
     formats = chart_style_context.formats
-    headline = _headline_numeric_value(normalized.value, data)
+    headline = _headline_numeric_value(value, data)
     chart_value = (
         primary.value.format if primary is not None and primary.value else None
     )
@@ -130,12 +141,22 @@ def _resolve_kpi(
         and support.value is not None
         else ()
     ) + authored_rules
+    if normalized.good is not None and cf is not None and value in cf:
+        # The authored validator makes this check only on a named value; a
+        # bound one is checked here, once the rows have named the column.
+        message = default_rule_beside_good(cf[value], value, "good")
+        if message is not None:
+            raise CompilationError.from_code(
+                ERR_VALIDATION_FIELD,
+                field_path=f"charts.{normalized.id}.conditional_formatting.{value}",
+                pydantic_msg=message,
+            )
     value_rules = (
         _good_rules(
             normalized.id,
             "good",
             "style.value.glyph",
-            normalized.value,
+            value,
             normalized.good,
             data,
             kpi.value.glyph,
@@ -150,7 +171,7 @@ def _resolve_kpi(
         compact=kpi.value.compact,
         board=board_value,
         query_formats=query_formats,
-        columns=normalized.value,
+        columns=value,
     )
     support_format = kpi.support.format
     if (
@@ -166,13 +187,13 @@ def _resolve_kpi(
             text=True,
         )
     text_link = _kpi_text_link(
-        value_format, data, normalized.value, normalized.id, bool(base["link"])
+        value_format, data, value, normalized.id, bool(base["link"])
     )
     return ResolvedKpiChart(
         **base,
         text_link=text_link,
         chart_type="kpi",
-        value=normalized.value,
+        value=value,
         label=_resolve_text(
             normalized.label, display_text, formats, normalized.id, "label"
         ),
@@ -211,7 +232,7 @@ def _resolve_kpi(
             chart_value,
             board=board_value,
             query_formats=query_formats,
-            columns=normalized.value,
+            columns=value,
         ),
         style=ResolvedKpiStyle(kpi=kpi),
     )

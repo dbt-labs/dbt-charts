@@ -146,14 +146,12 @@ def test_map_dispatches_to_geoshape():
 # ── required-field enforcement ────────────────────────────────────────────────
 
 
-def test_pie_requires_theta():
-    with pytest.raises(ValidationError):
-        PieChart(id="p", type="pie")
+def test_pie_theta_is_unset_until_bound():
+    assert PieChart(id="p", type="pie").theta is None
 
 
-def test_kpi_requires_value():
-    with pytest.raises(ValidationError):
-        KpiChart(id="k", type="kpi")
+def test_kpi_value_is_unset_until_bound():
+    assert KpiChart(id="k", type="kpi").value is None
 
 
 def test_callout_requires_message():

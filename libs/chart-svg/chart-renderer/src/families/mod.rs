@@ -25,7 +25,6 @@ pub mod spark_bar;
 pub mod span;
 pub mod subday;
 pub mod table;
-mod table_dates;
 pub(crate) mod tooltip_extra;
 
 pub mod cartesian;

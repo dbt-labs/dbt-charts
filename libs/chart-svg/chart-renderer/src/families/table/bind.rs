@@ -52,7 +52,7 @@ use ::bind::rows::{py_scalar_key, PyKey};
 use diagnostic::py_repr;
 use diagnostic::py_str;
 use diagnostic::Diagnostic;
-use crate::families::table_dates;
+use ::bind::table_dates;
 use crate::Payload;
 use crate::TonesStyle;
 use d3rs::py_float::float_repr;
@@ -1261,34 +1261,19 @@ pub(super) fn format_temporal_cell(col: &ColMeta, s: &str) -> Result<Option<Stri
         return Ok(None);
     }
     if !table_dates::is_time_format(spec) {
-        return Err(format_kind_mismatch(
-            spec,
-            "use a strftime spec (e.g. '%-d %b %Y') or remove format: to use date_short",
-        ));
+        return Err(format_kind_mismatch(spec, table_dates::STRFTIME_REMEDY));
     }
-    let invalid = |reason: String| {
-        Diagnostic::new(
-            &codes::ERR_TABLE_TEMPORAL_FORMAT_INVALID,
-            [
-                ("cell", json!(s)),
-                ("spec", json!(spec)),
-                ("reason", json!(reason)),
-            ],
-        )
-    };
-    table_dates::validate_spec(spec).map_err(&invalid)?;
-    let moment = match parsed {
-        Ok(Some(moment)) => moment,
-        Ok(None) => unreachable!("returned above"),
-        Err(table_dates::TemporalError::Invalid(reason)) => return Err(invalid(reason)),
-        Err(table_dates::TemporalError::Unported(why)) => return Err(refuse(why).into()),
-    };
-    let date = table_dates::strftime(moment, spec).map_err(refuse)?;
     // The format's own affixes ride around the date (`format_table_cell_value`).
     let affixes = col.cfg.format.as_ref();
     let prefix = affixes.map(|f| f.prefix.as_str()).unwrap_or("");
     let suffix = affixes.map(|f| f.suffix.as_str()).unwrap_or("");
-    Ok(Some(format!("{prefix}{date}{suffix}")))
+    table_dates::paint_cell(parsed, spec, prefix, suffix).map_err(|e| match e {
+        table_dates::TemporalError::Invalid(reason) => Diagnostic::new(
+            &codes::ERR_TABLE_TEMPORAL_FORMAT_INVALID,
+            [("cell", json!(s)), ("spec", json!(spec)), ("reason", json!(reason))],
+        ),
+        table_dates::TemporalError::Unported(why) => refuse(why).into(),
+    })
 }
 
 pub(super) fn format_kind_mismatch(fmt: &str, remedy: &str) -> Diagnostic {
@@ -2101,8 +2086,7 @@ pub(super) fn build_cell_data(
                     if table_dates::is_time_format(spec) {
                         return Err(format_kind_mismatch(
                             spec,
-                            "use a d3-format numeric spec (e.g. '.1f') or remove format: to use \
-                             the theme default",
+                            table_dates::NUMERIC_REMEDY,
                         ));
                     }
                 }

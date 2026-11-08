@@ -20,6 +20,7 @@ from dbt_charts.core.compile.models.primitives import PatternStyle
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _AnnotatedChartStyleMixin,
     _CartesianChartStyle,
+    _LegendedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
@@ -108,7 +109,10 @@ class AreaLayerStyle(BaseModel):
 
 
 class AreaChartStyle(
-    _CartesianChartStyle, _QuantitativeAxisChartStyleMixin, _AnnotatedChartStyleMixin
+    _CartesianChartStyle,
+    _LegendedChartStyleBaseAllOptional,
+    _QuantitativeAxisChartStyleMixin,
+    _AnnotatedChartStyleMixin,
 ):
     """Area chart style: chart-level fields + marks sub-block."""
 
@@ -133,7 +137,7 @@ class AreaChartStyle(
         ),
     )
     endpoint_labels: EndpointLabelsConfig = Field(
-        description="Series names printed on the bands instead of in a legend."
+        description="Styling of the series names printed on the bands (`legend.position.edge: endpoints`)."
     )
     pattern: PatternStyle = Field(
         description="How the `pattern:` channel paints fills."

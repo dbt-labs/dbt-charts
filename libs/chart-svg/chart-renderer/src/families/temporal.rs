@@ -31,7 +31,7 @@
 //! text instead.
 
 use crate::constants::axis::{EDGE_LABEL_MIN_GAP_RATIO, LABEL_GAP_SPACES, LABEL_GAP_SPACES_NUMERIC, SPARSE_CEILING_PX};
-use super::table_dates::{strftime, Moment};
+use ::bind::table_dates::{strftime, Moment};
 use ::bind::time_axis::Dates;
 use ::bind::temporal::{clock_hour, floor_day, floor_to_bucket_start, next_bucket, TimePart, TimeUnit};
 use d3rs::calendar::{civil_from_days, days_from_civil, weekday, MS_PER_DAY};
@@ -2320,8 +2320,8 @@ pub fn default_time_unit_text((y, m, d): (i32, u8, u8), unit: Option<TimeUnit>) 
     };
     let (y, m, d) = civil_from_days(bucket);
     let year = u32::try_from(y).map_err(|_| format!("year {y} out of range"))?;
-    let moment = super::table_dates::Moment::midnight(year, u32::from(m), u32::from(d));
-    super::table_dates::strftime(moment, unit.map_or("%b %d, %Y", time_unit_specifier))
+    let moment = ::bind::table_dates::Moment::midnight(year, u32::from(m), u32::from(d));
+    ::bind::table_dates::strftime(moment, unit.map_or("%b %d, %Y", time_unit_specifier))
 }
 
 /// Vega-Lite's default format for a `utc` timeUnit (`timeUnitSpecifier` over the unit's parts).

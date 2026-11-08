@@ -30,6 +30,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedSupportTable,
 )
 from dbt_charts.core.compile.models.primitives import (
+    FormatConfig,
     FormatTable,
     ResolvedFormat,
 )
@@ -40,12 +41,15 @@ from dbt_charts.core.compile.models.style.authored import (
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedChartDefaults
 from dbt_charts.core.compile.models.style.theme import (
+    AxisLabelStyle,
+    ChartLegendStyle,
     LegendEdge,
-    LegendStyle,
     PaddingStyle,
     PieChartStyle,
-    PieLegendStyle,
     SupportTableStyle,
+)
+from dbt_charts.core.compile.models.style.theme._chart_base import (
+    _CartesianChartStyle,
 )
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorScale,
@@ -97,10 +101,10 @@ AutomaticLinkCandidate = str | None
 
 class _LegendPositionOverridePatch(BaseModel):
     """All-Optional carrier for ``ResolvedLegendStyle.position_overridden_by_width``
-    -- the one legend fold below with no ``LegendStylePatch`` to ride: that
-    field is resolved-only (declared on ``ResolvedLegendStyle``, not on
-    ``LegendStyle``/``LegendStylePatch``, the authored surface), so an author
-    can never set it even through this carrier. Exists purely so
+    and ``hidden_under_edge`` -- the legend folds below with no
+    ``LegendStylePatch`` to ride: those fields are resolved-only (declared on
+    ``ResolvedLegendStyle``, not on ``LegendStyle``/``LegendStylePatch``, the
+    authored surface), so an author can never set them even through this carrier. Exists purely so
     ``_base_kwargs`` can fold it in through the same construction-final
     ``merge_onto_base`` path as every other legend decision below, instead of
     a post-hoc ``model_copy(update=...)`` on the already-built
@@ -110,7 +114,8 @@ class _LegendPositionOverridePatch(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    position_overridden_by_width: LegendEdge | None = None
+    position_overridden_by_width: LegendEdge | Literal["endpoints"] | None = None
+    hidden_under_edge: LegendEdge | None = None
 
 
 def _bound_scales(
@@ -149,7 +154,7 @@ def _base_kwargs(
     normalized: _BaseChartFields,
     chart_style_context: ChartStyleContext,
     channels: dict[str, Any],
-    legend_patch: LegendStyle | PieLegendStyle | None = None,
+    legend_patch: ChartLegendStyle | None = None,
     palette: list[str] | None = None,
     *,
     requested_alias_palette: str | None,
@@ -158,7 +163,10 @@ def _base_kwargs(
     suppress_legend: bool = False,
     drop_legend: bool = False,
     top_legend: Literal["compact", "row", "off"] = "off",
-    legend_position_overridden_by_width: LegendEdge | None = None,
+    legend_position_overridden_by_width: LegendEdge
+    | Literal["endpoints"]
+    | None = None,
+    legend_hidden_under_edge: LegendEdge | None = None,
     radial_legend: bool = False,
     legendless: bool = False,
     wrap_legend: bool,
@@ -205,14 +213,21 @@ def _base_kwargs(
     the authored surface, declare no such field), but it still goes through
     the same merge_onto_base construction as every other legend decision here,
     not a post-hoc patch on the finished ResolvedLegendStyle.
+    legend_hidden_under_edge: the authored side the legend is hidden under when
+    that leaves the chart's series named nowhere
+    (SeriesNaming.hidden_under_edge), folded in the same way.
     """
     legend = merge_legend(chart_style_context.legend, legend_patch)
     board_legend = chart_style_context.cascaded.charts.legend
     visible = merge_authored_visible(board_legend, legend_patch)
     title_visible = merge_authored_title_visible(board_legend, legend_patch)
-    if legend_position_overridden_by_width is not None:
+    if (
+        legend_position_overridden_by_width is not None
+        or legend_hidden_under_edge is not None
+    ):
         overridden = _LegendPositionOverridePatch(
-            position_overridden_by_width=legend_position_overridden_by_width
+            position_overridden_by_width=legend_position_overridden_by_width,
+            hidden_under_edge=legend_hidden_under_edge,
         )
         legend = merge_unset(legend, overridden)
     if top_legend != "off":
@@ -520,6 +535,18 @@ def default_chart_width(
     return float(family_base.preferred_width)
 
 
+def authored_measure_format(
+    style: _CartesianChartStyle | None,
+) -> str | FormatConfig | None:
+    """The chart's own ``style.axis_y.labels.format``, which its support table
+    inherits for the measure column; None when the chart authors none."""
+    # A chart's style is a patch: `labels` is unset unless authored, though
+    # the patch stub types it as the theme's required slot.
+    axis_y = None if style is None else style.axis_y
+    labels: AxisLabelStyle | None = axis_y.labels if axis_y is not None else None
+    return labels.format or None if labels is not None else None
+
+
 def _resolved_support_table(
     support_table: ChartSupportTable | None,
     y: str | list[str] | None,
@@ -527,9 +554,14 @@ def _resolved_support_table(
     formats: FormatTable | None,
     query_formats: Mapping[str, str] | None,
     header_inks: Mapping[str, str],
+    measure_format: str | FormatConfig | None,
 ) -> ResolvedSupportTable | None:
     """Bake the final support_table, entry formats and header inks included,
-    from the same rows render sees."""
+    from the same rows render sees.
+
+    ``measure_format`` is the chart's own ``style.axis_y.labels.format``; an
+    entry reading the single y column with no format of its own inherits it.
+    """
     if support_table is None:
         return None
     # Deferred like the one in _support_table_geometry below: support_table.py imports
@@ -537,9 +569,14 @@ def _resolved_support_table(
     # support_table ↔ resolve cycle that only stays quiet while some other module
     # happens to import resolve first.
     from dbt_charts.core.compile.support_table import (  # noqa: PLC0415
+        apply_measure_format_to_support_table,
         resolve_support_table,
     )
 
+    if measure_format is not None and isinstance(y, str):
+        support_table = apply_measure_format_to_support_table(
+            support_table, measure_format, y
+        )
     return resolve_support_table(
         support_table,
         formats,
@@ -624,6 +661,7 @@ def _cartesian_kwargs(
     chart_type: str,
     panel_axes: tuple[PartitionAxis, ...],
     stacked: bool,
+    measure_format: str | FormatConfig | None,
     category_axis_vertical: bool = False,
     axis_y_orient: Literal["left", "right"] = "left",
     header_inks: Mapping[str, str] = MappingProxyType({}),
@@ -655,6 +693,7 @@ def _cartesian_kwargs(
         chart_style_context.formats,
         normalized.query.formats if normalized.query else None,
         header_inks,
+        measure_format,
     )
     (
         effective_support_table_style,

@@ -2264,7 +2264,10 @@
     /*{# runtime's mount() does); a page that loads once binds on ready. #}*/
     /*{# A host that serializes a live board (an SVG download, a PNG copy) #}*/
     /*{# takes picture(): a copy without the runtime's chrome, so the export #}*/
-    /*{# stays the picture the render produced. #}*/
+    /*{# stays the picture the render produced. A runtime that keeps part of #}*/
+    /*{# the board out of the document (the table runtime's off-page rows) #}*/
+    /*{# adds a step that puts it back into the copy. #}*/
+    const pictureSteps = [];
     window.dbtChartHover = {
         registerChartButton: registerChartButton,
         picture: function (svg) {
@@ -2275,8 +2278,10 @@
             copy.querySelectorAll('.dbt-chart-toolbar').forEach(function (el) { el.remove(); });
             copy.querySelectorAll('.dbt-chart').forEach(function (chart) { chart.style.removeProperty('cursor'); });
             copy.querySelectorAll('[' + ARMED + ']').forEach(disarmHidingItem);
+            pictureSteps.forEach(function (step) { step(svg, copy); });
             return copy;
         },
+        addPictureStep: function (step) { pictureSteps.push(step); },
         mount: function (root) {
             markIndexes = new WeakMap();
             const scope = root || document;

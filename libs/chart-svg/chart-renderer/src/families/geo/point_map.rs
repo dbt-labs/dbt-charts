@@ -25,7 +25,7 @@
 //!
 //! `bind` holds what the data decides; `layout` fits it to the cell and returns nodes.
 
-use crate::scene_path::scene_path;
+use ::layout::scene_path::scene_path;
 use std::collections::HashMap;
 
 use d3rs::geojson::{Feature, FeatureCollection, GeoJson, Geometry};

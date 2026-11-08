@@ -40,10 +40,21 @@ pub struct Deps {
     pub unanalyzed: Option<&'static str>,
     /// Some expression adds, subtracts, multiplies, divides or raises.
     pub arithmetic: bool,
-    /// Some expression orders two values (`<`, `<=`, `>`, `>=`).
-    pub ordering: bool,
     /// Some expression joins values into text with `~`.
     pub concat: bool,
+    /// Every comparison of one ordering operator between two operands, in walk order.
+    pub orderings: Vec<OrderingSite>,
+    /// An ordering chained with another comparison (`a < b < c`), which no site covers.
+    pub ordering_chained: bool,
+}
+
+/// One `left <op> right` comparison: each operand's byte range in the source, so a
+/// caller can rewrite the comparison around its operands.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct OrderingSite {
+    pub left: (u32, u32),
+    pub op: &'static str,
+    pub right: (u32, u32),
 }
 
 #[derive(Default)]
@@ -70,8 +81,9 @@ struct Walk<'a> {
     listing_literal: usize,
     unanalyzed: Option<&'static str>,
     arithmetic: bool,
-    ordering: bool,
     concat: bool,
+    orderings: Vec<OrderingSite>,
+    ordering_chained: bool,
 }
 
 pub fn analyze(root: &ast::Stmt<'_>) -> Deps {
@@ -124,8 +136,9 @@ impl<'a> Walk<'a> {
             listings_nonliteral: self.listing_uses != self.listing_literal,
             unanalyzed: self.unanalyzed,
             arithmetic: self.arithmetic,
-            ordering: self.ordering,
             concat: self.concat,
+            orderings: self.orderings,
+            ordering_chained: self.ordering_chained,
         }
     }
 
@@ -418,7 +431,15 @@ impl<'a> Walk<'a> {
                     K::Add | K::Sub | K::Mul | K::Div | K::FloorDiv | K::Rem | K::Pow => {
                         self.arithmetic = true
                     }
-                    K::Lt | K::Lte | K::Gt | K::Gte => self.ordering = true,
+                    K::Lt | K::Lte | K::Gt | K::Gte => {
+                        let op = match o.op {
+                            K::Lt => "<",
+                            K::Lte => "<=",
+                            K::Gt => ">",
+                            _ => ">=",
+                        };
+                        self.orderings.push(OrderingSite { left: extent(&o.left), op, right: extent(&o.right) });
+                    }
                     K::Concat => self.concat = true,
                     K::Eq | K::Ne | K::ScAnd | K::ScOr | K::In => {}
                 }
@@ -427,8 +448,9 @@ impl<'a> Walk<'a> {
             }
             ast::Expr::Compare(c) => {
                 use ast::CompareOpKind as K;
+                // A single comparison parses as a `BinOp`; `Compare` is a chain.
                 if c.ops.iter().any(|o| matches!(o.op, K::Lt | K::Lte | K::Gt | K::Gte)) {
-                    self.ordering = true;
+                    self.ordering_chained = true;
                 }
                 self.expr(&c.expr);
                 c.ops.iter().for_each(|o| self.expr(&o.expr));
@@ -525,4 +547,68 @@ fn level_names<'a>(body: &[ast::Stmt<'a>]) -> HashSet<&'a str> {
         }
     }
     names
+}
+
+
+/// The byte range an expression covers in its source. A postfix node (`a.b`, `a[0]`,
+/// `f(x)`, `x | f`) carries the span of its last operator only, so the extent is taken
+/// over the whole subtree.
+fn extent(expr: &ast::Expr<'_>) -> (u32, u32) {
+    let own = expr.span();
+    let mut range = (own.start_offset, own.end_offset);
+    let mut take = |e: &ast::Expr<'_>| {
+        let (start, end) = extent(e);
+        range = (range.0.min(start), range.1.max(end));
+    };
+    let arg = |a: &ast::CallArg<'_>| match a {
+        ast::CallArg::Pos(e) | ast::CallArg::Kwarg(_, e) | ast::CallArg::PosSplat(e) | ast::CallArg::KwargSplat(e) => {
+            extent(e)
+        }
+    };
+    let mut children: Vec<(u32, u32)> = Vec::new();
+    match expr {
+        ast::Expr::Var(_) | ast::Expr::Const(_) => {}
+        ast::Expr::Slice(x) => {
+            take(&x.expr);
+            [&x.start, &x.stop, &x.step].into_iter().flatten().for_each(&mut take);
+        }
+        ast::Expr::UnaryOp(x) => take(&x.expr),
+        ast::Expr::BinOp(x) => {
+            take(&x.left);
+            take(&x.right);
+        }
+        ast::Expr::Compare(x) => {
+            take(&x.expr);
+            x.ops.iter().for_each(|o| take(&o.expr));
+        }
+        ast::Expr::IfExpr(x) => {
+            take(&x.test_expr);
+            take(&x.true_expr);
+            if let Some(f) = &x.false_expr {
+                take(f);
+            }
+        }
+        ast::Expr::Filter(x) => {
+            if let Some(e) = &x.expr {
+                take(e);
+            }
+            children.extend(x.args.iter().map(arg));
+        }
+        ast::Expr::Test(x) => {
+            take(&x.expr);
+            children.extend(x.args.iter().map(arg));
+        }
+        ast::Expr::GetAttr(x) => take(&x.expr),
+        ast::Expr::GetItem(x) => {
+            take(&x.expr);
+            take(&x.subscript_expr);
+        }
+        ast::Expr::Call(x) => {
+            take(&x.expr);
+            children.extend(x.args.iter().map(arg));
+        }
+        ast::Expr::List(x) => x.items.iter().for_each(&mut take),
+        ast::Expr::Map(x) => x.keys.iter().chain(&x.values).for_each(&mut take),
+    }
+    children.into_iter().fold(range, |(lo, hi), (start, end)| (lo.min(start), hi.max(end)))
 }

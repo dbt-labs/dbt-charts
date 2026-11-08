@@ -38,6 +38,10 @@ FontAlias = Annotated[str, Field(description="Name of a ``style.fonts`` entry.")
 
 
 AUTHORED_INPUT = {"authored": True}
+# A board re-validated once meta.yml and `extends:` fold under it: each file was
+# validated as authored input on its own, and leaves from different files now
+# share one mapping.
+MERGED_AUTHORED_INPUT = {"authored": True, "merged": True}
 
 
 class _PatchBase(BaseModel):

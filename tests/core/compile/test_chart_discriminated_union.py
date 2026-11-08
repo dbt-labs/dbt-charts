@@ -47,10 +47,9 @@ def test_bar_patch_rejects_theta():
         BarChart(type="bar", theta="slice")  # type: ignore[call-arg]
 
 
-def test_kpi_patch_requires_value():
-    """KpiChart.value is required (structural, not a validator)."""
-    with pytest.raises(ValidationError, match="value"):
-        KpiChart(type="kpi")  # type: ignore[call-arg]
+def test_kpi_patch_binds_value_by_position_when_unnamed():
+    """A KPI naming no value: binds its query's one column at render."""
+    assert KpiChart(type="kpi").value is None
 
 
 def test_kpi_patch_accepts_required_value():
@@ -58,10 +57,9 @@ def test_kpi_patch_accepts_required_value():
     assert p.value == "revenue"
 
 
-def test_pie_patch_requires_theta():
-    """PieChart.theta is required (structural)."""
-    with pytest.raises(ValidationError, match="theta"):
-        PieChart(type="pie")  # type: ignore[call-arg]
+def test_pie_patch_binds_theta_by_position_when_unnamed():
+    """A pie naming no theta: binds its query's columns at render."""
+    assert PieChart(type="pie").theta is None
 
 
 def test_pie_patch_rejects_x():

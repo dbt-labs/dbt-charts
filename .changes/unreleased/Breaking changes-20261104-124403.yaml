@@ -1,0 +1,3 @@
+kind: Breaking changes
+body: '`legend.position.edge: endpoints` replaces `endpoint_labels.visible`. Boards migrate. A chart placed in two boards whose legends sat on different sides must be split into one chart per placement.'
+time: 2026-11-04T12:44:03.482865-09:00

@@ -2,7 +2,7 @@
 //! `vega-scenegraph` draws for each of its names, and the legend Vega draws
 //! for a shape encoding that carries no legend config.
 
-use crate::scene_path::scene_path;
+use ::layout::scene_path::scene_path;
 use crate::families::legend::{legend_grid, LegendGrid, LegendSymbol};
 use d3rs::vega_symbol::{Extents, VegaSymbol};
 use scene::{Attrs, Node, PathData, Role};

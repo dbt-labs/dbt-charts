@@ -40,6 +40,8 @@ _CHART_DEFAULTS = {
     "type": "bar",
     "query_name": "q",
     "title": "",
+    "x": "month",
+    "y": "revenue",
 }
 
 

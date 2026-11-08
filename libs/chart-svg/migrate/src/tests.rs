@@ -40,7 +40,7 @@ fn rewrite_rebuilds_the_value_and_notes_a_change() {
     m.rewrite_note = Some("html widened");
     let mut yes = doc("title: T\ntext: hi\nallow_html: true\n");
     let mut out = Applied::default();
-    apply_move(&mut yes, &m, &mut out).expect("applies");
+    apply_move(&mut yes, &m, &json!(null), &mut out).expect("applies");
     assert_eq!(yes.to_json()["html_policy"], json!("trusted-raw"));
     assert_eq!(out.notices, ["html widened"]);
 }
@@ -54,7 +54,7 @@ fn a_rewrite_keeps_a_timestamp_it_hands_back_unchanged() {
         Rewritten::Value(out)
     }));
     let mut node = doc("title: T\ntext: hi\nallow_html:\n  at: 2020-01-02\n  n: 1\n");
-    apply_move(&mut node, &m, &mut Applied::default()).expect("applies");
+    apply_move(&mut node, &m, &json!(null), &mut Applied::default()).expect("applies");
     let at = crate::doc::at(&node, &["html_policy".to_string(), "at".to_string()]).expect("kept");
     assert!(matches!(&at.kind, yaml::Kind::Scalar(yaml::Value::Timestamp(t)) if t == "2020-01-02"));
     assert_eq!(node.to_json()["html_policy"]["n"], json!(2));
@@ -65,7 +65,7 @@ fn rewrite_drop_strikes_the_source_and_leaves_nothing() {
     let mut m = html_policy_move();
     m.rewrite = Some(Arc::new(|_| Rewritten::Drop));
     let mut no = doc("title: T\ntext: hi\nallow_html: false\n");
-    apply_move(&mut no, &m, &mut Applied::default()).expect("applies");
+    apply_move(&mut no, &m, &json!(null), &mut Applied::default()).expect("applies");
     assert_eq!(no.to_json(), json!({"title": "T", "text": "hi"}));
 }
 
@@ -74,7 +74,7 @@ fn conflicts_with_refuses_a_competing_spelling() {
     let mut m = html_policy_move();
     m.conflicts_with = vec![path(&["title"])];
     let mut d = doc("title: T\ntext: hi\nallow_html: true\n");
-    let err = apply_move(&mut d, &m, &mut Applied::default()).expect_err("conflict");
+    let err = apply_move(&mut d, &m, &json!(null), &mut Applied::default()).expect_err("conflict");
     assert!(matches!(err, MigrationError::Conflict(m) if m.contains("'title' is also set")));
 }
 
@@ -86,12 +86,12 @@ fn chart_type_gates_a_move_to_its_family() {
     let m = moves.remove(0);
     let board = "style:\n  text:\n    column:\n      number: 2\ntext: hi\n";
     let mut d = doc(board);
-    apply_move(&mut d, &m, &mut Applied::default()).expect("applies");
+    apply_move(&mut d, &m, &json!(null), &mut Applied::default()).expect("applies");
     // A board outside any chart holds no `kpi` type, so the gated move leaves it alone.
     assert_eq!(d.to_json(), doc(board).to_json());
     let mut outside = m.clone();
     outside.chart_type = Some(String::new());
-    apply_move(&mut d, &outside, &mut Applied::default()).expect("applies");
+    apply_move(&mut d, &outside, &json!(null), &mut Applied::default()).expect("applies");
     assert_eq!(
         d.to_json()["style"]["text"]["column"],
         json!({"max_number": 2})
@@ -120,7 +120,7 @@ fn expansion_turns_a_scalar_into_the_mapping_its_leaves_declare() {
     ));
     let board = chart_with_legend_position();
     let mut d = doc(&board);
-    apply_move(&mut d, &m, &mut Applied::default()).expect("applies");
+    apply_move(&mut d, &m, &json!(null), &mut Applied::default()).expect("applies");
     let legend = &d.to_json()["charts"]["c"]["style"]["legend"]["position"];
     assert_eq!(legend, &json!({"edge": "top", "overlay": true}));
 }
@@ -274,5 +274,49 @@ mod catalog {
             walk(grammar(&e.version).expect("embedded").root(), &mut bad);
         }
         assert!(bad.is_empty(), "{bad:?}");
+    }
+}
+
+mod write_leaf {
+    use crate::doc::write_leaf;
+    use serde_json::json;
+
+    fn written(text: &str, at: &[&str], value: Option<serde_json::Value>) -> serde_json::Value {
+        let mut node = yaml::parse_node(text).expect("parses");
+        let at: Vec<String> = at.iter().map(|s| s.to_string()).collect();
+        write_leaf(&mut node, &at, value.as_ref());
+        node.to_json()
+    }
+
+    #[test]
+    fn a_write_creates_the_mappings_it_passes_through_inside_a_list() {
+        assert_eq!(
+            written(
+                "rows:\n  - a: 1\n",
+                &["rows", "0", "legend", "edge"],
+                Some(json!("auto"))
+            ),
+            json!({"rows": [{"a": 1, "legend": {"edge": "auto"}}]})
+        );
+    }
+
+    #[test]
+    fn a_strike_takes_the_mappings_it_empties_but_keeps_the_list_item() {
+        assert_eq!(
+            written(
+                "rows:\n  - a:\n      b: 1\n",
+                &["rows", "0", "a", "b"],
+                None
+            ),
+            json!({"rows": [{}]})
+        );
+        assert_eq!(
+            written(
+                "tabs:\n  items:\n    - t: 1\n    - a:\n        b: 1\n        c: 2\n",
+                &["tabs", "items", "1", "a", "b"],
+                None
+            ),
+            json!({"tabs": {"items": [{"t": 1}, {"a": {"c": 2}}]}})
+        );
     }
 }

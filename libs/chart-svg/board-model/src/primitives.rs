@@ -56,10 +56,14 @@ pub struct StrokeStyle {
     pub color: Engine<Color, Auto>,
     /// Stroke width in pixels.
     pub width: Engine<Px, Auto>,
-    /// How the stroke's ends are finished (butt, round, or square).
-    pub cap: Engine<LineCap, Auto>,
-    /// How two stroke segments are joined (miter, round, or bevel).
-    pub join: Engine<LineJoin, Auto>,
+    /// How the stroke's ends are finished (butt, round, or square). Absent leaves
+    /// `stroke-linecap` out of the SVG, so its `butt` default applies.
+    #[model(absent = "no stroke-linecap attribute: the SVG default (butt) applies")]
+    pub cap: Option<Engine<LineCap, Auto>>,
+    /// How two stroke segments are joined (miter, round, or bevel). Absent leaves
+    /// `stroke-linejoin` out of the SVG, so its `miter` default applies.
+    #[model(absent = "no stroke-linejoin attribute: the SVG default (miter) applies")]
+    pub join: Option<Engine<LineJoin, Auto>>,
     /// Lengths of the dashes and the blanks between them (e.g. '4 2').
     #[model(absent = "solid line")]
     pub dasharray: Option<String>,
@@ -172,8 +176,10 @@ pub struct CornerStyle {
     pub radius: f64,
 }
 
-/// Four-sided spacing (margin or padding) in pixels.
+/// Four-sided spacing (margin or padding) in pixels. A bare number is every side, and a string is
+/// one to four CSS lengths (`16px`, `8px 16px`, `8px 16px 12px`, `8px 16px 12px 4px`).
 #[derive(Debug, Clone, PartialEq, Model)]
+#[model(shorthand_with = spacing_css, string_pattern = SPACING_STRING_PATTERN)]
 pub struct SpacingValues {
     /// Top spacing in pixels.
     #[model(fill = 0.0)]
@@ -187,6 +193,70 @@ pub struct SpacingValues {
     /// Left spacing in pixels.
     #[model(fill = 0.0)]
     pub left: f64,
+}
+
+const SPACING_STRING_PATTERN: &str =
+    r"^[0-9]+(?:\.[0-9]+)?(?:px)?(?: [0-9]+(?:\.[0-9]+)?(?:px)?){0,3}$";
+
+/// `padding: 30` and `padding: 8px 16px`: Python's `_parse_spacing` and `SpacingValues.from_css`,
+/// which widen a number or a string into the four sides it stands for.
+fn spacing_css(node: &model_core::Node, cx: &mut model_core::Cx) -> model_core::Shorthand {
+    use model_core::{map_node, scalar_node, Kind, Shorthand};
+    use yaml::Value;
+    let span = node.span;
+    let sides = |top: Value, right: Value, bottom: Value, left: Value| {
+        Shorthand::Widened(map_node(
+            span,
+            vec![
+                ("top", scalar_node(span, top)),
+                ("right", scalar_node(span, right)),
+                ("bottom", scalar_node(span, bottom)),
+                ("left", scalar_node(span, left)),
+            ],
+        ))
+    };
+    match &node.kind {
+        Kind::Scalar(Value::Bool(b)) => {
+            let got = if *b { "True" } else { "False" };
+            cx.invalid(
+                span,
+                format!("Value error, spacing must be a number or a CSS string, got {got}"),
+            );
+            Shorthand::Refused
+        }
+        Kind::Scalar(n @ Value::Number(_)) => sides(n.clone(), n.clone(), n.clone(), n.clone()),
+        Kind::Scalar(Value::Str(text)) => {
+            let lengths: Option<Vec<f64>> = text
+                .split(' ')
+                .map(|part| {
+                    let digits = part.strip_suffix("px").unwrap_or(part);
+                    let (whole, frac) = digits.split_once('.').unwrap_or((digits, "0"));
+                    let ok = |d: &str| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit());
+                    (ok(whole) && ok(frac))
+                        .then(|| digits.parse().ok())
+                        .flatten()
+                })
+                .collect();
+            let Some(v) = lengths.filter(|v| (1..=4).contains(&v.len())) else {
+                let got = diagnostic::py_repr(&serde_json::Value::String(text.clone()));
+                cx.invalid(
+                    span,
+                    format!("Value error, spacing must be 1-4 pixel lengths such as '16px' or '8px 16px', got {got}"),
+                );
+                return Shorthand::Refused;
+            };
+            let num = |v: f64| serde_json::Number::from_f64(v).map_or(Value::Null, Value::Number);
+            let at = |i: usize| v.get(i).copied().unwrap_or_default();
+            let (top, right, bottom, left) = match v.len() {
+                1 => (at(0), at(0), at(0), at(0)),
+                2 => (at(0), at(1), at(0), at(1)),
+                3 => (at(0), at(1), at(2), at(1)),
+                _ => (at(0), at(1), at(2), at(3)),
+            };
+            sides(num(top), num(right), num(bottom), num(left))
+        }
+        _ => Shorthand::Keep,
+    }
 }
 
 facet!(
@@ -387,10 +457,10 @@ pub struct ScaleTargetConfig {
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct StaticGradientColorStyle {
     /// One color for all marks: a hex, CSS name, `rgb()`/`oklch()` or theme token (`category[1]`, `positive.solid`, `dbt-grays.8`). A token follows the theme, a hex stays put.
-    #[model(absent = "no explicit color")]
+    #[model(absent = "no explicit color", local)]
     pub r#static: Option<Color>,
     /// Continuous gradient scale for the color encoding.
-    #[model(absent = "no gradient")]
+    #[model(absent = "no gradient", local)]
     pub gradient: Option<ScaleTargetConfig>,
 }
 
@@ -398,7 +468,7 @@ pub struct StaticGradientColorStyle {
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct CategoricalColorStyle {
     /// Palette name, or a list of colors, even one: ['#2E6B4F'].
-    #[model(fill = "category")]
+    #[model(fill = "category", local)]
     pub palette: PaletteChoice,
     /// Ink without a color column: palette name, or colors list, even one: ['#2E6B4F'].
     pub single_series_palette: SeriesInk,
@@ -690,4 +760,15 @@ pub struct Link {
     /// How a click opens the target: page navigates the board away; modal opens the target board in a dialog over this one; preview shows it small, beside the clicked mark; new_tab opens it in a new browser tab. Unset takes the board's links.open.
     #[model(absent = "takes the board's links.open")]
     pub open: Option<LinkOpen>,
+}
+
+/// Board-wide link behavior: automatic links and how links open.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct BoardLinks {
+    /// When True, table charts with no explicit link: automatically link each row to its canonical /data/<source>/<schema>/<table>/detail/ page. Default off. An explicit link: always wins; set link: false on a chart to suppress its automatic link.
+    #[model(fill = false)]
+    pub auto: bool,
+    /// How a link that does not author its own open opens: page, modal, preview or new_tab. Query-only ?variable= links, a table cell's filter link, implied email/url and KPI links, and a custom chart's per-row link always open as a page.
+    #[model(fill = "page")]
+    pub open: LinkOpen,
 }

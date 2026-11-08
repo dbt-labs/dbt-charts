@@ -103,6 +103,7 @@ impl model_core::Leaf for AnnotationFontWeight {
             },
             min_items: None,
             max_items: None,
+            in_arm: false,
         },
         &model_core::TypeExpr::Either(
             &model_core::TypeExpr::Ref("WeightName", <WeightName as model_core::Model>::info),

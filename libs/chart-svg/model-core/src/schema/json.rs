@@ -15,6 +15,10 @@ pub const CROSS_FIELD_RULE: &str = "x-dbt-charts-cross-field-rule";
 
 const EMPTY: [&str; 0] = [];
 
+/// Marks an arm whose keywords stay in it; [`hoist`] removes the mark, so a type that sets it must be
+/// an arm of its property's union.
+const IN_ARM: &str = "x-in-arm";
+
 /// The keywords a facet or unit declares.
 const KEYWORDS: [&str; 7] = [
     "minItems",
@@ -143,6 +147,10 @@ fn hoist(j: J) -> J {
         if let J::Object(a) = arm {
             // A tuple states its own length, as a pydantic `tuple` does.
             if a.contains_key("prefixItems") {
+                continue;
+            }
+            // A union arm that states its own keywords keeps them (`Literal[..] | Duration`).
+            if a.remove(IN_ARM).is_some() {
                 continue;
             }
             for k in KEYWORDS {
@@ -455,6 +463,9 @@ impl Emit<'_> {
                 let mut j = self.ty(i);
                 if let J::Object(o) = &mut j {
                     o.extend(keywords(k, rule));
+                    if k.in_arm {
+                        o.insert(IN_ARM.into(), json!(true));
+                    }
                 }
                 j
             }
@@ -464,6 +475,7 @@ impl Emit<'_> {
                 "minItems": items.len(),
                 "maxItems": items.len(),
             }),
+            Ty::Const(b) => json!({"enum": [b]}),
             Ty::Unit => json!({"type": "null"}),
             // A `keys` field is expanded into its variants by the struct.
             Ty::Keys(_) => json!({}),
@@ -535,6 +547,8 @@ impl Emit<'_> {
             || matches!(p.field.ty, Ty::Option(..))
             || a.fill.is_some()
             || a.fill_value.is_some()
+            || a.default_empty
+            || a.omit.is_some()
             || a.directive
             || a.inherit.is_some()
             || a.inherit_slot.is_some()

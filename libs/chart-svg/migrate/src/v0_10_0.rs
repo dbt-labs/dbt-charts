@@ -503,7 +503,13 @@ fn rewrite_nulls(
                 }
                 _ => rewrite_nulls(fields, schema, child, &nested, at),
             };
-            out.insert(key.clone(), rewritten);
+            // A mapping that held only dropped nulls goes with them, as the
+            // text writer strikes it.
+            let emptied = rewritten.as_object().is_some_and(|m| m.is_empty())
+                && child.as_object().is_some_and(|m| !m.is_empty());
+            if !emptied {
+                out.insert(key.clone(), rewritten);
+            }
         }
         at.pop();
     }
@@ -512,13 +518,21 @@ fn rewrite_nulls(
 
 fn null_rewrite(schema: &'static Schema, model: Pos) -> Rewrite {
     Arc::new(move |value| {
-        Rewritten::Value(rewrite_nulls(
+        let rewritten = rewrite_nulls(
             &mut Fields::new(schema),
             schema,
             value,
             &[model],
             &mut Vec::new(),
-        ))
+        );
+        // A style that held only dropped nulls goes with them.
+        if rewritten.as_object().is_some_and(|m| m.is_empty())
+            && value.as_object().is_some_and(|m| !m.is_empty())
+        {
+            Rewritten::Drop
+        } else {
+            Rewritten::Value(rewritten)
+        }
     })
 }
 

@@ -82,9 +82,16 @@ pub struct FontBook {
     /// Indexed like `PAINTED_FACES`.
     data: Vec<Vec<u8>>,
     /// Every `.ttf` of the fonts directory as production's measurer loads them, by
-    /// normalized stem (sorted) and file name: the faces [`Self::raw_advance`] resolves among.
-    shipped: Vec<(String, String)>,
-    dir: std::path::PathBuf,
+    /// normalized stem (sorted): the faces [`Self::raw_advance`] and [`Self::weighted_advance`] resolve among.
+    shipped: Vec<Shipped>,
+}
+
+/// A shipped face: the file is read on first use, once. A painted face is already in
+/// [`FontBook::data`] and never read again.
+struct Shipped {
+    stem: String,
+    path: std::path::PathBuf,
+    bytes: std::sync::OnceLock<Result<Vec<u8>, String>>,
 }
 
 impl FontBook {
@@ -114,35 +121,38 @@ impl FontBook {
             ) else {
                 continue;
             };
-            shipped.push((normalize(stem), format!("{stem}.ttf")));
+            shipped.push(Shipped {
+                stem: normalize(stem),
+                path,
+                bytes: std::sync::OnceLock::new(),
+            });
         }
-        shipped.sort();
-        Ok(FontBook {
-            data,
-            shipped,
-            dir: dir.to_path_buf(),
-        })
+        shipped.sort_by(|a, b| a.stem.cmp(&b.stem).then_with(|| a.path.cmp(&b.path)));
+        Ok(FontBook { data, shipped })
     }
 
     /// The bytes of the face production's `FontBook::face_for` picks for a CSS family list: only
     /// the first entry names the face, matched against the shipped stems (exact, then a prefix
     /// with "regular" or "variable" after it, then any prefix, then containment, the first of
-    /// the sorted stems winning a tie), else the body face. Only [`Self::raw_advance`] reads it.
-    fn production_face(&self, family_list: &str) -> Result<std::borrow::Cow<'_, [u8]>, String> {
+    /// the sorted stems winning a tie), else the body face. Only [`Self::raw_advance`] and [`Self::weighted_advance`] read it.
+    fn production_face(&self, family_list: &str) -> Result<&[u8], String> {
         let primary = family_list.split(',').next().unwrap_or_default();
         let found = self
             .match_shipped(primary)
             .or_else(|| self.match_shipped(DEFAULT_SANS))
             .expect("the body face is a shipped file");
-        let file = &self.shipped[found].1;
-        match PAINTED_FACES.iter().position(|(_, _, f)| f == file) {
-            Some(i) => Ok(std::borrow::Cow::Borrowed(&self.data[i])),
-            None => {
-                let path = self.dir.join(file);
-                std::fs::read(&path)
-                    .map(std::borrow::Cow::Owned)
-                    .map_err(|e| format!("font {}: {e}", path.display()))
-            }
+        let shipped = &self.shipped[found];
+        let file = shipped.path.file_name().and_then(|f| f.to_str());
+        match PAINTED_FACES.iter().position(|(_, _, f)| Some(*f) == file) {
+            Some(i) => Ok(&self.data[i]),
+            None => shipped
+                .bytes
+                .get_or_init(|| {
+                    std::fs::read(&shipped.path)
+                        .map_err(|e| format!("font {}: {e}", shipped.path.display()))
+                })
+                .as_deref()
+                .map_err(Clone::clone),
         }
     }
 
@@ -152,7 +162,7 @@ impl FontBook {
             return None;
         }
         let mut best: Option<(u8, usize)> = None;
-        for (i, (n, _)) in self.shipped.iter().enumerate() {
+        for (i, Shipped { stem: n, .. }) in self.shipped.iter().enumerate() {
             let score = if *n == f {
                 0
             } else if n.starts_with(&f)
@@ -236,10 +246,42 @@ impl FontBook {
     /// ([`crate::stand_in_family`]), which the caller applies. Only a verdict that production
     /// takes on these sums may read it.
     pub fn raw_advance(&self, text: &str, font: &Font) -> Result<f64, String> {
+        self.production_sum(text, font, false)
+    }
+
+    /// [`Self::raw_advance`] for a verdict production takes at the painted weight
+    /// (`measure_at_weight`): a face with no `wght` axis cannot be instanced at any weight, the
+    /// regular one included, and production fails there rather than measure the default instance.
+    /// `font.family` names the stack as production's measurer receives it, quotes and all.
+    pub fn weighted_advance(&self, text: &str, font: &Font) -> Result<f64, String> {
+        self.production_sum(text, font, true)
+    }
+
+    /// `font_measure.py::centered_baseline_offset(family, size)`: how far below a container's
+    /// vertical center a centered line's baseline sits, `(ascent - descent) / 2` of the face
+    /// `get_font_path` picks (any `Source Serif` spelling names its cut, every other stack Inter),
+    /// from the raw `hhea` metrics: `FontMeasurer` never reads the OS/2 typographic ones.
+    pub fn centered_baseline_offset(&self, family: &str, size: f64) -> Result<f64, String> {
+        let painted = if crate::weighted::registry_family(family) == "Source Serif 4" { "Source Serif 4" } else { DEFAULT_SANS };
+        let face = PAINTED_FACES.iter().position(|(name, italic, _)| *name == painted && !italic).expect("a served face");
+        let face = ttf_parser::Face::parse(&self.data[face], 0).map_err(|e| e.to_string())?;
+        let hhea = face.tables().hhea;
+        let upem = f64::from(face.units_per_em());
+        Ok(crate::centered_baseline(f64::from(hhea.ascender) / upem, f64::from(hhea.descender).abs() / upem, size))
+    }
+
+    fn production_sum(&self, text: &str, font: &Font, instanced: bool) -> Result<f64, String> {
         let bytes = self.production_face(font.family)?;
-        let face = ttf_parser::Face::parse(&bytes, 0).map_err(|e| e.to_string())?;
+        let face = ttf_parser::Face::parse(bytes, 0).map_err(|e| e.to_string())?;
         let wght = ttf_parser::Tag::from_bytes(b"wght");
-        let deltas = if face.variation_axes().into_iter().any(|a| a.tag == wght) {
+        let has_axis = face.variation_axes().into_iter().any(|a| a.tag == wght);
+        if instanced && !has_axis {
+            return Err(format!(
+                "text: {:?} has no wght axis to instance at {}",
+                font.family, font.weight
+            ));
+        }
+        let deltas = if has_axis {
             let glyphs = text
                 .chars()
                 .filter_map(|c| face.glyph_index(c))

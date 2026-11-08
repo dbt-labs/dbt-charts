@@ -151,6 +151,21 @@ pub fn is_deferred_color_reference(value: &str) -> bool {
     is_color_token(value) || bare_identifier_re().is_match(value)
 }
 
+fn identifier_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_-]*\n?$").unwrap())
+}
+
+/// `is_unknown_color_name`: a bare identifier that names no color. A leading underscore marks an
+/// internal column reference and is never flagged.
+pub fn is_unknown_color_name(value: &str) -> bool {
+    let lower = value.to_lowercase();
+    identifier_re().is_match(value)
+        && !value.starts_with('_')
+        && !matches!(lower.as_str(), "transparent" | "none" | "currentcolor" | "by_tone")
+        && css_named_color_to_hex(&lower).is_none()
+}
+
 /// `float(token)`, rejecting nan/inf. `float()` strips surrounding
 /// whitespace itself (a `%` or `deg` suffix can leave a padded token, as in
 /// `rgb(50 %, 0, 0)`), and its grammar allows a single `_` between two
@@ -656,6 +671,19 @@ pub fn mark_ink(color: &str, canvas: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_bare_word_naming_no_color_is_unknown() {
+        for known in ["white", "RebeccaPurple", "transparent", "none", "currentColor", "by_tone", "_column"] {
+            assert!(!super::is_unknown_color_name(known), "{known}");
+        }
+        for unknown in ["accent", "nonsense", "my-color"] {
+            assert!(super::is_unknown_color_name(unknown), "{unknown}");
+        }
+        for not_a_name in ["#fff", "chrome[3]", "rgb(1, 2, 3)", ""] {
+            assert!(!super::is_unknown_color_name(not_a_name), "{not_a_name}");
+        }
+    }
+
     use super::*;
 
     // Every expected value below is the Python engine's own output for the

@@ -45,8 +45,9 @@ mod table;
 mod tri;
 
 pub use build::{
-    build_field, build_field_authored, build_nullable, build_nullable_authored, build_payload,
-    build_whole, join, Build, Unset,
+    build_defaulted, build_defaulted_authored, build_field, build_field_authored, build_nullable,
+    build_nullable_authored, build_omitted, build_omitted_authored, build_payload, build_whole,
+    join, or_fill, Build, Unset,
 };
 pub use cascade::{CascadeError, Csr, Resolved, Tables};
 pub use from_node::{
@@ -54,9 +55,12 @@ pub use from_node::{
     read_nullable, read_nullable_patch, read_or_empty, read_patch_tri, read_tag, scalar_node,
     shorthand, FromMap, FromNode, InferTag, ReadScalar, Shorthand,
 };
-pub use inherit::{FillFrom, FillTry, InheritError, Refused};
+pub use inherit::{
+    fill_literal, FillDefault, FillFrom, FillTry, InheritError, Refused, TokenListSlot, TokenSlot,
+};
 pub use leaf::{
-    merge_map_deep, merge_nullable, merge_patch_slot, Empty, Fold, Leaf, Lift, SetLeaves, Slot,
+    merge_map_deep, merge_nullable, merge_patch_slot, tri_to_authored, tri_to_patch, Empty, Fold,
+    Leaf, Lift, SetLeaves, Slot, ToAuthored, ToPatch,
 };
 pub use parse::{
     nearest, render_path, Cx, Hint, MapRead, Parse, ParseError, Retired, Retirement, Seg,

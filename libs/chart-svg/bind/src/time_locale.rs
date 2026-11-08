@@ -67,6 +67,12 @@ pub fn quarter_words() -> Result<[String; 4], String> {
     Ok([word(1)?, word(2)?, word(3)?, word(4)?])
 }
 
+/// The board language's words for 00:00 and 12:00: size-free text a clock axis places.
+pub fn clock_words() -> Result<[String; 2], String> {
+    let word = |id: &str| display_text::language::tr(id, None, &[]);
+    Ok([word("axis.midnight")?, word("axis.noon")?])
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub fn en_us() -> Locale {
     serde_json::from_str(display_text::locale::time_locale("en-US").unwrap())
@@ -93,6 +99,14 @@ pub fn de_de() -> Locale {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_clock_words_are_the_board_languages() {
+        assert_eq!(clock_words().unwrap(), ["Midnight", "Noon"]);
+        let german: display_text::language::Language = serde_json::from_str("\"de\"").unwrap();
+        let words = display_text::language::with_language(german, || clock_words().unwrap());
+        assert_eq!(words, ["Mitternacht", "Mittag"]);
+    }
 
     #[test]
     fn a_locale_with_the_wrong_number_of_months_fails_to_parse() {

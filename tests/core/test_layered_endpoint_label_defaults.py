@@ -23,7 +23,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import (
     AreaChartStylePatch,
-    EndpointLabelsConfigPatch,
+    LegendStylePatch,
     LineChartStylePatch,
     StylePatch,
 )
@@ -161,7 +161,7 @@ def test_line_with_a_right_axis_layer_still_falls_back_to_a_legend() -> None:
 
 def test_layered_line_labels_directly_when_the_author_asks_for_it() -> None:
     """The layer rule steers the default, like every disqualifier on bar. An
-    author who writes `endpoint_labels.visible: true` on a layered line with
+    author who writes `legend.position.edge: endpoints` on a layered line with
     no base color channel gets the base series AND the overlay labeled
     directly on the rail (``EndpointLabelFeature._apply_layered_single_series``)
     — the legend would only repeat what the rail already names, so it retires.
@@ -175,7 +175,7 @@ def test_layered_line_labels_directly_when_the_author_asks_for_it() -> None:
         y="baseline",
         layers=[LineLayer(type="line", y="overlay")],
         style=LineChartStylePatch(
-            endpoint_labels=EndpointLabelsConfigPatch(visible=True)
+            legend=LegendStylePatch.model_validate({"position": {"edge": "endpoints"}})
         ),
     )
     resolved = resolve(
@@ -190,7 +190,7 @@ def test_layered_line_labels_directly_when_the_author_asks_for_it() -> None:
 
 
 def test_board_level_opt_in_keeps_the_rail_on_a_layered_line() -> None:
-    """A board-level `charts.line.endpoint_labels.visible: true` is as concrete
+    """A board-level `charts.line.legend.position.edge: endpoints` is as concrete
     as a chart-local one: the layer rule only steers an `auto` default."""
     chart = LineChart(
         id="t",
@@ -202,7 +202,7 @@ def test_board_level_opt_in_keeps_the_rail_on_a_layered_line() -> None:
         layers=[LineLayer(type="line", y="overlay")],
     )
     board_patch = StylePatch.model_validate(
-        {"charts": {"line": {"endpoint_labels": {"visible": True}}}}
+        {"charts": {"line": {"legend": {"position": {"edge": "endpoints"}}}}}
     )
     resolved = resolve(
         chart,
@@ -229,7 +229,7 @@ def test_layered_area_labels_directly_when_the_author_asks_for_it() -> None:
         y="baseline",
         layers=[LineLayer(type="line", y="overlay")],
         style=AreaChartStylePatch(
-            endpoint_labels=EndpointLabelsConfigPatch(visible=True)
+            legend=LegendStylePatch.model_validate({"position": {"edge": "endpoints"}})
         ),
     )
     resolved = resolve(
@@ -259,7 +259,7 @@ def test_dual_axis_layer_with_opt_in_raises_at_resolve() -> None:
         y="baseline",
         layers=[LineLayer(type="line", y="overlay", axis_y={"position": "right"})],
         style=LineChartStylePatch(
-            endpoint_labels=EndpointLabelsConfigPatch(visible=True)
+            legend=LegendStylePatch.model_validate({"position": {"edge": "endpoints"}})
         ),
     )
     with pytest.raises(ChartDataError, match="axis_y.position"):

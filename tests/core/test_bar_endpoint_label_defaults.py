@@ -22,7 +22,6 @@ from dbt_charts.core.compile.models.chart.resolved import ResolvedBarChart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import (
     BarChartStylePatch,
-    EndpointLabelsConfigPatch,
     LegendStylePatch,
 )
 from dbt_charts.core.compile.resolve import resolve
@@ -76,7 +75,7 @@ def _resolved(
     data: list[_Row],
     orientation: str | None = None,
     stack: str = "zero",
-    endpoint_labels: EndpointLabelsConfigPatch | None = None,
+    legend: LegendStylePatch | None = None,
 ) -> ResolvedBarChart:
     chart = BarChart(
         id="t",
@@ -91,7 +90,7 @@ def _resolved(
             orientation=orientation,
             # Omitted rather than passed as None: the patch model rejects an
             # explicit None here.
-            **({"endpoint_labels": endpoint_labels} if endpoint_labels else {}),
+            **({"legend": legend} if legend else {}),
         ),
     )
     resolved = resolve(
@@ -143,14 +142,14 @@ def test_grouped_bar_keeps_its_legend() -> None:
 
 def test_grouped_bar_labels_directly_when_the_author_asks_for_it() -> None:
     """Every disqualifier steers the *default*. An author who writes
-    ``endpoint_labels.visible: true`` on a grouped bar gets the bar-top labels
+    ``legend.position.edge: endpoints`` on a grouped bar gets the bar-top labels
     that shape has always rendered, and the legend steps aside for them.
     """
     resolved = _resolved(
         "month",
         _TEMPORAL_DATA,
         stack="none",
-        endpoint_labels=EndpointLabelsConfigPatch(visible=True),
+        legend=LegendStylePatch.model_validate({"position": {"edge": "endpoints"}}),
     )
 
     assert resolved.stack == "none"
@@ -167,7 +166,7 @@ def test_author_opt_in_reaches_the_render_layer_raise() -> None:
     resolved = _resolved(
         "month",
         _NEGATIVE_DATA,
-        endpoint_labels=EndpointLabelsConfigPatch(visible=True),
+        legend=LegendStylePatch.model_validate({"position": {"edge": "endpoints"}}),
     )
 
     assert resolved.style.endpoint_labels.visible is True

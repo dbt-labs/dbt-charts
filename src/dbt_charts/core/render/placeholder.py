@@ -286,7 +286,7 @@ def _generate_heatmap_placeholder() -> list[dict[str, Any]]:
     ]
     for i, row in enumerate(rows):
         for j, col in enumerate(cols):
-            data.append({"y": row, "x": col, "value": values[i][j]})
+            data.append({"x": col, "y": row, "value": values[i][j]})
     return data
 
 

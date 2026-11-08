@@ -17,6 +17,11 @@ from dbt_charts.agent_api._paths import (
 from dbt_charts.core.board import partition_compile_warnings
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import missing_format_columns
+from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.resolve.chart.positional import (
+    channel_error,
+    is_unbound,
+)
 from dbt_charts.core.compile.validate.chart_color_tokens import (
     chart_color_token_errors,
 )
@@ -254,6 +259,7 @@ def _validate_resolved(
     check_session_time_zones(result, project)
     check_model_columns(result, project)
     check_link_targets(result, project, resolved.relpath)
+    check_channel_sets(result, resolved.relpath)
 
     errors = [*lock_errors, *result.errors]
     if result.board is not None:
@@ -353,6 +359,22 @@ def annotate_with_data_lint(
     return annotated
 
 
+def check_channel_sets(compile_result: CompileResult, relpath: str) -> None:
+    """Fail each chart that names part of its channel set and not the rest.
+
+    Needs no data: a `y` with no `x` is wrong whatever the query returns. The
+    other half of the rule, an unnamed chart whose column count fits no shape,
+    needs the warehouse's columns (`_warehouse_findings`) or the rows at
+    render. Mutates ``compile_result.errors``.
+    """
+    if compile_result.board is None:
+        return
+    for chart in compile_result.board.charts.values():
+        error = channel_error(chart, ())
+        if error is not None:
+            compile_result.errors.append(error.to_diagnostic(file=relpath))
+
+
 def _warehouse_findings(
     compile_result: CompileResult,
     relpath: str,
@@ -374,9 +396,13 @@ def _warehouse_findings(
 
     # query name -> [(chart name, channel label, column name)] it must contain.
     refs_by_query: dict[str, list[tuple[str, str, str]]] = {}
+    # query name -> the charts that bind its columns by position.
+    unbound_by_query: dict[str, list[Chart]] = {}
     for chart_name, chart in board.charts.items():
         for query_name, label, column in chart_column_refs(chart):
             refs_by_query.setdefault(query_name, []).append((chart_name, label, column))
+        if is_unbound(chart) and chart.query_name is not None:
+            unbound_by_query.setdefault(chart.query_name, []).append(chart)
 
     errors: list[Diagnostic] = []
     warnings: list[Diagnostic] = []
@@ -456,6 +482,10 @@ def _warehouse_findings(
             continue
 
         result_columns = {c.name for c in check.columns}
+        for chart in unbound_by_query.get(query_name, []):
+            error = channel_error(chart, [c.name for c in check.columns])
+            if error is not None:
+                errors.append(error.to_diagnostic(file=relpath))
         for column_name in missing_format_columns(query.formats, result_columns):
             errors.append(
                 DbtChartsError.from_code(

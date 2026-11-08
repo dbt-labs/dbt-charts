@@ -157,6 +157,77 @@ class TestValidateReturnsErrorsForUnknownChartQuery:
         assert any("nonexistent_query" in e.message for e in result.errors)
 
 
+class TestValidateChecksChannelSets:
+    """A chart naming part of its channel set fails without a warehouse."""
+
+    def test_a_y_with_no_x_is_an_error(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate
+
+        board = _write_board(
+            tmp_path,
+            "queries:\n  q:\n    columns: [month, revenue]\n"
+            "    values: [[Jan, 1]]\n"
+            "charts:\n  c:\n    type: line\n    query: q\n    y: revenue\n"
+            "rows:\n  - c\n",
+        )
+        result = validate(board, project=local_project(tmp_path))
+
+        assert result.success is False
+        assert [e.code for e in result.errors] == ["ERR-CHART-CHANNELS-INCOMPLETE"]
+        assert "but not `x`" in result.errors[0].message
+
+    def test_a_field_naming_a_column_outside_the_set_is_an_error(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate
+
+        board = _write_board(
+            tmp_path,
+            "queries:\n  q:\n    columns: [month, revenue, target]\n"
+            "    values: [[Jan, 1, 2]]\n"
+            "charts:\n  c:\n    type: line\n    query: q\n"
+            "    layers:\n      - type: line\n        y: target\n"
+            "rows:\n  - c\n",
+        )
+        result = validate(board, project=local_project(tmp_path))
+
+        assert [e.code for e in result.errors] == ["ERR-CHART-CHANNELS-INCOMPLETE"]
+        assert "names `layers` but not `x` and `y`" in result.errors[0].message
+
+    @pytest.mark.parametrize("chart_type", ["kpi", "pie", "donut"])
+    def test_a_chart_naming_no_channel_and_no_query_is_an_error(
+        self,
+        chart_type: str,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate
+
+        board = _write_board(
+            tmp_path, f"charts:\n  c:\n    type: {chart_type}\nrows:\n  - c\n"
+        )
+        result = validate(board, project=local_project(tmp_path))
+
+        assert result.success is False
+        assert [e.code for e in result.errors] == ["ERR-CHART-CHANNELS-NO-QUERY"]
+
+    def test_a_chart_naming_no_channel_passes_without_data(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate
+
+        board = _write_board(
+            tmp_path,
+            "queries:\n  q:\n    columns: [month, revenue]\n"
+            "    values: [[Jan, 1]]\n"
+            "charts:\n  c:\n    type: line\n    query: q\n"
+            "rows:\n  - c\n",
+        )
+        assert validate(board, project=local_project(tmp_path)).errors == []
+
+
 class TestValidateReturnsErrorsForInvalidPydanticShape:
     """validate() surfaces errors when board YAML violates the Pydantic schema."""
 

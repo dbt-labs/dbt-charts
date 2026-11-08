@@ -198,3 +198,21 @@ def test_authored_domain_pins_the_axis(tmp_path: Path) -> None:
 
     assert _resolved_domain(chart, executor, {"orbit_pick": "LEO"}) == (0, 999)
     assert _resolved_domain(chart, executor, {"orbit_pick": "GTO"}) == (0, 999)
+
+
+def test_a_failing_query_leaves_a_shorthand_chart_unbound_for_its_own_error(
+    tmp_path: Path,
+) -> None:
+    """Binding runs before any chart resolves; a query that fails there is that
+    chart's own error to report, not the board's."""
+    from dbt_charts.core.execute.chart_resolution import with_bound_channels
+
+    executor, _ = _executor(
+        "queries:\n"
+        "  broken:\n    type: sql\n    source: mem\n"
+        "    sql: SELECT * FROM no_such_table\n"
+        "charts:\n  c:\n    type: bar\n    query: broken\n"
+        "rows:\n  - c\n",
+        tmp_path,
+    )
+    assert with_bound_channels(executor.board, executor, {}) is executor.board

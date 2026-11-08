@@ -3,6 +3,7 @@
 //! never renders it; rendering stays where the values are.
 
 mod deps;
+pub use deps::OrderingSite;
 pub mod environment;
 pub mod mask;
 
@@ -59,10 +60,12 @@ pub struct TemplateInfo {
     pub unanalyzed: Option<&'static str>,
     /// Some expression does arithmetic (`+ - * / // % **`).
     pub arithmetic: bool,
-    /// Some expression orders two values (`< <= > >=`).
-    pub ordering: bool,
     /// Some expression joins values into text with `~`.
     pub concat: bool,
+    /// Each single-operator ordering comparison, with its operands' byte ranges.
+    pub orderings: Vec<OrderingSite>,
+    /// An ordering comparison chained with another operator (`a < b < c`).
+    pub ordering_chained: bool,
 }
 
 fn diagnostic(e: &minijinja::Error, offset: usize, source: &str) -> Diagnostic {
@@ -130,8 +133,9 @@ pub fn parse(source: &str, kind: Kind) -> Result<TemplateInfo, Vec<Diagnostic>> 
         header,
         unanalyzed: d.unanalyzed,
         arithmetic: d.arithmetic,
-        ordering: d.ordering,
         concat: d.concat,
+        orderings: d.orderings,
+        ordering_chained: d.ordering_chained,
     })
 }
 

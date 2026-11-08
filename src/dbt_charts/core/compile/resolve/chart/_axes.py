@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from math import ceil
 from typing import Generic, Literal, NamedTuple, TypeVar
@@ -12,6 +12,9 @@ from dbt_charts.core.compile.format import column_format
 from dbt_charts.core.compile.models.chart.authored import (
     CartesianLayer,
     MultiplesConfig,
+)
+from dbt_charts.core.compile.models.chart.authored._support_table import (
+    ChartSupportTablePerSeries,
 )
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
@@ -38,9 +41,9 @@ from dbt_charts.core.compile.models.style.resolved._cartesian import (
 from dbt_charts.core.compile.models.style.theme import (
     AxisXStyle,
     AxisYStyle,
+    ChartLegendStyle,
     LegendEdge,
     LegendPositionStyle,
-    LegendStyle,
     _CartesianChartStyle,
 )
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset, ChartRows
@@ -77,7 +80,6 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_TICKS_INTERVAL_MEASURE_AXIS,
 )
 from dbt_charts.core.diagnostics.codes_render import (
-    ERR_ENDPOINT_LABELS_AND_LEGEND_NAME_SERIES_TWICE,
     ERR_LAYER_AXIS_POSITION_ENDPOINT_LABELS,
     ERR_MULTIPLES_INDEPENDENT_SCALE_MIRROR,
 )
@@ -92,7 +94,9 @@ from dbt_charts.core.text.format_d3 import is_d3_si_spec
 __all__ = [
     "SeriesNaming",
     "_NO_RAIL_ENDPOINT_LABELS",
+    "no_rail",
     "_cascaded_legend",
+    "endpoint_rail_request",
     "horizontal_measure_style",
     "_bake_ay_orient",
     "_bake_ay_position_left",
@@ -100,8 +104,8 @@ __all__ = [
     "_apply_multiples_mirror",
     "_bake_cartesian_axes",
     "_edge_or_none",
-    "_endpoint_labels_off_for_layers",
-    "_endpoint_labels_off_for_multiples",
+    "_rail_off_for_layers",
+    "_rail_off_for_multiples",
     "_extract_axis_overrides",
     "_reject_dual_axis_layered_endpoint_labels",
     "cartesian_color_domain_values",
@@ -504,42 +508,68 @@ def _reject_dual_axis_layered_endpoint_labels(
         )
 
 
-def _endpoint_labels_off_for_layers(
-    endpoint_labels: EndpointLabelsConfig,
-    normalized: BarChart | LineChart | AreaChart,
-) -> EndpointLabelsConfig:
+RailRequest = bool | Literal["auto"]
+
+
+def support_table_names_series(normalized: _CartesianChartFields) -> bool:
+    """A per-series support table prints one row per series, in that series' ink."""
+    return normalized.support_table is not None and any(
+        isinstance(entry, ChartSupportTablePerSeries) and not entry.by_measure
+        for entry in normalized.support_table.entries
+    )
+
+
+def endpoint_rail_request(
+    authored_position: LegendPositionStyle, authored_visible: bool | Literal["auto"]
+) -> RailRequest:
+    """What the cascaded ``legend.position`` and ``legend.visible`` ask of the endpoint rail.
+
+    ``endpoints`` asks for it. A placed edge or a shown legend (``visible: true``)
+    rules it out, as does a placed ``align`` or ``overlay`` unless the legend is
+    hidden. Otherwise ``auto`` leaves it to the chart's shape. Endpoint labels
+    ignore an inherited ``align`` or ``overlay``, but an inherited placement must
+    still be one the legend supports.
+    """
+    if authored_position.edge == "endpoints":
+        return True
+    if placed_edge(authored_position.edge) is not None or authored_visible is True:
+        return False
+    placed = (
+        placed_align(authored_position.align) is not None
+        or placed_overlay(authored_position.overlay) is not None
+    )
+    return False if placed and authored_visible is not False else "auto"
+
+
+def _rail_off_for_layers(
+    rail: RailRequest, normalized: BarChart | LineChart | AreaChart
+) -> RailRequest:
     """A layered chart's ``auto`` is a legend, not the endpoint-label rail.
 
     Without this disqualifier an ``auto`` layered chart would flip straight to
     the rail and leave a single-series chart with an overlay looking like the
     multi-series case it isn't.
 
-    A concrete ``visible: true`` from any tier keeps the rail: it then names
-    the base series and every overlay layer's own endpoint
-    (see ``EndpointLabelFeature._apply_layered_single_series``), and
-    ``_suppress_legend_for_endpoint_labels`` retires the legend so nothing is
+    A requested rail keeps it: it then names the base series and every overlay
+    layer's own endpoint (see ``EndpointLabelFeature._apply_layered_single_series``),
+    and ``_suppress_legend_for_endpoint_labels`` retires the legend so nothing is
     named twice.
     """
-    if endpoint_labels.visible != "auto" or not normalized.layers:
-        return endpoint_labels
-    return endpoint_labels.model_copy(update={"visible": False})
+    return False if rail == "auto" and normalized.layers else rail
 
 
-def _endpoint_labels_off_for_multiples(
-    endpoint_labels: EndpointLabelsConfig,
-    normalized: BarChart | LineChart | AreaChart,
-) -> EndpointLabelsConfig:
+def _rail_off_for_multiples(
+    rail: RailRequest, normalized: BarChart | LineChart | AreaChart
+) -> RailRequest:
     """Each small multiple is its own panel; the rail names series for one panel
     and a faceted chart has no single panel for it to sit beside. The shared
     top legend takes over the naming (``_multiples_wants_top_legend``).
 
-    Like its sibling above it steers ``auto`` only: a concrete
-    ``endpoint_labels.visible: true`` on a faceted chart still reaches the
-    render-layer refusal, with a diagnostic naming both fields.
+    Like its sibling above it steers ``auto`` only: a requested rail on a
+    faceted chart still reaches the render-layer refusal, with a diagnostic
+    naming both fields.
     """
-    if endpoint_labels.visible != "auto" or normalized.multiples is None:
-        return endpoint_labels
-    return endpoint_labels.model_copy(update={"visible": False})
+    return False if rail == "auto" and normalized.multiples is not None else rail
 
 
 def _multiples_wants_top_legend(
@@ -554,7 +584,7 @@ def _multiples_wants_top_legend(
     ``_endpoint_label_rail_fires`` with the rail it replaces so the two can't
     disagree about what counts as a series to name — passing ``True`` for the
     rail's visibility asks it the unconditional form of that question, since
-    ``_endpoint_labels_off_for_multiples`` has just switched the real rail off.
+    ``_rail_off_for_multiples`` has just switched the real rail off.
     """
     return normalized.multiples is not None and _endpoint_label_rail_fires(
         channels, True, wide_measure_series=wide_measure_series
@@ -562,7 +592,7 @@ def _multiples_wants_top_legend(
 
 
 def _cascaded_legend(
-    chart_style_context: ChartStyleContext, family_legend: LegendStyle
+    chart_style_context: ChartStyleContext, family_legend: ChartLegendStyle
 ) -> tuple[LegendPositionStyle, bool | Literal["auto"]]:
     """The legend's placement leaves and ``visible`` as the cascade left them.
 
@@ -577,16 +607,13 @@ def _cascaded_legend(
 
 
 def _series_label_layout_for_width(
-    endpoint_labels: EndpointLabelsConfig,
+    rail: RailRequest,
     width: float,
-) -> tuple[EndpointLabelsConfig, bool]:
+) -> tuple[RailRequest, bool]:
     """Make the top legend the series-naming mechanism for every tiny chart."""
     if width_tier(width) != "tiny":
-        return endpoint_labels, False
-    return (
-        endpoint_labels.model_copy(update={"visible": False}),
-        True,
-    )
+        return rail, False
+    return False, True
 
 
 def _bake_ay_orient(
@@ -1076,13 +1103,13 @@ class SeriesNaming(NamedTuple):
     """The legend-vs-rail decision every cartesian family resolves with.
 
     ``endpoint_labels`` is the tiny-width-adjusted rail config. Families with
-    no rail (scatter, heatmap) pass ``_NO_RAIL_ENDPOINT_LABELS`` in and have
+    no rail (scatter, heatmap) pass ``False`` for ``rail`` and have
     no field on their own resolved style to put the output in — "no rail" is
     the explicit input, the returned copy is simply unused, never a skipped
     call to this function.
 
     ``legend_position_overridden_by_width`` carries the author's own
-    ``position.edge`` when ``tiny_top_legend`` overrode it back to top — the one
+    ``position.edge`` (a side, or ``endpoints``) when ``tiny_top_legend`` overrode it back to top — the one
     route ``author_moved_legend_off_top`` does not outrank (see this
     function's docstring). ``None`` otherwise, including when the author
     placed no position at all.
@@ -1091,13 +1118,17 @@ class SeriesNaming(NamedTuple):
     endpoint_labels: ResolvedEndpointLabelsConfig
     suppress_legend: bool
     top_legend: Literal["compact", "row", "off"]
-    legend_position_overridden_by_width: LegendEdge | None
+    legend_position_overridden_by_width: LegendEdge | Literal["endpoints"] | None
     wrap_legend: bool
+    hidden_under_edge: LegendEdge | None
 
 
-_NO_RAIL_ENDPOINT_LABELS = ResolvedEndpointLabelsConfig(
-    visible=False, label_offset=0.0, height=0.0
-)
+_NO_RAIL_ENDPOINT_LABELS = EndpointLabelsConfig(label_offset=0.0, height=0.0)
+
+
+def no_rail(request: RailRequest) -> RailRequest:
+    """``rail_for`` of the families (scatter, heatmap) that have no rail."""
+    return False
 
 
 def cartesian_series_naming(
@@ -1107,6 +1138,7 @@ def cartesian_series_naming(
     authored_visible: bool | Literal["auto"],
     legend: ResolvedLegendStyle,
     width: float,
+    rail_for: Callable[[RailRequest], RailRequest],
     endpoint_labels: EndpointLabelsConfig,
     endpoint_label_has_layers: bool,
     has_layers: bool,
@@ -1136,11 +1168,10 @@ def cartesian_series_naming(
     only ever answers a question the cascade left open:
 
     - a concrete ``visible: true`` keeps the endpoint rail from retiring the
-      legend. The rail replaces a legend nobody asked for, never one that was
-      asked for; it goes on rendering beside it. Only ``auto`` is retired.
+      legend, and under ``auto`` rules the rail out (``endpoint_rail_request``).
     - a position is a legend that was placed, so the automatic top strip
-      stands down and the rail leaves the legend alone — naming where a legend
-      goes cannot resolve to no legend.
+      stands down and the rail is off (``endpoint_rail_request``) — naming
+      where a legend goes cannot resolve to no legend.
       The one policy it does not outrank is the tiny-width tier: a card that
       narrow physically cannot hold a side legend, so ``tiny_top_legend`` wins
       over an authored ``position: right`` the way it already wins over the
@@ -1148,15 +1179,15 @@ def cartesian_series_naming(
     - ``visible: false`` still wins over both, and over the width-tier and
       grouped-bar policies that would otherwise bring a legend back.
 
-    ``endpoint_labels`` arrives already family-disqualified (bar's stack
-    chain, or line/area's layers-then-multiples chain already applied) —
-    this function only applies the tiny-width fold on top.
+    ``rail_for`` is the family's disqualifier chain, applied to the author's
+    rail request before the tiny-width fold.
 
-    ``rail_eligible_for_suppression`` ANDs into the tiny-adjusted
-    ``endpoint_labels.visible`` right before the suppression check, and only
-    there: bar's horizontal grouped shape never earns a rail even when
-    ``endpoint_labels.visible`` is true (``_horizontal_series_rail_fires``);
-    every other family passes ``True``.
+    ``SeriesNaming.hidden_under_edge`` is the side the author hid the legend
+    under when the chart could have printed endpoint labels, so it now names its
+    series nowhere.
+
+    ``rail_eligible_for_suppression`` gates only the legend suppression: bar's
+    horizontal grouped shape never draws a rail, so it passes ``False``.
 
     ``suppress_wide_measure_series`` and ``multiples_wide_measure_series`` are
     separate parameters for the families that ever need them to differ, even
@@ -1228,45 +1259,49 @@ def cartesian_series_naming(
     """
     color_channel = channels.get("color")
     gradient_color = color_channel is not None and color_channel.mode == "gradient"
-    endpoint_labels, tiny_top_legend = _series_label_layout_for_width(
-        endpoint_labels, width
-    )
-    endpoint_labels = ResolvedEndpointLabelsConfig.model_validate(
-        {
-            **endpoint_labels.model_dump(),
-            "visible": endpoint_labels.visible in (True, "auto"),
-        }
+    rail = rail_for(endpoint_rail_request(authored_position, authored_visible))
+    rail, tiny_top_legend = _series_label_layout_for_width(rail, width)
+    resolved_endpoint_labels = ResolvedEndpointLabelsConfig.model_validate(
+        {**endpoint_labels.model_dump(), "visible": rail is not False}
     )
     author_hid_legend = authored_visible is False
     authored_edge = placed_edge(authored_position.edge)
-    # Naming any leaf of `position` is placing the legend; only a named edge can
-    # conflict with the automatic top strip (an unset edge is the engine's call).
-    author_placed_legend = (
-        authored_edge is not None
-        or placed_align(authored_position.align) is not None
-        or placed_overlay(authored_position.overlay) is not None
-    ) and not author_hid_legend
-    rail_names_series = _suppress_legend_for_endpoint_labels(
-        channels,
-        endpoint_labels.visible and rail_eligible_for_suppression,
-        endpoint_label_has_layers,
-        wide_measure_series=suppress_wide_measure_series,
-        has_layers=has_layers,
-    )
-    if rail_names_series and (authored_visible is True or author_placed_legend):
-        raise ChartDataError.from_code(
-            ERR_ENDPOINT_LABELS_AND_LEGEND_NAME_SERIES_TWICE, chart_id=normalized.id
+    hidden_under_edge = (
+        authored_edge
+        if author_hid_legend
+        and authored_edge is not None
+        and not support_table_names_series(normalized)
+        and _series_label_layout_for_width(rail_for("auto"), width)[0] is not False
+        and _endpoint_label_rail_fires(
+            channels, True, wide_measure_series=suppress_wide_measure_series
         )
-    suppress_legend = authored_visible == "auto" and rail_names_series
+        else None
+    )
+    suppress_legend = (
+        authored_visible == "auto"
+        and resolved_endpoint_labels.visible
+        and _suppress_legend_for_endpoint_labels(
+            channels,
+            rail_eligible_for_suppression,
+            endpoint_label_has_layers,
+            wide_measure_series=suppress_wide_measure_series,
+            has_layers=has_layers,
+        )
+    )
     # An authored `edge: top` agrees with the automatic top strip -- only an
     # edge that moves the legend off the top is a conflict to resolve. Short-
     # circuiting on agreement would drop the horizontal/columns-0/titleless
     # layout and render a worse legend than authoring nothing.
     author_moved_legend_off_top = (
-        author_placed_legend and authored_edge is not None and authored_edge != "top"
+        authored_edge is not None and authored_edge != "top" and not author_hid_legend
     )
-    legend_position_overridden_by_width: LegendEdge | None = (
-        authored_edge if tiny_top_legend and author_moved_legend_off_top else None
+    authored_endpoints = authored_position.edge == "endpoints"
+    legend_position_overridden_by_width: LegendEdge | Literal["endpoints"] | None = (
+        "endpoints"
+        if tiny_top_legend and authored_endpoints
+        else authored_edge
+        if tiny_top_legend and author_moved_legend_off_top
+        else None
     )
     top_legend_series_row_fits = (
         top_legend_series is not None
@@ -1323,9 +1358,10 @@ def cartesian_series_naming(
         legend_entries, width - left_axis_reserve_px, legend
     )
     return SeriesNaming(
-        endpoint_labels,
+        resolved_endpoint_labels,
         suppress_legend,
         top_legend,
         legend_position_overridden_by_width,
         wrap_legend,
+        hidden_under_edge,
     )

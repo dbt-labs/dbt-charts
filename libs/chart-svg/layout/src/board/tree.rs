@@ -2,6 +2,8 @@
 //! each item asks for. The facts that come from style, text and charts are
 //! resolved by the caller; this tree holds only what the layout arithmetic needs.
 
+use board_model::ids::ItemId;
+
 use crate::board::width::IntrinsicWidth;
 use crate::title::TitleMetrics;
 
@@ -98,8 +100,19 @@ pub struct Details {
     pub collapsed: bool,
 }
 
-/// A grid item's cell: its first row and column and how many it spans. An item
-/// with no cell is auto-placed and spans one track, as production defaults it.
+/// Where a grid item asks to sit: its row and column, if written, and how many
+/// of each it spans. Heights place it at both when both are written and flow it
+/// otherwise; widths read its column alone (production's two readings). An item
+/// with no place is flowed and spans one track.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Place {
+    pub row: Option<usize>,
+    pub col: Option<usize>,
+    pub row_span: usize,
+    pub col_span: usize,
+}
+
+/// A grid item's placed cell: its first row and column and how many it spans.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Cell {
     pub row: usize,
@@ -108,14 +121,14 @@ pub struct Cell {
     pub col_span: usize,
 }
 
-/// A layout item: its authored width and height (a tab carries neither), its grid cell,
+/// A layout item: its authored width and height (a tab carries neither), its grid place,
 /// whether it is drawn (now, and with no query data, which is how tabs are
 /// hugged), and what it holds. In a tabs layout, `drawn` is the open tab.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
     pub width: Option<Dim>,
     pub height: Option<Dim>,
-    pub cell: Option<Cell>,
+    pub place: Option<Place>,
     pub drawn: bool,
     pub drawn_without_data: bool,
     pub content: Content,
@@ -129,12 +142,14 @@ pub enum Content {
 
 /// A chart's width facts: its own authored `width:`, and its intrinsic width
 /// with its data and without (a table measures its columns; with no data it
-/// answers its configured width); and the facts the heights read: its id, which
+/// answers its configured width); and the facts the heights read: its placement and id, which
 /// charts draw to their content (table, kpi, spark_bar, callout, custom), which
 /// is a table, whether it can use spare height, and, for a horizontal bar, the
 /// height its categories need. Its natural height at a width is the caller's.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chart {
+    /// The placement it is drawn at: a chart placed twice is two `Chart`s.
+    pub at: ItemId,
     pub id: String,
     pub width: Option<f64>,
     pub intrinsic: IntrinsicWidth,

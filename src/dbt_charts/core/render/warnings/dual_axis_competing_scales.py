@@ -49,19 +49,12 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             continue
         idx, layer = named
 
-        # Resolved y is a single column or unset; unset means the engine infers
-        # it, so there is no authored column to point at.
-        related: list[RelatedLocation] = []
-        if chart.y is None:
-            base_label = "the base chart's measure"
-        else:
-            base_label = repr(chart.y)
-            related.append(
-                RelatedLocation(
-                    path=f"charts.{chart_id}.y",
-                    message=f"{chart.y!r} is on the other scale",
-                )
+        related: list[RelatedLocation] = [
+            RelatedLocation(
+                path=f"charts.{chart_id}.y",
+                message=f"{chart.y!r} is on the other scale",
             )
+        ]
         if idx != pinned_idx:
             related.append(
                 RelatedLocation(
@@ -77,7 +70,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
                 path=f"charts.{chart_id}.layers.{pinned_idx}.axis_y.position",
                 related=tuple(related),
                 message=WARN_DUAL_AXIS_COMPETING_SCALES.message_template.format(
-                    chart_id=chart_id, layer_col=layer.y, base_col=base_label
+                    chart_id=chart_id, layer_col=layer.y, base_col=repr(chart.y)
                 ),
                 fix=WARN_DUAL_AXIS_COMPETING_SCALES.fix_template,
             )

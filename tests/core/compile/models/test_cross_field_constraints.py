@@ -171,19 +171,6 @@ CASES: list[tuple[str, type[BaseModel], dict[str, Any], str]] = [
         "charts. Use a long-form query with one y field.",
     ),
     (
-        "bar-multi-y-without-x",
-        BarChart,
-        {"type": "bar", "y": ["a", "b"]},
-        "Bar chart: multi-metric (y: [...]) charts require an x field.",
-    ),
-    (
-        "bar-x-without-y",
-        BarChart,
-        {"type": "bar", "x": "a"},
-        "Bar chart: x requires a y field — a bar with categories but no measure "
-        "has nothing to draw.",
-    ),
-    (
         "area-multi-y-layers",
         AreaChart,
         {

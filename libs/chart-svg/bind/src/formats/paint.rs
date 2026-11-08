@@ -59,6 +59,74 @@ impl ResolvedFormat {
         self.digits(locale, &bare, None, value)
     }
 
+    /// A rung of a ladder production does not bake, printed as Vega's axis prints it: `rung` is
+    /// the tick's index and the ladder's length (`None` for a gutter estimate, which dresses every
+    /// candidate), `extent_hi` the top of the axis field's raw extent. A house SI format paints
+    /// each tick by its magnitude (`sub_unit_guarded_format`): the SI spec from 1 up, else the
+    /// plain significant-digit sibling, or the exponential one below 1e-10, and its anchored affix
+    /// wears the last tick, or the first when no value is above 0 (`ladderless_tick_label`). Any
+    /// other format with an anchored affix wears the last nonzero tick alone
+    /// (`affix_tick_label`); without one, every tick prints [`Self::paint_tick`].
+    pub fn paint_unbaked_rung(
+        &self,
+        locale: &NumberLocale,
+        value: f64,
+        rung: Option<(usize, usize)>,
+        extent_hi: f64,
+    ) -> Result<String, Diagnostic> {
+        let affixed = !self.prefix.is_empty() || !self.suffix.is_empty();
+        let anchored = self.repeat == Some(super::Repeat::Anchor) && affixed;
+        if !self.is_house_si() {
+            return match rung {
+                Some((index, count)) if anchored => {
+                    if index + 1 == count && value != 0.0 {
+                        self.paint_anchored(locale, &self.spec, value, true)
+                    } else {
+                        self.bare_digits(locale, &self.spec, value)
+                    }
+                }
+                _ => self.paint_tick(locale, value),
+            };
+        }
+        let (digit, scientific) = d3rs::format::sub_unit_specs(&self.spec).map_err(Diagnostic::refused)?;
+        let band = if value.abs() >= 1.0 {
+            &self.spec
+        } else if value != 0.0 && value.abs() < d3rs::format::SUB_UNIT_SCIENTIFIC_FLOOR {
+            &scientific
+        } else {
+            &digit
+        };
+        let wears = match rung {
+            Some((index, count)) if anchored => index == if extent_hi <= 0.0 { 0 } else { count - 1 },
+            _ => true,
+        };
+        if wears && affixed && value != 0.0 {
+            return self.paint_anchored(locale, band, value, anchored);
+        }
+        self.bare_digits(locale, band, value)
+    }
+
+    /// The rungs Vega draws on an axis production does not bake: d3's ticks from `start` to
+    /// `stop` at Vega's count for `target` (capped by `min_step`), each printed by
+    /// [`Self::paint_unbaked_rung`].
+    pub fn unbaked_rungs(
+        &self,
+        locale: &NumberLocale,
+        (start, stop): (f64, f64),
+        target: usize,
+        min_step: Option<f64>,
+        extent_hi: f64,
+    ) -> Result<Vec<(f64, String)>, Diagnostic> {
+        let count = d3rs::ticks::vega_tick_count(start, stop, target, min_step);
+        let ticks = d3rs::ticks::d3_ticks(start, stop, count);
+        let total = ticks.len();
+        ticks
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| Ok((value, self.paint_unbaked_rung(locale, value, Some((index, total)), extent_hi)?)))
+            .collect()
+    }
+
     /// A ladder tick's affixed digits (`_affixed_digits_expr`): `spec` at this format's
     /// notation inside its affix. An anchored affix (one tick per ladder) leads the sign,
     /// so the anchor's digits line up with the bare ticks beside it
@@ -83,7 +151,7 @@ impl ResolvedFormat {
     }
 
     /// The d3 digits of `value` under `locale`, an SI letter respelled at `notation`.
-    fn digits(
+    pub(super) fn digits(
         &self,
         locale: &NumberLocale,
         spec: &str,
@@ -159,7 +227,7 @@ fn split_sign(digits: &str) -> (&str, &str) {
 }
 
 /// A d3 SI string split after its last digit: the number and the SI letter (`12.3M`).
-fn split_si_suffix(s: &str) -> (&str, &str) {
+pub(super) fn split_si_suffix(s: &str) -> (&str, &str) {
     match s.char_indices().rev().find(|(_, c)| c.is_ascii_digit()) {
         Some((i, _)) => s.split_at(i + 1),
         None => (s, ""),

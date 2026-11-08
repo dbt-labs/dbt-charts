@@ -190,6 +190,18 @@ pub fn err_chart_cell_type_mismatch(column: impl Into<Value>, declared: impl Int
     Diagnostic::new(&codes::ERR_CHART_CELL_TYPE_MISMATCH, [("column", column.into()), ("declared", declared.into()), ("value", value.into())])
 }
 
+pub fn err_chart_channels_incomplete(chart_id: impl Into<Value>, chart_type: impl Into<Value>, named: impl Into<Value>, missing: impl Into<Value>, required: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_CHART_CHANNELS_INCOMPLETE, [("chart_id", chart_id.into()), ("chart_type", chart_type.into()), ("named", named.into()), ("missing", missing.into()), ("required", required.into())])
+}
+
+pub fn err_chart_channels_no_query(chart_id: impl Into<Value>, chart_type: impl Into<Value>, channels: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_CHART_CHANNELS_NO_QUERY, [("chart_id", chart_id.into()), ("chart_type", chart_type.into()), ("channels", channels.into())])
+}
+
+pub fn err_chart_channels_unbound(chart_id: impl Into<Value>, chart_type: impl Into<Value>, channels: impl Into<Value>, shapes: impl Into<Value>, outcome: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_CHART_CHANNELS_UNBOUND, [("chart_id", chart_id.into()), ("chart_type", chart_type.into()), ("channels", channels.into()), ("shapes", shapes.into()), ("outcome", outcome.into())])
+}
+
 pub fn err_chart_column_not_in_result(chart: impl Into<Value>, channel: impl Into<Value>, column: impl Into<Value>, name: impl Into<Value>, columns: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_CHART_COLUMN_NOT_IN_RESULT, [("chart", chart.into()), ("channel", channel.into()), ("column", column.into()), ("name", name.into()), ("columns", columns.into())])
 }
@@ -316,10 +328,6 @@ pub fn err_duplicate_variable_name(name: impl Into<Value>, first: impl Into<Valu
 
 pub fn err_empty_yaml_document(path: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_EMPTY_YAML_DOCUMENT, [("path", path.into())])
-}
-
-pub fn err_endpoint_labels_and_legend_name_series_twice(chart_id: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::ERR_ENDPOINT_LABELS_AND_LEGEND_NAME_SERIES_TWICE, [("chart_id", chart_id.into())])
 }
 
 pub fn err_endpoint_labels_center_stack(chart_id: impl Into<Value>) -> Diagnostic {
@@ -632,6 +640,14 @@ pub fn err_layers_ambiguous_y_domain(chart_id: impl Into<Value>, domain: impl In
 
 pub fn err_legend_align_unsupported(chart_id: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_LEGEND_ALIGN_UNSUPPORTED, [("chart_id", chart_id.into()), ("reason", reason.into())])
+}
+
+pub fn err_legend_align_with_endpoints() -> Diagnostic {
+    Diagnostic::new(&codes::ERR_LEGEND_ALIGN_WITH_ENDPOINTS, [])
+}
+
+pub fn err_legend_overlay_with_endpoints() -> Diagnostic {
+    Diagnostic::new(&codes::ERR_LEGEND_OVERLAY_WITH_ENDPOINTS, [])
 }
 
 pub fn err_legend_position_unsupported(chart_id: impl Into<Value>, edge: impl Into<Value>, align: impl Into<Value>, overlay: impl Into<Value>, supported: impl Into<Value>) -> Diagnostic {
@@ -1444,6 +1460,10 @@ pub fn warn_layered_chart_shared_y_axis_scale_mismatch(chart_id: impl Into<Value
 
 pub fn warn_layout_min_exceeds_height(chart_id: impl Into<Value>, n_categories: impl Into<Value>, min_height: impl Into<Value>, authored_height: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_LAYOUT_MIN_EXCEEDS_HEIGHT, [("chart_id", chart_id.into()), ("n_categories", n_categories.into()), ("min_height", min_height.into()), ("authored_height", authored_height.into())])
+}
+
+pub fn warn_legend_hidden_under_edge(chart_id: impl Into<Value>, edge: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_LEGEND_HIDDEN_UNDER_EDGE, [("chart_id", chart_id.into()), ("edge", edge.into())])
 }
 
 pub fn warn_legend_position_width_fallback(chart_id: impl Into<Value>, authored_edge: impl Into<Value>, resolved_edge: impl Into<Value>) -> Diagnostic {

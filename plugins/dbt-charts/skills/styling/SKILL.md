@@ -90,7 +90,7 @@ Also exist: `legend`, `preferred_width`, `padding`, `background`, `aspect_ratio`
 - `marks` ({bar: {}, text: {}}): Bar-family mark overrides
 - `stack` (none|zero|normalize|center): Default stack mode for bar charts; none renders side-by-side columns
 - `orientation` (horizontal|vertical|auto): Preferred bar orientation
-- `endpoint_labels` ({visible, label_offset, height}): Series names printed on stacked bars instead of in a legend
+- `endpoint_labels` ({label_offset, height}): Styling of the series names printed on stacked bars (`legend.position.edge: endpoints`)
 Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `stack_order`, `grouped`, `pattern`.
 
 ### Axes
@@ -150,7 +150,7 @@ Also exist: `connect`, `disconnected_cap`, `disconnected_width`, `halo_multiplie
 
 `legend`:
 - `visible` (bool|auto): Show the legend
-- `position` ({edge, align, overlay}): Legend placement: edge, align along the edge, overlay or reserve
+- `position` ({align, overlay, edge}): Legend edge (or `endpoints`), align along it, overlay or reserve
 - `values` (list of text): Explicit legend entry order/filter
 Also exist: `direction`, `columns`, `compact_columns`, `row`, `label`, `title`, `symbol_limit`, `symbol_shape`, `symbol_fill`.
 

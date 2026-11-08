@@ -392,7 +392,7 @@ impl ColumnBlock {
         for (i, (col, edge)) in self.columns.iter().zip(self.right_edges(plot_w)).enumerate() {
             let x = origin_x + edge;
             let header = Node::text(Role::Label, (x, header_y), Attrs::new().set("text-anchor", "end").vega("font-family", label_family).num("font-size", label_size).quick_some("font-style", style.label.font.style.as_deref()).set("font-weight", label_weight.clone()).set("fill", col.header_ink.as_deref().unwrap_or(label_ink)), col.header.as_str());
-            out.push(crate::contract::mark_group("text", "strip", vec![crate::href::linked(undefined, header)])?);
+            out.push(::layout::contract::mark_group("text", "strip", vec![crate::href::linked(undefined, header)])?);
             let mut cells = Vec::new();
             for (k, cell) in col.cells.iter().enumerate() {
                 let ink = col.cell_series.get(k).and_then(|(_, ink, _)| ink.as_deref()).or(col.ink.as_deref()).unwrap_or(cell_ink);
@@ -415,7 +415,7 @@ impl ColumnBlock {
                     cells.push(crate::href::linked(anchor, text));
                 }
             }
-            out.push(crate::contract::mark_group("text", "strip", cells)?);
+            out.push(::layout::contract::mark_group("text", "strip", cells)?);
             if style.row.divider.visible && i < last {
                 // `_column_rule_layer`: every column right-aligns AT its edge,
                 // so the line clears the left column's glyphs by one padding

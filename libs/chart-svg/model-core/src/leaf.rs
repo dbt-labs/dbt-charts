@@ -306,3 +306,109 @@ impl<F: Fold> Fold for Box<F> {
         F::fold(lower, *upper);
     }
 }
+
+/// An authored twin read as the patch twin of the same model: the one conversion between the
+/// parse output of a whole board and a mergeable layer. A model's impl is generated from its field
+/// table, so a field whose twins cannot convert fails to compile; the whole-leaf types, whose twins
+/// are the same `Option<T>`, convert as themselves.
+pub trait ToPatch {
+    type Out;
+    fn to_patch(self) -> Self::Out;
+}
+
+impl<T> ToPatch for Option<T> {
+    type Out = Option<T>;
+    fn to_patch(self) -> Self::Out {
+        self
+    }
+}
+
+impl ToPatch for () {
+    type Out = ();
+    fn to_patch(self) -> Self::Out {}
+}
+
+impl<A: ToPatch> ToPatch for Box<A> {
+    type Out = Box<A::Out>;
+    fn to_patch(self) -> Self::Out {
+        Box::new((*self).to_patch())
+    }
+}
+
+impl<A: ToPatch> ToPatch for IndexMap<String, A> {
+    type Out = IndexMap<String, A::Out>;
+    fn to_patch(self) -> Self::Out {
+        self.into_iter().map(|(k, v)| (k, v.to_patch())).collect()
+    }
+}
+
+/// A nullable field's slot (`Tri` of the value inside a twin) converted: a value goes through its
+/// twin's conversion, unset and null stay.
+pub fn tri_to_patch<A>(slot: crate::Tri<A::Value>) -> crate::Tri<<A::Out as Lift>::Value>
+where
+    A: Lift + ToPatch,
+    A::Out: Lift,
+{
+    match slot {
+        crate::Tri::Unset => crate::Tri::Unset,
+        crate::Tri::Null => crate::Tri::Null,
+        crate::Tri::Value(v) => match A::put(v).to_patch().lift() {
+            Some(v) => crate::Tri::Value(v),
+            None => crate::Tri::Unset,
+        },
+    }
+}
+
+/// A patch twin read as the authored twin of the same model: the mirror of [`ToPatch`]. Normalize
+/// folds a scope's style as patches, but a board's charts live in `Patch<Board>` as authored values
+/// (a tagged-enum model's patch twin is `Option<Authored>`), and the board is built from them, so a
+/// folded style has to be written back into a chart's authored `style` before `Board::try_from`
+/// reads it. Generated from the field table like [`ToPatch`], and round-tripped against it.
+pub trait ToAuthored {
+    type Out;
+    fn to_authored(self) -> Self::Out;
+}
+
+impl<T> ToAuthored for Option<T> {
+    type Out = Option<T>;
+    fn to_authored(self) -> Self::Out {
+        self
+    }
+}
+
+impl ToAuthored for () {
+    type Out = ();
+    fn to_authored(self) -> Self::Out {}
+}
+
+impl<P: ToAuthored> ToAuthored for Box<P> {
+    type Out = Box<P::Out>;
+    fn to_authored(self) -> Self::Out {
+        Box::new((*self).to_authored())
+    }
+}
+
+impl<P: ToAuthored> ToAuthored for IndexMap<String, P> {
+    type Out = IndexMap<String, P::Out>;
+    fn to_authored(self) -> Self::Out {
+        self.into_iter()
+            .map(|(k, v)| (k, v.to_authored()))
+            .collect()
+    }
+}
+
+/// [`tri_to_patch`], the other way.
+pub fn tri_to_authored<P>(slot: crate::Tri<P::Value>) -> crate::Tri<<P::Out as Lift>::Value>
+where
+    P: Lift + ToAuthored,
+    P::Out: Lift,
+{
+    match slot {
+        crate::Tri::Unset => crate::Tri::Unset,
+        crate::Tri::Null => crate::Tri::Null,
+        crate::Tri::Value(v) => match P::put(v).to_authored().lift() {
+            Some(v) => crate::Tri::Value(v),
+            None => crate::Tri::Unset,
+        },
+    }
+}

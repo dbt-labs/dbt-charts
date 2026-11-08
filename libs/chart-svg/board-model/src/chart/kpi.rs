@@ -49,7 +49,8 @@ pub struct KpiChart {
     #[flatten]
     pub base: ChartBase,
     /// Column reference (string column name) for the headline number/text.
-    pub value: Channel,
+    #[model(absent = "bound by position from the query's one column")]
+    pub value: Option<Channel>,
     /// Caption naming what the headline value measures; `style.variant` places it.
     #[model(absent = "no label")]
     pub label: Option<DisplayText>,
@@ -116,7 +117,10 @@ impl KpiChart {
                 format!("Value error, conditional_formatting.{column} has a `default: true` rule beside `{key}`, whose sign rules cover every nonzero value, so the default rule would apply only at zero or null. Replace it with an explicit predicate such as `eq: 0` or `between`."),
             )]
         };
-        let value = chart.value.as_ref().map(Channel::as_str);
+        let value = match &chart.value {
+            Tri::Value(v) => Some(v.as_str()),
+            _ => None,
+        };
         let mut out = Vec::new();
         if let (Tri::Value(_), Some(value)) = (&chart.good, value) {
             out.extend(beside(value, "good"));

@@ -31,7 +31,7 @@ use crate::style::chart_base::TitledChartStyleBase;
 use crate::style::font::{FontSlant, FontStyle, LetterCase, TextDecoration};
 use crate::unit::{Fraction, Px};
 use indexmap::IndexMap;
-use model_core::{Cx, Engine, FromNode, Leaf, Merge, Node, ReadScalar, Scalar, TypeExpr};
+use model_core::{Cx, Engine, FromNode, Leaf, Merge, Node, Patch, ReadScalar, Scalar, TypeExpr};
 use model_derive::Model;
 use serde_json::Value;
 
@@ -438,7 +438,8 @@ pub struct PaginatorStyle {
     /// Chevron color when at first/last page (signals disabled by tone).
     pub color_disabled: Color,
     /// Paginator font overrides (size, family).
-    pub font: FontStyle,
+    #[model(absent = "the enclosing text font applies")]
+    pub font: Option<Patch<FontStyle>>,
     /// Font weight for the current (selected) page number.
     pub weight_active: u32,
     /// Font weight for other pages and ellipsis.
@@ -580,6 +581,7 @@ pub struct SparkConfig {
     #[model(absent = "the column's data max")]
     pub max: Option<f64>,
     /// Color thresholds for bar / bar-normalize / column: {value: CSS color string}.
+    #[model(default_empty)]
     pub thresholds: IndexMap<String, String>,
     /// Background track color for bar-normalize chart.
     #[model(absent = "the table's track color")]
@@ -736,6 +738,7 @@ pub struct TableChartStyle {
     /// Table-level column defaults applied to every column.
     pub column_defaults: TableColumnDefaultsConfig,
     /// Per-column display configuration keyed by column name (label, format, width, etc.).
+    #[model(default_empty)]
     pub columns: IndexMap<String, TableColumnConfig>,
     /// Table column header text overflow mode.
     #[model(absent = "each header's own overflow")]

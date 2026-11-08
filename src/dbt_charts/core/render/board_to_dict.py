@@ -38,6 +38,7 @@ from dbt_charts.core.compile.models.primitives import (
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.variable.authored import INTERNAL_VARIABLE_FIELDS
+from dbt_charts.core.compile.resolve import bind_channels, columns_of
 from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -384,6 +385,7 @@ def _render_chart_item(
 
     try:
         data = chart_rows(chart, results, variables).rows
+        chart = bind_channels(chart, columns_of(data))
         # Resolve against the full result so data-aware resolution (auto type,
         # auto fields) is unaffected by the cap; only the emitted rows shrink.
         resolved = resolve_chart_with_runtime_inputs(

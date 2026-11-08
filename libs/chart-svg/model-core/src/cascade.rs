@@ -27,6 +27,13 @@ impl Csr {
 /// A link: its source node, its target node and the function that runs it.
 pub type Link<T> = (u16, u16, fn(&mut <T as Leaf>::Patch, &mut Vec<Refused>));
 
+/// Called with the authored path of each leaf a fill set.
+pub type Filled<'a> = &'a mut dyn FnMut(&str);
+
+/// The color pass: the patch to resolve and the patch whose palette bindings and roles apply.
+pub type ResolveColors<T> =
+    fn(&mut <T as Leaf>::Patch, &<T as Leaf>::Patch) -> Result<(), Vec<Refused>>;
+
 /// One generated cascade for a root model `T`.
 pub struct Tables<T: Leaf + 'static> {
     /// Every field of the tree by authored path below the root, sorted; a node's id is its index.
@@ -52,6 +59,17 @@ pub struct Tables<T: Leaf + 'static> {
     pub rebuild: fn(u16, &mut T, &T::Patch, &mut Vec<String>),
     /// The full inherit pass: the reference the incremental one must equal.
     pub inherit: fn(&mut T::Patch) -> Result<(), Vec<Refused>>,
+    /// Set each leaf's `fill` literal where the inherited patch has its container and not the leaf,
+    /// reporting the authored path of each.
+    pub fill: fn(&mut T::Patch, Filled<'_>) -> Result<(), Vec<Refused>>,
+    /// Expand the named fonts of a folded patch: each slot that `extends` one takes the fields the
+    /// font sets under its own, and the name is dropped.
+    pub expand: fn(&mut T::Patch) -> Result<(), Vec<Refused>>,
+    /// Sparse slots that hold a font slot: setting one may bring an `extends` the set paths do not show.
+    pub opaque_fonts: &'static [&'static str],
+    /// Replace each color token in the first patch with the color it names, in the palette and
+    /// role context of the second.
+    pub resolve_colors: ResolveColors<T>,
 }
 
 /// No parent.
@@ -68,7 +86,10 @@ pub enum CascadeError {
 impl fmt::Display for CascadeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Refused(r) => write!(f, "{} inherited values refused", r.len()),
+            Self::Refused(r) => {
+                let each: Vec<String> = r.iter().map(|r| format!("{}: {}", r.at, r.why)).collect();
+                write!(f, "{}", each.join("; "))
+            }
             Self::Unset(u) => u.fmt(f),
         }
     }
@@ -81,6 +102,8 @@ pub struct Resolved<T: Leaf + 'static> {
     tables: &'static Tables<T>,
     /// What the cascade's layers set; inherit's record of which leaves were set anywhere.
     pub folded: Box<T::Patch>,
+    /// The layers as merged, named fonts unexpanded: what a font change has to start again from.
+    pub raw: Box<T::Patch>,
     /// `folded` with every inherited leaf filled.
     pub inherited: Box<T::Patch>,
     pub total: Box<T>,
@@ -185,6 +208,7 @@ where
         Self {
             tables: self.tables,
             folded: self.folded.clone(),
+            raw: self.raw.clone(),
             inherited: self.inherited.clone(),
             total: self.total.clone(),
         }
@@ -198,6 +222,7 @@ where
 {
     fn eq(&self, other: &Self) -> bool {
         self.folded == other.folded
+            && self.raw == other.raw
             && self.inherited == other.inherited
             && self.total == other.total
     }
@@ -222,14 +247,32 @@ where
     T: Build + Clone,
     T::Patch: Clone + Slot + SetLeaves + Empty,
 {
-    /// Resolve a folded patch from scratch: the full pass.
+    /// Resolve a folded patch from scratch: the full pass. Its color tokens resolve in the context
+    /// of the folded patch itself.
     pub fn base(tables: &'static Tables<T>, folded: T::Patch) -> Result<Self, CascadeError> {
-        let mut inherited = Box::new(folded.clone());
+        let with = folded.clone();
+        Self::base_in(tables, folded, &with)
+    }
+
+    /// As [`Resolved::base`], with the color tokens resolved in the palette and role context of
+    /// `with`: a host whose tokens bind to a layer other than the folded whole names it.
+    pub fn base_in(
+        tables: &'static Tables<T>,
+        folded: T::Patch,
+        with: &T::Patch,
+    ) -> Result<Self, CascadeError> {
+        let raw = Box::new(folded.clone());
+        let mut folded = Box::new(folded);
+        (tables.resolve_colors)(&mut folded, with).map_err(CascadeError::Refused)?;
+        (tables.expand)(&mut folded).map_err(CascadeError::Refused)?;
+        let mut inherited = folded.clone();
         (tables.inherit)(&mut inherited).map_err(CascadeError::Refused)?;
+        (tables.fill)(&mut inherited, &mut |_| {}).map_err(CascadeError::Refused)?;
         let total = T::build((*inherited).clone(), "").map_err(CascadeError::Unset)?;
         Ok(Self {
             tables,
-            folded: Box::new(folded),
+            folded,
+            raw,
             inherited,
             total: Box::new(total),
         })
@@ -239,6 +282,29 @@ where
     /// gives, at the cost of what `upper` changes.
     pub fn apply(&self, upper: &T::Patch) -> Result<Self, CascadeError> {
         let t = self.tables;
+        // A font registry entry or a slot's `extends` changes what the slots took: start again.
+        let mut renames = false;
+        upper.set_leaves("", &mut |path| {
+            renames |= path == "palettes"
+                || path.starts_with("palettes.")
+                || path == "roles"
+                || path.starts_with("roles.")
+                || path == "fonts"
+                || path.starts_with("fonts.")
+                || path.ends_with(".extends")
+                || t.opaque_fonts.iter().any(|o| {
+                    path == *o || path.strip_prefix(o).is_some_and(|r| r.starts_with('.'))
+                });
+        });
+        if renames {
+            let mut raw = self.raw.clone();
+            (*raw).merge(upper.clone());
+            return Self::base(t, *raw);
+        }
+        let mut raw = self.raw.clone();
+        (*raw).merge(upper.clone());
+        let mut upper = upper.clone();
+        (t.resolve_colors)(&mut upper, &raw).map_err(CascadeError::Refused)?;
         let mut folded = self.folded.clone();
         (*folded).merge(upper.clone());
         let mut inherited = self.inherited.clone();
@@ -280,6 +346,12 @@ where
         if !refused.is_empty() {
             return Err(CascadeError::Refused(refused));
         }
+        let mut filled = Vec::new();
+        (t.fill)(&mut inherited, &mut |path| filled.push(path.to_string()))
+            .map_err(CascadeError::Refused)?;
+        for id in filled.iter().filter_map(|path| node_of(t.paths, path)) {
+            pass.changed(id);
+        }
         let mut unset = Vec::new();
         let mut rebuilt = Bits::new(n);
         for id in 0..n {
@@ -298,6 +370,7 @@ where
         Ok(Self {
             tables: t,
             folded,
+            raw,
             inherited,
             total,
         })
@@ -344,6 +417,38 @@ pub fn rebuild_optional_slot<P: Clone>(
         Tri::Value(v) => Some(v.clone()),
         Tri::Unset | Tri::Null => None,
     };
+}
+
+/// Rebuild an `omit` field from its slot: unset is `None`.
+pub fn rebuild_omitted<T: Build>(
+    slot: &T::Patch,
+    at: &str,
+    out: &mut Option<T>,
+    unset: &mut Vec<String>,
+) where
+    T::Patch: Clone + crate::Empty,
+{
+    if slot.is_empty() {
+        *out = None;
+    } else if let Some(v) = crate::build_field::<T>(slot.clone(), at, unset) {
+        *out = Some(v);
+    }
+}
+
+/// Rebuild a `default_empty` field from its slot: unset is the empty value.
+pub fn rebuild_defaulted<T: Build + Default>(
+    slot: &T::Patch,
+    at: &str,
+    out: &mut T,
+    unset: &mut Vec<String>,
+) where
+    T::Patch: Clone + crate::Empty,
+{
+    if slot.is_empty() {
+        *out = T::default();
+    } else if let Some(v) = crate::build_field::<T>(slot.clone(), at, unset) {
+        *out = v;
+    }
 }
 
 /// Rebuild a field from its slot.

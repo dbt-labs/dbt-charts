@@ -658,10 +658,14 @@ class _RadialChartFields(_SharedChartFields, _FieldLabelsField):
 
     model_config = ConfigDict(allow_inf_nan=False)
 
+    # None = bound by position from the query's columns.
     theta: Annotated[
-        str,
+        str | None,
         Channel(),
-        Field(description="Column for angular encoding in pie (arc) charts."),
+        Field(
+            default=None,
+            description="Column for angular encoding in pie (arc) charts.",
+        ),
     ]
     # None = no color encoding.
     color: Annotated[

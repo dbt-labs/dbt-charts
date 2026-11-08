@@ -30,7 +30,9 @@ pub struct ScatterChart {
     #[model(nullable)]
     pub style: ScatterChartStyle,
     /// Extra marks on one shared x, each with its own type.
+    #[model(fill = fill_empty)]
     pub layers: Vec<CartesianLayer>,
     /// Rules, bands, notes and trends drawn on the chart.
+    #[model(fill = fill_empty)]
     pub annotations: Vec<Annotation>,
 }

@@ -26,6 +26,7 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     color_legend_entries,
     estimate_cartesian_plot_height,
     legend_row_fits,
+    no_rail,
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
     _classify_to_channel_type,
@@ -38,6 +39,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     _base_kwargs,
     _cartesian_kwargs,
     _color_column_format,
+    authored_measure_format,
     board_family_style,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
@@ -129,6 +131,7 @@ def _resolve_heatmap(
         *_cascaded_legend(chart_style_context, heatmap.legend),
         merge_legend(chart_style_context.legend, heatmap.legend),
         width,
+        no_rail,
         _NO_RAIL_ENDPOINT_LABELS,
         endpoint_label_has_layers=False,
         has_layers=False,
@@ -237,6 +240,7 @@ def _resolve_heatmap(
             data,
             "heatmap",
             panel_axes=dataset.axes,
+            measure_format=authored_measure_format(normalized.style),
             stacked=False,
         ),
         chart_type="heatmap",

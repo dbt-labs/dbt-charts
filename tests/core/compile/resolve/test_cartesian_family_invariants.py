@@ -427,14 +427,7 @@ class TestAuthoredLegendPositionResolvesVisible:
         chart = _BUILDERS[family](
             color="series",
             style=_STYLE_PATCHES[family].model_validate(
-                {
-                    "legend": {"position": {"edge": "bottom"}},
-                    **(
-                        {"endpoint_labels": {"visible": False}}
-                        if family in ("bar", "line", "area")
-                        else {}
-                    ),
-                }
+                {"legend": {"position": {"edge": "bottom"}}}
             ),
         )
         resolved = resolve(chart, _SERIES_DATA, _board())
@@ -1081,18 +1074,16 @@ class TestBoardLegendSettingsApply:
         resolved = resolve(chart, _LAYER_DATA, _board_with_legend({"visible": False}))
         assert resolved.legend.visible is False
 
-    def test_board_visible_true_beside_the_endpoint_rail_is_an_error(self) -> None:
+    def test_board_visible_true_keeps_the_legend_and_drops_the_endpoint_labels(
+        self,
+    ) -> None:
         chart = _line(color="series")
-        with pytest.raises(ChartDataError):
-            resolve(chart, _SERIES_DATA, _board_with_legend({"visible": True}))
+        resolved = resolve(chart, _SERIES_DATA, _board_with_legend({"visible": True}))
+        assert resolved.legend.visible is True
+        assert resolved.style.endpoint_labels.visible is False
 
     def test_board_edge_counts_as_placed(self) -> None:
-        chart = _line(
-            color="series",
-            style=LineChartStylePatch.model_validate(
-                {"endpoint_labels": {"visible": False}}
-            ),
-        )
+        chart = _line(color="series")
         resolved = resolve(
             chart,
             _SERIES_DATA,

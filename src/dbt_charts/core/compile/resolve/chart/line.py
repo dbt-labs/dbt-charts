@@ -29,8 +29,8 @@ from dbt_charts.core.compile.resolve.chart._annotations import (
 from dbt_charts.core.compile.resolve.chart._axes import (
     _bake_ay_orient,
     _cascaded_legend,
-    _endpoint_labels_off_for_layers,
-    _endpoint_labels_off_for_multiples,
+    _rail_off_for_layers,
+    _rail_off_for_multiples,
     _reject_dual_axis_layered_endpoint_labels,
     cartesian_color_domain_values,
     cartesian_series_naming,
@@ -63,6 +63,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _cartesian_kwargs,
+    authored_measure_format,
 )
 from dbt_charts.core.compile.resolve.chart._layers import (
     _check_layers_y_domain,
@@ -273,16 +274,20 @@ def _resolve_line(
         field_labels=normalized.field_labels,
     )
     top_legend_series = legend_entries if normalized.layers else None
+    authored_position, authored_visible = _cascaded_legend(
+        chart_style_context, line.legend
+    )
     naming = cartesian_series_naming(
         normalized,
         channels,
-        *_cascaded_legend(chart_style_context, line.legend),
+        authored_position,
+        authored_visible,
         merge_legend(chart_style_context.legend, line.legend),
         width,
-        _endpoint_labels_off_for_multiples(
-            _endpoint_labels_off_for_layers(line.endpoint_labels, normalized),
-            normalized,
+        lambda request: _rail_off_for_multiples(
+            _rail_off_for_layers(request, normalized), normalized
         ),
+        line.endpoint_labels,
         endpoint_label_has_layers=endpoint_label_has_layers,
         has_layers=bool(normalized.layers),
         rail_eligible_for_suppression=True,
@@ -531,6 +536,7 @@ def _resolve_line(
         top_legend=naming.top_legend,
         wrap_legend=naming.wrap_legend,
         legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
+        legend_hidden_under_edge=naming.hidden_under_edge,
     )
     resolved_layers = _resolve_layer_list(
         normalized.layers,
@@ -564,6 +570,7 @@ def _resolve_line(
         data,
         "line",
         panel_axes=dataset.axes,
+        measure_format=authored_measure_format(normalized.style),
         stacked=False,
         header_inks=series_header_inks(
             base_y=normalized.y,

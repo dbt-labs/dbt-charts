@@ -124,28 +124,6 @@ pub(crate) struct LinearX {
     rule_datums: [Option<f64>; 2],
 }
 
-/// `to`, unless moving from `from` would cross zero: a zero edge is fine, a past-zero one is not.
-fn clamp_to_zero(from: f64, to: f64) -> f64 {
-    if from.signum() == to.signum() { to } else { 0.0 }
-}
-
-/// A data-fit domain rounded out to the axis's own tick boundaries, then
-/// one tick step further past a non-zero end a data value still lands on:
-/// a dot on the plot edge reads as clipped, unless the edge is zero.
-pub(super) fn nice_clear_of_data(lo: f64, hi: f64, (data_lo, data_hi): (f64, f64), tick_count: usize, min_step: Option<f64>) -> (f64, f64) {
-    let (nice_lo, nice_hi) = d3rs::ticks::d3_nice(lo, hi, tick_count);
-    if nice_hi <= nice_lo {
-        return (nice_lo, nice_hi);
-    }
-    let count = d3rs::ticks::vega_tick_count(nice_lo, nice_hi, tick_count, min_step);
-    let step = d3rs::ticks::d3_tick_step(nice_lo, nice_hi, count);
-    // An authored tick step can exceed the step the domain rounded to, so clamp at zero.
-    (
-        if data_lo == nice_lo && nice_lo != 0.0 { clamp_to_zero(nice_lo, nice_lo - step) } else { nice_lo },
-        if data_hi == nice_hi && nice_hi != 0.0 { clamp_to_zero(nice_hi, nice_hi + step) } else { nice_hi },
-    )
-}
-
 impl LinearX {
     /// The scale's domain on a plot `pw` wide.
     pub(crate) fn domain_at(&self, pw: f64) -> (f64, f64) {
@@ -158,7 +136,7 @@ impl LinearX {
             let (nice_hi, nice_lo) = d3rs::ticks::d3_nice(hi, lo, 10);
             (nice_lo, nice_hi)
         } else if self.fit {
-            nice_clear_of_data(lo, hi, self.raw, self.tick_count, self.min_step)
+            ::bind::plot::domain::nice_clear_of_data(lo, hi, self.raw, self.tick_count, self.min_step)
         } else {
             d3rs::ticks::d3_nice(lo, hi, 10)
         }
@@ -568,11 +546,11 @@ fn rule_point(
             .set("fill", color)
             .num("stroke-width", width)
             .num("opacity", 1.0)
-            .extend(crate::contract::aria_attrs(point_aria.as_deref(), crate::contract::ItemRole::Point)?),
+            .extend(::layout::contract::aria_attrs(point_aria.as_deref(), ::layout::contract::ItemRole::Point)?),
     )
     .translate(at.0, at.1);
     Ok(vec![if point_aria.is_some() {
-        crate::contract::mark_group("symbol", &format!("layer_{layer}_layer_1_marks"), vec![point])?
+        ::layout::contract::mark_group("symbol", &format!("layer_{layer}_layer_1_marks"), vec![point])?
     } else {
         point
     }])

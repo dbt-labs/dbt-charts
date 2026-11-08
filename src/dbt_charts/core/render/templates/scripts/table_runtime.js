@@ -2,13 +2,15 @@
    draws every row of a table once (`data-dbt-table`) and publishes the hooks
    this reads -- row groups, `data-dbt-sort` keys, header `data-col`, stripes,
    rules, pagers, a date column's `data-dbt-day`. This script only moves,
-   hides, and relabels those elements;
-   it never computes a cell's text, format, or color, never issues a request,
-   and never touches the URL. State lives in the page and is not saved. #}*/
+   hides, and relabels those elements, and keeps a page's rows in the document
+   while the rest wait in memory; it never computes a cell's text, format, or
+   color, never issues a request, and never touches the URL. State lives in the
+   page and is not saved. #}*/
 (function() {
     var SVG_NS = 'http://www.w3.org/2000/svg';
     var MAX_CHECKLIST_VALUES = 100;
     var _menu = null;
+    var _states = new WeakMap();
 
     function _children(parent, attr) {
         return Array.prototype.filter.call(parent.children, function(el) {
@@ -137,6 +139,44 @@
         else el.removeAttribute('display');
     }
 
+    /*{# An off-page row is out of the document, not hidden in it: every style #}*/
+    /*{# and paint pass on the board walks the live SVG, and a table at the pool #}*/
+    /*{# cap would put thousands of hidden nodes in the way of each hover. Rows #}*/
+    /*{# return ahead of the pagers, which the engine draws after the rows. #}*/
+    function _pagerAnchor(table) {
+        return _children(table, 'data-dbt-pager')[0] || null;
+    }
+
+    function _placeRows(state, onPage) {
+        state.rows.forEach(function(row) {
+            if (onPage.indexOf(row) === -1) row.el.remove();
+        });
+        var anchor = _pagerAnchor(state.table);
+        onPage.forEach(function(row) {
+            if (!row.el.parentNode) state.table.insertBefore(row.el, anchor);
+        });
+    }
+
+    /*{# A serialized board is the engine's picture: every row in query order, #}*/
+    /*{# the off-page ones hidden. A layout may place one chart twice, so the #}*/
+    /*{# live tables pair with the copy's by position, which a clone keeps. #}*/
+    function _pictureRows(svg, copy) {
+        var live = svg.querySelectorAll('[data-dbt-table]');
+        var copies = copy.querySelectorAll('[data-dbt-table]');
+        live.forEach(function(table, i) {
+            var state = _states.get(table);
+            if (!state) return;
+            var target = copies[i];
+            _children(target, 'data-dbt-row').forEach(function(el) { el.remove(); });
+            var anchor = _pagerAnchor(target);
+            state.rows.forEach(function(row) {
+                var clone = row.el.cloneNode(true);
+                if (!row.el.parentNode) clone.setAttribute('display', 'none');
+                target.insertBefore(clone, anchor);
+            });
+        });
+    }
+
     function _layout(state) {
         /*{# Unsorted, every row keeps its place in the query's order. Sorted, the #}*/
         /*{# summary rows (the engine pools only a trailing run) stay last, unsorted. #}*/
@@ -156,7 +196,7 @@
         var first = (state.page - 1) * state.pageRows;
         var onPage = all.slice(first, first + state.pageRows);
 
-        state.rows.forEach(function(row) { _setHidden(row.el, onPage.indexOf(row) === -1); });
+        _placeRows(state, onPage);
         var y = state.rowsY;
         onPage.forEach(function(row, slot) {
             var previous = slot > 0 ? onPage[slot - 1] : null;
@@ -506,6 +546,13 @@
             ranges: {},
             page: _numberHook(table, 'data-dbt-page'),
         };
+        _states.set(table, state);
+        state.rows.forEach(function(row) {
+            if (row.el.getAttribute('display') === 'none') {
+                row.el.removeAttribute('display');
+                row.el.remove();
+            }
+        });
         table.querySelectorAll('[data-dbt-sortable]').forEach(function(header) {
             var col = header.getAttribute('data-col');
             var type = header.getAttribute('data-dbt-sort-type');
@@ -528,7 +575,7 @@
             header.setAttribute('aria-haspopup', 'menu');
             header.setAttribute('aria-expanded', 'false');
         });
-        _markAffixes(state, state.rows.filter(function(row) { return row.el.getAttribute('display') !== 'none'; }));
+        _markAffixes(state, state.rows.filter(function(row) { return row.el.parentNode !== null; }));
         /*{# Compact-only pagers open unlabeled: size them to the open page now. #}*/
         if (!state.perPagePagers && _children(table, 'data-dbt-pager').length) _layout(state);
         table.addEventListener('click', function(event) {
@@ -585,5 +632,6 @@
     }, true);
     window.addEventListener('resize', _closeMenu);
 
+    window.dbtChartHover.addPictureStep(_pictureRows);
     window.dbtTableRuntime = { mount: mount };
 })();

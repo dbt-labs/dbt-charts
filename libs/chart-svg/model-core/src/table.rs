@@ -39,6 +39,8 @@ pub enum TypeExpr {
     OneOf(&'static [&'static str]),
     /// A newtype that is either of two shapes, such as a name or a number.
     Either(&'static TypeExpr, &'static TypeExpr),
+    /// A boolean constant: the only value a flag takes (`Literal[True]`).
+    Const(bool),
     /// A fixed-length array of positional types: a pair, a rectangle.
     Tuple(&'static [&'static TypeExpr]),
     /// The payload of a unit variant.
@@ -58,6 +60,9 @@ pub struct Keywords {
     pub min_items: Option<u64>,
     /// `maxItems` of a list-valued newtype.
     pub max_items: Option<u64>,
+    /// The keywords stay in the arm that states them (`Literal[..] | Duration`, where the pattern is
+    /// the string arm's own) instead of moving beside the field's `anyOf`.
+    pub in_arm: bool,
 }
 
 /// A facet's pattern under an `Engine`.
@@ -76,6 +81,7 @@ impl Keywords {
             bounds: Bounds::NONE,
             min_items: None,
             max_items: None,
+            in_arm: false,
         }
     }
 
@@ -86,6 +92,7 @@ impl Keywords {
             bounds,
             min_items: None,
             max_items: None,
+            in_arm: false,
         }
     }
 
@@ -96,6 +103,7 @@ impl Keywords {
             bounds: Bounds::NONE,
             min_items: Some(min_items),
             max_items: None,
+            in_arm: false,
         }
     }
 
@@ -107,7 +115,14 @@ impl Keywords {
             bounds: Bounds::NONE,
             min_items: Some(n),
             max_items: Some(n),
+            in_arm: false,
         }
+    }
+
+    /// Keep these keywords in their arm of a union.
+    pub const fn in_arm(mut self) -> Self {
+        self.in_arm = true;
+        self
     }
 
     pub const fn in_engine(mut self, in_engine: InEngine) -> Self {
@@ -132,6 +147,7 @@ impl PartialEq for TypeExpr {
             (Self::Either(a, b), Self::Either(c, d)) => a == c && b == d,
             (Self::OneOf(a), Self::OneOf(b)) => a == b,
             (Self::Tuple(a), Self::Tuple(b)) => a == b,
+            (Self::Const(a), Self::Const(b)) => a == b,
             (Self::Unit, Self::Unit) => true,
             _ => false,
         }
@@ -143,10 +159,21 @@ impl PartialEq for TypeExpr {
 #[derive(Debug, Default, PartialEq)]
 pub struct Attrs {
     pub absent: Option<&'static str>,
+    /// `omit`: an `Option<T>` the layers may leave unset, whose authored twin is `T`'s own, so
+    /// `null` is refused as for a plain field. Names what `None` means.
+    pub omit: Option<&'static str>,
+    /// `default_empty`: a map or list the layers leave unset builds empty.
+    pub default_empty: bool,
     pub inherit: Option<&'static str>,
     pub inherit_slot: Option<&'static str>,
     /// `(leaf, path)`: re-parent single leaves of an inherit slot.
     pub links: &'static [(&'static str, &'static str)],
+    /// `(path, source)`: a leaf or container below the field takes `source`, at this mount only
+    /// (one shared type mounted at different tiers).
+    pub links_at: &'static [(&'static str, &'static str)],
+    /// `(path, value)`: a leaf below the field holds `value` where nothing set it, at this mount
+    /// only.
+    pub fills_at: &'static [(&'static str, Value)],
     pub local: bool,
     pub nested_drop: bool,
     /// Python types the field `X | None` and a null means nothing authored: it reads as the empty mapping.

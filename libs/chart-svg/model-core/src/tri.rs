@@ -32,6 +32,13 @@ pub enum Engine<T, R> {
     Value(T),
 }
 
+impl<T, R> From<T> for Engine<T, R> {
+    /// A value is the engine slot's own value.
+    fn from(v: T) -> Self {
+        Engine::Value(v)
+    }
+}
+
 /// The specificity walk for one leaf: layers most specific first. The first
 /// set layer wins; null wins as absent (`None`); unset falls through. Callers
 /// end the list with a total layer.

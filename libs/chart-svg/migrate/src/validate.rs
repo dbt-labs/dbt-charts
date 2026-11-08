@@ -3,7 +3,8 @@
 //! Keywords: `type`, `enum`, `const`, `properties`, `required`,
 //! `additionalProperties`, `items`/`prefixItems`, `anyOf`, `allOf`, `not`,
 //! `if`/`then`, `$ref`, `pattern`, and the numeric/size bounds. Anything else is
-//! an annotation. Format is not asserted. A schema declaring draft-07 reads as
+//! an annotation. Format is not asserted, and a YAML timestamp is its ISO text,
+//! as the board parser reads it. A schema declaring draft-07 reads as
 //! jsonschema's Draft7 does: `$ref` overrides its siblings and `prefixItems` is
 //! unknown.
 
@@ -87,7 +88,7 @@ fn check(root: &Json, legacy: bool, schema: &Json, node: &Node) -> bool {
     match &node.kind {
         Kind::Map(map) => object(root, legacy, s, map),
         Kind::Seq(items) => array(root, legacy, s, items),
-        Kind::Scalar(Value::Str(text)) => string(s, text),
+        Kind::Scalar(Value::Str(text) | Value::Timestamp(text)) => string(s, text),
         Kind::Scalar(Value::Number(n)) => number(s, n.as_f64().unwrap_or(f64::NAN)),
         Kind::Scalar(_) => true,
     }
@@ -191,7 +192,7 @@ fn type_is(name: &str, node: &Node) -> bool {
     match (&node.kind, name) {
         (Kind::Map(_), "object") | (Kind::Seq(_), "array") => true,
         (Kind::Scalar(Value::Null), "null") | (Kind::Scalar(Value::Bool(_)), "boolean") => true,
-        (Kind::Scalar(Value::Str(_)), "string") => true,
+        (Kind::Scalar(Value::Str(_) | Value::Timestamp(_)), "string") => true,
         (Kind::Scalar(Value::Number(_)), "number") => true,
         (Kind::Scalar(Value::Number(n)), "integer") => {
             n.is_i64() || n.is_u64() || n.as_f64().is_some_and(|f| f.fract() == 0.0)
@@ -206,7 +207,7 @@ pub(crate) fn equals(expected: &Json, node: &Node) -> bool {
         (Json::Null, Kind::Scalar(Value::Null)) => true,
         (Json::Bool(a), Kind::Scalar(Value::Bool(b))) => a == b,
         (Json::Number(a), Kind::Scalar(Value::Number(b))) => a.as_f64() == b.as_f64(),
-        (Json::String(a), Kind::Scalar(Value::Str(b))) => a == b,
+        (Json::String(a), Kind::Scalar(Value::Str(b) | Value::Timestamp(b))) => a == b,
         (Json::Array(a), Kind::Seq(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(x, y)| equals(x, y))
         }
@@ -477,7 +478,7 @@ fn bound_error(keyword: &str, arg: &Json, node: &Node, at: &[String]) -> Option<
                 }
             ),
         ),
-        (Kind::Scalar(Value::Str(t)), "minLength")
+        (Kind::Scalar(Value::Str(t) | Value::Timestamp(t)), "minLength")
             if (t.chars().count() as u64) < arg.as_u64()? =>
         {
             fail(
@@ -492,7 +493,7 @@ fn bound_error(keyword: &str, arg: &Json, node: &Node, at: &[String]) -> Option<
                 ),
             )
         }
-        (Kind::Scalar(Value::Str(t)), "pattern") => {
+        (Kind::Scalar(Value::Str(t) | Value::Timestamp(t)), "pattern") => {
             let p = arg.as_str()?;
             (!pattern(p).is_some_and(|re| re.is_match(t).unwrap_or(false))).then(|| {
                 (

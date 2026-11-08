@@ -31,6 +31,8 @@ _LINE_CHART_DEFAULTS = {
     "type": "line",
     "query_name": "q",
     "title": "",
+    "x": "date",
+    "y": "value",
 }
 
 
@@ -122,7 +124,7 @@ def test_no_fire_for_line_ordinal_one_row() -> None:
 
 def test_no_fire_for_bar_temporal_one_row() -> None:
     """Bar charts are out of scope for this detector."""
-    chart = BarChart(id="c1", type="bar", query_name="q", x="date")
+    chart = BarChart(id="c1", type="bar", query_name="q", x="date", y="value")
     ctx = _make_ctx(chart, _ONE_ROW)
     assert detector.detect(ctx) == []
 

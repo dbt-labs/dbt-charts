@@ -73,11 +73,14 @@ pub mod bar;
 pub mod callout;
 pub mod columns;
 pub mod conditional_formatting;
+pub mod custom;
+pub mod geoshape;
 pub mod heatmap;
 pub mod kpi;
 pub mod layer;
 pub mod line;
 pub mod pie;
+pub mod point_map;
 pub mod projection;
 pub mod query;
 pub mod scatter;
@@ -86,13 +89,17 @@ pub mod support_table;
 pub mod table;
 pub mod tooltip;
 
+use crate::board::Visible;
 use crate::facet::{Channel, Color, DisplayText};
 use crate::names::ChartWarningCode;
 use crate::primitives::LinkSpec;
 use crate::string_enum;
+use crate::style::charts::ChartsStyle;
+use crate::style::style::Style;
 use annotation::{ChartSort, ChartTotal};
 use conditional_formatting::FieldConditionalFormatting;
 use indexmap::IndexMap;
+use model_core::Leaf;
 use model_derive::Model;
 use projection::ProjectionChoice;
 use support_table::SupportTableSpec;
@@ -101,10 +108,13 @@ pub use area::AreaChart;
 pub use bar::BarChart;
 pub use callout::CalloutChart;
 pub use columns::{ColorColumn, Columns, LonLat, NonBlankColumn, NumberPair, PatternColumn};
+pub use custom::CustomChart;
+pub use geoshape::GeoshapeChart;
 pub use heatmap::HeatmapChart;
 pub use kpi::{KpiChart, KpiSupportConfig};
 pub use line::LineChart;
 pub use pie::PieChart;
+pub use point_map::PointMapChart;
 pub use query::{ChartQuery, LayerQuery};
 pub use scatter::ScatterChart;
 pub use spark_bar::SparkBarChart;
@@ -131,6 +141,118 @@ pub enum Chart {
     Donut(PieChart),
     SparkBar(SparkBarChart),
     Table(TableChart),
+    Geoshape(GeoshapeChart),
+    /// Read as `GeoshapeChart`, a synonym of `geoshape`.
+    Map(GeoshapeChart),
+    PointMap(PointMapChart),
+    /// Read as `PointMapChart`, a synonym of `point_map`.
+    BubbleMap(PointMapChart),
+    Custom(CustomChart),
+}
+
+impl ChartAuthored {
+    /// The `query:` slot, for every family that reads a query (a callout reads none): where
+    /// normalize swaps an inline query for its hoisted id.
+    pub fn query_mut(&mut self) -> Option<&mut model_core::Tri<ChartQuery>> {
+        Some(match self {
+            Self::Scatter(c) => &mut c.cartesian.shared.base.query,
+            Self::Bar(c) | Self::Histogram(c) => &mut c.cartesian.shared.base.query,
+            Self::Line(c) => &mut c.cartesian.shared.base.query,
+            Self::Area(c) => &mut c.cartesian.shared.base.query,
+            Self::Heatmap(c) => &mut c.cartesian.shared.base.query,
+            Self::Kpi(c) => &mut c.base.query,
+            Self::Pie(c) | Self::Donut(c) => &mut c.radial.shared.base.query,
+            Self::SparkBar(c) => &mut c.shared.base.query,
+            Self::Table(c) => &mut c.shared.base.query,
+            Self::Geoshape(c) | Self::Map(c) => &mut c.geo.shared.base.query,
+            Self::PointMap(c) | Self::BubbleMap(c) => &mut c.geo.shared.base.query,
+            Self::Custom(c) => &mut c.shared.base.query,
+            Self::Callout(_) => return None,
+        })
+    }
+}
+
+impl ChartAuthored {
+    /// The `query:` slot of every layer, for the families that draw layers (bar, line, area and
+    /// scatter): where normalize swaps a layer's query name for its hoisted id.
+    pub fn layer_queries_mut(&mut self) -> Vec<&mut model_core::Tri<LayerQuery>> {
+        let layers = match self {
+            Self::Scatter(c) => &mut c.layers,
+            Self::Bar(c) | Self::Histogram(c) => &mut c.layers,
+            Self::Line(c) => &mut c.layers,
+            Self::Area(c) => &mut c.layers,
+            _ => return Vec::new(),
+        };
+        layers
+            .iter_mut()
+            .flatten()
+            .map(|layer| match layer {
+                layer::CartesianLayerAuthored::Bar(l) => &mut l.base.query,
+                layer::CartesianLayerAuthored::Line(l) => &mut l.base.query,
+                layer::CartesianLayerAuthored::Area(l) => &mut l.base.query,
+                layer::CartesianLayerAuthored::Scatter(l) => &mut l.base.query,
+            })
+            .collect()
+    }
+}
+
+/// Declares, once, which `style.charts.<slot>` each chart variant's own `style:` folds into (Python's
+/// `_AUTHORED_FAMILY_TO_MONOLITHIC_KEY`: a histogram reads the bar slot, a donut the pie slot, a
+/// `map` the geoshape slot and a `bubble_map` the point-map slot) and builds from it
+/// [`ChartAuthored::style_overlay`].
+macro_rules! family_slots {
+    ($($variant:ident $(| $alias:ident)* => $slot:ident),* $(,)?) => {
+        impl ChartAuthored {
+            /// This chart's own `style:` as a board-style layer: `charts.<slot>` carrying it, the
+            /// shape the chart-local fold applies over its placement's scope. `None` for a chart
+            /// that authored no style, and for a custom chart, which has no slot (`compile` refuses
+            /// custom charts before it asks).
+            pub fn style_overlay(&self) -> Option<<Style as Leaf>::Patch> {
+                use model_core::{Empty, ToPatch};
+                match self {
+                    $(Self::$variant(c) $(| Self::$alias(c))* => {
+                        let own = c.style.clone().to_patch();
+                        if own.is_empty() {
+                            return None;
+                        }
+                        let mut charts = <ChartsStyle as Leaf>::Patch::default();
+                        charts.$slot = Box::new(own);
+                        let mut layer = <Style as Leaf>::Patch::default();
+                        layer.charts = Box::new(charts);
+                        Some(layer)
+                    })*
+                    Self::Custom(_) => None,
+                }
+            }
+
+            /// Replace this chart's own `style:` with the family style `scope` holds for its slot:
+            /// the total the board is built from. A custom chart has no slot and keeps its own.
+            pub fn adopt_style(&mut self, scope: &<Style as Leaf>::Patch) {
+                use model_core::ToAuthored;
+                match self {
+                    $(Self::$variant(c) $(| Self::$alias(c))* => {
+                        c.style = (*scope.charts.$slot).clone().to_authored();
+                    })*
+                    Self::Custom(_) => {}
+                }
+            }
+        }
+    };
+}
+
+family_slots! {
+    Scatter => scatter,
+    Bar | Histogram => bar,
+    Line => line,
+    Area => area,
+    Callout => callout,
+    Heatmap => heatmap,
+    Kpi => kpi,
+    Pie | Donut => pie,
+    SparkBar => spark_bar,
+    Table => table,
+    Geoshape | Map => geoshape,
+    PointMap | BubbleMap => point_map,
 }
 
 /// A chart's `link:`: a URL or `{url, open}`, or `false` to suppress the board's automatic link.
@@ -175,6 +297,9 @@ pub struct ChartBase {
     /// Click-through link for drill-down, or just its URL.
     #[model(absent = "no link of its own; the board's links.auto decides")]
     pub link: Option<ChartLink>,
+    /// Whether the chart is drawn where the layout places it: a bool, a variable name, a Jinja expression, or a `{query, column}` probe. Normalize moves it onto the layout placement.
+    #[model(directive, absent = "always drawn")]
+    pub visible: Option<Visible>,
     /// Codes of render warnings to suppress for this chart.
     #[model(fill = fill_empty)]
     pub warnings_ignore: Vec<ChartWarningCode>,
@@ -284,10 +409,10 @@ pub struct CartesianChartFields {
     pub support_table: Option<SupportTableSpec>,
     /// Explicit chart height in pixels. Positive number only. When set, overrides aspect_ratio and theme cascade.
     #[model(absent = "sized by aspect_ratio and the theme cascade")]
-    pub height: Option<f64>,
+    pub height: Option<crate::unit::Number>,
     /// Chart width in pixels. Positive number only. In a rows layout the chart's slot pins to this width (a fixed footprint, capped at the row). In cols and grid layouts it contributes to the dashboard's intrinsic width measurement when the board has no width of its own, and the layout still owns the final slot.
     #[model(absent = "the layout's width")]
-    pub width: Option<f64>,
+    pub width: Option<crate::unit::Number>,
 }
 
 impl CartesianChartFields {
@@ -386,10 +511,10 @@ pub struct GeoChartFields {
     pub value: Option<Channel>,
     /// Explicit chart height in pixels. Positive number only.
     #[model(absent = "sized by the theme cascade")]
-    pub height: Option<f64>,
+    pub height: Option<crate::unit::Number>,
     /// Chart width in pixels. Positive number only. In a rows layout the chart's slot pins to this width (a fixed footprint, capped at the row). In cols and grid layouts it contributes to the dashboard's intrinsic width measurement when the board has no width of its own, and the layout still owns the final slot.
     #[model(absent = "the layout's width")]
-    pub width: Option<f64>,
+    pub width: Option<crate::unit::Number>,
 }
 
 /// Channels of the arc families (pie, donut).
@@ -402,7 +527,8 @@ pub struct RadialChartFields {
     #[flatten]
     pub shared: SharedChartFields,
     /// Column for angular encoding in pie (arc) charts.
-    pub theta: Channel,
+    #[model(absent = "bound by position from the query's columns")]
+    pub theta: Option<Channel>,
     /// Column naming each wedge, giving it its own hue. Bare column name only; a literal color goes in `style.color.static`.
     #[model(absent = "no color encoding")]
     pub color: Option<ColorColumn>,
@@ -411,8 +537,8 @@ pub struct RadialChartFields {
     pub total: Option<ChartTotal>,
     /// Explicit chart height in pixels. Positive number only.
     #[model(absent = "sized by the theme cascade")]
-    pub height: Option<f64>,
+    pub height: Option<crate::unit::Number>,
     /// Chart width in pixels. Positive number only. In a rows layout the chart's slot pins to this width (a fixed footprint, capped at the row). In cols and grid layouts it contributes to the dashboard's intrinsic width measurement when the board has no width of its own, and the layout still owns the final slot.
     #[model(absent = "the layout's width")]
-    pub width: Option<f64>,
+    pub width: Option<crate::unit::Number>,
 }

@@ -20,10 +20,7 @@ from dbt_charts.core.compile.models.style.authored import (
     SparkBarChartStylePatch,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
-from dbt_charts.core.compile.models.style.merged import (
-    BoardChartTiers,
-    MergedChartStyle,
-)
+from dbt_charts.core.compile.models.style.merged import MergedChartStyle
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     _FAMILY_SLOT,
     board_family_style,
@@ -137,18 +134,6 @@ def attach_chart_styles(board: Board) -> None:
         except UnknownColorError:
             continue
     board.chart_styles = styles
-
-
-def board_chart_tiers(context: ChartStyleContext) -> BoardChartTiers:
-    """The board-wide chart inputs the engine reads beside ``chart_styles``."""
-    return BoardChartTiers(
-        category_color_pins=context.category_color_pins,
-        axis=context.axis,
-        axis_x=context.axis_x,
-        axis_y=context.axis_y,
-        axis_quantitative=context.axis_quantitative,
-        axis_band=context.axis_band,
-    )
 
 
 def attach_chart_styles_tree(board: Board) -> None:

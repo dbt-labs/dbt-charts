@@ -298,24 +298,24 @@ def test_compiled_chart_returns_family_model() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_pie_missing_theta_raises() -> None:
-    """Pie chart with no theta field raises CompilationError, not silent empty string."""
-    from dbt_charts.core.compile.errors import CompilationError
+def test_pie_missing_theta_is_left_to_bind_by_position() -> None:
+    """A pie naming no theta keeps it unset (never an empty string) for the
+    binder to fill from the query's columns at render."""
     from dbt_charts.core.compile.normalize.charts import normalize_chart
 
     qr = _registry(q=_sql())
-    with pytest.raises(CompilationError, match="theta"):
-        normalize_chart("c", {"type": "pie", "query": "q"}, qr, sources={})
+    chart = normalize_chart("c", {"type": "pie", "query": "q"}, qr, sources={})
+    assert chart.theta is None
 
 
-def test_kpi_missing_value_raises() -> None:
-    """KPI chart with no value field raises CompilationError, not silent empty string."""
-    from dbt_charts.core.compile.errors import CompilationError
+def test_kpi_missing_value_is_left_to_bind_by_position() -> None:
+    """A KPI naming no value keeps it unset (never an empty string) for the
+    binder to fill from the query's one column at render."""
     from dbt_charts.core.compile.normalize.charts import normalize_chart
 
     qr = _registry(q=_sql())
-    with pytest.raises(CompilationError, match="value"):
-        normalize_chart("c", {"type": "kpi", "query": "q"}, qr, sources={})
+    chart = normalize_chart("c", {"type": "kpi", "query": "q"}, qr, sources={})
+    assert chart.value is None
 
 
 def test_callout_missing_message_raises() -> None:
@@ -753,36 +753,3 @@ def test_geoshape_rejects_latitude_longitude() -> None:
         GeoshapeChart.model_validate(
             {"type": "geoshape", "longitude": "lon_col", "query": "q"}
         )
-
-
-def test_support_table_entry_inherits_measure_format_from_style_axis_y() -> None:
-    """v2 must match v1: a support_table entry reading chart.y with format=None
-
-    inherits the chart's measure format (style.axis_y.format here), same as
-    normalize_chart() does for v1. Regression: normalize_chart passed
-    authored.support_table straight through with no inheritance, so v2 strip
-    cells rendered unformatted.
-    """
-    from dbt_charts.core.compile.normalize.charts import normalize_chart
-
-    qr = _registry(q=_sql())
-    compiled = normalize_chart(
-        "b",
-        {
-            "type": "bar",
-            "x": "month",
-            "y": "revenue",
-            "query": "q",
-            "style": {"axis_y": {"labels": {"format": "$,.0f"}}},
-            "support_table": [{"source": "revenue"}, {"source": "count"}],
-        },
-        qr,
-        sources={},
-    )
-    assert isinstance(compiled, BarChart)
-    assert compiled.support_table is not None
-    entries = compiled.support_table.entries
-    assert entries[0].format == "$,.0f", (
-        "measure entry must inherit style.axis_y.format, matching v1"
-    )
-    assert entries[1].format is None, "non-measure entry must not inherit"

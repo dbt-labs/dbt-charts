@@ -11,7 +11,7 @@ use crate::primitives::{BorderStyle, DividerStyle, TextBaseline};
 use crate::rule::Auto;
 use crate::string_enum;
 use crate::style::font::{FontSlant, FontStyle, LetterCase, TextDecoration};
-use model_core::Engine;
+use model_core::{Engine, Patch};
 use model_derive::Model;
 
 string_enum!(
@@ -278,8 +278,11 @@ pub struct ChartTitleStyle {
 /// Shared boxed-surface group: font, background and border.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct BoxStyle {
-    /// Box text font overrides.
-    pub font: FontStyle,
+    /// Box text font overrides; the fields it sets win over the text it sits in. A field left
+    /// unset takes the surrounding text's, except on code: its family is mdsvg's monospace stack and
+    /// its size is the surrounding size times mdsvg's `code_font_scale`, neither a theme value.
+    #[model(absent = "the enclosing text font applies")]
+    pub font: Option<Patch<FontStyle>>,
     /// Box background fill.
     pub background: Color,
     /// Box border (width, color, radius).

@@ -23,7 +23,7 @@ use crate::style::axis::{
 };
 use crate::style::board::{ChartTitleStyle, PaddingStyle};
 use crate::style::font::FontStyle;
-use crate::style::legend::{LegendStyle, PieLegendStyle};
+use crate::style::legend::{LegendStyle, PieLegendStyle, SideLegendStyle};
 use crate::style::marks::{BasemapStyle, TotalStyle};
 use crate::style::table::SupportTableStyle;
 use crate::unit::Fraction;
@@ -55,8 +55,10 @@ pub struct TitledChartStyleBase {
 /// Font for families with a hand-drawn per-chart card render surface.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct ChartCardStyleMixin {
-    /// Chart-level font overrides.
-    pub font: FontStyle,
+    /// Chart-level font overrides. Absent: the chart draws in the board's font
+    /// (`style.charts.font`).
+    #[model(absent = "the chart draws in the board's font (style.charts.font)")]
+    pub font: Option<FontStyle>,
 }
 
 /// Families with their own geometry and a legend: cartesian, radial and geo.
@@ -76,11 +78,13 @@ pub struct PaintedChartStyleBase {
     /// Maximum chart height in pixels.
     #[model(inherit = "Style.charts.max_height")]
     pub max_height: f64,
-    /// Chart color: static mark paint, categorical palette, and/or gradient scale.
+    /// Chart color: static mark paint, categorical palette, and/or gradient scale. Only the
+    /// single-series ink is the enclosing tier's when unset; the rest of the slot is local.
+    #[model(inherit_slot = "Style.charts.color")]
     pub color: ColorStyle,
 }
 
-/// The legend slot for families placed along a plot edge (not pie/donut).
+/// The legend slot for line, area and bar: a legend edge or `endpoints`.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct LegendedChartStyleBase {
     /// Chart legend style, a sparse override of `ChartsStyle.legend`.
@@ -88,14 +92,26 @@ pub struct LegendedChartStyleBase {
     pub legend: Option<Patch<LegendStyle>>,
 }
 
+/// The legend slot for families that cannot name series on the chart itself.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct SideLegendedChartStyleBase {
+    /// Chart legend style, a sparse override of `ChartsStyle.legend`.
+    #[model(local)]
+    pub legend: Patch<SideLegendStyle>,
+}
+
 /// The legend slot for pie and donut.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct PieLegendedChartStyleBase {
-    /// Pie key style.
-    pub legend: PieLegendStyle,
+    /// Pie key style, a sparse override of `ChartsStyle.legend`.
+    #[model(absent = "the pie key follows style.charts.legend", local)]
+    pub legend: Option<Patch<PieLegendStyle>>,
 }
 
 /// Cartesian families: bar, line, area, scatter, histogram, heatmap.
+///
+/// Each family mixes in its own legend slot: only line, area and bar accept
+/// `edge: endpoints`.
 ///
 /// The axis slots are sparse overlays: only what a theme authors for the family is
 /// set, and every other leaf comes from the global axis when the slot is read, so
@@ -104,8 +120,6 @@ pub struct PieLegendedChartStyleBase {
 pub struct CartesianChartStyle {
     #[flatten]
     pub titled: TitledChartStyleBase,
-    #[flatten]
-    pub legended: LegendedChartStyleBase,
     #[flatten]
     pub painted: PaintedChartStyleBase,
     /// Override applied to both x and y axes; unset takes the global axis.
@@ -171,7 +185,7 @@ pub struct GeoChartStyle {
     #[flatten]
     pub titled: TitledChartStyleBase,
     #[flatten]
-    pub legended: LegendedChartStyleBase,
+    pub legended: SideLegendedChartStyleBase,
     #[flatten]
     pub base: ChartStyleBase,
     /// Chart aspect ratio (width/height).

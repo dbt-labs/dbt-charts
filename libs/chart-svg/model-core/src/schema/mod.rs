@@ -40,6 +40,8 @@ pub enum Ty {
     /// The type, and the type its `accept` also takes.
     Accept(Box<Ty>, Box<Ty>),
     Patch(Box<Ty>),
+    /// A boolean constant.
+    Const(bool),
     /// A fixed-length array of positional types.
     Tuple(Vec<Ty>),
     /// A facet or unit with the keywords its declaration carries.

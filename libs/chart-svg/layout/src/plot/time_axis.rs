@@ -14,12 +14,35 @@
 //!
 //! The gutter is the labels' ink; the outermost ticks' stroke is the caller's.
 //!
+//! The x range keeps `TimeLabels::inset` pixels off each plot edge (production pads an unauthored
+//! line or area x axis by a mark's radius and two pixels, and an authored `scale.padding` by its
+//! own pixels): an instant at fraction `f` of the extent stands at `inset + (width - 2 inset) f`,
+//! and the plot's edges are the labels' to overhang. A grained axis flushes a label within a pixel
+//! of an end of that inset range; a continuous one flushes by the fraction of the whole plot
+//! (`bare_label_anchor`). The end-point clearance and the interval labels' clip test read the
+//! whole plot and the card's estimate, as production does. What the pad does to the marks' ink,
+//! the annotation scale and a support strip's columns is the caller's.
+//!
+//! A continuous axis over times of day ([`clock`]) ticks the finest clock step that fits, words each
+//! tick on the clock face (stacking the date under a midnight), and names the data's first and last
+//! instants or each day where there is room; an aware column reads its clock in the board zone. Every
+//! other continuous axis keeps d3's ticks and text. One tick carries several rows there, so a label is
+//! as many lines as its ticks stack.
+//!
 //! An axis over a calendar grain (a year, quarter, month, week or day) labels by the cadence ladder
 //! ([`crate::plot::time_cadence`]); when its labels name periods coarser than the data and nothing
 //! is thinned, it ticks the period boundaries and centers each label between two of them. Every
 //! other grained axis stands its labels on its ticks (`on_ticks`).
+//!
+//! An authored `ticks.time_unit` pins the ticks to its interval and the labels to them: the period
+//! labels of the interval axis and the end-point names are off (`interval_labels_allowed`,
+//! `labels_unpinned`), and a tick speaks where its own date opens a label period.
 
+mod clock;
+mod intervals;
 mod on_ticks;
+
+pub use clock::{Clock, DayLabels};
 
 use bind::model::TimeDomain;
 use bind::plot::time::TimeUnitSetting;
@@ -30,10 +53,11 @@ use measure::shaped::{Font, FontBook};
 use scene::Bounds;
 
 use crate::geom::{Insets, Size};
-use crate::plot::time_cadence::{self, label_rows, Cadence, Crowding, LABEL_GAP_SPACES};
+use crate::plot::time_cadence::{self, Cadence, Crowding};
 use crate::time_ladder::{
     interval_instants, ladder_zone, no_cadence, zone_instants, AuthoredTickCadence,
 };
+use clock::{Bare, ClockPlan, Mark};
 
 /// An x axis' labels as resolved: the face, the width a label is cut at, how far below the axis
 /// line they hang (tick size plus label padding), the least gap Vega's parity rule leaves between
@@ -48,7 +72,15 @@ use crate::time_ladder::{
 /// A grained axis whose labels stand on its ticks also assumes the caller refused what layout cannot
 /// see and production reads there: an authored `labels.align`, `labels.angle`, `labels.values`
 /// or `labels.expr` (`labels_unpinned`, `x_label_align`) keep end-point labels away or move the
-/// anchor, so such a board must not reach this axis.
+/// anchor, so such a board must not reach this axis. The authored `ticks.count` and label formats
+/// layout cannot read are stated (`tick_count`, `date_format`) and refused by name.
+///
+/// An axis over times of day is the line and area axis: production's scatter builds the same plan but never
+/// names the data's end points or draws day labels (`scatter_axis.rs:675, 908-934`), so a scatter caller
+/// must not reach it. It also assumes the caller refused what layout cannot see and production reads
+/// there: `labels.values`, `labels.expr` and `scale.continuous.domain`, each of which makes production
+/// keep Vega's own labels or extent. A continuous axis never tilts, so an authored `labels.angle` is
+/// the caller's to refuse there as it is on every continuous axis.
 #[derive(Debug, Clone, Copy)]
 pub struct TimeLabels<'a> {
     pub font: Font<'a>,
@@ -62,12 +94,28 @@ pub struct TimeLabels<'a> {
     /// The board language's quarter words, resolved by bind (`bind::time_locale::quarter_words`).
     pub quarters: &'a [String; 4],
     pub edge_width: f64,
+    /// Pixels the x range keeps off each plot edge: ticks and labels stand over `[inset, width - inset]`
+    /// (production's `x_scale_pad`). The caller states it; layout does not derive it. Any finite
+    /// value is production's: `x_edge_pad(edge_size)` (at least 2) when `scale.padding` is unauthored
+    /// or authored 0, else the authored padding as written, a negative one included (the range
+    /// then overruns the plot) and one past half the plot (the range collapses).
+    pub inset: f64,
     /// `labels.font.case` is set: production measures and draws the cased text, which is not modeled.
     pub cased: bool,
+    /// `ticks.count` is authored: production ticks a capped count (`AuthoredTickCadence::Count`) on a
+    /// grained axis and picks d3's rung by it on a continuous one, which is not modeled.
+    pub tick_count: bool,
+    /// `labels.format` or a redefined `date_<grain>` is authored: production prints every label through
+    /// that format (`AuthoredTimeFormat`) and turns the interval labels off, which is not modeled.
+    pub date_format: bool,
     /// Production labels this axis by the curated ladder on ticks rather than as this axis: its
     /// x-type law dropped the grain for the scaffold budget (bind's `TimeDomain` still carries it),
     /// or the author set `axis_x.time_unit: none`. Layout cannot see either; the caller states it.
+    /// An axis over times of day that keeps a clock plan is none of this (production's `clock` term of
+    /// `keeps_dropped_grain_ladder`), whatever is stated.
     pub ladder_bare: bool,
+    /// What an axis over times of day reads; unread without one.
+    pub clock: Clock<'a>,
 }
 
 /// Where a label's anchor sits along its text.
@@ -129,6 +177,7 @@ pub struct TimeAxis<'a> {
     aware: bool,
     cadence: Option<AuthoredTickCadence>,
     grained: Option<Grained>,
+    clock: Option<ClockPlan>,
     ascent: f64,
     descent: f64,
 }
@@ -144,9 +193,20 @@ impl<'a> TimeAxis<'a> {
                 "a time axis with labels.font.case is not supported"
             )));
         }
-        if labels.ladder_bare {
+        if labels.tick_count {
             return Err(Diagnostic::refused(refuse!(
-                "a time axis labeled by the curated ladder on ticks (a grain dropped for the scaffold budget, or axis_x.time_unit: none) is not supported"
+                "a time axis with an authored ticks.count is not supported"
+            )));
+        }
+        if labels.date_format {
+            return Err(Diagnostic::refused(refuse!(
+                "a time axis with an authored labels.format or date_<grain> format is not supported"
+            )));
+        }
+        if !labels.inset.is_finite() {
+            return Err(diag::err_internal(format!(
+                "a time axis inset of {} px is not a pixel count",
+                labels.inset
             )));
         }
         // Production draws a moved fiscal year or quarter ordinally (`resolve_cartesian_x_type`), so a
@@ -158,23 +218,25 @@ impl<'a> TimeAxis<'a> {
                 "a moved fiscal year or quarter grain reached a continuous time axis",
             ));
         }
-        if domain.buckets.iter().any(|b| b.timed) {
-            return Err(Diagnostic::refused(refuse!(
-                "a time axis over times of day (clock ticks and labels) is not supported"
-            )));
-        }
         let cadence = match labels.tick_unit {
             TimeUnitSetting::Absent => None,
             TimeUnitSetting::Auto => return Err(no_cadence("auto")),
-            TimeUnitSetting::Unit(_) if domain.unit.is_some() => {
-                return Err(Diagnostic::refused(refuse!(
-                    "an authored tick cadence on a time axis over a calendar grain is not supported"
-                )))
-            }
             TimeUnitSetting::Unit(unit) => {
                 Some(AuthoredTickCadence::authored(unit, labels.tick_step))
             }
         };
+        // An aware timestamp prints its wall clock in the board zone; a bare date or a naive
+        // timestamp keeps the one it was written with.
+        let aware = domain
+            .buckets
+            .iter()
+            .all(|b| b.absolute && b.iso.len() > 10);
+        let clock = ClockPlan::of(domain, &labels.clock, cadence, aware)?;
+        if labels.ladder_bare && clock.is_none() {
+            return Err(Diagnostic::refused(refuse!(
+                "a time axis labeled by the curated ladder on ticks (a grain dropped for the scaffold budget, or axis_x.time_unit: none) is not supported"
+            )));
+        }
         let days = domain.buckets.iter().map(|b| b.pos);
         let extent = (
             days.clone().fold(f64::INFINITY, f64::min),
@@ -193,12 +255,8 @@ impl<'a> TimeAxis<'a> {
             book,
             extent,
             grained,
-            // An aware timestamp prints its wall clock in the board zone; a bare date or a naive
-            // timestamp keeps the one it was written with.
-            aware: domain
-                .buckets
-                .iter()
-                .all(|b| b.absolute && b.iso.len() > 10),
+            aware,
+            clock,
             cadence,
             ascent: run.ascent,
             descent: run.descent,
@@ -271,6 +329,9 @@ impl<'a> TimeAxis<'a> {
         if lo == hi {
             return Ok(vec![lo]);
         }
+        if let Some(ticks) = self.clock.as_ref().and_then(|c| c.ticks(lo, hi)) {
+            return ticks.map_err(Diagnostic::refused);
+        }
         let zone = ladder_zone(self.aware);
         let ticks = match self.cadence {
             Some(AuthoredTickCadence::Interval(interval)) => {
@@ -290,10 +351,26 @@ impl<'a> TimeAxis<'a> {
         ticks.map_err(Diagnostic::refused)
     }
 
+    /// The x of the instant at `frac` of the extent on a plot `width` across: the range is inset on
+    /// both ends, and collapses to its start once the insets meet.
+    fn x_at(&self, frac: f64, width: f64) -> f64 {
+        let inset = self.labels.inset;
+        inset + (width - 2.0 * inset).max(0.0) * frac
+    }
+
+    /// A grained label's anchor: Vega's flush read on the inset range (`flat_label_anchor`), its
+    /// span left unclamped as production leaves it.
+    fn range_align(&self, frac: f64, width: f64) -> Align {
+        let span = width - 2.0 * self.labels.inset;
+        Self::align(frac * span, span)
+    }
+
     /// The ticks and labels on a plot `plot` across.
     pub fn place(&self, plot: Size) -> Result<Placement, Diagnostic> {
         match &self.grained {
             None => self.place_continuous(plot),
+            // An authored cadence pins the labels to its ticks (`interval_labels_allowed`).
+            Some(grained) if self.cadence.is_some() => self.place_on_ticks(grained, plot),
             Some(grained) => match self.place_intervals(grained, plot)? {
                 Some(placed) => Ok(placed),
                 None => self.place_on_ticks(grained, plot),
@@ -302,9 +379,10 @@ impl<'a> TimeAxis<'a> {
     }
 
     /// The labels on a continuous axis `plot` px across. A label is cut at the limit; which show is Vega's
-    /// parity rule over boxes the font size tall, and where they are inked a box is the face's
-    /// ascent plus descent tall (quirk class Q2d). An edge label within a pixel of the plot edge
-    /// flushes to it. The gutter is the shown labels' overhang.
+    /// parity rule over boxes the font size tall (a second row adds the font size and two pixels), and
+    /// where they are inked a box is the face's ascent plus descent tall per row (quirk class Q2d). An
+    /// edge label within a pixel of the plot edge flushes to it. The gutter is the shown labels' overhang,
+    /// and a stacked clock axis reserves its second row whatever shows.
     fn place_continuous(&self, plot: Size) -> Result<Placement, Diagnostic> {
         let TimeLabels {
             font,
@@ -312,50 +390,11 @@ impl<'a> TimeAxis<'a> {
             offset,
             ..
         } = self.labels;
-        let (lo, hi) = self.extent;
-        let locale = bind::time_locale::active_time_locale().map_err(diag::err_internal)?;
-        let mut ticks = Vec::new();
         let instants = self.instants(plot.width)?;
-        for &day in &instants {
-            let wall = if self.aware {
-                bind::time_zone::wall_day(day).map_err(diag::err_internal)?
-            } else {
-                day
-            };
-            let full = d3rs::time_format::multi_format((wall * MS_PER_DAY).round(), 0.0, &locale)
-                .map_err(diag::err_internal)?;
-            let (text, _) = self
-                .book
-                .truncate(&full, &font, limit)
-                .map_err(diag::err_internal)?;
-            let width = self
-                .book
-                .run(&full, &font)
-                .map_err(diag::err_internal)?
-                .advance
-                .min(limit);
-            let frac = if lo == hi {
-                0.5
-            } else {
-                (day - lo) / (hi - lo)
-            };
-            // Vega's parity pass reads `measure_shaped`, the face's upright default instance whatever the
-            // painted weight and style; the ink is the painted run.
-            let parity_width = self
-                .book
-                .run(
-                    &full,
-                    &Font {
-                        weight: 400.0,
-                        italic: false,
-                        ..font
-                    },
-                )
-                .map_err(diag::err_internal)?
-                .advance
-                .min(limit);
-            ticks.push((day, text, width, parity_width, frac * plot.width));
-        }
+        let bare = match &self.clock {
+            Some(clock) => self.clock_ticks(clock, &instants, plot.width)?,
+            None => self.plain_ticks(&instants)?,
+        };
         let height = self.ascent + self.descent;
         let boxed = |x: f64, width: f64, align: Align, height: f64| {
             let x1 = match align {
@@ -370,35 +409,116 @@ impl<'a> TimeAxis<'a> {
                 y2: offset + height,
             }
         };
-        let aligns: Vec<Align> = ticks.iter().map(|t| Self::align(t.4, plot.width)).collect();
-        let vega: Vec<Bounds> = ticks
-            .iter()
-            .zip(&aligns)
-            .map(|(t, &align)| boxed(t.4, t.3, align, font.size))
-            .collect();
+        let upright = Font {
+            weight: 400.0,
+            italic: false,
+            ..font
+        };
+        // A bare axis flushes on the fraction of the whole plot, not of the inset range
+        // (`bare_label_anchor`).
+        let mut cut = Vec::new();
+        let mut vega = Vec::new();
+        let mut inks = Vec::new();
+        let mut aligns = Vec::new();
+        for tick in bare.iter().filter(|t| t.mark != Mark::TickOnly) {
+            let rows: Vec<&str> = std::iter::once(tick.row1.as_str())
+                .chain(Some(tick.row2.as_str()).filter(|row| !row.is_empty()))
+                .collect();
+            let mut text = Vec::new();
+            let (mut ink, mut parity) = (0.0_f64, 0.0_f64);
+            for row in &rows {
+                text.push(
+                    self.book
+                        .truncate(row, &font, limit)
+                        .map_err(diag::err_internal)?
+                        .0,
+                );
+                ink = ink.max(
+                    self.book
+                        .run(row, &font)
+                        .map_err(diag::err_internal)?
+                        .advance,
+                );
+                // Vega's parity pass reads `measure_shaped`, the face's upright default instance whatever the
+                // painted weight and style; the ink is the painted run.
+                parity = parity.max(
+                    self.book
+                        .run(row, &upright)
+                        .map_err(diag::err_internal)?
+                        .advance,
+                );
+            }
+            let align = Self::align(tick.frac * plot.width, plot.width);
+            let x = self.x_at(tick.frac, plot.width);
+            // Flat labels share one top, so a second row never changes a gap between boxes.
+            vega.push(boxed(x, parity.min(limit), align, font.size));
+            inks.push(boxed(x, ink.min(limit), align, height * rows.len() as f64));
+            aligns.push((tick, x, align));
+            cut.push(text.join("\n"));
+        }
         let shown = parity_visible(&vega, self.labels.min_gap);
-        let labels: Vec<PlacedLabel> = ticks
+        let labels: Vec<PlacedLabel> = aligns
             .into_iter()
-            .zip(aligns)
+            .zip(cut)
+            .zip(inks)
             .zip(shown)
-            .map(|(((day, text, width, _, x), align), visible)| PlacedLabel {
+            .map(|((((tick, x, align), text), ink), visible)| PlacedLabel {
                 text,
-                day,
+                day: tick.day,
                 x,
                 y: offset,
                 align,
                 baseline: Baseline::Top,
                 angle: 0.0,
                 visible,
-                ink: boxed(x, width, align, height),
+                ink,
             })
             .collect();
-        let gutter = gutter_of(&labels, plot.width);
+        let mut gutter = gutter_of(&labels, plot.width);
+        if self.clock.as_ref().is_some_and(ClockPlan::stacked) {
+            gutter.bottom = gutter.bottom.max(offset + 2.0 * height);
+        }
         Ok(Placement {
-            ticks: instants,
+            ticks: bare
+                .iter()
+                .filter(|t| t.mark != Mark::LabelOnly)
+                .map(|t| t.day)
+                .collect(),
             labels,
             gutter,
         })
+    }
+
+    /// d3's multi-scale text at each tick (Vega's own labels).
+    fn plain_ticks(&self, instants: &[f64]) -> Result<Vec<Bare>, Diagnostic> {
+        let (lo, hi) = self.extent;
+        let locale = bind::time_locale::active_time_locale().map_err(diag::err_internal)?;
+        instants
+            .iter()
+            .map(|&day| {
+                let wall = if self.aware {
+                    bind::time_zone::wall_day(day).map_err(diag::err_internal)?
+                } else {
+                    day
+                };
+                Ok(Bare {
+                    day,
+                    frac: if lo == hi {
+                        0.5
+                    } else {
+                        (day - lo) / (hi - lo)
+                    },
+                    row1: d3rs::time_format::multi_format(
+                        (wall * MS_PER_DAY).round(),
+                        0.0,
+                        &locale,
+                    )
+                    .map_err(diag::err_internal)?,
+                    row2: String::new(),
+                    mark: Mark::Both,
+                })
+            })
+            .collect()
     }
 
     /// A grained axis whose labels name periods coarser than its data, unthinned: ticks on the
@@ -435,26 +555,11 @@ impl<'a> TimeAxis<'a> {
         {
             return Ok(None);
         }
-        let (y, m, d) = civil_from_days(lo.floor() as i64);
-        let mut start = floor_to_bucket_start((y, m, d), period, fiscal_start);
-        let mut periods = Vec::new();
-        while days_from_civil(start.0, start.1, start.2) as f64 <= hi {
-            let end = next_bucket(start, period);
-            periods.push((
-                start,
-                days_from_civil(start.0, start.1, start.2) as f64,
-                days_from_civil(end.0, end.1, end.2) as f64,
-            ));
-            start = end;
-        }
-        let ticks: Vec<f64> = periods
-            .iter()
-            .map(|p| p.1)
-            .filter(|&from| from >= lo)
-            .collect();
-        if !ticks.iter().any(|&day| day > lo) {
+        let Some(intervals::Intervals { ticks, spans }) =
+            self.intervals(period, fiscal_start, edge_width)?
+        else {
             return Ok(None);
-        }
+        };
         // A label's drawn text is cut at the limit; its clip test reads the uncut decision width and
         // its ink the uncut shaped advance capped at the limit.
         let measure = |text: &str| -> Result<(String, f64, f64), Diagnostic> {
@@ -470,35 +575,25 @@ impl<'a> TimeAxis<'a> {
             let decided = time_cadence::decision_width(self.book, text, &font)?;
             Ok((cut, uncut, decided))
         };
-        let gap = LABEL_GAP_SPACES * measure(" ")?.2;
         let line = self.ascent + self.descent;
         let mut labels: Vec<PlacedLabel> = Vec::new();
-        for &(date, from, to) in &periods {
-            let (slice_lo, slice_hi) = (from.max(lo), to.min(hi));
-            if slice_hi <= slice_lo {
-                continue;
-            }
-            let (row1, row2) = label_rows(
-                date,
-                period,
-                labels.is_empty(),
-                fiscal_start,
-                self.labels.quarters,
-            )?;
-            let (row1, w1, d1) = measure(&row1)?;
-            let (row2, w2, d2) = if row2.is_empty() {
+        for intervals::Span {
+            rows: (row1, row2),
+            lo: slice_lo,
+            hi: slice_hi,
+        } in spans
+        {
+            let (row1, w1, _) = measure(&row1)?;
+            let (row2, w2, _) = if row2.is_empty() {
                 (row2, 0.0, 0.0)
             } else {
                 measure(&row2)?
             };
             let width = w1.max(w2);
-            let clipped = slice_lo != from || slice_hi != to;
-            if clipped && d1.max(d2) + gap > (slice_hi - slice_lo) / (hi - lo) * edge_width {
-                continue;
-            }
             let day = (slice_lo + slice_hi) / 2.0;
-            let x = (day - lo) / (hi - lo) * plot.width;
-            let align = Self::align(x, plot.width);
+            let frac = (day - lo) / (hi - lo);
+            let x = self.x_at(frac, plot.width);
+            let align = self.range_align(frac, plot.width);
             let width = width.min(limit);
             let x1 = match align {
                 Align::Left => x,

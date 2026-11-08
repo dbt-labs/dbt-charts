@@ -38,6 +38,10 @@ pub enum Edit {
         /// The declared old path (`a.*.b`), for the writer's refusal texts.
         declared: String,
     },
+    /// A value a document-aware rewrite owes a position no move fires at,
+    /// creating the mappings it passes through; `None` strikes the key and the
+    /// mappings it empties.
+    Write { path: Vec<Seg>, value: Option<Json> },
     /// A key struck together with the ancestors it emptied: the shallowest entry removed.
     Delete {
         path: Vec<Seg>,
@@ -226,5 +230,64 @@ pub fn try_delete_tail(node: &mut Node, tail: &[String], depth: usize) -> Struck
     Struck {
         emptied: false,
         top: inner.top,
+    }
+}
+
+/// Sets `value` at `path` below `node`, creating the mappings it passes
+/// through (a null or scalar on the way gives way to one); `None` strikes the
+/// key and the mappings and lists it empties instead. A list on the way is
+/// indexed, never created.
+pub fn write_leaf(node: &mut Node, path: &[String], value: Option<&Json>) {
+    let Some((head, rest)) = path.split_first() else {
+        return;
+    };
+    let m = match &mut node.kind {
+        Kind::Seq(items) => {
+            if let Some(item) = head.parse::<usize>().ok().and_then(|i| items.get_mut(i)) {
+                write_leaf(item, rest, value);
+            }
+            return;
+        }
+        Kind::Map(m) => m,
+        Kind::Scalar(_) => return,
+    };
+    if rest.is_empty() {
+        match value {
+            None => {
+                m.shift_remove(head);
+            }
+            Some(v) => match m.get_mut(head) {
+                Some(e) => e.value = from_json(v, SYNTHETIC),
+                None => {
+                    m.insert(
+                        head.clone(),
+                        Entry::string_key(SYNTHETIC, head, from_json(v, SYNTHETIC)),
+                    );
+                }
+            },
+        }
+        return;
+    }
+    let container = m
+        .get(head)
+        .is_some_and(|e| matches!(e.value.kind, Kind::Map(_) | Kind::Seq(_)));
+    if !container {
+        if value.is_none() {
+            return;
+        }
+        m.insert(
+            head.clone(),
+            Entry::string_key(SYNTHETIC, head, empty_map()),
+        );
+    }
+    let Some(entry) = m.get_mut(head) else { return };
+    write_leaf(&mut entry.value, rest, value);
+    let emptied = match &entry.value.kind {
+        Kind::Map(inner) => inner.is_empty(),
+        Kind::Seq(inner) => inner.is_empty(),
+        Kind::Scalar(_) => false,
+    };
+    if value.is_none() && emptied {
+        m.shift_remove(head);
     }
 }

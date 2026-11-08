@@ -7,7 +7,9 @@ description = "The typed spine: hand-written board model types (facet and unit n
 
 [features]
 # Builders for the types of this crate, through the same `try_from` normalize uses.
-fixtures = []
+fixtures = ["cascade"]
+# The generated inherit and fill over `Style` (`cascade`), which normalize's style step runs.
+cascade = []
 
 [dependencies]
 color = { package = "dbt-charts-color", path = "../color" }
@@ -22,6 +24,8 @@ serde_json = "1"
 yaml = { path = "../yaml" }
 
 [build-dependencies]
+display-text = { path = "../display-text" }
+jiff-tzdb = "0.1"
 yaml = { path = "../yaml" }
 serde_json = "1"
 

@@ -632,7 +632,8 @@ pub(crate) fn cell_nodes(
     y_scale: &BandScale,
     marks: &CellMarks,
 ) -> Result<Vec<Node>, String> {
-    use crate::contract::{aria_attrs, ghost_layer, mark_group, GhostRule, GhostRun, ItemRole};
+    use crate::contract::{ghost_layer, GhostRule, GhostRun};
+    use ::layout::contract::{aria_attrs, mark_group, ItemRole};
     let (cell_w, cell_h) = (x_scale.bandwidth(), y_scale.bandwidth());
     let mut nodes = Vec::with_capacity(cells.len() + 1);
     let mut rules = Vec::new();

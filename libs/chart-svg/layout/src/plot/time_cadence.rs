@@ -25,20 +25,20 @@ const LABEL_GAP_SPACES_NUMERIC: f64 = 2.0;
 /// advances at the painted weight, unkerned, in the family production maps the painted one to
 /// (`stand_in_family`: Inter for every sans face). Drawn ink, gutters and positions are shaped in
 /// the painted face ([`FontBook::run`]) and never read this; only a verdict production takes on
-/// these sums may.
+/// these sums may. A stand-in face with no `wght` axis fails as production does.
 pub fn decision_width(book: &FontBook, text: &str, font: &Font) -> Result<f64, Diagnostic> {
     let stand_in = Font {
         family: measure::stand_in_family(font.family),
         ..*font
     };
-    book.raw_advance(text, &stand_in)
+    book.weighted_advance(text, &stand_in)
         .map_err(diag::err_internal)
 }
 
 /// Years a dense year axis labels in turn, the round steps readers group on, before any tilt.
 const YEAR_STEPS: [i32; 5] = [5, 10, 25, 50, 100];
 
-type Date = (i32, u8, u8);
+pub(crate) type Date = (i32, u8, u8);
 
 /// The rows a label paints: its own text and its context.
 pub type Rows = (String, String);
@@ -436,26 +436,8 @@ impl Ladder<'_> {
         Ok((unit, 1, false))
     }
 
-    /// `dates[at]` opens a `label` period (`is_label_opener`). A row of a year, quarter or month
-    /// grain is the first of its bucket; a week opens a month within its first seven days, and a
-    /// year or quarter too; a day only a year within the first seven (production's rule) and a
-    /// quarter on the first.
     fn opens(&self, at: usize, label: TimeUnit) -> bool {
-        let (y, m, d) = self.dates[at];
-        let fiscal = self.fiscal_start;
-        match label {
-            TimeUnit::Year => opens_period(m, 12, fiscal) && d <= 7,
-            TimeUnit::YearQuarter => {
-                opens_period(m, 3, fiscal) && (d == 1 || self.data == TimeUnit::YearWeek && d <= 7)
-            }
-            TimeUnit::YearMonth => match self.data {
-                TimeUnit::YearWeek => d <= 7,
-                TimeUnit::YearMonthDate => d == 1,
-                _ => true,
-            },
-            TimeUnit::YearWeek => self.data != TimeUnit::YearMonthDate || weekday(y, m, d) == 0,
-            TimeUnit::YearMonthDate => true,
-        }
+        opens_label(self.dates[at], self.data, label, self.fiscal_start)
     }
 
     /// The indices of the dates that open a `label` period and whose year is a multiple of
@@ -573,6 +555,59 @@ impl Ladder<'_> {
             }
         }
         Ok(true)
+    }
+}
+
+/// `date` of a `data` grain's bucket sequence opens a `label` period (`is_label_opener`). A row of
+/// a year, quarter or month grain is the first of its bucket; a week opens a month within its first
+/// seven days, and a year or quarter too; a day only a year within the first seven (production's
+/// rule) and a quarter on the first.
+pub(crate) fn opens_label(
+    (y, m, d): Date,
+    data: TimeUnit,
+    label: TimeUnit,
+    fiscal_start: u8,
+) -> bool {
+    match label {
+        TimeUnit::Year => opens_period(m, 12, fiscal_start) && d <= 7,
+        TimeUnit::YearQuarter => {
+            opens_period(m, 3, fiscal_start) && (d == 1 || data == TimeUnit::YearWeek && d <= 7)
+        }
+        TimeUnit::YearMonth => match data {
+            TimeUnit::YearWeek => d <= 7,
+            TimeUnit::YearMonthDate => d == 1,
+            _ => true,
+        },
+        TimeUnit::YearWeek => data != TimeUnit::YearMonthDate || weekday(y, m, d) == 0,
+        TimeUnit::YearMonthDate => true,
+    }
+}
+
+/// Whether a Vega tick on `(y, m, d)` of a `data` axis opens a `label` period (`opens_label_period`).
+/// Unlike [`opens_label`], the per-row predicate, it keeps the gate's own clauses: a monthly axis
+/// carries no day clause (every tick inside an opening month passes) and a pair with no clause
+/// has no gate at all.
+pub(crate) fn tick_opens_label(
+    (y, m, d): Date,
+    data: TimeUnit,
+    label: TimeUnit,
+    fiscal_start: u8,
+) -> bool {
+    use TimeUnit::{Year, YearMonth, YearMonthDate, YearQuarter, YearWeek};
+    let day_clause = || match data {
+        YearWeek => d <= 7,
+        YearMonthDate => d == 1,
+        _ => true,
+    };
+    match (label, data) {
+        (YearQuarter, YearMonth | YearWeek | YearMonthDate) => {
+            opens_period(m, 3, fiscal_start) && day_clause()
+        }
+        (YearMonth, YearWeek) => d <= 7,
+        (YearMonth, YearMonthDate) => d == 1,
+        (YearWeek, YearMonthDate) => weekday(y, m, d) == 0,
+        (Year, grain) if grain != Year => opens_period(m, 12, fiscal_start) && day_clause(),
+        _ => true,
     }
 }
 

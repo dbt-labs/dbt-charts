@@ -189,7 +189,7 @@ fn main() {
     let (warning, chart_warning) = warning_codes(&codes);
 
     let mut out = String::new();
-    let lists: [(&str, &str, Vec<String>); 8] = [
+    let lists: [(&str, &str, Vec<String>); 11] = [
         ("ThemeName", "A built-in theme: the names `theme:` and `extends:` take.", themes),
         ("PaletteName", "A built-in palette, or one of its tonal steps: the names `style.palettes` takes.", palette_names.into_iter().collect()),
         ("StopsPaletteName", "A palette that resolves to stops: the names a `palette:` field takes.", stops.into_iter().collect()),
@@ -198,6 +198,13 @@ fn main() {
         ("CategorySlotToken", "`category[1]` to `category[N]`, N the widest palette a built-in theme binds to `category`.", (1..=slots).map(|i| format!("category[{i}]")).collect()),
         ("WarningCode", "A warning code, retired ones included: a board that suppresses one keeps loading.", warning),
         ("ChartWarningCode", "A warning code a chart-scoped `warnings_ignore` can name.", chart_warning),
+        ("NumberLocaleName", "A d3-format locale the engine vendors.", display_text::locale::NUMBER_LOCALES.iter().map(|s| s.to_string()).collect()),
+        ("TimeLocaleName", "A d3-time-format locale the engine vendors.", display_text::locale::TIME_LOCALES.iter().map(|s| s.to_string()).collect()),
+        ("TimeZoneName", "An IANA zone of the bundled time zone database: the names `regional.time_zone` takes.", {
+            let mut zones: Vec<String> = jiff_tzdb::available().map(str::to_string).collect();
+            zones.sort();
+            zones
+        }),
     ];
     for (name, doc, values) in lists {
         enum_of(&mut out, name, doc, &values);
@@ -226,6 +233,23 @@ fn main() {
     }
     sources.push_str("];\n");
     std::fs::write(out_dir.join("theme_sources.rs"), sources).expect("write theme_sources.rs");
+
+    let mut palettes = String::from("pub const PALETTE_SOURCES: &[(&str, &str)] = &[\n");
+    for family in FAMILIES {
+        let dir = defaults.join("palettes").join(family);
+        if !dir.is_dir() {
+            continue;
+        }
+        for yml in files(&dir, "yml") {
+            let _ = writeln!(
+                palettes,
+                "    ({family:?}, include_str!({:?})),",
+                yml.display().to_string()
+            );
+        }
+    }
+    palettes.push_str("];\n");
+    std::fs::write(out_dir.join("palette_sources.rs"), palettes).expect("write palette_sources.rs");
 }
 
 fn enum_of(out: &mut String, name: &str, doc: &str, values: &[String]) {
@@ -233,6 +257,9 @@ fn enum_of(out: &mut String, name: &str, doc: &str, values: &[String]) {
     let _ = writeln!(out, "string_enum!(\n    /// {doc}\n    {name} {{");
     for v in values {
         let ident: String = v
+            .replace('+', "Plus")
+            .replace("-0", "Minus0")
+            .replace("-1", "Minus1")
             .split(|c: char| !c.is_ascii_alphanumeric())
             .map(|p| {
                 let mut cs = p.chars();

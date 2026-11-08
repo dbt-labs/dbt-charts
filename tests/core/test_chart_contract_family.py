@@ -90,10 +90,9 @@ class TestAuthoredChart:
         patch = BarChart(type="bar", style=style)
         assert patch.style is not None
 
-    def test_kpi_validation(self):
-        """KPI charts must specify value field."""
-        with pytest.raises(ValueError, match="value"):
-            KpiChart(type="kpi")
+    def test_kpi_value_may_be_left_to_bind_by_position(self):
+        """A KPI naming no value binds the query's one column at render."""
+        assert KpiChart(type="kpi").value is None
 
     def test_pie_forbids_extra_cartesian_fields(self):
         """PieChart rejects extra cartesian fields via extra='forbid'."""

@@ -7,10 +7,20 @@ use syn::{Attribute, Error, Expr, Ident, Lit, LitStr, Path, Result, Token, Type}
 #[derive(Default, Clone)]
 pub struct FieldAttrs {
     pub absent: Option<String>,
+    /// `omit = ".."` on an `Option<T>`: the field may be left out; its twins are `T`'s own.
+    pub omit: Option<String>,
+    /// `default_empty`: a map or list left unset builds empty.
+    pub default_empty: bool,
     pub merge: Option<String>,
     pub inherit: Option<String>,
     pub inherit_slot: Option<String>,
     pub links: Vec<(String, String)>,
+    /// `link_at(to = "labels.font", from = "Style.charts.marks.text.font")`: a leaf or container
+    /// below this field takes `from`, at this mount only.
+    pub links_at: Vec<(String, String)>,
+    /// `fill_at(to = "stroke.color", value = "auto")`: a leaf below this field holds `value` where
+    /// nothing set it, at this mount only.
+    pub fills_at: Vec<(String, TokenStream)>,
     pub local: bool,
     pub nested_drop: bool,
     pub nullable: bool,
@@ -63,6 +73,8 @@ pub fn field(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 let id = m.path.get_ident().map(Ident::to_string).unwrap_or_default();
                 match id.as_str() {
                     "absent" => a.absent = Some(string(&m)?),
+                    "omit" => a.omit = Some(string(&m)?),
+                    "default_empty" => a.default_empty = true,
                     "inherit" => a.inherit = Some(string(&m)?),
                     "inherit_slot" => a.inherit_slot = Some(string(&m)?),
                     "role" => {
@@ -109,6 +121,51 @@ pub fn field(attrs: &[Attribute]) -> Result<FieldAttrs> {
                         a.links.push((leaf, string(&l)?));
                         Ok(())
                     })?,
+                    "link_at" => {
+                        let (mut to, mut from) = (None, None);
+                        m.parse_nested_meta(|l| {
+                            if l.path.is_ident("to") {
+                                to = Some(string(&l)?);
+                            } else if l.path.is_ident("from") {
+                                from = Some(string(&l)?);
+                            } else {
+                                return Err(l.error("`link_at(to = \"..\", from = \"..\")`"));
+                            }
+                            Ok(())
+                        })?;
+                        match (to, from) {
+                            (Some(t), Some(f)) => a.links_at.push((t, f)),
+                            _ => return Err(m.error("`link_at(to = \"..\", from = \"..\")`")),
+                        }
+                    }
+                    "fill_at" => {
+                        let (mut to, mut value) = (None, None);
+                        m.parse_nested_meta(|l| {
+                            if l.path.is_ident("to") {
+                                to = Some(string(&l)?);
+                            } else if l.path.is_ident("value") {
+                                value = Some(match l.value()?.parse::<Lit>()? {
+                                    Lit::Str(s) => quote!(::model_core::Value::Str(#s)),
+                                    Lit::Bool(b) => quote!(::model_core::Value::Bool(#b)),
+                                    Lit::Int(i) => quote!(::model_core::Value::Int(#i)),
+                                    Lit::Float(f) => quote!(::model_core::Value::Float(#f)),
+                                    other => {
+                                        return Err(Error::new_spanned(
+                                            other,
+                                            "`fill_at` takes a string, bool, int or float literal",
+                                        ))
+                                    }
+                                });
+                            } else {
+                                return Err(l.error("`fill_at(to = \"..\", value = ..)`"));
+                            }
+                            Ok(())
+                        })?;
+                        match (to, value) {
+                            (Some(t), Some(v)) => a.fills_at.push((t, v)),
+                            _ => return Err(m.error("`fill_at(to = \"..\", value = ..)`")),
+                        }
+                    }
                     "local" => a.local = true,
                     "nullable" => a.nullable = true,
                     "directive" => a.directive = true,

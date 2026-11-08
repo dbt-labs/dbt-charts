@@ -25,6 +25,10 @@ fn args(t: &Type) -> Option<(String, Vec<&Type>)> {
     Some((seg.ident.to_string(), tys))
 }
 
+fn is_map(t: &Type) -> bool {
+    args(t).is_some_and(|(n, _)| n == "IndexMap")
+}
+
 /// Whether `ty` is `Option<Patch<_>>` with `absent`: a sparse overlay whose `null` is a state.
 fn absent_patch_ty(ty: &Type, a: &FieldAttrs) -> bool {
     a.absent.is_some()
@@ -87,7 +91,57 @@ struct Slot {
     asserts: Vec<TokenStream>,
 }
 
+/// A field's slot. An `omit` field is an `Option<T>` whose twins are `T`'s own: it is expanded as
+/// the plain field `T`, and only the field table keeps the `Option`.
 fn slot(name: Ident, ty: &Type, a: &FieldAttrs, doc: &str, unit: bool) -> Result<Slot> {
+    if a.omit.is_none() {
+        return slot_of(name, ty, ty, a, doc, unit);
+    }
+    if a.default_empty
+        || a.accept.is_some()
+        || a.flatten
+        || a.keys
+        || a.merge.as_deref() == Some("override")
+    {
+        return Err(Error::new_spanned(
+            ty,
+            "`omit` cannot combine with `default_empty`, `accept`, `flatten`, `keys` or `merge = override`",
+        ));
+    }
+    match args(ty) {
+        Some((n, inner)) if n == "Option" && a.absent.is_none() => {
+            let t = inner
+                .first()
+                .ok_or_else(|| Error::new_spanned(ty, "Option needs a type"))?;
+            if is_map(t) {
+                return Err(Error::new_spanned(
+                    ty,
+                    "`omit` is for a scalar or a model: a map that may be left out is `default_empty`",
+                ));
+            }
+            slot_of(name, t, ty, a, doc, unit)
+        }
+        _ => Err(Error::new_spanned(
+            ty,
+            "`omit` is for an `Option<T>` field and cannot combine with `absent`",
+        )),
+    }
+}
+
+fn slot_of(
+    name: Ident,
+    ty: &Type,
+    shown: &Type,
+    a: &FieldAttrs,
+    doc: &str,
+    unit: bool,
+) -> Result<Slot> {
+    if a.default_empty && !args(ty).is_some_and(|(n, _)| n == "IndexMap" || n == "Vec") {
+        return Err(Error::new_spanned(
+            ty,
+            "`default_empty` is for a map or a list: the built value is the empty container",
+        ));
+    }
     let mut asserts = Vec::new();
     let mut nullable = None;
     let opt = args(ty).filter(|(n, _)| n == "Option");
@@ -186,8 +240,10 @@ fn slot(name: Ident, ty: &Type, a: &FieldAttrs, doc: &str, unit: bool) -> Result
     let te = if unit {
         quote!(&::model_core::TypeExpr::Unit)
     } else {
-        type_expr(ty)
+        type_expr(shown)
     };
+    let omit = opt_str(&a.omit);
+    let default_empty = a.default_empty;
     let (absent, inherit, inherit_slot) = (
         opt_str(&a.absent),
         opt_str(&a.inherit),
@@ -206,6 +262,8 @@ fn slot(name: Ident, ty: &Type, a: &FieldAttrs, doc: &str, unit: bool) -> Result
         None => quote!(None),
     };
     let links = a.links.iter().map(|(l, p)| quote!((#l, #p)));
+    let links_at = a.links_at.iter().map(|(t, f)| quote!((#t, #f)));
+    let fills_at = a.fills_at.iter().map(|(t, v)| quote!((#t, #v)));
     let wrapped = args(ty)
         .is_some_and(|(n, _)| matches!(n.as_str(), "Patch" | "Option" | "Vec" | "IndexMap"));
     if a.nullable && (wrapped || a.flatten || a.keys || a.accept.is_some() || a.absent.is_some()) {
@@ -226,8 +284,8 @@ fn slot(name: Ident, ty: &Type, a: &FieldAttrs, doc: &str, unit: bool) -> Result
         ::model_core::Field {
             name: #n, ty: #te, doc: #doc, merge: #merge,
             attrs: ::model_core::Attrs {
-                absent: #absent, inherit: #inherit, inherit_slot: #inherit_slot,
-                links: &[#(#links),*], local: #local, nested_drop: #nested_drop, nullable: #null_empty,
+                absent: #absent, omit: #omit, default_empty: #default_empty, inherit: #inherit, inherit_slot: #inherit_slot,
+                links: &[#(#links),*], links_at: &[#(#links_at),*], fills_at: &[#(#fills_at),*], local: #local, nested_drop: #nested_drop, nullable: #null_empty,
                 fill: #fill, fill_value: #fill_value, accept: #accept, directive: #directive, keys: #keys,
                 flatten: #flatten, role: #role,
             },
@@ -372,6 +430,26 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
                 quote!(::model_core::Empty::is_empty(&self.#n))
             });
             let set_leaves = reads.iter().map(set_leaves_stmt);
+            let to_patch = slots.iter().map(|s| {
+                let n = &s.name;
+                if s.authored.to_string() == s.patch.to_string() {
+                    quote!(#n: self.#n)
+                } else if let Some(t) = &s.nullable {
+                    quote!(#n: ::model_core::tri_to_patch::<<#t as ::model_core::Leaf>::Authored>(self.#n))
+                } else {
+                    quote!(#n: ::model_core::ToPatch::to_patch(self.#n))
+                }
+            });
+            let to_authored = slots.iter().map(|s| {
+                let n = &s.name;
+                if s.authored.to_string() == s.patch.to_string() {
+                    quote!(#n: self.#n)
+                } else if let Some(t) = &s.nullable {
+                    quote!(#n: ::model_core::tri_to_authored::<<#t as ::model_core::Leaf>::Patch>(self.#n))
+                } else {
+                    quote!(#n: ::model_core::ToAuthored::to_authored(self.#n))
+                }
+            });
             let info = info(&slots);
             let build = build_impl(name, &authored, &patch, &reads);
             if let Some(k) = container.shorthand.as_deref() {
@@ -423,6 +501,14 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
                 }
                 impl ::model_core::Slot for #patch {
                     fn merge(&mut self, upper: Self) { #patch::merge(self, upper) }
+                }
+                impl ::model_core::ToAuthored for #patch {
+                    type Out = #authored;
+                    fn to_authored(self) -> #authored { #authored { #(#to_authored),* } }
+                }
+                impl ::model_core::ToPatch for #authored {
+                    type Out = #patch;
+                    fn to_patch(self) -> #patch { #patch { #(#to_patch),* } }
                 }
                 impl ::model_core::Empty for #patch {
                     fn is_empty(&self) -> bool { true #(&& #empties)* }
@@ -628,8 +714,37 @@ fn build_impl(name: &Ident, authored: &Ident, patch: &Ident, reads: &[Read]) -> 
                         ::model_core::Tri::Null => { unset.push((#path).to_string()); None }
                     };)
                 }
+                _ if r.fa.default_empty => {
+                    let defaulted = if authored_side {
+                        quote!(build_defaulted_authored)
+                    } else {
+                        quote!(build_defaulted)
+                    };
+                    quote!(let #v = ::model_core::#defaulted::<#ty>(p.#id, #at, &mut unset);)
+                }
+                _ if r.fa.omit.is_some() => {
+                    let inner = args(ty).and_then(|(_, a)| a.first().copied().cloned());
+                    let omitted = if authored_side {
+                        quote!(build_omitted_authored)
+                    } else {
+                        quote!(build_omitted)
+                    };
+                    quote!(let #v = ::model_core::#omitted::<#inner>(p.#id, #at, &mut unset);)
+                }
                 _ if r.fa.merge.as_deref() == Some("override") => {
                     quote!(let #v = ::model_core::build_whole::<#ty>(p.#id, #at, &mut unset);)
+                }
+                // A declared `fill` is what a total value holds where nothing set it.
+                _ if r.fa.fill_value.is_some() || r.fa.fill.as_deref() == Some("fill_empty") => {
+                    let fill = match &r.fa.fill_value {
+                        Some(value) => quote!(|| ::model_core::fill_literal::<#ty>(#value)),
+                        None => quote!(|| Some(<#ty as Default>::default())),
+                    };
+                    quote!(let #v = {
+                        let mut paths = Vec::new();
+                        let built = ::model_core::#field::<#ty>(p.#id, #at, &mut paths);
+                        ::model_core::or_fill::<#ty>(built, paths, #at, &mut unset, #fill)
+                    };)
                 }
                 _ => quote!(let #v = ::model_core::#field::<#ty>(p.#id, #at, &mut unset);),
             }
@@ -714,6 +829,9 @@ fn read_stmt(f: &Read, patch: bool) -> TokenStream {
             };
             return quote!(if let Some(v) = cx.field(m, #key, |n, cx| ::model_core::#read::<#inner>(n, cx)) { out.#id = v; });
         }
+        (None, None, Some(inner)) if fa.omit.is_some() => {
+            quote!(<#inner as ::model_core::FromNode>::#node_fn(n, cx))
+        }
         (_, Some(alt), _) => {
             return quote!(if let Some(Some(v)) = cx.field(m, #key, |n, cx| ::model_core::read_accept::<#ty, #alt>(n, cx)) { out.#id = Some(v); });
         }
@@ -753,10 +871,14 @@ fn struct_from_node(
                 .and_then(|t| args(t))
                 .and_then(|(_, a)| a.first().map(|t| (*t).clone()))
                 .unwrap_or_else(|| r.ty.clone()),
-            Some((n, a)) if n == "Patch" || (n == "Option" && r.fa.absent.is_some()) => a
-                .first()
-                .map(|t| (*t).clone())
-                .unwrap_or_else(|| r.ty.clone()),
+            Some((n, a))
+                if n == "Patch"
+                    || (n == "Option" && (r.fa.absent.is_some() || r.fa.omit.is_some())) =>
+            {
+                a.first()
+                    .map(|t| (*t).clone())
+                    .unwrap_or_else(|| r.ty.clone())
+            }
             _ => r.ty.clone(),
         };
         quote!(w.field(#k, <#t as ::model_core::FromNode>::walk);)

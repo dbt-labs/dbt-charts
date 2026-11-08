@@ -1,0 +1,3 @@
+kind: Features
+body: 'A chart can leave out `x`, `y` and its other channels: the query''s columns bind by position, dimensions first and the measure last.'
+time: 2026-11-05T19:45:35.308296-09:00

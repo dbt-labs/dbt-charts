@@ -344,7 +344,7 @@ pub(super) fn baseline_rule_layers(first_layer: usize, positions: &[f64], line: 
             crate::contract::item_group(
                 "rule",
                 &format!("layer_{}_marks", first_layer + i),
-                crate::contract::ItemRole::RuleMark,
+                ::layout::contract::ItemRole::RuleMark,
                 Reads::Hidden,
                 |aria| line(pos, aria),
             )
@@ -773,10 +773,10 @@ pub(super) fn bar_passes(
     // `bar_passes`'s doc: only `cornerRadiusEnd`'s clipped group strokes twice.
     let fill_attrs = |attrs: Attrs| attrs.set("fill", fill).num_some("fill-opacity", fill_opacity).quick_some("data-dbt-ink", ink);
     let stroke_repeat = double_stroke && stroked && ink.is_none() && !matches!(ends, Rounded::Both | Rounded::Fall);
-    let label_attrs = crate::contract::aria_attrs(aria_label, crate::contract::ItemRole::Bar)?;
+    let label_attrs = ::layout::contract::aria_attrs(aria_label, ::layout::contract::ItemRole::Bar)?;
     let grouped = |nodes: Vec<Node>| -> Result<Vec<Node>, String> {
         match aria_label {
-            Some(_) => Ok(vec![crate::contract::mark_group("rect", "layer_0_marks", nodes)?]),
+            Some(_) => Ok(vec![::layout::contract::mark_group("rect", "layer_0_marks", nodes)?]),
             None => Ok(nodes),
         }
     };

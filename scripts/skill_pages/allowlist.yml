@@ -238,7 +238,7 @@ rules:
     only: [one layout type]
   bar:
     path: chart:bar
-    only: ["x requires a y", "can't be stacked", "multi-metric (y: [...]) charts require"]
+    only: ["can't be stacked"]
 
 chart_types:
   - {type: bar, keys: [x, y, color, y_start, layers]}

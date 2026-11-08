@@ -44,6 +44,7 @@ from dbt_charts.core.compile.models.style.theme.board import (
 from dbt_charts.core.compile.models.style.theme.legend import (
     LegendStyle,
     PieLegendStyle,
+    SideLegendStyle,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
     BasemapStyle,
@@ -256,6 +257,14 @@ class _LegendedChartStyleBase(BaseModel):
     legend: LegendStyle = Field(description="Chart legend style.")
 
 
+class _SideLegendedChartStyleBase(BaseModel):
+    """The legend slot for families that cannot name series on the chart itself."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    legend: SideLegendStyle = Field(description="Chart legend style.")
+
+
 class _PieLegendedChartStyleBase(BaseModel):
     """The legend slot for pie and donut."""
 
@@ -269,12 +278,18 @@ if TYPE_CHECKING:
     class _LegendedChartStyleBaseAllOptional(_LegendedChartStyleBase):
         pass
 
+    class _SideLegendedChartStyleBaseAllOptional(_SideLegendedChartStyleBase):
+        pass
+
     class _PieLegendedChartStyleBaseAllOptional(_PieLegendedChartStyleBase):
         pass
 
 else:
     _LegendedChartStyleBaseAllOptional = build_patch_model_ext(
         _LegendedChartStyleBase, is_recursive=True
+    )
+    _SideLegendedChartStyleBaseAllOptional = build_patch_model_ext(
+        _SideLegendedChartStyleBase, is_recursive=True
     )
     _PieLegendedChartStyleBaseAllOptional = build_patch_model_ext(
         _PieLegendedChartStyleBase, is_recursive=True
@@ -283,10 +298,12 @@ else:
 
 class _CartesianChartStyle(
     _PaintedChartStyleBaseAllOptional,
-    _LegendedChartStyleBaseAllOptional,
     _TitledChartStyleBaseAllOptional,
 ):
     """Cartesian families: bar, line, area, scatter, histogram, heatmap.
+
+    Each family mixes in its own legend slot: only line, area and bar accept
+    ``edge: endpoints``.
 
     Shared axis tier — theme YAML populates per-family axis overrides here.
     ``axis_quantitative`` is NOT declared here — see
@@ -393,7 +410,7 @@ class _RadialChartStyle(
 class _GeoChartStyle(
     _ChartCardStyleMixinAllOptional,
     _PaintedChartStyleBaseAllOptional,
-    _LegendedChartStyleBaseAllOptional,
+    _SideLegendedChartStyleBaseAllOptional,
     _TitledChartStyleBaseAllOptional,
 ):
     """Geo families: geoshape (choropleth), point_map.

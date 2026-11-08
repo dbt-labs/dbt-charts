@@ -5,9 +5,9 @@
 //! chosen here, because they follow the axis's pixel length.
 
 use bind::formats::locale::NumberLocale;
-use bind::formats::{Repeat, ResolvedFormat};
+use bind::formats::ResolvedFormat;
 use bind::model::{Extent, Ladder, ValueDomain, Zero};
-use d3rs::ticks::{d3_ticks, nice_tick_values, vega_tick_count};
+use d3rs::ticks::nice_tick_values;
 use diagnostic::{diag, refuse, Diagnostic};
 use measure::shaped::{Font, FontBook};
 use scene::Bounds;
@@ -207,10 +207,6 @@ fn default_tick_count(length: f64) -> usize {
     (length / 40.0).ceil() as usize
 }
 
-fn has_affix_text(format: &ResolvedFormat) -> bool {
-    !format.prefix.is_empty() || !format.suffix.is_empty()
-}
-
 /// The domain's ends in scale order: a reversed authored domain starts at its high end.
 fn direction(domain: &ValueDomain) -> (f64, f64) {
     let bounds = domain.bounds.extent;
@@ -270,14 +266,8 @@ impl<'a> ValueAxis<'a> {
                 .map(|r| (r.value, r.text.clone()))
                 .collect()),
             Ladder::BySize { min_step } => {
-                let count = vega_tick_count(start, stop, default_tick_count(length), *min_step);
-                let ticks = d3_ticks(start, stop, count);
-                let total = ticks.len();
-                ticks
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, v)| Ok((v, self.paint(v, Some((i, total)))?)))
-                    .collect()
+                let ValueLabels { format, locale, estimate_extent, .. } = self.labels;
+                format.unbaked_rungs(locale, (start, stop), default_tick_count(length), *min_step, estimate_extent.hi())
             }
             Ladder::None => Err(diag::err_internal(
                 "a value axis with no data-chosen ladder (log, independent panels) is not laid out here",
@@ -315,52 +305,10 @@ impl<'a> ValueAxis<'a> {
     }
 
     /// A ladder-less axis's rung text (`rung` is the tick's index and the ladder's
-    /// length; the estimate has none). A house SI format paints each tick by its
-    /// magnitude (`sub_unit_guarded_format`): the SI spec from 1 up, else the plain
-    /// significant-digit sibling, or the exponential one below 1e-10. Its anchored
-    /// affix wears the last tick, or the first when no value is above 0
-    /// (`ladderless_tick_label`). Any other format with an anchored affix wears the
-    /// last nonzero tick alone (`affix_tick_label`); without one, every tick prints
-    /// `paint_tick`. The estimate dresses every candidate.
+    /// length; the estimate has none), printed by the one unbaked-rung law.
     fn paint(&self, value: f64, rung: Option<(usize, usize)>) -> Result<String, Diagnostic> {
         let ValueLabels { format, locale, .. } = self.labels;
-        let anchored = format.repeat == Some(Repeat::Anchor) && has_affix_text(format);
-        if !format.is_house_si() {
-            return match rung {
-                Some((index, count)) if anchored => {
-                    if index + 1 == count && value != 0.0 {
-                        format.paint_anchored(locale, &format.spec, value, true)
-                    } else {
-                        format.bare_digits(locale, &format.spec, value)
-                    }
-                }
-                _ => format.paint_tick(locale, value),
-            };
-        }
-        let (digit, scientific) =
-            d3rs::format::sub_unit_specs(&format.spec).map_err(Diagnostic::refused)?;
-        let band = if value.abs() >= 1.0 {
-            &format.spec
-        } else if value != 0.0 && value.abs() < d3rs::format::SUB_UNIT_SCIENTIFIC_FLOOR {
-            &scientific
-        } else {
-            &digit
-        };
-        let wears = match rung {
-            Some((index, count)) if anchored => {
-                index
-                    == if self.labels.estimate_extent.hi() <= 0.0 {
-                        0
-                    } else {
-                        count - 1
-                    }
-            }
-            _ => true,
-        };
-        if wears && has_affix_text(format) && value != 0.0 {
-            return format.paint_anchored(locale, band, value, anchored);
-        }
-        format.bare_digits(locale, band, value)
+        format.paint_unbaked_rung(locale, value, rung, self.labels.estimate_extent.hi())
     }
 
     /// The number format the ghost paints with, `None` when it repeats the primary's labels.

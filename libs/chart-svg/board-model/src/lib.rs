@@ -14,6 +14,7 @@
 //! - [`rule`]: the rule enum behind `Engine<T, R>` fields.
 //! - [`string_enum!`]: a closed string set (Python `Literal[...]`) as a Rust enum.
 //! - [`query`], [`variable`], [`sql_analysis`]: the structure phase's query side.
+//! - [`variable_value`]: a variable's resolved value as render holds it (`normalize_render_values`), pure data with a JSON wire form.
 //! - `fixtures` (feature `fixtures`): builders for render's mock board values and for tests.
 //! - [`style`]: one module per Python file under
 //!   `dbt-charts/src/dbt_charts/core/compile/models/style/theme/`.
@@ -31,6 +32,7 @@
 //! | `chart/authored/_support_table.py` | `chart::support_table` |
 //! | `chart/authored/_base.py` (the mixins past `_BaseChartFields` / `_SharedChartFields`; its column facets) | `chart` (mixins), `chart::columns` |
 //! | `vega_lite/contracts.py` (`Projection`, `ProjectionType`) | `chart::projection` |
+//! | `primitives.py` (`NumberLocale`, `TimeLocale`, `RegionalLocale`, `Regional`) | `regional` |
 //! | `style/theme/legend.py` | `style::legend` |
 //! | `primitives.py` (`FontStyle`, `SingleLineFontStyle`, `SymbolShape`, `NamedFont` only) | `style::font` |
 //! | `primitives.py` (`Curve`, `LineCap`, `StrokeStyle`, `FontColorStrokeStyle`, `BorderStyle`, `CornerStyle`, `DividerStyle`, `SpacingValues`, `TextBaseline`, `Dasharray`, `ToneLiteral` as `Tone`, `ScaleTargetConfig`, `StaticGradientColorStyle`, `ColorStyle`, `CategoricalColorStyle`, `GlyphText`, `FormatConfig`, `Link`, `BoxShadow`) | `primitives` |
@@ -61,6 +63,7 @@
 //! | `style/theme/variables.py` | `style::variables` |
 //! | `models/query/authored.py`, `models/query/normalized.py` | `query` |
 //! | `models/variable/authored.py` | `variable` |
+//! | `template/variables.py` (`normalize_render_values`, what render holds per variable) | `variable_value` |
 //! | `sqlglot` seam results (`sql_guard.py`, `column_lineage.py`; D-18): no Python model | `sql_analysis` |
 //!
 //! Porting rules:
@@ -84,6 +87,11 @@
 )]
 
 pub mod board;
+/// The generated inherit and fill over `Style`; `tests/it/inherit` regenerates it.
+#[cfg(feature = "cascade")]
+#[rustfmt::skip]
+pub mod cascade;
+pub mod cache;
 pub mod chart;
 pub mod convert;
 pub mod facet;
@@ -91,13 +99,17 @@ pub mod facet;
 pub mod fixtures;
 pub mod ids;
 pub mod names;
+pub mod nested;
+pub mod palette;
 pub mod primitives;
 pub mod query;
+pub mod regional;
 pub mod rule;
 pub mod sql_analysis;
 pub mod style;
 pub mod unit;
 pub mod variable;
+pub mod variable_value;
 
 /// Declares a closed string set: the enum, its authored spelling, a
 /// `TryFrom<&str>` that refuses anything else, and its `Model` (a unit-only
@@ -174,9 +186,13 @@ macro_rules! string_enum {
                         merge: ::model_core::Merge::Override,
                         attrs: ::model_core::Attrs {
                             absent: None,
+                            omit: None,
+                            default_empty: false,
                             inherit: None,
                             inherit_slot: None,
                             links: &[],
+                            links_at: &[],
+                            fills_at: &[],
                             local: false,
                             nested_drop: false,
                             nullable: false,

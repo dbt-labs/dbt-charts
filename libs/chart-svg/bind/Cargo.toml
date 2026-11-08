@@ -5,8 +5,9 @@ edition = "2021"
 description = "The bind stage: a normalized board plus its datasets to a bound board. Data-derived facts only; no measuring, no nodes."
 
 [dependencies]
-board-types = { path = "../board-types" }
 board-model = { path = "../board-model" }
+color = { package = "dbt-charts-color", path = "../color" }
+model-core = { path = "../model-core" }
 column-types = { path = "../column-types" }
 d3rs = { path = "../d3rs" }
 diagnostic = { path = "../diagnostic" }
@@ -24,5 +25,7 @@ serde_json = "1"
 test-support = []
 
 [dev-dependencies]
+board-model = { path = "../board-model", features = ["fixtures"] }
 bind = { path = ".", features = ["test-support"] }
 diagnostic = { path = "../diagnostic", features = ["test-support"] }
+yaml = { path = "../yaml" }

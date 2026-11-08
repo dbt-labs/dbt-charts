@@ -15,9 +15,12 @@
 //! }
 //! ```
 //!
-//! Field attributes live in one closed `#[model(..)]` set: `absent = ".."`,
+//! Field attributes live in one closed `#[model(..)]` set: `absent = ".."`, `omit = ".."`,
+//! `default_empty`,
 //! `merge = override | deep | by_key`, `inherit = ".."`, `inherit_slot = ".."`
-//! with `links(leaf = "path", ..)`, `local`, `nested = drop`, `fill = fn` or `fill = <literal>` (a constant the schema states as `default`),
+//! with `links(leaf = "path", ..)`, `link_at(to = "a.b", from = "path")` and
+//! `fill_at(to = "a.b", value = <literal>)` (a link or fill for a node below the field at this
+//! mount only: one shared type mounted at different tiers), `local`, `nested = drop`, `fill = fn` or `fill = <literal>` (a constant the schema states as `default`),
 //! `accept = Type`, `directive`, `keys`, `nullable`, `role = ..`; a bare `#[flatten]`
 //! composes a mixin. A struct or enum takes `#[model(constraint(kind(key, ..)))]`
 //! with kind `requires | forbids | value_in | items_match | range | unique |
@@ -33,6 +36,9 @@
 //! absent state and two values merge deep.
 //! `absent` on `Option<Patch<Inner>>` is the same for a sparse overlay: it builds to `None` for unset
 //! and null, `Some(patch)` for a value.
+//! `omit` on `Option<T>` (a scalar or a model, not a map) is a field that may be left out and builds `None`, but
+//! whose twins are `T`'s own, so an authored `null` is refused as for any plain field; `absent` is
+//! the field whose `null` is a value. `default_empty` on a map or list builds empty when unset.
 //! Anything else is a compile error. All are recorded in the field table;
 //! `keys`, `flatten`, `accept`, `shorthand`, `tag` and `fill = fn` (an absent tag, inferred from the keys
 //! present) also drive the generated `FromNode`; the rest wait for the passes that read them.

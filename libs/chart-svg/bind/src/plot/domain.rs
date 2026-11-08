@@ -52,8 +52,11 @@ pub enum Mark {
     VerticalBar,
     /// Any other bar rounds only an unpinned, unauthored axis.
     Bar,
-    /// Line, area, scatter: rounds after the pins, whatever they are.
+    /// Line and area: rounds after the pins, whatever they are.
     Plotted,
+    /// A scatter's measure axis: its scale reads the pins verbatim, so only an unpinned,
+    /// unauthored extent rounds, as on a bar.
+    Points,
 }
 
 /// Prints a ladder's rungs together: the ruler law reads the whole ladder.
@@ -91,6 +94,12 @@ pub fn linear(axis: &Axis, values: &[f64], text: RungText) -> Result<Option<Valu
             value,
             reason: if mixed_sign { PinReason::FormatFloor } else { PinReason::Headroom },
         });
+        // A vertical bar's mixed-sign zero-anchored floor is its computed ladder's first rung
+        // (`zero_anchor_domain_floor`), unless a floor was already pinned.
+        let ladder_floor = (axis.mark == Mark::VerticalBar && mixed_sign && min.is_none() && axis.values.is_none())
+            .then(|| baked.ticks.first().map(|&value| Pin { value, reason: PinReason::FormatFloor }))
+            .flatten();
+        let min = min.or(ladder_floor);
         let ladder = if let Some(authored_values) = axis.values {
             Ladder::Authored(rungs(authored_values, text))
         } else if axis.count.is_none() {
@@ -110,9 +119,9 @@ pub fn linear(axis: &Axis, values: &[f64], text: RungText) -> Result<Option<Valu
     Ok(Some(ValueDomain { extent, zero: axis.zero, headroom: axis.headroom, authored, ladder, min, max, bounds }))
 }
 
-/// A pin stands as is. A bar rounds only an unpinned, unauthored extent (zero included
-/// when anchored), and a vertical bar not even that; line, area and scatter round after
-/// the pins. An authored `scale.nice` overrides either way and rounds a pinned, authored
+/// A pin stands as is. A bar or a scatter rounds only an unpinned, unauthored extent (zero
+/// included when anchored), and a vertical bar not even that; line and area round after the
+/// pins. An authored `scale.nice` overrides either way and rounds a pinned, authored
 /// or stacked extent outward. A flat unpinned extent cannot round, so it takes headroom.
 fn linear_bounds(
     axis: &Axis,
@@ -140,10 +149,27 @@ fn linear_bounds(
     let default = authored.is_none()
         && match axis.mark {
             Mark::VerticalBar => false,
-            Mark::Bar => !pinned,
+            Mark::Bar | Mark::Points => !pinned,
             Mark::Plotted => !flat,
         };
     nice_bounds(base, axis.nice.unwrap_or(default))
+}
+
+/// A data-fit domain rounded out to the axis's own tick boundaries at `tick_count`, then one
+/// tick step further past a non-zero end a data value still lands on: a dot on the plot edge
+/// reads as clipped, unless the edge is zero. A step past zero stops at zero.
+pub fn nice_clear_of_data(lo: f64, hi: f64, (data_lo, data_hi): (f64, f64), tick_count: usize, min_step: Option<f64>) -> (f64, f64) {
+    let (nice_lo, nice_hi) = d3rs::ticks::d3_nice(lo, hi, tick_count);
+    if nice_hi <= nice_lo {
+        return (nice_lo, nice_hi);
+    }
+    let count = d3rs::ticks::vega_tick_count(nice_lo, nice_hi, tick_count, min_step);
+    let step = d3rs::ticks::d3_tick_step(nice_lo, nice_hi, count);
+    let clamp_to_zero = |from: f64, to: f64| if from.signum() == to.signum() { to } else { 0.0 };
+    (
+        if data_lo == nice_lo && nice_lo != 0.0 { clamp_to_zero(nice_lo, nice_lo - step) } else { nice_lo },
+        if data_hi == nice_hi && nice_hi != 0.0 { clamp_to_zero(nice_hi, nice_hi + step) } else { nice_hi },
+    )
 }
 
 /// `bounds` rounded outward by d3's nice at count 10, whatever the ladder's count.
@@ -435,6 +461,15 @@ mod tests {
     }
 
     #[test]
+    fn a_vertical_bar_over_mixed_signs_floors_at_its_first_rung() {
+        let bar = Axis { mark: Mark::VerticalBar, count: Some(Count::Auto), headroom: 0.08, ..axis(Zero::Anchored) };
+        let domain = linear(&bar, &[-5.0, 40.0], &digits).unwrap().unwrap();
+        assert_eq!(bounds(&domain), (-10.0, 43.2, BoundsReason::Pinned));
+        let positive = linear(&bar, &[5.0, 40.0], &digits).unwrap().unwrap();
+        assert_eq!(bounds(&positive), (0.0, 43.2, BoundsReason::Pinned));
+    }
+
+    #[test]
     fn a_vertical_bar_fits_its_extent_instead_of_nicing() {
         let bar = Axis { mark: Mark::VerticalBar, ..axis(Zero::Anchored) };
         let domain = linear(&bar, &[3.0, 92.0], &digits).unwrap().unwrap();
@@ -445,15 +480,17 @@ mod tests {
     }
 
     #[test]
-    fn line_area_and_scatter_round_after_the_pins() {
+    fn line_and_area_round_after_the_pins_and_a_scatter_keeps_them() {
         let line = Axis { mark: Mark::Plotted, headroom: 0.08, count: Some(Count::Auto), ..axis(Zero::Free) };
         let domain = linear(&line, &[20000.0, 40000.0], &digits).unwrap().unwrap();
         assert_eq!(domain.min.map(|p| p.value), Some(18400.0));
         let expected = d3rs::ticks::d3_nice(18400.0, 41600.0, 10);
         assert_eq!(bounds(&domain), (expected.0, expected.1, BoundsReason::Niced));
-        let bar = Axis { mark: Mark::Bar, ..line };
-        let domain = linear(&bar, &[20000.0, 40000.0], &digits).unwrap().unwrap();
-        assert_eq!(bounds(&domain), (18400.0, 41600.0, BoundsReason::Pinned));
+        for mark in [Mark::Bar, Mark::Points] {
+            let pinned = Axis { mark, ..line };
+            let domain = linear(&pinned, &[20000.0, 40000.0], &digits).unwrap().unwrap();
+            assert_eq!(bounds(&domain), (18400.0, 41600.0, BoundsReason::Pinned));
+        }
     }
 
     #[test]

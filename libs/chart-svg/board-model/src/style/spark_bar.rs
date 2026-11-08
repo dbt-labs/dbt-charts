@@ -5,6 +5,7 @@ use crate::primitives::CornerStyle;
 use crate::style::board::PaddingStyle;
 use crate::style::font::FontStyle;
 use crate::style::marks::SubtitleStyle;
+use model_core::Patch;
 use model_derive::Model;
 
 /// Bar geometry sub-block for `SparkBarChartStyle`.
@@ -43,7 +44,8 @@ pub struct SparkBarCountStyle {
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct SparkBarMoreRowsStyle {
     /// Font style of the "+N" note; the theme binds it to the secondary font.
-    pub font: FontStyle,
+    #[model(absent = "the enclosing text font applies")]
+    pub font: Option<Patch<FontStyle>>,
 }
 
 /// Chart-family style for `type: spark_bar` charts.

@@ -371,9 +371,11 @@ def _build_resolved_board(
         plan_board_category_colors,
         with_category_colors,
     )
+    from dbt_charts.core.execute.chart_resolution import with_bound_channels
     from dbt_charts.core.execute.column_formats import with_dbt_column_formats
     from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
 
+    board = with_bound_channels(board, results, variables)
     # Board-wide category colors, before anything resolves: a value's swatch is
     # decided once for the whole board, so every chart must see the same plan.
     board = with_category_colors(

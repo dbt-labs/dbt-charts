@@ -40,17 +40,23 @@ _BOARD_CTX = resolve_chart_style_context(get_theme_style())
 def seed_with_bar_endpoint_labels(model_copy_at):
     """Resolved style with bar.endpoint_labels override applied (seeded from stark)."""
     from dbt_charts.core.compile.config import get_theme_style
-    from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
+    from dbt_charts.core.compile.models.style.authored import (
+        EndpointLabelsConfig,
+        LegendStylePatch,
+    )
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
     def _build(enabled: bool, label_offset: float = 5.0):
         seed = model_copy_at(
             get_theme_style("stark"),
             "charts.bar.endpoint_labels",
-            EndpointLabelsConfig(
-                visible="auto" if enabled else False,
-                label_offset=label_offset,
-                height=20.0,
+            EndpointLabelsConfig(label_offset=label_offset, height=20.0),
+        )
+        seed = model_copy_at(
+            seed,
+            "charts.bar.legend",
+            LegendStylePatch.model_validate(
+                {"position": {"edge": "auto" if enabled else "top"}}
             ),
         )
         return resolve_chart_style_context(seed)
@@ -89,7 +95,7 @@ def resolve_horizontal_bar_chart(make_chart, seed_with_bar_endpoint_labels):
         if author_asked:
             # The default steers a ragged anchor row back to a legend (the rail
             # has no collision resolver); only the chart's own patch outranks it.
-            style["endpoint_labels"] = {"visible": True}
+            style["legend"] = {"position": {"edge": "endpoints"}}
         chart = make_chart(
             "bar",
             x="row",
@@ -517,7 +523,7 @@ def test_center_stack_still_raises_when_the_author_opts_in(
     """The refusal above is the other half of that contract.
 
     Resolve steers the default away from a center stack, but an explicit
-    ``endpoint_labels.visible: true`` reaches render — and must meet the named
+    ``legend.position.edge: endpoints`` reaches render — and must meet the named
     conflict rather than a rail anchored on an axis the chart does not have.
     """
     import pytest
@@ -686,7 +692,7 @@ def test_center_stack_with_an_opted_in_rail_raises_a_registered_code(
     with pytest.raises(ChartDataError) as exc_info:
         _render(rc, data)
     assert exc_info.value.code is ERR_ENDPOINT_LABELS_CENTER_STACK
-    assert "style.endpoint_labels.visible" in str(exc_info.value)
+    assert "style.legend.position.edge" in str(exc_info.value)
 
 
 def test_negative_values_with_an_opted_in_rail_raise_a_registered_code(
@@ -707,4 +713,4 @@ def test_negative_values_with_an_opted_in_rail_raise_a_registered_code(
     with pytest.raises(ChartDataError) as exc_info:
         _render(rc, data)
     assert exc_info.value.code is ERR_ENDPOINT_LABELS_NEGATIVE_STACK
-    assert "style.endpoint_labels.visible" in str(exc_info.value)
+    assert "style.legend.position.edge" in str(exc_info.value)

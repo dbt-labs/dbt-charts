@@ -561,33 +561,61 @@ def test_chart_patch_by_measure_no_color_required():
     )
 
 
-def test_support_table_entry_format_inherits_axis_y_format_at_normalize_time():
-    """After normalize_chart(), a source entry reading chart.y inherits style.axis_y.labels.format."""
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTableSource
+@pytest.mark.parametrize("measure_format", ["~s", "$,.0f"])
+def test_support_table_entry_inherits_the_axis_y_format_at_resolve(
+    measure_format: str,
+) -> None:
+    """A source entry reading the single y column with no format of its own
+    resolves exactly as one authoring the chart's `style.axis_y.labels.format`
+    would; the inheritance happens at resolve, where a y bound from the
+    query's columns is known too. A non-measure entry keeps its own."""
+    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
     from dbt_charts.core.compile.normalize.charts import normalize_chart
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-    chart = normalize_chart(
-        "t",
-        {
-            "type": "bar",
-            "x": "month",
-            "y": "revenue",
-            "style": {"axis_y": {"labels": {"format": "~s"}}},
-            "query": {"sql": "SELECT 1", "source": "test"},
-            "support_table": [{"source": "revenue"}, {"source": "count"}],
-        },
-        {},
-        None,
-        None,
-        "charts.t",
-        sources={},
+    def resolved_entries(
+        entries: list[dict[str, str]], axis_format: str | None = measure_format
+    ):
+        style = (
+            {"axis_y": {"labels": {"format": axis_format}}}
+            if axis_format is not None
+            else {}
+        )
+        chart = normalize_chart(
+            "t",
+            {
+                "type": "bar",
+                "x": "month",
+                "y": "revenue",
+                "style": style,
+                "query": {"sql": "SELECT 1", "source": "test"},
+                "support_table": entries,
+            },
+            {},
+            None,
+            None,
+            "charts.t",
+            sources={},
+        )
+        data = [{"month": "Jan", "revenue": 100, "count": 3}]
+        board_style = resolve_chart_style_context(
+            get_theme_style(get_default_theme_name())
+        )
+        resolved = resolve(chart, data, board_style)
+        assert resolved.support_table is not None
+        return resolved.support_table.entries
+
+    inherited = resolved_entries([{"source": "revenue"}, {"source": "count"}])
+    authored = resolved_entries(
+        [{"source": "revenue", "format": measure_format}, {"source": "count"}]
     )
-    assert chart.support_table is not None
-    entries = chart.support_table.entries
-    assert isinstance(entries[0], ChartSupportTableSource)
-    assert entries[0].format == "~s", "measure entry must inherit the y axis format"
-    assert isinstance(entries[1], ChartSupportTableSource)
-    assert entries[1].format is None, "non-measure entry must not inherit"
+    unformatted_axis = resolved_entries(
+        [{"source": "revenue"}, {"source": "count"}], axis_format=None
+    )
+    assert inherited[0].format == authored[0].format
+    assert inherited[0].format != unformatted_axis[0].format
+    assert inherited[1].format == unformatted_axis[1].format
 
 
 def test_resolved_chart_bakes_number_format_for_numeric_y():
@@ -726,48 +754,6 @@ def test_column_is_numeric_gates_number_inheritance():
     assert _column_is_numeric([], "v") is False
     assert _column_is_numeric([{"v": True}, {"v": 2}], "v") is False  # bool excluded
     assert _column_is_numeric([{"v": 1}, {"v": "x"}], "v") is False  # mixed
-
-
-def test_support_table_entry_format_inherits_style_axis_y_format_at_normalize_time():
-    """style.axis_y.format is the primary authoring path for cartesian charts.
-
-    chart.format is a test-only fallback; production dashboards author format
-    through style.bar.axis_y.format (or style.line/area equivalents). The
-    normalize_chart() step must resolve the authored measure format, not bare
-    chart.format, so strip cells inherit the same format as the chart axis.
-    """
-    from dbt_charts.core.compile.models.chart.authored import ChartSupportTableSource
-    from dbt_charts.core.compile.normalize.charts import normalize_chart
-
-    chart = normalize_chart(
-        "t",
-        {
-            "type": "bar",
-            "x": "month",
-            "y": "revenue",
-            "style": {"axis_y": {"labels": {"format": "$,.0f"}}},
-            "query": {"sql": "SELECT 1", "source": "test"},
-            "support_table": [{"source": "revenue"}, {"source": "count"}],
-        },
-        {},
-        None,
-        None,
-        "charts.t",
-        sources={},
-    )
-    assert chart.support_table is not None
-    entries = chart.support_table.entries
-    assert isinstance(entries[0], ChartSupportTableSource)
-    assert entries[0].format == "$,.0f", (
-        "measure entry must inherit style.bar.axis_y.format at normalize time"
-    )
-    assert isinstance(entries[1], ChartSupportTableSource)
-    assert entries[1].format is None, "non-measure entry must not inherit"
-
-
-# =============================================================================
-# BARE STRING SUGAR — `support_table: [revenue]` === `support_table: [{source: revenue}]`
-# =============================================================================
 
 
 def test_bare_string_entry_parses_as_source():

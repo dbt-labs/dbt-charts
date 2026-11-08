@@ -59,6 +59,8 @@ rows:
   - revenue_trend
 ```
 
+A chart naming no `x`/`y`/`color` binds the query's columns by position (dimensions first, the measure last: `month, total` is `x`, `y`; `month, region, total` is `x`, `color`, `y`); a column count the family does not bind, or naming only some channels, is an error. Name them when the query returns more than the chart plots.
+
 Then validate and render:
 
 ```bash

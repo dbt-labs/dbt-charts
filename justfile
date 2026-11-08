@@ -166,7 +166,12 @@ serve dir port="":
 # ============================================
 
 # Regenerate every introspection-derived artifact.
-gen: gen-highlight-artifacts
+gen: gen-highlight-artifacts gen-dev-grammar
+
+# Regenerate the DEV grammar the Rust migrate crate embeds (data/schemas/yaml/dev.json).
+# Re-run after any change to the authored schema; `--check` compares instead.
+gen-dev-grammar *ARGS:
+    uv run python scripts/gen_dev_grammar.py {{ARGS}}
 
 # Regenerate the highlight manifest (board.json) and tmLanguage grammar.
 # Re-run after any change to the authored schema's key structure.

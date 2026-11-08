@@ -26,6 +26,7 @@ from dbt_charts.core.compile.models.primitives import (
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _AnnotatedChartStyleMixin,
     _CartesianChartStyle,
+    _LegendedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
@@ -73,7 +74,10 @@ class BarLayerStyle(BaseModel):
 
 
 class BarChartStyle(
-    _CartesianChartStyle, _QuantitativeAxisChartStyleMixin, _AnnotatedChartStyleMixin
+    _CartesianChartStyle,
+    _LegendedChartStyleBaseAllOptional,
+    _QuantitativeAxisChartStyleMixin,
+    _AnnotatedChartStyleMixin,
 ):
     """Bar chart style: chart-level fields + marks sub-block."""
 
@@ -124,7 +128,7 @@ class BarChartStyle(
     # Stacked only: resolve turns the rail back off for a grouped bar, whose
     # series all rise from the same baseline and would collide.
     endpoint_labels: EndpointLabelsConfig = Field(
-        description="Series names printed on stacked bars instead of in a legend."
+        description="Styling of the series names printed on stacked bars (`legend.position.edge: endpoints`)."
     )
     grouped: BarGroupedStyle = Field(description="Band-scale padding for grouped bars.")
     pattern: PatternStyle = Field(

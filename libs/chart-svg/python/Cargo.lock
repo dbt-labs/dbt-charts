@@ -46,14 +46,15 @@ name = "bind"
 version = "0.0.1"
 dependencies = [
  "board-model",
- "board-types",
  "column-types",
  "d3rs",
+ "dbt-charts-color",
  "diagnostic",
  "display-text",
  "indexmap",
  "jiff",
  "minijinja",
+ "model-core",
  "regex",
  "serde",
  "serde_json",
@@ -112,22 +113,15 @@ dependencies = [
  "d3rs",
  "dbt-charts-color",
  "diagnostic",
+ "display-text",
  "indexmap",
+ "jiff-tzdb",
  "model-core",
  "model-derive",
  "project",
  "regex",
  "serde_json",
  "yaml",
-]
-
-[[package]]
-name = "board-types"
-version = "0.0.1"
-dependencies = [
- "indexmap",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -656,12 +650,20 @@ name = "layout"
 version = "0.0.1"
 dependencies = [
  "bind",
+ "board-model",
  "d3rs",
+ "dbt-charts-color",
  "diagnostic",
+ "display-text",
  "fancy-regex",
+ "indexmap",
  "jiff",
  "libm",
+ "md-5",
+ "mdsvg",
  "measure",
+ "model-core",
+ "print",
  "regex",
  "scene",
  "serde_json",

@@ -64,7 +64,12 @@ pub struct Face {
 /// `font_measure.py::centered_baseline_offset`: how far below a container's
 /// vertical center a centered line's baseline sits.
 pub fn centered_baseline_offset(measurer: &crate::fonts::FontMeasurer, font_size: f64) -> f64 {
-    (measurer.ascent_em() - measurer.descent_em()) / 2.0 * font_size
+    centered_baseline(measurer.ascent_em(), measurer.descent_em(), font_size)
+}
+
+/// The centered-baseline law over a face's `hhea` ascent and descent, in ems.
+pub fn centered_baseline(ascent_em: f64, descent_em: f64, font_size: f64) -> f64 {
+    (ascent_em - descent_em) / 2.0 * font_size
 }
 
 /// The advance, in font units, of the cluster that starts at

@@ -30,7 +30,7 @@ impl ReadScalar for Cell {
 }
 union_leaf!(
     Cell,
-    ::model_core::TypeExpr::Facet("any", ::model_core::Scalar::Str)
+    ::model_core::TypeExpr::Scalar(::model_core::Scalar::Json)
 );
 
 /// The values of an `in` rule: at least one.
@@ -52,7 +52,10 @@ impl ReadScalar for Cells {
 }
 union_leaf!(
     Cells,
-    ::model_core::TypeExpr::Facet("any_list", ::model_core::Scalar::Str)
+    ::model_core::TypeExpr::Keyed(
+        &::model_core::Keywords::at_least_items(1),
+        &::model_core::TypeExpr::List(&::model_core::TypeExpr::Scalar(::model_core::Scalar::Json)),
+    )
 );
 
 /// `between: [low, high]`, inclusive, low first.
@@ -106,10 +109,7 @@ impl ReadScalar for CatchAll {
         None
     }
 }
-union_leaf!(
-    CatchAll,
-    ::model_core::TypeExpr::Facet("true", ::model_core::Scalar::Bool)
-);
+union_leaf!(CatchAll, ::model_core::TypeExpr::Const(true));
 
 /// The predicate fields of a rule; exactly one is set.
 #[derive(Debug, Clone, PartialEq, Model)]
@@ -122,16 +122,16 @@ pub struct Predicate {
     pub ne: Option<Cell>,
     /// Match rows where the column value is less than this number.
     #[model(absent = "no less-than test")]
-    pub lt: Option<f64>,
+    pub lt: Option<crate::unit::Number>,
     /// Match rows where the column value is less than or equal to this number.
     #[model(absent = "no less-or-equal test")]
-    pub lte: Option<f64>,
+    pub lte: Option<crate::unit::Number>,
     /// Match rows where the column value is greater than this number.
     #[model(absent = "no greater-than test")]
-    pub gt: Option<f64>,
+    pub gt: Option<crate::unit::Number>,
     /// Match rows where the column value is greater than or equal to this number.
     #[model(absent = "no greater-or-equal test")]
-    pub gte: Option<f64>,
+    pub gte: Option<crate::unit::Number>,
     /// Match rows where the column value falls in [low, high] (inclusive).
     #[model(absent = "no range test")]
     pub between: Option<Between>,

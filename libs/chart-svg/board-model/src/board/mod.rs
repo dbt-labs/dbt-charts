@@ -17,7 +17,7 @@
 //!   `level`, `visible_variables`, `placed_charts`): `BoardIndex`.
 //! - `sources` (`dbt_charts.yml`): `Config`, out of scope.
 //!
-//! Not yet ported, each a field added when its type lands: `Board.links`, `Board.regional`,
+//! Not yet ported, each a field added when its type lands: `Board.links`,
 //! `BoardBody.cache`, `BoardBody.incremental`.
 
 pub mod layout;
@@ -28,7 +28,9 @@ use crate::chart::Chart;
 use crate::facet::{DisplayText, Markdown};
 use crate::ids::{BoardId, ChartId};
 use crate::names::ThemeName;
+use crate::primitives::BoardLinks;
 use crate::query::Query;
+use crate::regional::Regional;
 use crate::string_enum;
 use crate::style::style::Style;
 use crate::variable::Variable;
@@ -160,6 +162,12 @@ pub struct Board {
     /// are rejected: there is no parent to size relative to.
     #[model(absent = "hugs its content up to style.frame.max_width")]
     pub width: Option<Width>,
+    /// Link behavior for the whole board: links.auto adds detail-page links to table charts, links.open sets how links open. Root board only; a nested board's links: is an error.
+    #[model(absent = "no board-wide link behavior: links.auto off, links open as a page")]
+    pub links: Option<BoardLinks>,
+    /// Locale and currency for every number on the board. Set it in charts/meta.yml to cover a folder; a nested board takes its root's.
+    #[model(absent = "en-US numbers and times in UTC")]
+    pub regional: Option<Regional>,
     #[flatten]
     pub body: BoardBody,
 }

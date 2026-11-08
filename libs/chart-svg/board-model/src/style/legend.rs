@@ -12,6 +12,16 @@ string_enum!(
     LegendEdge { Left = "left", Right = "right", Top = "top", Bottom = "bottom" }
 );
 string_enum!(
+    /// A legend edge, or `endpoints` to name the series on the chart itself.
+    LegendPlacementEdge {
+        Left = "left",
+        Right = "right",
+        Top = "top",
+        Bottom = "bottom",
+        Endpoints = "endpoints",
+    }
+);
+string_enum!(
     /// Position along the legend's edge.
     LegendAlign { Start = "start", Center = "center", End = "end" }
 );
@@ -51,15 +61,9 @@ pub struct LegendTitleStyle {
     pub visible: Engine<bool, Auto>,
 }
 
-/// Cartesian and geo legend placement: edge, align along it, overlay or reserve.
-///
-/// Every leaf is `auto` on every built-in theme: the engine decides and bakes
-/// the concrete placement into the resolved legend.
+/// The legend placement leaves every cartesian and geo family shares.
 #[derive(Debug, Clone, PartialEq, Model)]
-pub struct LegendPositionStyle {
-    /// Side of the plot the legend sits on. 'auto' = the engine decides.
-    #[model(fill = "auto")]
-    pub edge: Engine<LegendEdge, Auto>,
+pub struct PlacementLeaves {
     /// Position along the edge. 'auto' = the engine decides.
     #[model(fill = "auto")]
     pub align: Engine<LegendAlign, Auto>,
@@ -67,6 +71,32 @@ pub struct LegendPositionStyle {
     /// a strip for it. 'auto' = the engine decides.
     #[model(fill = "auto")]
     pub overlay: Engine<bool, Auto>,
+}
+
+/// Legend placement for families that cannot name series on the chart itself.
+///
+/// Scatter, heatmap, histogram and the geo families: `edge` is a side or `auto`,
+/// never `endpoints`.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct SideLegendPositionStyle {
+    #[flatten]
+    pub leaves: PlacementLeaves,
+    /// Side of the plot the legend sits on. 'auto' = the engine decides.
+    #[model(fill = "auto")]
+    pub edge: Engine<LegendEdge, Auto>,
+}
+
+/// Legend placement for line, area and bar charts, and the board-wide default.
+///
+/// Every leaf is `auto` on every built-in theme: the engine decides and bakes
+/// the concrete placement into the resolved legend.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct LegendPositionStyle {
+    #[flatten]
+    pub leaves: PlacementLeaves,
+    /// Legend side, 'endpoints' for on-chart series names, or 'auto' (engine decides).
+    #[model(fill = "auto")]
+    pub edge: Engine<LegendPlacementEdge, Auto>,
 }
 
 /// Pie key placement: edge and align, never overlay.
@@ -140,13 +170,22 @@ pub struct LegendStyleBase {
     pub symbol_fill: Engine<bool, Auto>,
 }
 
-/// Cartesian and geo legend.
+/// Legend for line, area and bar charts, and the board-wide default.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct LegendStyle {
     #[flatten]
     pub base: LegendStyleBase,
-    /// Legend placement: edge, align along the edge, overlay or reserve.
+    /// Legend edge (or `endpoints`), align along it, overlay or reserve.
     pub position: LegendPositionStyle,
+}
+
+/// Legend for scatter, heatmap, histogram and the geo families.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct SideLegendStyle {
+    #[flatten]
+    pub base: LegendStyleBase,
+    /// Legend edge, align along it, overlay or reserve.
+    pub position: SideLegendPositionStyle,
 }
 
 /// Pie legend.

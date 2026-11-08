@@ -18,7 +18,6 @@ from dbt_charts.core.compile.normalize.chart_focus import (
     focus_on_chart,
     focus_on_item,
 )
-from dbt_charts.core.compile.normalize.chart_styles import board_chart_tiers
 from dbt_charts.core.compile.resolve.chart._kwargs import board_family_style
 from dbt_charts.core.compile.resolve.chart._palette import _with_color_tokens
 from dbt_charts.core.compile.resolve.style import board as style_board, chart_context
@@ -418,35 +417,6 @@ def test_context_without_a_memo_stays_without_one_through_scales() -> None:
     owned = chart_context.with_chart_memo(shared)
     carried = chart_context.context_with_category_colors(owned, ())
     assert carried.__dict__["_chart_memo"] is not owned.__dict__["_chart_memo"]
-
-
-def test_board_tiers_carry_the_theme_axis_and_category_pins() -> None:
-    board = _board(
-        f"""\
-title: T
-style:
-  charts:
-    axis_quantitative:
-      labels:
-        visible: false
-    category_colors:
-      m:
-        values:
-          a: '#112233'
-rows:
-  - c
-charts:
-  c:
-    type: bar
-    x: m
-    y: r
-    {_QUERY}
-"""
-    )
-    tiers = board_chart_tiers(board.chart_style_context)
-    assert tiers.axis_quantitative.labels.visible is False
-    assert tiers.axis_band.labels.visible is not False
-    assert tiers.category_color_pins["m"].values == {"a": "#112233"}
 
 
 def test_table_style_records_whether_the_chart_pins_its_width() -> None:

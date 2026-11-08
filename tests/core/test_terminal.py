@@ -5,10 +5,13 @@ from dbt_charts.core.compile.models.primitives import BoardLinks
 """Tests for terminal rendering functionality."""
 
 import logging
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.terminal_charts import (
     _terminal_y_field,
@@ -245,6 +248,103 @@ def test_render_table_terminal(make_chart):
     assert "Test Table" in output or "table" in output.lower()
     # Should contain column names or data
     assert "Alice" in output or "Bob" in output or "name" in output.lower()
+
+
+def test_render_chart_terminal_binds_columns_by_position(make_chart):
+    """A chart naming no channels draws the same as its explicit twin."""
+    data = [{"month": "Jan", "revenue": 1000}, {"month": "Feb", "revenue": 1500}]
+    outputs = [
+        render_chart_terminal(
+            chart,
+            data,
+            "Revenue by Month",
+            width=80,
+            height=20,
+            formats=None,
+            kpi_compact=_KPI_COMPACT,
+        )
+        for chart in (
+            make_chart("bar", x=None, y=None),
+            make_chart("bar", x="month", y="revenue"),
+        )
+    ]
+    assert outputs[0] == outputs[1]
+
+
+def _render_plotted(chart: Chart, data: list[dict[str, Any]]) -> str:
+    return render_chart_terminal(
+        chart,
+        data,
+        "Plotted",
+        width=80,
+        height=20,
+        formats=None,
+        kpi_compact=_KPI_COMPACT,
+    )
+
+
+@pytest.mark.parametrize(
+    "channels",
+    [{"x": "latency"}, {"x": None}],
+    ids=["named", "shorthand"],
+)
+def test_render_chart_terminal_histogram_draws_bars(
+    make_chart: Callable[..., Chart], channels: dict[str, str | None]
+) -> None:
+    data = [{"latency": value} for value in (1, 2, 2, 3, 3, 3, 9)]
+
+    output = _render_plotted(make_chart("histogram", y=None, **channels), data)
+
+    assert "plotext" not in output
+    assert "█" in output
+
+
+@pytest.mark.parametrize(
+    "channels",
+    [
+        {"x": "orders", "y": "region"},
+        {"x": None, "y": "region"},
+        {"x": None, "y": None},
+    ],
+    ids=["named", "y-only", "unnamed"],
+)
+def test_render_chart_terminal_spark_bar_reads_values_from_x(
+    make_chart: Callable[..., Chart], channels: dict[str, str | None]
+) -> None:
+    data = [
+        {"region": "East", "orders": 40},
+        {"region": "West", "orders": 25},
+    ]
+
+    output = _render_plotted(make_chart("spark_bar", **channels), data)
+
+    assert "plotext" not in output
+    assert "40.0" in output  # the value axis, scaled by the orders column
+    assert "West" in output
+
+
+def test_render_chart_terminal_no_numeric_values_does_not_blame_plotext(
+    make_chart: Callable[..., Chart],
+) -> None:
+    data = [{"month": "Jan", "revenue": "n/a"}]
+
+    output = _render_plotted(make_chart("bar", x="month", y="revenue"), data)
+
+    assert "plotext" not in output
+
+
+def test_render_kpi_terminal_binds_value_by_position(
+    make_chart: Callable[..., Chart],
+) -> None:
+    output = render_kpi_terminal(
+        make_chart("kpi", value=None),
+        [{"revenue": 1234567}],
+        "Revenue",
+        formats=None,
+        kpi_compact=_KPI_COMPACT,
+    )
+
+    assert "1,234,567" in output
 
 
 def test_render_chart_terminal_bar(make_chart):

@@ -7,6 +7,7 @@ This module handles the conversion from Vega-Lite chart specifications
 to terminal output using Plotext for charts and Rich for tables.
 """
 
+import contextlib
 import logging
 from typing import Any
 
@@ -27,6 +28,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
 from dbt_charts.core.compile.models.primitives import FormatTable
 from dbt_charts.core.compile.models.style.theme import KpiValueStyle
 from dbt_charts.core.compile.models.style.theme.kpi import KpiCompactStyle
+from dbt_charts.core.compile.resolve import bind_channels, columns_of
 from dbt_charts.core.compile.resolve.chart.channel import parse_style_channel
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_KPI_MULTIROW, ERR_KPI_NO_DATA
@@ -135,7 +137,7 @@ def render_chart_terminal(
         return render_table_terminal(chart, data, display_title, width=width)
 
     # chart is now narrowed to _XYChart for all subsequent calls.
-    xy_chart: _XYChart = chart
+    xy_chart: _XYChart = bind_channels(chart, columns_of(data))
 
     # Normalize data types
     normalized_data = normalize_data_types(data)
@@ -175,7 +177,9 @@ def render_chart_terminal(
         plt.title(display_title)
 
     # Render based on chart type
-    if chart_type in ("bar", "histogram"):
+    if chart_type == "histogram":
+        return _render_histogram_terminal(xy_chart, normalized_data, plt, display_title)
+    if chart_type == "bar":
         return _render_bar_chart_terminal(xy_chart, normalized_data, plt, display_title)
     elif chart_type == "line":
         return _render_line_chart_terminal(
@@ -198,7 +202,7 @@ def render_chart_terminal(
 def _get_terminal_chart_type(chart_type: str) -> str:
     """Map chart types to terminal-supported equivalents.
 
-    Terminal mode supports: bar, line, scatter, area, table, kpi
+    Terminal mode supports: bar, histogram, line, scatter, area, table, kpi
     All other chart types are mapped to their closest visual equivalent.
 
     Args:
@@ -212,7 +216,7 @@ def _get_terminal_chart_type(chart_type: str) -> str:
     chart_type_map = {
         # Direct support (no mapping needed)
         "bar": "bar",
-        "histogram": "bar",
+        "histogram": "histogram",
         "line": "line",
         "circle": "scatter",
         "scatter": "scatter",
@@ -342,6 +346,7 @@ def render_kpi_terminal(
 
     # render_kpi_terminal is only dispatched for KPI charts; narrow the union.
     assert isinstance(chart, KpiChart)
+    chart = bind_channels(chart, columns_of(data))
 
     chart_id = getattr(chart, "id", "unknown")
     if not data:
@@ -352,6 +357,7 @@ def render_kpi_terminal(
         )
 
     raw_value = chart.value
+    assert raw_value is not None, "bind_channels names value or raises"
     row = data[0]
     cell = resolve_kpi_value(raw_value, row, chart_id)
 
@@ -405,13 +411,16 @@ def _render_bar_chart_terminal(
     """Render a bar chart using Plotext."""
     x_field = chart.x
     y_field = _terminal_y_field(chart)
+    if isinstance(chart, SparkBarChart):
+        # A spark bar's x is the magnitude and its y the label.
+        x_field, y_field = y_field, x_field
 
-    # If no x/y fields, try to infer from data or render as table
+    # Only a spark bar arrives here short of a channel (every other family is
+    # bound by position or refused first); its engine finds the label and the
+    # magnitude it does not name, and so does this preview.
     if not x_field or not y_field:
-        # Try to find suitable fields from data
         if data and len(data) > 0:
             keys = list(data[0].keys())
-            # Try to find a numeric field for y
             for key in keys:
                 try:
                     float(data[0].get(key, 0))
@@ -470,6 +479,29 @@ def _render_bar_chart_terminal(
     lines = chart_output.split("\n")
     cleaned_lines = [line.rstrip() for line in lines]
     return "\n".join(cleaned_lines)
+
+
+def _render_histogram_terminal(
+    chart: _XYChart,
+    data: list[dict[str, Any]],  # type-state: explicit_any — raw query row dicts
+    plt: Any,  # type-state: explicit_any — plotext has no stubs
+    display_title: str,
+) -> str:
+    """Render a histogram of the x column using Plotext's binning."""
+    x_field = chart.x
+    if not x_field:
+        return _fallback_chart_render(display_title, data)
+
+    values = []
+    for row in data:
+        with contextlib.suppress(ValueError, TypeError):  # skip non-numeric cells
+            values.append(float(row[x_field]))
+
+    if not values:
+        return _fallback_chart_render(display_title, data)
+
+    plt.hist(values)
+    return "\n".join(line.rstrip() for line in plt.build().split("\n"))
 
 
 def _render_line_chart_terminal(
@@ -628,10 +660,10 @@ def _render_area_chart_terminal(
 
 
 def _fallback_chart_render(display_title: str, data: list[dict[str, Any]]) -> str:
-    """Fallback rendering when Plotext is not available."""
+    """Placeholder for a chart with no plottable values."""
     title = display_title or "Chart"
     if data:
-        return f"{title}\n[Chart rendering not available - install plotext]"
+        return f"{title}\n[No numeric values to plot]"
     return f"{title}\n[No data]"
 
 

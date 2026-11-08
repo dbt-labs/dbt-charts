@@ -19,14 +19,16 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedLegendStyle,
 )
 from dbt_charts.core.compile.models.style.theme import (
+    ChartLegendStyle,
     LegendAlign,
+    LegendAlignSetting,
     LegendDirection,
     LegendEdge,
+    LegendEdgeSetting,
     LegendLabelStyle,
     LegendPositionStyle,
     LegendStyle,
     LegendTitleStyle,
-    PieLegendStyle,
 )
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset, settled
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -42,7 +44,7 @@ SUPPORTED_PLACEMENTS = (
 
 
 def merge_authored_position(
-    board: LegendPositionStyle, patch: LegendStyle | PieLegendStyle | None
+    board: LegendPositionStyle, patch: ChartLegendStyle | None
 ) -> LegendPositionStyle:
     """The authored leaves after layering a family or chart legend patch on the board's.
 
@@ -52,7 +54,7 @@ def merge_authored_position(
 
 
 def merge_authored_direction(
-    board: LegendStyle, patch: LegendStyle | PieLegendStyle | None
+    board: LegendStyle, patch: ChartLegendStyle | None
 ) -> LegendDirection | None:
     if patch is not None and "direction" in patch.model_fields_set:
         return patch.direction
@@ -60,7 +62,7 @@ def merge_authored_direction(
 
 
 def merge_authored_visible(
-    board: LegendStyle, patch: LegendStyle | PieLegendStyle | None
+    board: LegendStyle, patch: ChartLegendStyle | None
 ) -> bool | Literal["auto"]:
     """The legend's ``visible`` after layering a family or chart patch on the board's.
 
@@ -73,7 +75,7 @@ def merge_authored_visible(
 
 
 def merge_authored_title_visible(
-    board: LegendStyle, patch: LegendStyle | PieLegendStyle | None
+    board: LegendStyle, patch: ChartLegendStyle | None
 ) -> bool | Literal["auto"] | None:
     """The legend title's ``visible`` after layering a family or chart patch."""
     # A sparse patch leaves `title` None when unauthored, though the patch
@@ -133,18 +135,22 @@ def without_engine_decided(patch: _Patch | None) -> _Patch | None:
 
 
 def merge_legend(
-    base: ResolvedLegendStyle, patch: LegendStyle | PieLegendStyle | None
+    base: ResolvedLegendStyle, patch: ChartLegendStyle | None
 ) -> ResolvedLegendStyle:
     """*patch* folded onto the resolved legend, decided leaves left to the engine."""
     return merge_unset(base, without_engine_decided(patch))
 
 
-def placed_edge(leaf: LegendEdge | Literal["auto"] | None) -> LegendEdge | None:
-    """An edge someone set; ``auto`` and unset are the engine's call."""
-    return None if leaf == "auto" else leaf
+def placed_edge(
+    leaf: LegendEdgeSetting | None,
+) -> LegendEdge | None:
+    """A side someone set; ``auto``, ``endpoints`` (no legend) and unset are the engine's call."""
+    if leaf is None or leaf == "auto" or leaf == "endpoints":
+        return None
+    return leaf
 
 
-def placed_align(leaf: LegendAlign | Literal["auto"] | None) -> LegendAlign | None:
+def placed_align(leaf: LegendAlignSetting | None) -> LegendAlign | None:
     return None if leaf == "auto" else leaf
 
 

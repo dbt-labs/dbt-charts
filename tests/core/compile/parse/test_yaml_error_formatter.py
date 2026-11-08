@@ -142,26 +142,21 @@ rows:
     def test_format_missing_required_field(self):
         """Test formatting error for missing required field."""
         yaml_content = """title: Test
-queries:
-  q1:
-    sql: SELECT 1
-    source: test
 charts:
-  my_kpi:
-    type: kpi
-    query: q1
+  my_callout:
+    type: callout
 rows:
-  - my_kpi
+  - my_callout
 """
         result = compile(yaml_content)
 
-        # KPI without value should fail
+        # A callout without a message should fail
         assert not result.success
         assert len(result.errors) > 0
 
         error_msg = str(result.errors[0])
-        # Should mention 'value' field is required
-        assert "value" in error_msg.lower()
+        # Should mention 'message' field is required
+        assert "message" in error_msg.lower()
 
     def test_format_reference_error(self):
         """Test formatting error for invalid reference."""

@@ -15,6 +15,7 @@ from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 
 from .._results import rows_result
+from ._svg_render import render_board_svg_result
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -866,3 +867,32 @@ def test_spark_bar_subtitle_font_size_reads_directly_from_theme(make_chart):
     assert f'font-size="{distinctive_size:g}"' in svg, (
         f"Expected subtitle font-size={distinctive_size} verbatim in SparkBar SVG"
     )
+
+
+class TestSparkBarOnABoard:
+    """A spark bar finds the columns it does not name, so a board naming one
+    channel or none draws it."""
+
+    @pytest.mark.parametrize(
+        ("channels", "columns", "values", "label"),
+        [
+            ("    y: month_label\n", ["month_label", "revenue"], [["Jan", 3]], "Jan"),
+            ("", ["revenue"], [[3], [5]], "Item 1"),
+            ("", ["month_label", "revenue", "orders"], [["Jan", 3, 4]], "Jan"),
+        ],
+        ids=["y-only", "one-column", "three-columns"],
+    )
+    def test_a_spark_bar_naming_part_of_its_channels_draws(
+        self, channels: str, columns: list[str], values: list[list[object]], label: str
+    ) -> None:
+        board = (
+            "queries:\n"
+            f"  q:\n    columns: {json.dumps(columns)}\n"
+            f"    values: {json.dumps(values)}\n"
+            "charts:\n"
+            f"  s:\n    type: spark_bar\n    query: q\n{channels}"
+            "rows:\n  - s\n"
+        )
+        result = render_board_svg_result(board)
+        assert result.chart_errors == []
+        assert label in result.output

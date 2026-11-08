@@ -12,7 +12,13 @@ object. A rule naming a key no field carries fails at import.
 
 A message is a ``str.format`` template: ``{set}`` is the list of set keys
 (``AtMostOneOf``), ``{item}`` the offending item (``ItemsMatch``), and any other
-name is the value of that key.
+name is the value of that key. A message may instead be an ``ErrorCode``, whose
+own code and message report the violation.
+
+A model with ``__judges_one_mapping__`` checks its rules only on one authored
+mapping (``AUTHORED_INPUT``), never on a board folded from several files
+(``MERGED_AUTHORED_INPUT``) or a cascade merge (no context), where a narrower
+tier's key may legitimately meet a broader tier's.
 """
 
 from __future__ import annotations
@@ -21,9 +27,13 @@ import dataclasses
 import re
 from typing import ClassVar, get_args
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationInfo, model_validator
+from pydantic_core import PydanticCustomError
+
+from dbt_charts.core.diagnostics.registry import ErrorCode
 
 JsonScalar = str | int | float | bool
+Message = str | ErrorCode
 
 
 @dataclasses.dataclass(frozen=True)
@@ -67,7 +77,7 @@ Condition = IsSet | ValueIn | IsCall | IsList
 @dataclasses.dataclass(frozen=True)
 class AtLeastOneOf:
     keys: tuple[str, ...]
-    message: str
+    message: Message
     nonempty: tuple[str, ...] = ()
 
 
@@ -77,7 +87,7 @@ class AtMostOneOf:
     ``auto``: the engine decides it, so it is not a second authored value."""
 
     keys: tuple[str, ...]
-    message: str
+    message: Message
     nonempty: tuple[str, ...] = ()
     auto: tuple[str, ...] = ()
 
@@ -87,7 +97,7 @@ class Requires:
     """When every condition holds, every key must be set."""
 
     keys: tuple[str, ...]
-    message: str
+    message: Message
     when: tuple[Condition, ...] = ()
     nonempty: tuple[str, ...] = ()
 
@@ -97,7 +107,7 @@ class Forbids:
     """When every condition holds, no key may be set."""
 
     keys: tuple[str, ...]
-    message: str
+    message: Message
     when: tuple[Condition, ...] = ()
     nonempty: tuple[str, ...] = ()
 
@@ -109,7 +119,7 @@ class ItemsMatch:
 
     key: str
     pattern: str
-    message: str
+    message: Message
     when: tuple[Condition, ...] = ()
 
 
@@ -122,7 +132,7 @@ class NotNull:
     """
 
     keys: tuple[str, ...]
-    message: str
+    message: Message
 
 
 Constraint = AtLeastOneOf | AtMostOneOf | Requires | Forbids | ItemsMatch | NotNull
@@ -238,14 +248,17 @@ class _Placeholders(dict[str, object]):
 
 def _fail(
     model: BaseModel,
-    message: str,
+    message: Message,
     **known: object,  # type-state: object_annotation — str.format values
-) -> ValueError:
+) -> ValueError | PydanticCustomError:
+    if isinstance(message, ErrorCode):
+        return message.validation_error()
     return ValueError(message.format_map(_Placeholders(model, **known)))
 
 
 def check_constraints(model: BaseModel) -> None:
-    """Raise ``ValueError`` with the first violated rule's message."""
+    """Raise the first violated rule's error: ``ValueError`` with its message,
+    or its ``ErrorCode``'s validation error."""
     for constraint in declared_constraints(type(model)):
         match constraint:
             case AtLeastOneOf(keys, message, nonempty):
@@ -293,6 +306,7 @@ class ConstrainedModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     __constraints__: ClassVar[tuple[Constraint, ...]] = ()
+    __judges_one_mapping__: ClassVar[bool] = False
 
     @classmethod
     def __pydantic_init_subclass__(
@@ -323,6 +337,9 @@ class ConstrainedModel(BaseModel):
                 )
 
     @model_validator(mode="after")
-    def _check_constraints(self) -> ConstrainedModel:
-        check_constraints(self)
+    def _check_constraints(self, info: ValidationInfo) -> ConstrainedModel:
+        context = info.context if isinstance(info.context, dict) else {}
+        one_mapping = context.get("authored") and not context.get("merged")
+        if one_mapping or not self.__judges_one_mapping__:
+            check_constraints(self)
         return self

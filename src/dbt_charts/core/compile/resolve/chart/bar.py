@@ -11,9 +11,6 @@ from dbt_charts.core.compile.format import (
     column_format,
     resolve_format,
 )
-from dbt_charts.core.compile.models.chart.authored._support_table import (
-    ChartSupportTablePerSeries,
-)
 from dbt_charts.core.compile.models.chart.normalized import (
     BarChart,
 )
@@ -21,7 +18,6 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedBarChart,
 )
 from dbt_charts.core.compile.models.primitives import resolved_as
-from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedBarLabels,
@@ -44,13 +40,14 @@ from dbt_charts.core.compile.resolve.chart._annotations import (
     resolve_annotations,
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
+    RailRequest,
     _apply_multiples_mirror,
     _bake_ay_orient,
     _bake_ay_position_left,
     _cascaded_legend,
     _edge_or_none,
-    _endpoint_labels_off_for_layers,
-    _endpoint_labels_off_for_multiples,
+    _rail_off_for_layers,
+    _rail_off_for_multiples,
     _reject_dual_axis_layered_endpoint_labels,
     cartesian_color_domain_values,
     cartesian_series_naming,
@@ -60,6 +57,7 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     horizontal_measure_style,
     legend_wrap_marginal_height_px,
     legend_wrap_required_height_px,
+    support_table_names_series,
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
     _bar_orientation,
@@ -92,6 +90,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _cartesian_kwargs,
+    authored_measure_format,
     board_family_style,
 )
 from dbt_charts.core.compile.resolve.chart._layers import (
@@ -146,7 +145,9 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset, settled
-from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
+from dbt_charts.core.compile.resolve.style.legend_position import (
+    merge_legend,
+)
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.constants.bar import TOP_RAIL_LABEL_GAP_SPACES
@@ -177,8 +178,8 @@ __all__ = [
 ]
 
 
-def _bar_endpoint_labels_for_stack(
-    endpoint_labels: EndpointLabelsConfig,
+def _bar_rail_for_stack(
+    rail: RailRequest,
     normalized: BarChart,
     data: ChartRows,
     stack_mode: str,
@@ -189,35 +190,30 @@ def _bar_endpoint_labels_for_stack(
     stack_order: str | None,
     font_family: str,
     font_size: float,
-) -> EndpointLabelsConfig:
+) -> RailRequest:
     """Direct labeling is what ``auto`` means; the disqualifiers below turn it off.
 
-    Every disqualifier here steers ``auto`` away from a shape it would
-    render badly or not at all. A concrete ``style.endpoint_labels.visible``
-    from any tier is returned untouched: with ``true``, grouped bars label at
-    their bar tops as they always have, and the shapes render refuses (a
-    negative measure, a sorted or center-stacked horizontal rail,
-    ``multiples:``) raise there with a message naming the conflict. Quietly
-    dropping the rail instead would be neither.
+    A requested rail (``edge: endpoints``) or a ruled-out one (a placed legend)
+    is returned untouched: with ``endpoints``, grouped bars label at their bar
+    tops, and the shapes render refuses (a negative measure, a sorted or
+    center-stacked horizontal rail, ``multiples:``) raise there naming the
+    conflict. A horizontal grouped bar has no rail to draw, so it keeps a
+    legend without a diagnostic.
     """
-    if endpoint_labels.visible != "auto":
-        return endpoint_labels
-    if normalized.support_table is not None and any(
-        isinstance(entry, ChartSupportTablePerSeries) and not entry.by_measure
-        for entry in normalized.support_table.entries
-    ):
-        # A per-series support table already prints one row per series, labeled
-        # in that series' own ink — the rail would name them a second time,
-        # and it costs the plot the height and the axis side it needs.
-        return endpoint_labels.model_copy(update={"visible": False})
+    if rail != "auto":
+        return rail
+    if support_table_names_series(normalized):
+        # The rail would name the series a second time, and it costs the plot
+        # the height and the axis side it needs.
+        return False
     if stack_mode == "none":
         # Grouped: every series' last bar rises from the same baseline to a
         # similar height, so the collision cascade squashes the labels
         # together. A legend is the honest treatment.
-        return endpoint_labels.model_copy(update={"visible": False})
-    endpoint_labels = _endpoint_labels_off_for_multiples(endpoint_labels, normalized)
-    if endpoint_labels.visible is False:
-        return endpoint_labels
+        return False
+    rail = _rail_off_for_multiples(rail, normalized)
+    if rail is False:
+        return rail
     y_fields = (
         (normalized.y,)
         if isinstance(normalized.y, str)
@@ -230,27 +226,27 @@ def _bar_endpoint_labels_for_stack(
     # zero/normalize/center all reach that raise, so this check runs
     # regardless of which one resolved_stack picked.
     if any(v < 0 for v in _numeric_y_values(data, y_fields)):
-        return endpoint_labels.model_copy(update={"visible": False})
-    endpoint_labels = _endpoint_labels_off_for_layers(endpoint_labels, normalized)
-    if endpoint_labels.visible is False:
-        return endpoint_labels
+        return False
+    rail = _rail_off_for_layers(rail, normalized)
+    if rail is False:
+        return rail
     if normalized.sort is not None and not numeric_column_values(
         data, normalized.sort.by
     ):
         # Conservative rather than necessary: `bar_sort_op` pins `min`, which
         # Vega compares natively on strings and dates, so this refuses a shape
         # the engine could order.
-        return endpoint_labels.model_copy(update={"visible": False})
+        return False
     if horizontal and stack_mode == "center":
         # The horizontal rail anchors on the cumulative (0..Σ) axis, which the
         # diverging center-stack domain doesn't have.
-        return endpoint_labels.model_copy(update={"visible": False})
+        return False
     if not _any_column_stacks_more_than_one_series(normalized, data, y_fields):
-        return endpoint_labels.model_copy(update={"visible": False})
+        return False
     if horizontal and not _every_series_reaches_the_anchor_row(
         normalized, data, y_fields
     ):
-        return endpoint_labels.model_copy(update={"visible": False})
+        return False
     if horizontal and _horizontal_rail_labels_would_collide(
         normalized,
         data,
@@ -263,8 +259,8 @@ def _bar_endpoint_labels_for_stack(
         font_family,
         font_size,
     ):
-        return endpoint_labels.model_copy(update={"visible": False})
-    return endpoint_labels
+        return False
+    return rail
 
 
 def _every_series_reaches_the_anchor_row(
@@ -286,7 +282,7 @@ def _every_series_reaches_the_anchor_row(
     of the data going forward.
 
     Steering the default back to a legend is the honest treatment. An explicit
-    ``endpoint_labels.visible: true`` still reaches the seam math, which is
+    ``edge: endpoints`` still reaches the seam math, which is
     correct and tested — it is only unsafe to *choose* unprompted.
     """
     color = normalized.color
@@ -295,10 +291,9 @@ def _every_series_reaches_the_anchor_row(
         return True
     sort = normalized.sort
     sort_by = sort.by if sort else ""
-    # Only reached past _bar_endpoint_labels_for_stack's stack_mode == "none"
-    # return, so the mark stacks. The measure mirrors what the emitter pins
-    # against (``emitters/bar.py``): a wide chart's is a synthetic fold field,
-    # so it never reads as a sort by the measure.
+    # The measure mirrors what the emitter pins against (``emitters/bar.py``):
+    # a wide chart's is a synthetic fold field, so it never reads as a sort by
+    # the measure.
     domain = x_domain_order(
         data,
         x,
@@ -497,7 +492,7 @@ def _horizontal_rail_labels_would_collide(
     else:
         # data is the whole chart's rows, not a per-panel slice — small
         # multiples already disqualified the rail earlier in
-        # _bar_endpoint_labels_for_stack, so partition(None, ...) always
+        # _bar_rail_for_stack, so partition(None, ...) always
         # yields the single trivial panel. Routed through partition() rather
         # than constructing PanelRows directly: only _chart_rows.py may do
         # that (test_panel_rows_construction_boundary.py).
@@ -816,11 +811,10 @@ def _resolve_bar(
         )
     )
     # A horizontal bar's color-series rail (EndpointLabelFeature.applies_to()'s
-    # horizontal branch) only ever fires on a genuinely stacked chart — a
-    # grouped (stack: none) horizontal bar never gets a rail even with a
-    # color series and endpoint_labels.visible explicitly authored, so
-    # letting suppression fire off the color-series term there would retire
-    # the legend with nothing to replace it.
+    # horizontal branch) only fires on a genuinely stacked chart: a grouped
+    # (stack: none) horizontal bar never gets a rail, even with a color series
+    # and an authored `edge: endpoints`. Suppressing the legend off the
+    # color-series term there would leave the series named nowhere.
     _horizontal_is_grouped = orientation == "horizontal" and resolved_stack in (
         None,
         "none",
@@ -913,14 +907,13 @@ def _resolve_bar(
     _subtitle_height_px = subtitle_cost_px(
         normalized.subtitle, chart_style_context.title.subtitle.font
     )
-    naming = cartesian_series_naming(
-        normalized,
-        channels,
-        *_cascaded_legend(chart_style_context, bar.legend),
-        merged_legend,
-        width,
-        _bar_endpoint_labels_for_stack(
-            bar.endpoint_labels,
+    authored_position, authored_visible = _cascaded_legend(
+        chart_style_context, bar.legend
+    )
+
+    def rail_for(request: RailRequest) -> RailRequest:
+        return _bar_rail_for_stack(
+            request,
             normalized,
             data,
             resolved_stack,
@@ -931,7 +924,17 @@ def _resolve_bar(
             bar.stack_order,
             series_label.font_family,
             series_label.font_size,
-        ),
+        )
+
+    naming = cartesian_series_naming(
+        normalized,
+        channels,
+        authored_position,
+        authored_visible,
+        merged_legend,
+        width,
+        rail_for,
+        bar.endpoint_labels,
         endpoint_label_has_layers=endpoint_label_has_layers,
         has_layers=bool(normalized.layers),
         rail_eligible_for_suppression=_horizontal_series_rail_fires,
@@ -1257,6 +1260,7 @@ def _resolve_bar(
         top_legend=naming.top_legend,
         wrap_legend=naming.wrap_legend,
         legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
+        legend_hidden_under_edge=naming.hidden_under_edge,
     )
     resolved_layers = _resolve_layer_list(
         normalized.layers,
@@ -1346,6 +1350,7 @@ def _resolve_bar(
         data,
         "bar",
         panel_axes=dataset.axes,
+        measure_format=authored_measure_format(normalized.style),
         category_axis_vertical=orientation == "horizontal",
         axis_y_orient=_ay_orient_for_table,
         stacked=is_stacked,
@@ -1525,6 +1530,7 @@ def _resolve_histogram(
                 data,
                 "histogram",
                 panel_axes=dataset.axes,
+                measure_format=authored_measure_format(normalized.style),
                 stacked=False,
             ),
             # Histogram uses aggregate-count on y; authored `y: [a, b]` is legal

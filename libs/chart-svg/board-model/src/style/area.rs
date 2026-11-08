@@ -3,7 +3,8 @@
 use crate::primitives::{PatternStyle, StrokeStyle};
 use crate::style::bar::{StackMode, StackOrder};
 use crate::style::chart_base::{
-    AnnotatedChartStyleMixin, CartesianChartStyle, QuantitativeAxisChartStyleMixin,
+    AnnotatedChartStyleMixin, CartesianChartStyle, LegendedChartStyleBase,
+    QuantitativeAxisChartStyleMixin,
 };
 use crate::style::endpoint_labels::EndpointLabelsConfig;
 use crate::style::marks::{AreaMarkStyle, PointLabelsStyle, PointMarkStyle};
@@ -56,6 +57,8 @@ pub struct AreaChartStyle {
     pub annotated: AnnotatedChartStyleMixin,
     #[flatten]
     pub quantitative: QuantitativeAxisChartStyleMixin,
+    #[flatten]
+    pub legended: LegendedChartStyleBase,
     #[flatten]
     pub cartesian: CartesianChartStyle,
     /// Default stack mode for area charts: 'none', 'zero', 'normalize', or 'center'.

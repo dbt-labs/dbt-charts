@@ -10,6 +10,7 @@ use std::fmt;
 pub mod codes;
 #[rustfmt::skip]
 pub mod diag;
+pub mod hints;
 mod message;
 use d3rs::py_float::float_repr;
 pub use message::MessageError;
@@ -26,6 +27,8 @@ pub enum Level {
 /// A registered diagnostic code: its level, title, message template and the
 /// template params (sorted) it formats; instances come only from the generated
 /// `codes.rs`. `fix` is a template for a warning and verbatim text for an error.
+/// `hint` names the Python generator that writes the diagnostic's hint from its fields;
+/// Rust cannot run it, so a surface that shows hints refuses a code that has one.
 pub struct Code {
     pub id: &'static str,
     pub level: Level,
@@ -33,6 +36,7 @@ pub struct Code {
     pub params: &'static [&'static str],
     pub template: &'static str,
     pub fix: Option<&'static str>,
+    pub hint: Option<&'static str>,
 }
 
 /// A byte range into the source text of the file a diagnostic is about.
@@ -41,6 +45,12 @@ pub struct SourceRange {
     pub start: usize,
     pub end: usize,
 }
+
+/// A hint's text behind a thin pointer: a `Diagnostic` is the `Err` of most results in the spine,
+/// and clippy's `result_large_err` measures it against 128 bytes.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(transparent)]
+struct Hint(String);
 
 /// A location in the board model, one segment per key or index.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -64,13 +74,19 @@ pub struct Diagnostic {
     pub path: Option<ModelPath>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub related: Vec<(SourceRange, String)>,
+    /// What to try, for the codes whose Python `hint_generator` is ported ([`hints::PORTED`]) or
+    /// a producer that set one; `None` is no hint. Boxed to keep a `Diagnostic` under clippy's
+    /// `result_large_err` size, which every `Result<_, Diagnostic>` is measured by; read it with
+    /// [`Diagnostic::hint`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hint: Option<Box<Hint>>,
 }
 
 impl Diagnostic {
     /// Panics when `params` names differ from the code's template params:
     /// a mismatch is a programming error that Python would turn into a
     /// `KeyError` while formatting.
-    pub fn new<const N: usize>(code: &Code, params: [(&'static str, Value); N]) -> Self {
+    pub fn new(code: &Code, params: impl IntoIterator<Item = (&'static str, Value)>) -> Self {
         let params: BTreeMap<_, _> = params.into_iter().collect();
         assert!(
             params.keys().copied().eq(code.params.iter().copied()),
@@ -79,13 +95,26 @@ impl Diagnostic {
             params.keys().collect::<Vec<_>>(),
             code.params,
         );
+        let hint = hints::generate(code.id, &params).map(|h| Box::new(Hint(h)));
         Diagnostic {
             code: code.id,
             params,
             range: None,
             path: None,
             related: Vec::new(),
+            hint,
         }
+    }
+
+    /// A hint a producer sets at its raise site; it wins over the code's generator.
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(Box::new(Hint(hint.into())));
+        self
+    }
+
+    /// The hint, if there is one.
+    pub fn hint(&self) -> Option<&str> {
+        self.hint.as_deref().map(|h| h.0.as_str())
     }
 
     pub fn at(mut self, range: SourceRange) -> Self {
@@ -230,7 +259,11 @@ pub fn py_repr(v: &Value) -> String {
 /// unassigned or private-use code point (`mdsvg::css::python_repr` has the
 /// full table).
 pub fn py_str_repr(s: &str) -> String {
-    let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+    let quote = if s.contains('\'') && !s.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
     let mut out = String::with_capacity(s.len() + 2);
     out.push(quote);
     for c in s.chars() {

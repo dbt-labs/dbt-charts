@@ -604,30 +604,14 @@
   level: error
   title: multiples cannot be combined with endpoint labels
   template: 'Chart {chart_id!r}: multiples cannot be combined with endpoint labels; the endpoint-label
-    rail names series for a single panel, and a faceted chart has no single panel for it to
-    sit beside. Set style.endpoint_labels.visible: false on this chart to keep the small multiples,
-    or remove multiples to keep the labels.'
-  doc: Fired when a chart authors `multiples:` while its endpoint-label rail is explicitly
-    switched on. The rail names series for one panel; a faceted chart has no single panel
-    for it to sit beside. The shipped default switches the rail off wherever `multiples:`
-    is set (a legend above the panels names the series instead), so this fires only where
-    the rail was asked for by name. Turn off `style.endpoint_labels.visible` to keep the small
-    multiples, or remove `multiples:` to keep the labels.
-  docs_topic: charts
-- code: ERR-ENDPOINT-LABELS-AND-LEGEND-NAME-SERIES-TWICE
-  level: error
-  title: endpoint labels and a visible legend name the same series twice
-  template: 'Chart {chart_id!r}: endpoint labels and a visible legend both name this chart''s
-    series. Set style.endpoint_labels.visible: false on this chart to use the legend, or remove
-    the authored legend.visible / legend.position to keep the labels.'
-  doc: 'Fired when a chart''s endpoint-label rail will name its series and the chart also
-    authors `legend.visible: true` or a `legend.position` (at the chart or board tier). The
-    rail replaces the legend by default, so only an authored legend conflicts; shown together
-    they name every series twice and the right-edge legend pushes the labels away from their
-    lines. Turn off `style.endpoint_labels.visible` to keep the legend, or drop the authored
-    legend keys to keep the labels.'
-  summary: Fired when a chart authors a visible or positioned legend while its endpoint-label
-    rail names the same series.
+    rail names series for a single panel, and a faceted chart has no single panel for it to sit beside.
+    Set style.legend.position.edge: top on this chart to keep the small multiples, or remove multiples
+    to keep the labels.'
+  doc: 'Fired when a chart authors `multiples:` while its endpoint-label rail is explicitly switched
+    on. The rail names series for one panel; a faceted chart has no single panel for it to sit beside.
+    The shipped default switches the rail off wherever `multiples:` is set (a legend above the panels
+    names the series instead), so this fires only where the rail was asked for by name. Set `style.legend.position.edge:
+    top` to keep the small multiples, or remove `multiples:` to keep the labels.'
   docs_topic: charts
 - code: ERR-MIRROR-ENDPOINT-LABELS
   level: error
@@ -647,41 +631,39 @@
 - code: ERR-ENDPOINT-LABELS-UNORDERABLE-SORT
   level: error
   title: sort by a non-numeric column cannot be combined with stacked endpoint labels
-  template: 'Chart {chart_id!r}: chart.sort by {sort_by!r} cannot be combined with stacked
-    bar endpoint labels. The rail places its labels from the order the sorted axis draws,
-    and dbt Charts confirms that order only for a column carrying numeric values. Sort by
-    a measure instead, or set style.endpoint_labels.visible: false on this chart.'
-  doc: 'Fired when a stacked bar chart authors `sort:` by a column that carries no numeric
-    values while its endpoint-label rail is visible. The rail places its labels from the order
-    the sorted axis draws (a vertical rail anchors each series at its own last drawn column,
-    a horizontal one anchors every series on the top row), so it has to know that order before
-    the chart renders. dbt Charts confirms it only for a numeric sort column, and labels placed
-    from the wrong order name series in the wrong place, which is worse than a legend. Sort
-    by a measure, or turn the rail off with `style.endpoint_labels.visible: false`.'
+  template: 'Chart {chart_id!r}: chart.sort by {sort_by!r} cannot be combined with stacked bar endpoint
+    labels. The rail places its labels from the order the sorted axis draws, and dbt Charts confirms
+    that order only for a column carrying numeric values. Sort by a measure instead, or set style.legend.position.edge:
+    top on this chart.'
+  doc: 'Fired when a stacked bar chart authors `sort:` by a column that carries no numeric values
+    while its endpoint-label rail is visible. The rail places its labels from the order the sorted
+    axis draws (a vertical rail anchors each series at its own last drawn column, a horizontal one
+    anchors every series on the top row), so it has to know that order before the chart renders.
+    dbt Charts confirms it only for a numeric sort column, and labels placed from the wrong order
+    name series in the wrong place, which is worse than a legend. Sort by a measure, or turn the
+    rail off with `style.legend.position.edge: top`.'
   docs_topic: charts
 - code: ERR-ENDPOINT-LABELS-NEGATIVE-STACK
   level: error
   title: negative values are not supported for stacked endpoint labels
   template: 'Chart {chart_id!r}: negative values are not supported for stacked bar/area endpoint
-    labels — they break the cumulative-midpoint computation. Set style.endpoint_labels.visible:
-    false on this chart.'
-  doc: 'Fired when a stacked bar or area chart''s data carries a negative measure while its
-    endpoint-label rail is visible. The rail anchors each label at its segment''s cumulative
-    midpoint, a computation that assumes every segment in the stack contributes in the same
-    direction; a negative value crosses zero and breaks it. Turn the rail off with `style.endpoint_labels.visible:
-    false`.'
+    labels — they break the cumulative-midpoint computation. Set style.legend.position.edge: top
+    on this chart.'
+  doc: 'Fired when a stacked bar or area chart''s data carries a negative measure while its endpoint-label
+    rail is visible. The rail anchors each label at its segment''s cumulative midpoint, a computation
+    that assumes every segment in the stack contributes in the same direction; a negative value crosses
+    zero and breaks it. Turn the rail off with `style.legend.position.edge: top`.'
   docs_topic: charts
 - code: ERR-ENDPOINT-LABELS-CENTER-STACK
   level: error
   title: 'stack: center is not supported for horizontal endpoint labels'
-  template: 'Chart {chart_id!r}: stack: center is not supported for horizontal stacked bar
-    endpoint labels — the rail anchors on the cumulative (0..Σ) axis, which a center stack
-    (-Σ/2..+Σ/2) does not have. Use stack: zero, or set style.endpoint_labels.visible: false
-    on this chart.'
-  doc: 'Fired when a horizontal stacked bar chart uses `stack: center` while its endpoint-label
-    rail is forced on. The rail anchors each label at its segment''s cumulative midpoint from
-    zero; a center stack has no such axis. Use `stack: zero`, or turn the rail off with `style.endpoint_labels.visible:
-    false`.'
+  template: 'Chart {chart_id!r}: stack: center is not supported for horizontal stacked bar endpoint
+    labels — the rail anchors on the cumulative (0..Σ) axis, which a center stack (-Σ/2..+Σ/2) does
+    not have. Use stack: zero, or set style.legend.position.edge: top on this chart.'
+  doc: 'Fired when a horizontal stacked bar chart uses `stack: center` while its endpoint-label rail
+    is forced on. The rail anchors each label at its segment''s cumulative midpoint from zero; a
+    center stack has no such axis. Use `stack: zero`, or turn the rail off with `style.legend.position.edge:
+    top`.'
   docs_topic: charts
 - code: ERR-MIRROR-UNMEASURABLE-ALIGN
   level: error
@@ -730,18 +712,17 @@
 - code: ERR-LAYER-AXIS-POSITION-ENDPOINT-LABELS
   level: error
   title: axis_y.position on a layer cannot be combined with endpoint labels
-  template: 'Chart {chart_id!r}: style.endpoint_labels.visible is not supported on a layered
-    chart whose layers pin an explicit axis_y.position — the label rail anchors on one shared
-    y-scale, and a dual-axis layer renders on a different one. Remove the per-layer axis_y.position
-    override, or set style.endpoint_labels.visible: false on this chart.'
-  doc: 'Fired when a layered chart''s endpoint-label rail is visible (authored or theme-set)
-    while one of its layers pins its own `axis_y.position`. The rail anchors every layer''s
-    labels on the base chart''s single shared y-scale; a layer with a pinned `axis_y.position`
-    is a genuine dual-axis layer rendering on a different scale, which the rail has no way
-    to represent. Remove the per-layer `axis_y.position`, or turn the rail off with `style.endpoint_labels.visible:
-    false`.'
-  summary: Fired when a layered chart's endpoint-label rail is visible while one of its layers
-    pins its own axis_y.position.
+  template: 'Chart {chart_id!r}: style.legend.position.edge: endpoints is not supported on a layered
+    chart whose layers pin an explicit axis_y.position — the label rail anchors on one shared y-scale,
+    and a dual-axis layer renders on a different one. Remove the per-layer axis_y.position override,
+    or set style.legend.position.edge: top on this chart.'
+  doc: 'Fired when a layered chart''s endpoint-label rail is visible (authored or theme-set) while
+    one of its layers pins its own `axis_y.position`. The rail anchors every layer''s labels on the
+    base chart''s single shared y-scale; a layer with a pinned `axis_y.position` is a genuine dual-axis
+    layer rendering on a different scale, which the rail has no way to represent. Remove the per-layer
+    `axis_y.position`, or turn the rail off with `style.legend.position.edge: top`.'
+  summary: Fired when a layered chart's endpoint-label rail is visible while one of its layers pins
+    its own axis_y.position.
   docs_topic: charts
 - code: ERR-LAYER-STEP-ORIENTATION
   level: error
@@ -1531,33 +1512,32 @@
 - code: WARN-SERIES-LABEL-TRUNCATED
   level: warning
   title: Series label was too long for the endpoint-label rail and was truncated
-  template: 'Chart {chart_id!r}: {count} series {labels_noun} from {authored_field!r} {were}
-    truncated in the endpoint-label rail, which is capped at a fraction of the chart''s width:
-    {labels}.'
-  fix: 'Shorten the {authored_field} values, widen the chart, or set style.endpoint_labels.visible:
-    false to keep the series names in the legend.'
-  doc: 'Fires when a chart''s series labels are drawn in the right-hand endpoint-label rail
-    and do not fit. The rail may claim only a fraction of the chart''s width, so longer names
-    are cut with an ellipsis (…). The labels are the values of the column bound to `color:`;
-    for a wide-form chart authored `y: [a, b, …]`, the measure names themselves, prefixed
-    by the `color:` column''s value (`<value> - <measure>`) when one is authored; the warning
-    names whichever key holds the long part. The label text in the message is the full value
-    before truncation, so you can see exactly what was cut. Only the drawn label is shortened:
-    the underlying values, the color scale, and tooltips still carry the full text.'
+  template: 'Chart {chart_id!r}: {count} series {labels_noun} from {authored_field!r} {were} truncated
+    in the endpoint-label rail, which is capped at a fraction of the chart''s width: {labels}.'
+  fix: 'Shorten the {authored_field} values, widen the chart, or set style.legend.position.edge:
+    top to keep the series names in the legend.'
+  doc: 'Fires when a chart''s series labels are drawn in the right-hand endpoint-label rail and do
+    not fit. The rail may claim only a fraction of the chart''s width, so longer names are cut with
+    an ellipsis (…). The labels are the values of the column bound to `color:`; for a wide-form chart
+    authored `y: [a, b, …]`, the measure names themselves, prefixed by the `color:` column''s value
+    (`<value> - <measure>`) when one is authored; the warning names whichever key holds the long
+    part. The label text in the message is the full value before truncation, so you can see exactly
+    what was cut. Only the drawn label is shortened: the underlying values, the color scale, and
+    tooltips still carry the full text.'
   docs_topic: charts
 - code: WARN-RAIL-VALUE-DROPPED
   level: warning
   title: Endpoint label shows its series name without the value
-  template: 'Chart {chart_id!r}: {count} endpoint {labels_noun} from {authored_field!r} {were}
-    drawn without the final value, because the value and the name fit neither one line nor
-    two in the rail: {labels}.'
-  fix: 'Shorten the {authored_field} values, widen the chart, or set style.endpoint_labels.visible:
-    false to keep the series names in the legend.'
-  doc: Fires when an endpoint label cannot show its series' final value. A label reads `value
-    name` on one line; when that is too wide for the rail it wraps onto a second line, and
-    when two lines do not fit either, or the rail has no vertical room for two-line labels,
-    the value is dropped and the name is drawn alone (cut with an ellipsis if it is still
-    too long). The labels in the message are the full series names.
+  template: 'Chart {chart_id!r}: {count} endpoint {labels_noun} from {authored_field!r} {were} drawn
+    without the final value, because the value and the name fit neither one line nor two in the rail:
+    {labels}.'
+  fix: 'Shorten the {authored_field} values, widen the chart, or set style.legend.position.edge:
+    top to keep the series names in the legend.'
+  doc: Fires when an endpoint label cannot show its series' final value. A label reads `value name`
+    on one line; when that is too wide for the rail it wraps onto a second line, and when two lines
+    do not fit either, or the rail has no vertical room for two-line labels, the value is dropped
+    and the name is drawn alone (cut with an ellipsis if it is still too long). The labels in the
+    message are the full series names.
   docs_topic: charts
 - code: WARN-SERIES-LABELS-REPEAT-WORD
   level: warning
@@ -1726,22 +1706,38 @@
 # Authored explicitly: the doc's first sentence ends inside the inline
 # code span `legend.position.edge`, which the agent_api summary deriver
 # refuses to split on rather than guess.
+- code: WARN-LEGEND-HIDDEN-UNDER-EDGE
+  level: warning
+  title: A hidden legend under a legend edge names no series
+  template: 'Chart {chart_id!r} hides its legend, but `legend.position.edge: {edge}` also keeps endpoint
+    labels off, so nothing names its series.'
+  fix: 'Set `legend.position.edge: endpoints` to name the series on the chart, or set `legend.visible:
+    true` to show the legend.'
+  doc: 'Fires on a chart that has several series and would print endpoint labels by default, but
+    whose resolved style hides the legend and sets a side (`top`, `bottom`, `left` or `right`) as
+    `legend.position.edge`. A side places a legend, so it keeps the endpoint labels off whatever
+    `legend.visible` says, and nothing names the series. A chart that never had endpoint labels (a
+    grouped bar, small multiples, a layered chart) is not reported. Setting `edge: endpoints` restores
+    the labels; `legend.visible: true` shows the legend.'
+  summary: Fired when a chart with several series hides its legend under a side legend edge.
+  docs_topic: charts
 - code: WARN-LEGEND-POSITION-WIDTH-FALLBACK
   level: warning
   title: A narrow card overrode an authored legend edge
   template: 'Chart {chart_id!r} authored `legend.position.edge: {authored_edge}`, but a card
-    this narrow cannot hold a side legend, so it was placed on the `{resolved_edge}` edge
-    instead.'
+    this narrow cannot hold that placement, so the legend was placed on the `{resolved_edge}`
+    edge instead.'
   fix: Widen the chart, or drop `legend.position.edge` and accept the automatic placement.
   doc: 'Fires when a chart authors a `legend.position.edge` its card is too narrow to honor
     and the engine places the legend elsewhere. A cartesian chart (bar, line, area, scatter,
     heatmap) authoring a non-top edge on a card in the tiny width tier gets a compact top
-    strip; a pie or donut authoring a side edge (`left` or `right`) gets its attached table
+    strip, and so does `edge: endpoints`, whose on-chart series names need more width than the
+    card has; a pie or donut authoring a side edge (`left` or `right`) gets its attached table
     below the wheel when the wheel region beside it would be too narrow. The fallback itself
-    is not a defect (the card physically cannot fit a side legend); this warning exists only
+    is not a defect (the card physically cannot fit that placement); this warning exists only
     because the override was otherwise silent: the resolved chart renders a different legend
     position than the one the author wrote, with no signal that happened.'
-  summary: Fired when a card too narrow for a side legend overrides the edge its author wrote.
+  summary: Fired when a card too narrow for the placement its author wrote overrides that placement.
   docs_topic: charts
 - code: WARN-CATEGORY-COLOR-PIN-UNSEEN
   level: warning

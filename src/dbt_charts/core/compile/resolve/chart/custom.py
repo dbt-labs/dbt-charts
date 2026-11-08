@@ -17,12 +17,12 @@ from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.authored import (
     LegendStylePatch,
     PieLegendStylePatch,
+    SideLegendStylePatch,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.theme import (
+    ChartLegendStyle,
     LegendPositionStyle,
-    LegendStyle,
-    PieLegendStyle,
 )
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
@@ -100,7 +100,7 @@ def _concrete(node: JsonValue, path: tuple[str, ...] = ()) -> JsonValue:
 
 def _decided_position(
     board: LegendPositionStyle,
-    family_legend: LegendStyle | PieLegendStyle | None,
+    family_legend: ChartLegendStyle | None,
     *,
     radial: bool = False,
 ) -> dict[str, JsonValue]:
@@ -143,9 +143,9 @@ def _style_tree(context: ChartStyleContext) -> dict[str, JsonValue]:
         legend = dict(family).get("legend") if isinstance(family, BaseModel) else None
         node = tree_charts[name]
         legend_node = node.get("legend") if isinstance(node, dict) else None
-        if isinstance(legend, (LegendStylePatch, PieLegendStylePatch)) and isinstance(
-            legend_node, dict
-        ):
+        if isinstance(
+            legend, (LegendStylePatch, SideLegendStylePatch, PieLegendStylePatch)
+        ) and isinstance(legend_node, dict):
             legend_node["position"] = _decided_position(
                 general.position, legend, radial=name == "pie"
             )

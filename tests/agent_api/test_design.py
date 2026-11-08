@@ -259,6 +259,7 @@ _PARSE_FIXTURES = {
         "    query: q\n"
         "    x: month\n"
         "    y: region\n"
+        "    color: revenue\n"
     ),
     # A variable is a target of its own, so its controls board the same gate
     # every chart's do — and `Variable` is the first target model that is
@@ -520,9 +521,14 @@ def test_an_int_literal_field_is_a_select_of_its_ints() -> None:
 
 def test_a_required_field_offers_no_default(targets) -> None:
     """Required fields hold `dataclasses.MISSING`, which must never be serialized."""
-    value = _flat(targets["rows.0.cols.1"])["value"]
-    assert value.required is True
-    assert value.default_repr is None
+    required = [
+        prop
+        for target in targets.values()
+        for prop in _flat(target).values()
+        if prop.required
+    ]
+    assert required
+    assert all(prop.default_repr is None for prop in required)
     assert not [t for t in targets.values() if "_MISSING_TYPE" in t.model_dump_json()]
 
 
@@ -882,6 +888,8 @@ def test_no_control_can_commit_a_board_that_stops_parsing() -> None:
 # its data does not have; non-numeric, area fails on a swapped encoding. Neither
 # is the rule the sweep is about — a column's *type* is not something the panel
 # can know, and both are what the fixture, not the design target, got wrong.
+# `q3` is for the bare charts: a chart naming no channel binds its query's
+# columns by position, and three columns is a shape every family here takes.
 _RENDER_QUERY = (
     "queries:\n"
     "  q:\n"
@@ -889,6 +897,11 @@ _RENDER_QUERY = (
     "    rows:\n"
     "      - {month: Jan, revenue: 1, cost: 2, region: A, customers: 3, x: 10}\n"
     "      - {month: Feb, revenue: 2, cost: 1, region: B, customers: 4, x: 20}\n"
+    "  q3:\n"
+    "    type: values\n"
+    "    rows:\n"
+    "      - {month: Jan, revenue: 1, cost: 2}\n"
+    "      - {month: Feb, revenue: 2, cost: 1}\n"
 )
 
 _RENDER_FIXTURES = {
@@ -1027,22 +1040,24 @@ _RENDER_FIXTURES = {
         "        area:\n"
         "          curve: step\n"
     ),
-    # Two shapes whose baseline render used to be an `ERR-INTERNAL` crash, both
-    # a single cleared-`y` away from ordinary boards: columns-multiples with no
-    # measure fired the auto-mirror default at an absent y encoding
-    # (MirrorAxisFeature), and a chart with neither channel emitted line/area
-    # layers with no `encoding` key, which Vega-Lite 6.x cannot compile.
-    "line-multiples-no-y": (
+    # Columns-multiples beside the measure: the multiples control is a list,
+    # and the chart it edits has to render before the edit.
+    "line-multiples": (
         "rows:\n"
         "  - title: Line\n"
         "    type: line\n"
         "    query: q\n"
         "    x: month\n"
+        "    y: revenue\n"
         "    multiples:\n"
         "      columns: region\n"
     ),
-    "line-bare": "rows:\n  - title: Line\n    type: line\n    query: q\n",
-    "area-bare": "rows:\n  - title: Area\n    type: area\n    query: q\n",
+    # A chart naming no channel binds its query's columns by position; the
+    # sweep must keep rendering these so the gate cannot pass by refusing
+    # everything, and `y` stays a text box here (`_REQUIRED_WITH_LIST`: a `y`
+    # list needs an `x`).
+    "line-bare": "rows:\n  - title: Line\n    type: line\n    query: q3\n",
+    "area-bare": "rows:\n  - title: Area\n    type: area\n    query: q3\n",
     # The engine raises `ERR-TABLE-PIVOT-DIMENSIONS-AMBIGUOUS` for
     # a pivot declaring neither `rows` nor `values`, and every one of these three
     # fields is a `list` control, so the sweep reaches that rule from both
@@ -1077,6 +1092,7 @@ _RENDER_FIXTURES = {
         "    query: q\n"
         "    x: month\n"
         "    y: region\n"
+        "    color: revenue\n"
     ),
     # `axis_y.mirror` reflects one shared y-scale, so `mirror_axis.py` raises
     # `ERR-MIRROR-MULTI-SERIES` the moment `y` holds two columns — at render, on
@@ -1553,8 +1569,8 @@ def _multi_metric(chart_type: str) -> dict[str, DesignProperty]:
 
 
 def test_the_multi_metric_rules_follow_the_families_that_enforce_them() -> None:
-    """`color:` composes with a multi-metric `y:` on every wide family; the
-    `x`-required raise is bar's.
+    """`color:` composes with a multi-metric `y:` on every wide family, and
+    every one of them needs its `x` beside a `y`.
 
     A `color:` column beside `y: [a, b]` is the dimension the measures are
     grouped by (one series per value per measure), so the control stays on
@@ -1563,8 +1579,9 @@ def test_the_multi_metric_rules_follow_the_families_that_enforce_them() -> None:
     render path, see `test_a_heatmap_spends_its_color_channel_on_the_measure_
     and_takes_no_list`).
 
-    The mirror matters as much: applying bar's `x`-required raise to a family
-    that does not make it hides a control the compiler accepts.
+    A `y` with no `x` fails at render on every family (the binder's
+    ERR-CHART-CHANNELS-INCOMPLETE), so `x` is required beside a `y` on all
+    four, and the panel withholds its clear.
     """
     assert "color" in _multi_metric("bar")
     assert "color" in _multi_metric("area")
@@ -1572,8 +1589,8 @@ def test_the_multi_metric_rules_follow_the_families_that_enforce_them() -> None:
     assert "color" in _multi_metric("scatter")
     assert "y" in _multi_metric("scatter")
 
-    assert _multi_metric("bar")["x"].required
-    assert not _multi_metric("line")["x"].required
+    for family in ("bar", "area", "line", "scatter"):
+        assert _multi_metric(family)["x"].required, family
 
 
 def test_a_heatmap_spends_its_color_channel_on_the_measure_and_takes_no_list() -> None:
@@ -1614,22 +1631,6 @@ def test_a_histogram_does_not_inherit_bar_s_rules() -> None:
     props = _flat(_targets(board)["rows.0"])
     assert props["y"].widget == "list"
     assert "color" in props
-
-
-def test_but_a_histogram_can_never_clear_its_x() -> None:
-    """Exempt from bar's conflicts, and stricter than bar on the one shared rule.
-
-    `_emit_histogram` raises `ERR-HISTOGRAM-NON-NUMERIC` when there is no `x` to
-    bin — on every histogram, whatever `y` holds. Bar's rule is the conditional
-    one (`x` required only beside a list `y`), so exempting histogram from bar's
-    table has to *raise* the requirement rather than drop it. `required=False`
-    is what renders the clear, and the clear is the single edit a histogram
-    cannot survive: the board still parses, so the save endpoint waves it
-    through and the chart stops rendering.
-    """
-    for y in ("revenue", "[revenue, cost]"):
-        board = f"rows:\n  - title: H\n    type: histogram\n    query: q\n    y: {y}\n"
-        assert _flat(_targets(board)["rows.0"])["x"].required is True
 
 
 def _curved(family: str, y: str, curve: str) -> dict[str, DesignProperty]:
@@ -3550,29 +3551,71 @@ def test_a_scale_parameter_block_is_refused_without_its_own_scale_type() -> None
     assert not any(key.startswith("style.axis_y.scale.continuous.log") for key in props)
 
 
-def test_a_histogram_that_loses_its_x_stops_rendering() -> None:
-    """`_design._ALWAYS_REQUIRED`. `required=False` is what draws the clear, and the clear
-    is the one edit a histogram cannot survive — the board still parses, so the
-    save endpoint waves it through."""
-    histogram = _AGREEMENT_QUERY + "rows:\n  - title: H\n    type: histogram\n"
-    assert _render_failures(histogram + "    query: q\n    y: v\n"), (
-        "a histogram with no `x` no longer fails to render"
+def test_a_histogram_with_no_x_binds_its_one_column() -> None:
+    """A histogram naming no `x` binds the query's one column by position, and a
+    query with more columns fails at render with a named error, never silently —
+    so `x` is not always required, and the panel offers the clear."""
+    histogram = "rows:\n  - title: H\n    type: histogram\n    query: q\n"
+    assert _render_failures(_AGREEMENT_QUERY + histogram) == [
+        "ERR-CHART-CHANNELS-UNBOUND"
+    ], "a two-column query must fail an unbound histogram loudly"
+    one_column = _AGREEMENT_QUERY.replace("{m: 1, v: 1}", "{v: 1}").replace(
+        "{m: 2, v: 2}", "{v: 2}"
     )
-    assert not _render_failures(histogram + "    query: q\n    x: v\n"), (
-        "a histogram with an `x` must still render"
+    assert not _render_failures(one_column + histogram), (
+        "a histogram with no `x` must bind a one-column query"
     )
 
-    # The panel's half: `required` is what withholds the clear.
-    props = _flat(_targets(histogram + "    query: q\n    y: v\n")["rows.0"])
-    assert props["x"].required is True
+    props = _flat(_targets(_AGREEMENT_QUERY + histogram)["rows.0"])
+    assert props["x"].required is False
+
+
+@pytest.mark.parametrize(
+    ("chart_type", "only", "full", "needed"),
+    [
+        ("bar", "y", "x: m\n    y: v\n", "x"),
+        ("bar", "color", "x: m\n    y: v\n    color: m\n", "x"),
+        ("line", "x", "x: m\n    y: v\n", "y"),
+        ("line", "y", "x: m\n    y: v\n", "x"),
+        ("line", "color", "x: m\n    y: v\n    color: m\n", "y"),
+        ("area", "y", "x: m\n    y: v\n", "x"),
+        ("scatter", "x", "x: m\n    y: v\n", "y"),
+        ("scatter", "size", "x: m\n    y: v\n    size: v\n", "x"),
+        ("heatmap", "x", "x: m\n    y: v\n    color: v\n", "y"),
+        ("heatmap", "color", "x: m\n    y: v\n    color: v\n", "y"),
+        ("pie", "color", "theta: v\n    color: m\n", "theta"),
+    ],
+)
+def test_channels_bind_as_a_set_so_the_panel_withholds_the_clear(
+    chart_type: str, only: str, full: str, needed: str
+) -> None:
+    """`_design._REQUIRED_WITH`. A family's channels are named together or not at
+    all (the binder refuses one without the rest at render,
+    ERR-CHART-CHANNELS-INCOMPLETE; none at all binds the query's columns by
+    position), so the panel withholds a channel's clear exactly while a sibling
+    stands, and offers it once no sibling does."""
+    chart = _AGREEMENT_QUERY + (
+        f"rows:\n  - title: C\n    type: {chart_type}\n    query: q\n"
+    )
+    assert _render_failures(chart + f"    {only}: m\n"), (
+        f"a {chart_type} naming only `{only}` no longer fails"
+    )
+    assert not _render_failures(chart + "    " + full), (
+        f"a fully named {chart_type} must still render"
+    )
+
+    props = _flat(_targets(chart + "    " + full)["rows.0"])
+    assert props[needed].required is True
+    props = _flat(_targets(chart)["rows.0"])
+    assert props[needed].required is False
 
 
 def test_a_bar_that_loses_its_y_stops_rendering() -> None:
     """`_design._REQUIRED_WITH`. A bar's `y` is a list control beside `color:`
-    (the two compose), so clearing it is an edit the sweeps reach — and
-    `BarChart` refuses an `x` with no measure at parse, so `required` must
+    (the two compose), so clearing it is an edit the sweeps reach — and the
+    binder refuses an `x` with no measure at render, so `required` must
     withhold the clear exactly while an `x` stands: with no `x`, a y-less bar
-    parses and renders and the clear stays on offer."""
+    renders by binding its columns and the clear stays on offer."""
     bar = _AGREEMENT_QUERY + "rows:\n  - title: B\n    type: bar\n    query: q\n"
     assert _render_failures(bar + "    x: v\n    color: v\n"), (
         "a bar with an `x` and no `y` no longer fails"
@@ -3655,8 +3698,6 @@ def test_every_rule_table_names_a_field_that_still_exists() -> None:
     for key, required in _design._REQUIRED_WITH_LIST.items():
         for field, guard in required.items():
             check("_design._REQUIRED_WITH_LIST", key, field, guard)
-    for key, fields in _design._ALWAYS_REQUIRED.items():
-        check("_design._ALWAYS_REQUIRED", key, *fields)
     for key, required in _design._REQUIRED_WITH.items():
         for field, siblings in required.items():
             check("_design._REQUIRED_WITH", key, field, *siblings)

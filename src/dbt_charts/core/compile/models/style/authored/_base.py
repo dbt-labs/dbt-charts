@@ -16,7 +16,7 @@ DAG-safe path.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import (
     BaseModel,
@@ -81,6 +81,7 @@ from dbt_charts.core.compile.models.style.theme import (
     ScaleContinuousStyle,
     ScatterChartStyle,
     ScatterLayerStyle,
+    SideLegendStyle,
     Style,
     SupportTableStyle as SupportTableStyle,
     TableChartStyle,
@@ -205,36 +206,19 @@ else:
 
 
 class EndpointLabelsConfig(BaseModel):
-    """Series names printed on the chart itself instead of in a legend.
+    """Styling of the series names printed on the chart itself instead of in a legend.
 
-    Also called direct labels, series labels, or an in-chart legend. Each
-    series gets one label in its own color, beside the plot: to the right on
-    line, area, and vertical stacked bar charts, above the top row on
-    horizontal stacked bars.
-
-    Only shapes that can name every series get them. Line and area charts and
-    stacked bars do; grouped bars, layered charts, small multiples, and very
-    narrow cards keep a legend instead. Where the labels do appear they replace the color
-    legend, so `visible` here, and not `legend`, is what takes series names
-    off the side of those charts. Their font comes from
+    The names appear when `legend.position.edge` is `endpoints`, which `auto`
+    resolves to wherever they can name every series (line and area charts and
+    stacked bars). Also called direct labels, series labels, or an in-chart
+    legend. Each series gets one label in its own color, beside the plot: to
+    the right on line, area, and vertical stacked bar charts, above the top
+    row on horizontal stacked bars. Their font comes from
     `style.charts.series_label.font`.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    visible: bool | Literal["auto"] = Field(
-        description=(
-            "Print series names on the chart instead of in a legend. 'auto' "
-            "on every built-in theme: used wherever the shape can name every "
-            "series (line and area charts, and stacked bars), with a legend "
-            "on grouped bars, layered charts, small multiples, and very "
-            "narrow cards. "
-            "Set true to print them on every shape that can, or false to move "
-            "the names back into a legend everywhere. Where "
-            "the labels do appear they replace the color legend, so this "
-            "setting and not `legend` is what removes them."
-        )
-    )
     label_offset: float = Field(
         description="Gap in pixels between the plot and the series labels."
     )
@@ -411,6 +395,14 @@ if TYPE_CHECKING:
 
 else:
     LegendStylePatch = build_patch_model(LegendStyle)
+
+if TYPE_CHECKING:
+
+    class SideLegendStylePatch(SideLegendStyle):
+        pass
+
+else:
+    SideLegendStylePatch = build_patch_model(SideLegendStyle)
 
 if TYPE_CHECKING:
 

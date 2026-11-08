@@ -146,13 +146,15 @@ class TestAuthoredEndpointLabelsCollision:
         assert diagnostic.code == "ERR-MULTIPLES-ENDPOINT-LABELS"
 
     def test_board_level_opt_in_raises_typed_code(self, tmp_path: Path) -> None:
-        """A board-level `charts.line.endpoint_labels.visible: true` is as
+        """A board-level `charts.line.legend.position.edge: endpoints` is as
         concrete as a chart-local one."""
         result = _render(
             tmp_path,
             "line",
             {"multiples": {"rows": "region"}},
-            board_style={"charts": {"line": {"endpoint_labels": {"visible": True}}}},
+            board_style={
+                "charts": {"line": {"legend": {"position": {"edge": "endpoints"}}}}
+            },
         )
         assert _diagnostic(result).code == "ERR-MULTIPLES-ENDPOINT-LABELS"
 
@@ -165,7 +167,7 @@ class TestAuthoredEndpointLabelsCollision:
             chart_type,
             {
                 "multiples": multiples,
-                "style": {"endpoint_labels": {"visible": True}},
+                "style": {"legend": {"position": {"edge": "endpoints"}}},
             },
         )
 
@@ -237,11 +239,11 @@ class TestAcceptedShapes:
     def test_line_multiples_columns_endpoint_labels_fix_hint_round_trip(
         self, tmp_path: Path
     ) -> None:
-        """The error message's own hint — "Set style.endpoint_labels.visible:
-        false ... to keep the small multiples" — must actually fix the chart it
+        """The error message's own hint — "Set style.legend.position.edge:
+        top ... to keep the small multiples" — must actually fix the chart it
         was raised on. Prove the round trip on the exact opted-in config that
-        raises: start from ``visible: true`` (raises), flip to the literal
-        remedy (renders). ``visible: false`` is a no-op against the *default*
+        raises: start from ``edge: endpoints`` (raises), flip to the literal
+        remedy (renders). ``edge: top`` is a no-op against the *default*
         (nothing opted in), so this only proves something the default-off
         sweep in ``TestAcceptedShapes`` can't: that the hint text is honest
         advice for the chart that actually needed it."""
@@ -249,14 +251,20 @@ class TestAcceptedShapes:
         raised = _render(
             tmp_path,
             "line",
-            {"multiples": multiples, "style": {"endpoint_labels": {"visible": True}}},
+            {
+                "multiples": multiples,
+                "style": {"legend": {"position": {"edge": "endpoints"}}},
+            },
         )
         assert _diagnostic(raised).code == "ERR-MULTIPLES-ENDPOINT-LABELS"
 
         fixed = _render(
             tmp_path,
             "line",
-            {"multiples": multiples, "style": {"endpoint_labels": {"visible": False}}},
+            {
+                "multiples": multiples,
+                "style": {"legend": {"position": {"edge": "top"}}},
+            },
         )
         assert fixed.status == "ok"
         assert not fixed.chart_errors
@@ -268,14 +276,20 @@ class TestAcceptedShapes:
         raised = _render(
             tmp_path,
             "line",
-            {"multiples": multiples, "style": {"endpoint_labels": {"visible": True}}},
+            {
+                "multiples": multiples,
+                "style": {"legend": {"position": {"edge": "endpoints"}}},
+            },
         )
         assert _diagnostic(raised).code == "ERR-MULTIPLES-ENDPOINT-LABELS"
 
         fixed = _render(
             tmp_path,
             "line",
-            {"multiples": multiples, "style": {"endpoint_labels": {"visible": False}}},
+            {
+                "multiples": multiples,
+                "style": {"legend": {"position": {"edge": "top"}}},
+            },
         )
         assert fixed.status == "ok"
         assert not fixed.chart_errors

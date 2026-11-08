@@ -120,7 +120,7 @@ pub fn is_fit(params: Option<&Map<String, Value>>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scene_path::scene_path;
+    use ::layout::scene_path::scene_path;
     use d3rs::geojson::{Feature, Geometry};
     use serde_json::json;
 

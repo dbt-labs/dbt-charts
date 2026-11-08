@@ -97,8 +97,7 @@ def test_endpoint_rail_names_base_and_layer_by_field_label() -> None:
             **_DATE_LAYERED,
             "field_labels": {"revenue": "Rev LBL", "target": "Goal LBL"},
             "style": {
-                "endpoint_labels": {"visible": True},
-                "legend": {"visible": False},
+                "legend": {"visible": False, "position": {"edge": "endpoints"}},
             },
         },
         _DATE_LAYER_ROWS,

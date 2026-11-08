@@ -20,8 +20,9 @@ class KpiChart(_BaseChartFields):
     """
 
     type: Literal["kpi"]
-    value: str = Field(
-        description="Column reference for the headline number (required)."
+    # None until resolve binds it from the query's one column.
+    value: str | None = Field(
+        default=None, description="Column reference for the headline number."
     )
     label: str = Field(
         default="", description="Text rendered above the headline value."

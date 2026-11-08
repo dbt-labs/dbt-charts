@@ -46,6 +46,7 @@ from dbt_charts.core.compile.normalize.variable_input_refinement import (
     refine_input_type_from_data,
 )
 from dbt_charts.core.compile.normalize.variables import detect_variable_input_type
+from dbt_charts.core.compile.resolve.chart.positional import POSITIONAL_FIELDS
 from dbt_charts.core.compile.resolve.style.board import resolve_cascaded_font
 from dbt_charts.core.compile.template.variables import choice_member_type
 from dbt_charts.core.diagnostics import (
@@ -484,7 +485,9 @@ _PROMOTED_AT_NORMALIZE = _PROMOTED_TOP_LEVEL | {
 }
 # `notes` is never drawn; `link` and `link_open` resolve against render-only
 # context (automatic and foreign-key links) this comparison does not rebuild.
-_CHART_NOT_JUDGED = frozenset(
+# A channel is never a restatement: dropped, the query's columns bind it by
+# position, and naming it is the explicit form this check must not argue away.
+_CHART_NOT_JUDGED = POSITIONAL_FIELDS | frozenset(
     {
         "type",
         "id",

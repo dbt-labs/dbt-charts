@@ -812,14 +812,6 @@ def test_silent_on_zero_rows_for_a_wide_chart() -> None:
     assert detector.detect(_ctx(_area(y=["a", "b"]), [])) == []
 
 
-def test_silent_when_chart_has_no_x() -> None:
-    """`x` is str | None on the shared Cartesian base; a chart whose two
-    series plainly cross must not be reported as never crossing just
-    because there is no x field to compare them through."""
-    chart = AreaChart(id="c1", type="area", query_name="q", y="val", color="series")
-    assert detector.detect(_ctx(chart, _crossing_rows(4))) == []
-
-
 def test_decimal_beside_float_coerces_without_raising() -> None:
     """Mixed warehouse numeric types (Postgres Decimal beside a plain float)
     must not raise -- coerce_numeric_cell puts them on common ground before

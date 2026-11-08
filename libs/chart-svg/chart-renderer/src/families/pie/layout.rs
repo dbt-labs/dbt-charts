@@ -4,7 +4,7 @@
 //! Python SVG composer. A pie has no height of its own and hugs nothing; only an attached
 //! table makes the canvas differ from the cell.
 
-use crate::scene_path::scene_path;
+use ::layout::scene_path::scene_path;
 use d3rs::arc::Arc;
 use d3rs::pie::pie;
 use measure::{baseline_shift, Measure};
@@ -15,7 +15,8 @@ use d3rs::radial_fit::{Ink, SolveError};
 use super::bind::{Align, Attached, Bound, LegendPlan, Placement, SliceLabel, Wheel};
 use super::{Parts, Resolved, WheelError, ALL_PARTS, BARE};
 use crate::common::{Font, MeasuredAs, TitleStyle};
-use crate::contract::{self, ItemRole, Reads};
+use crate::contract::{self, Reads};
+use ::layout::contract::ItemRole;
 use diagnostic::Diagnostic;
 use crate::families::legend::{
     drawn_symbol_legend, legend_edge_origin, legend_from_widths, legend_origin, legend_slide, limit_legend_text,

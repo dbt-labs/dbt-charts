@@ -2,6 +2,7 @@
 
 use crate::style::chart_base::{
     AnnotatedChartStyleMixin, CartesianChartStyle, QuantitativeAxisChartStyleMixin,
+    SideLegendedChartStyleBase,
 };
 use crate::style::marks::{PointMarkStyle, TextMarkStyle};
 use model_derive::Model;
@@ -30,6 +31,8 @@ pub struct ScatterChartStyle {
     pub annotated: AnnotatedChartStyleMixin,
     #[flatten]
     pub quantitative: QuantitativeAxisChartStyleMixin,
+    #[flatten]
+    pub legended: SideLegendedChartStyleBase,
     #[flatten]
     pub cartesian: CartesianChartStyle,
     /// Scatter-family mark overrides.

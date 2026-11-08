@@ -35,6 +35,7 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     cartesian_series_naming,
     estimate_cartesian_plot_height,
     estimate_left_axis_reserve_px,
+    no_rail,
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
     _classify_to_channel_type,
@@ -61,6 +62,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _cartesian_kwargs,
+    authored_measure_format,
     board_family_style,
 )
 from dbt_charts.core.compile.resolve.chart._layers import (
@@ -185,6 +187,7 @@ def _resolve_scatter(
         *_cascaded_legend(chart_style_context, scatter.legend),
         merge_legend(chart_style_context.legend, scatter.legend),
         width,
+        no_rail,
         _NO_RAIL_ENDPOINT_LABELS,
         endpoint_label_has_layers=False,
         has_layers=bool(normalized.layers),
@@ -422,6 +425,7 @@ def _resolve_scatter(
         data,
         "scatter",
         panel_axes=dataset.axes,
+        measure_format=authored_measure_format(normalized.style),
         stacked=False,
     )
     _ck, wide_measures = bake_wide_measures_kwargs(normalized.y, _ck)

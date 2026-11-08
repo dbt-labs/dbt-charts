@@ -5,14 +5,17 @@
 //! does here, so the field is the total model.
 
 use crate::primitives::PatternStyle;
-use crate::style::chart_base::CartesianChartStyle;
+use crate::style::chart_base::{CartesianChartStyle, SideLegendedChartStyleBase};
 use crate::style::marks::{RectMarkStyle, TextMarkStyle};
 use model_derive::Model;
 
 /// Heatmap-family mark overrides.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct HeatmapChartMarksStyle {
-    /// Rect mark overrides; inherits from global.
+    /// Rect mark overrides; inherits from global. A stroke that leaves its color out strokes in
+    /// `auto` (Python's `AutoUnset`), here only: `StrokeStyle` is shared with marks that state
+    /// other colors.
+    #[model(fill_at(to = "stroke.color", value = "auto"))]
     pub rect: RectMarkStyle,
     /// Text mark overrides; inherits from global.
     pub text: TextMarkStyle,
@@ -21,6 +24,8 @@ pub struct HeatmapChartMarksStyle {
 /// Heatmap chart style.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct HeatmapChartStyle {
+    #[flatten]
+    pub legended: SideLegendedChartStyleBase,
     #[flatten]
     pub cartesian: CartesianChartStyle,
     /// Padding between heatmap cells in pixels.

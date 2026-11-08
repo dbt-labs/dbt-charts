@@ -293,6 +293,11 @@ def migrate_yaml_text(yaml_text: str, *, stop_target: str | None = None) -> str:
         if edit["kind"] == "delete":
             yaml_text = _delete_paths_in_yaml_text(yaml_text, [tuple(edit["path"])])
             continue
+        if edit["kind"] == "write":
+            yaml_text = set_board_values(
+                yaml_text, {".".join(edit["path"]): edit["value"]}
+            )
+            continue
         source, destination = edit["from"], edit["to"]
         if edit["expansion"]:
             yaml_text = set_board_values(yaml_text, {".".join(source): None})
@@ -388,24 +393,43 @@ def _replay_rewrite(
     source: Sequence[str],
     destination: Sequence[str],
 ) -> str:
-    """Write what ``move.rewrite`` made of *value* into the text as leaf edits.
+    """Write what the move's rewrite made of *value* into the text as leaf edits.
 
     A mapping kept under its parent is renamed in place and then edited leaf
-    by leaf, so comments beside untouched leaves survive. Anything else is
-    struck and its successor written leaf by leaf at the destination.
+    by leaf, so comments beside untouched leaves survive. A scalar rewritten in
+    place is set where it stands. Anything else is struck and its successor
+    written leaf by leaf at the destination. A value the rewrite drops is only
+    struck.
     """
     from dbt_charts.core.compile.authoring.yaml_patch import (
         rename_key_at_path,
         set_board_values,
     )
+    from dbt_charts.core.utils import YAML_LOADER
 
     rewritten = DROP if edit.get("dropped") else edit["after"]
+    if source == destination and isinstance(rewritten, (str, int, float, bool)):
+        if rewritten == value:
+            return yaml_text
+        return set_board_values(yaml_text, {".".join(destination): rewritten})
     if source[:-1] != destination[:-1]:
-        yaml_text = _delete_paths_in_yaml_text(yaml_text, [tuple(source)])
-        leaves: dict[str, ScalarLeaf | None] = {
-            **_destination_leaves(edit, destination, rewritten)
-        }
-        return set_board_values(yaml_text, leaves)
+        if not isinstance(rewritten, Dropped):
+            # A `null` where the successor's mapping goes gives way to it.
+            written = yaml.load(yaml_text, Loader=YAML_LOADER)
+            for depth in range(1, len(destination)):
+                ancestor = destination[:depth]
+                if _null_at(written, ancestor):
+                    yaml_text = set_board_values(yaml_text, {".".join(ancestor): None})
+                    break
+            yaml_text = set_board_values(
+                yaml_text, dict(_destination_leaves(edit, destination, rewritten))
+            )
+        # A scalar leaves as a key removal, which strikes the mappings it empties
+        # (the engine does the same after the successor lands); a mapping is
+        # struck as it stands.
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return set_board_values(yaml_text, {".".join(source): None})
+        return _delete_paths_in_yaml_text(yaml_text, [tuple(source)])
     if isinstance(value, dict):
         if source != destination:
             yaml_text = rename_key_at_path(yaml_text, ".".join(source), destination[-1])
@@ -414,7 +438,11 @@ def _replay_rewrite(
         yaml_text = set_board_values(yaml_text, {".".join(source): None})
         old_leaves = {}
     if isinstance(rewritten, Dropped):
-        return yaml_text
+        return (
+            _delete_paths_in_yaml_text(yaml_text, [tuple(destination)])
+            if isinstance(value, dict)
+            else yaml_text
+        )
     if not isinstance(rewritten, dict):
         raise MigrationError(
             f"Cannot rewrite {edit['declared']!r}: only mappings can "
@@ -425,10 +453,37 @@ def _replay_rewrite(
     for leaf, leaf_value in new_leaves.items():
         if leaf not in old_leaves or old_leaves[leaf] != leaf_value:
             edits[".".join((*destination, *leaf))] = leaf_value
-    for leaf in old_leaves:
-        if leaf not in new_leaves:
-            edits[".".join((*destination, *leaf))] = None
+    # A `null` leaf the rewrite struck goes too; `_scalar_leaves` skips it.
+    for leaf in _leaf_paths(value if isinstance(value, dict) else {}) - _leaf_paths(
+        rewritten
+    ):
+        edits[".".join((*destination, *leaf))] = None
     return set_board_values(yaml_text, edits) if edits else yaml_text
+
+
+def _leaf_paths(
+    value: Mapping[str, JsonValue], prefix: tuple[str, ...] = ()
+) -> set[tuple[str, ...]]:
+    paths: set[tuple[str, ...]] = set()
+    for key, leaf in value.items():
+        if isinstance(leaf, dict):
+            paths |= _leaf_paths(leaf, (*prefix, key))
+        else:
+            paths.add((*prefix, key))
+    return paths
+
+
+def _null_at(document: JsonValue, path: Sequence[str]) -> bool:
+    """Whether *path* is present in *document* and holds ``null``."""
+    node = document
+    for part in path:
+        if isinstance(node, list) and part.isdigit() and int(part) < len(node):
+            node = node[int(part)]
+        elif isinstance(node, dict) and part in node:
+            node = node[part]
+        else:
+            return False
+    return node is None
 
 
 def _destination_leaves(

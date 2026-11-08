@@ -5193,7 +5193,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
             ));
         }
         let mut rail = if tooltip_labels {
-            vec![crate::contract::mark_group("text", "concat_1_marks", rail_labels)?]
+            vec![::layout::contract::mark_group("text", "concat_1_marks", rail_labels)?]
         } else {
             rail_labels
         };

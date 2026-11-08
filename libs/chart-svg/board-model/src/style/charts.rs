@@ -106,6 +106,7 @@ pub struct ChartsStyle {
     #[model(inherit_slot = "Style.title")]
     pub title: ChartTitleStyle,
     /// Board-wide category colors as `<column>: {values: {<value>: color}}`. Pins a category to one swatch across every chart on the board.
+    #[model(default_empty)]
     pub category_colors: IndexMap<String, CategoryColorBinding>,
     /// Board-wide chart tooltip style.
     pub tooltip: TooltipStyle,
@@ -139,36 +140,36 @@ pub struct ChartsStyle {
     /// Global mark defaults (tier-1 of the marks cascade).
     pub marks: GlobalMarksStyle,
     /// Bar chart style; histogram has its own block.
-    pub bar: BarChartStyle,
+    pub bar: Box<BarChartStyle>,
     /// Line chart style.
-    pub line: LineChartStyle,
+    pub line: Box<LineChartStyle>,
     /// Area chart style.
-    pub area: AreaChartStyle,
+    pub area: Box<AreaChartStyle>,
     /// Scatter chart style.
-    pub scatter: ScatterChartStyle,
+    pub scatter: Box<ScatterChartStyle>,
     /// Histogram chart style.
-    pub histogram: HistogramChartStyle,
+    pub histogram: Box<HistogramChartStyle>,
     /// Heatmap chart style.
-    pub heatmap: HeatmapChartStyle,
+    pub heatmap: Box<HeatmapChartStyle>,
     /// Geoshape (choropleth) chart style.
-    pub geoshape: GeoshapeChartStyle,
+    pub geoshape: Box<GeoshapeChartStyle>,
     /// Point map chart style.
-    pub point_map: PointMapChartStyle,
+    pub point_map: Box<PointMapChartStyle>,
     /// Pie/donut chart style.
-    pub pie: PieChartStyle,
+    pub pie: Box<PieChartStyle>,
     /// Donut overrides, applied over `pie`: a board's pie or donut style reaches every donut, and `donut` styles donuts only.
     #[model(absent = "no donut overrides: a donut is the plain pie", local)]
     pub donut: Option<Patch<PieChartStyle>>,
     /// Shared series-label typography for endpoint and stack labels.
     pub series_label: SeriesLabelStyle,
     /// KPI card chart style.
-    pub kpi: KpiChartStyle,
+    pub kpi: Box<KpiChartStyle>,
     /// Table chart style.
-    pub table: TableChartStyle,
+    pub table: Box<TableChartStyle>,
     /// Spark_bar (full-chart horizontal bar) style.
-    pub spark_bar: SparkBarChartStyle,
+    pub spark_bar: Box<SparkBarChartStyle>,
     /// Attached support_table strip style.
     pub support_table: SupportTableStyle,
     /// Callout chart-family style for type:callout and runtime fallback cards.
-    pub callout: CalloutChartStyle,
+    pub callout: Box<CalloutChartStyle>,
 }

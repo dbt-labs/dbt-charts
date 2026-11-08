@@ -99,7 +99,7 @@ def test_null_last_value_labels_the_last_non_null() -> None:
 
 
 def test_each_series_gets_its_own_last_value() -> None:
-    no_rail = "    style:\n      endpoint_labels:\n        visible: false\n"
+    no_rail = "    style:\n      legend:\n        position:\n          edge: top\n"
     body = "    color: s\n" + _style("line", "last").replace("    style:\n", no_rail)
     svg = _render(body, _MULTI_ROWS)
     assert _labels(svg) == 2
@@ -335,7 +335,7 @@ _STACKED_ROWS = [
     for s, mult in (("A", 1), ("B", 10))
     for r in _ROWS
 ]
-_NO_RAIL = "    style:\n      endpoint_labels:\n        visible: false\n"
+_NO_RAIL = "    style:\n      legend:\n        position:\n          edge: top\n"
 
 
 @pytest.mark.parametrize("mark", ["line", "point"])

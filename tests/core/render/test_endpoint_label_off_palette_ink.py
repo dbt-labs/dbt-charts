@@ -25,8 +25,9 @@ charts:
     color: source
     style:
       stack: center
-      endpoint_labels:
-        visible: true
+      legend:
+        position:
+          edge: endpoints
       color:
         categorical:
           palette: ["#2a4d8f", "#3d8f5a"]
@@ -76,8 +77,9 @@ charts:
     color: source
     style:
       stack: center
-      endpoint_labels:
-        visible: true
+      legend:
+        position:
+          edge: endpoints
       color:
         categorical:
           palette: ["#2a4d8f", "#3d8f5a"]

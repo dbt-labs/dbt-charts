@@ -1980,7 +1980,7 @@ pub(super) fn fit(
             plot.push(crate::contract::item_group(
                 "rule",
                 &rule_layer_name,
-                crate::contract::ItemRole::RuleMark,
+                ::layout::contract::ItemRole::RuleMark,
                 crate::contract::Reads::Hidden,
                 |aria| {
                     Node::line(Role::Rule, (rx1, gy), (rx2, gy), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
@@ -2010,7 +2010,7 @@ pub(super) fn fit(
             plot.push(crate::contract::item_group(
                 "rule",
                 &rule_layer_name,
-                crate::contract::ItemRole::RuleMark,
+                ::layout::contract::ItemRole::RuleMark,
                 crate::contract::Reads::Hidden,
                 |aria| {
                     Node::line(Role::Rule, (gx, 0.0), (gx, plot_h), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
@@ -2166,7 +2166,7 @@ pub(super) fn fit(
         } else {
             None
         };
-        let label_attrs = crate::contract::aria_attrs(aria.as_deref(), crate::contract::ItemRole::Point)?;
+        let label_attrs = ::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::Point)?;
         let d = point_glyph(r, row, &shape_domain, *mark_r)?;
         let href = datum_link.as_ref().filter(|_| base_linked).map(|link| link.href(row)).transpose()?;
         let anchor = r.link_open.anchor(href.as_deref());
@@ -2181,7 +2181,7 @@ pub(super) fn fit(
         };
         let role = Role::Mark { layer: 0, series: Some(series.clone()).filter(|series| !series.is_empty()), datum: Some(datum) };
         let mark = crate::href::linked(anchor, Node::path(role, d, glyph.num("opacity", mark_opacity).extend(label_attrs)).translate(cx, cy));
-        plot.push(if aria.is_some() { crate::contract::mark_group("symbol", &points_layer_name, vec![mark])? } else { mark });
+        plot.push(if aria.is_some() { ::layout::contract::mark_group("symbol", &points_layer_name, vec![mark])? } else { mark });
         if value_labels.is_some() && !y_nominal {
             let ink = match value_label_font.and_then(|f| f.color.as_deref()) {
                 Some(crate::common::SERIES_INK) => channel_ink.clone(),
@@ -2313,7 +2313,7 @@ pub(super) fn fit(
         for ((cx, cy, aria, color, href, _), ((text, w), spot)) in value_label_marks.iter().zip(value_label_texts.iter().zip(&spots)) {
             let Some(spot) = spot else { continue };
             let ink = vega_fit::text_ink(cx + spot.dx, cy + spot.dy, *w, value_label_size, spot.align, spot.baseline);
-            let label_attrs = crate::contract::aria_attrs(aria.as_deref(), crate::contract::ItemRole::TextMark)?;
+            let label_attrs = ::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::TextMark)?;
             let anchor = r.link_open.anchor(href.as_deref());
             let label = crate::common::value_label(
                 cx + spot.dx,
@@ -2335,7 +2335,7 @@ pub(super) fn fit(
             crate::placement::warn_value_labels_thinned(&r.id, dropped, spots.len());
         }
         if tooltip_labels {
-            plot.push(crate::contract::value_label_group(&format!("layer_{}_marks", fired_rule_count + 1), labels)?);
+            plot.push(::layout::contract::value_label_group(&format!("layer_{}_marks", fired_rule_count + 1), labels)?);
         } else {
             plot.extend(labels);
         }
@@ -2532,7 +2532,7 @@ pub(super) fn fit(
             plot.push(crate::contract::item_group(
                 "rule",
                 &format!("layer_{}_marks", 1 + overlays.len() + index),
-                crate::contract::ItemRole::RuleMark,
+                ::layout::contract::ItemRole::RuleMark,
                 crate::contract::Reads::Hidden,
                 |aria| {
                     Node::line(Role::Rule, (lx1, gy), (lx2, gy), Attrs::new().set("stroke", zc).num("stroke-width", *width).extend(aria))
@@ -2573,12 +2573,12 @@ pub(super) fn fit(
                         .set("fill", fill.as_str())
                         .num("stroke-width", 2.0)
                         .num("opacity", 1.0)
-                        .extend(crate::contract::aria_attrs(Some(label), crate::contract::ItemRole::Point)?),
+                        .extend(::layout::contract::aria_attrs(Some(label), ::layout::contract::ItemRole::Point)?),
                 )
                 .translate(*cx, *cy);
                 symbols.push(crate::href::linked(anchor, symbol));
             }
-            plot.push(crate::contract::mark_group("symbol", "ghost_symbol_marks", symbols)?);
+            plot.push(::layout::contract::mark_group("symbol", "ghost_symbol_marks", symbols)?);
         }
     }
 
@@ -3037,7 +3037,7 @@ pub(super) fn unauthored_measure_domain(ax: &AxisStyle, data_lo: f64, data_hi: f
     if !rounds || hi <= lo {
         (lo, hi)
     } else if ax.is_zero_false() && ax.domain_min.is_none() && ax.domain_max.is_none() {
-        super::nice_clear_of_data(lo, hi, (data_lo, data_hi), 10, ax.ticks.step)
+        ::bind::plot::domain::nice_clear_of_data(lo, hi, (data_lo, data_hi), 10, ax.ticks.step)
     } else {
         d3rs::ticks::d3_nice(lo, hi, 10)
     }

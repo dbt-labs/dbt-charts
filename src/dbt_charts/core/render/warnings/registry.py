@@ -57,6 +57,7 @@ import dbt_charts.core.render.warnings.layer_data_outside_domain as layer_data_o
 import dbt_charts.core.render.warnings.layer_x_domain_paint_order as layer_x_domain_paint_order
 import dbt_charts.core.render.warnings.layered_chart_shared_y_axis_scale_mismatch as layered_chart_shared_y_axis_scale_mismatch
 import dbt_charts.core.render.warnings.layout_min_exceeds_height as layout_min_exceeds_height
+import dbt_charts.core.render.warnings.legend_hidden_under_edge as legend_hidden_under_edge
 import dbt_charts.core.render.warnings.legend_position_width_fallback as legend_position_width_fallback
 import dbt_charts.core.render.warnings.legend_values_unresolved as legend_values_unresolved
 import dbt_charts.core.render.warnings.line_joins_missing_periods as line_joins_missing_periods
@@ -121,6 +122,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     kpi_support_truncated,
     layer_x_domain_paint_order,
     layout_min_exceeds_height,
+    legend_hidden_under_edge,
     legend_position_width_fallback,
     low_text_contrast,
     pattern_fallback_flat,

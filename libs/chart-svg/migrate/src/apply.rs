@@ -8,7 +8,7 @@ use crate::catalog::{current_grammar, grammar};
 use crate::decl::{ConditionalMove, Deletion, MapKeyDeletion, Mapped, Move, Rewritten, ValueMap};
 use crate::doc::{
     at, at_mut, child, empty_map, map, map_mut, scalar, segs, spans, tail_present, tail_value,
-    try_delete_tail, Edit, Seg,
+    try_delete_tail, write_leaf, Edit, Seg,
 };
 use crate::locate::{
     expansion_locations, is_scalar_key, mapped_json, move_path, move_source_locations,
@@ -136,17 +136,25 @@ fn descend<'a>(parent: &'a mut Node, part: &str, m: &Move) -> Result<&'a mut Nod
     }
 }
 
+/// `in_document` is what a document-aware rewrite made of the value: it
+/// replaces the value, owns an occupied destination, and (`None`) strikes the
+/// source without landing anything.
 fn move_value(
     doc: &mut Node,
     source: &[String],
     destination: &[String],
     m: &Move,
+    in_document: Option<&Option<Json>>,
 ) -> Result<Landed, MigrationError> {
     let (Some((dest_key, dest_parent)), Some((src_key, src_parent))) =
         (destination.split_last(), source.split_last())
     else {
         return other("empty move path".into());
     };
+    if let Some(None) = in_document {
+        pop(doc, src_parent, src_key);
+        return Ok(Landed::Dropped);
+    }
     let mut parent: &mut Node = doc;
     for part in dest_parent {
         let next = descend(parent, part, m)?;
@@ -183,7 +191,7 @@ fn move_value(
     }
     let same_slot = dest_parent == src_parent && dest_key == src_key;
     let occupied = child(parent, dest_key).is_some();
-    if occupied && !same_slot {
+    if occupied && !same_slot && in_document.is_none() {
         return Err(MigrationError::Conflict(format!(
             "Cannot move {} to {}: both fields exist. Choose one value and migrate manually.",
             quoted_path(&m.old_path),
@@ -200,6 +208,14 @@ fn move_value(
         ));
     };
     let mut changed = None;
+    if let Some(Some(j)) = in_document {
+        if *j != value.to_json() {
+            changed = Some(j.clone());
+        }
+        let mut rewritten = crate::doc::from_json(j, value.span);
+        keep_timestamps(&mut rewritten, &value);
+        value = rewritten;
+    }
     if let Some(rw) = &m.rewrite {
         match rw(&value.to_json()) {
             Rewritten::Drop => return Ok(Landed::Dropped),
@@ -281,14 +297,23 @@ fn prune_emptied_ancestors(doc: &mut Node, source: &[String]) {
     }
 }
 
-fn is_plain_scalar(n: &Node) -> bool {
+/// A value the text writer moves as a key removal, which strikes the mappings it empties.
+fn leaves_as_a_key_removal(n: &Node) -> bool {
     matches!(
         n.kind,
-        Kind::Scalar(Value::Str(_) | Value::Number(_) | Value::Bool(_))
+        Kind::Scalar(Value::Str(_) | Value::Number(_) | Value::Bool(_) | Value::Null)
     )
 }
 
-pub fn apply_move(doc: &mut Node, m: &Move, out: &mut Applied) -> Result<(), MigrationError> {
+/// Applies `m` everywhere it fires. `authored` is the document as `m`'s
+/// boundary began, which a document-aware rewrite reads: the moves before it
+/// in the boundary have not changed it.
+pub fn apply_move(
+    doc: &mut Node,
+    m: &Move,
+    authored: &Json,
+    out: &mut Applied,
+) -> Result<(), MigrationError> {
     if m.expansion.is_some() {
         return apply_expansion(doc, m, out);
     }
@@ -319,11 +344,24 @@ pub fn apply_move(doc: &mut Node, m: &Move, out: &mut Applied) -> Result<(), Mig
             }
         }
         let source = move_path(m, &m.old_path, &loc.bindings).map_err(MigrationError::Other)?;
-        let moved_scalar = is_plain_scalar(current);
+        let before = current.to_json();
+        let rewrote = match &m.rewrite_in_document {
+            Some(rw) => Some(rw(authored, &source, &before).map_err(MigrationError::Other)?),
+            None => None,
+        };
+        if let Some(notice) = rewrote.as_ref().and_then(|r| r.notice.clone()) {
+            out.notices.push(notice);
+        }
+        let removal = leaves_as_a_key_removal(current);
         let (key_span, value_span) = spans(doc, &loc.path);
         let from = segs(doc, &source);
-        let before = current.to_json();
-        let landed = move_value(doc, &loc.path, &destination, m)?;
+        let landed = move_value(
+            doc,
+            &loc.path,
+            &destination,
+            m,
+            rewrote.as_ref().map(|r| &r.value),
+        )?;
         let after = match landed {
             Landed::Dropped => None,
             Landed::Same => Some(before.clone()),
@@ -336,15 +374,17 @@ pub fn apply_move(doc: &mut Node, m: &Move, out: &mut Applied) -> Result<(), Mig
             value_span,
             before,
             after,
-            rewrite: m.rewrite.is_some(),
+            rewrite: m.rewrite.is_some() || rewrote.is_some(),
             value_map: m.value_map.is_some(),
             expansion: false,
             declared: format_path(&m.old_path),
         });
-        if m.rewrite.is_none()
-            && moved_scalar
-            && source.split_last().map(|s| s.1) != destination.split_last().map(|d| d.1)
-        {
+        for (path, value) in rewrote.map(|r| r.writes).unwrap_or_default() {
+            let at = segs(doc, &path);
+            write_leaf(doc, &path, value.as_ref());
+            out.edits.push(Edit::Write { path: at, value });
+        }
+        if removal && source.split_last().map(|s| s.1) != destination.split_last().map(|d| d.1) {
             prune_emptied_ancestors(doc, &source);
         }
     }

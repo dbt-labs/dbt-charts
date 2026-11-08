@@ -680,8 +680,6 @@ charts:
     style:
       legend:
         position: right
-      endpoint_labels:
-        visible: false
 rows:
   - c
 """

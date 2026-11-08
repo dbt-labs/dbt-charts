@@ -13,7 +13,7 @@ use super::table::bind::{
 };
 use super::table::{WhenRule, VALID_FONT_WEIGHTS};
 use super::color_scale::nice_domain;
-use super::table_dates;
+use ::bind::table_dates;
 use crate::common::ScaleTarget;
 use diagnostic::codes;
 use crate::common::{
@@ -444,26 +444,21 @@ fn format_temporal(
             ],
         ));
     };
-    let invalid = |reason: String| {
-        Diagnostic::new(
-            &codes::ERR_KPI_TEMPORAL_FORMAT_INVALID,
-            [
-                ("chart_id", json!(chart_id)),
-                ("cell", json!(cell)),
-                ("spec", json!(spec_text)),
-                ("reason", json!(reason)),
-            ],
-        )
-    };
-    table_dates::validate_spec(spec_text).map_err(&invalid)?;
-    let moment = match parsed {
-        Ok(Some(moment)) => moment,
-        Ok(None) => unreachable!("only temporal cells reach here"),
-        Err(table_dates::TemporalError::Invalid(reason)) => return Err(invalid(reason)),
-        Err(table_dates::TemporalError::Unported(why)) => return Err(why.into()),
-    };
-    let text = table_dates::strftime(moment, spec_text)?;
-    Ok((String::new(), format!("{prefix}{text}{suffix}"), String::new(), false))
+    let text = table_dates::paint_cell(parsed, spec_text, prefix, suffix)
+        .map_err(|e| match e {
+            table_dates::TemporalError::Invalid(reason) => Diagnostic::new(
+                &codes::ERR_KPI_TEMPORAL_FORMAT_INVALID,
+                [
+                    ("chart_id", json!(chart_id)),
+                    ("cell", json!(cell)),
+                    ("spec", json!(spec_text)),
+                    ("reason", json!(reason)),
+                ],
+            ),
+            table_dates::TemporalError::Unported(why) => why.into(),
+        })?
+        .ok_or_else(|| Diagnostic::from(format!("kpi: temporal cell {cell:?} holds no date")))?;
+    Ok((String::new(), text, String::new(), false))
 }
 
 // ── Literal channels ────────────────────────────────────────────────────────

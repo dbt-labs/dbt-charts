@@ -11,10 +11,11 @@
 
 use std::collections::HashSet;
 
-use board_types::{
-    AreaChartY, BarChartType, BarChartY, BoardChartStylesValue, KpiChartBackground, LayoutItemChart,
-    LineChartY, ScaleTargetConfig, ScatterChartY,
-};
+use board_model::chart::kpi::KpiBackground;
+use board_model::chart::layer::CartesianLayer;
+use board_model::chart::{CartesianChartFields, Chart, ColorColumn, Columns};
+use board_model::facet::Channel as ColumnName;
+use board_model::primitives::ScaleTargetConfig;
 use column_types::Dataset;
 use diagnostic::Diagnostic;
 use serde_json::Value;
@@ -50,76 +51,80 @@ pub struct Channels {
     pub background: Option<Channel>,
 }
 
-/// The gradient a chart's own `style.color` sets (`None`: it sets none).
-pub fn style_gradient(style: &BoardChartStylesValue) -> Option<&ScaleTargetConfig> {
-    use BoardChartStylesValue as S;
-    match style {
-        S::BarStyle(s) => s.gradient.as_ref(),
-        S::HistogramStyle(s) => s.gradient.as_ref(),
-        S::LineStyle(s) => s.gradient.as_ref(),
-        S::AreaStyle(s) => s.gradient.as_ref(),
-        S::ScatterStyle(s) => s.gradient.as_ref(),
-        S::HeatmapStyle(s) => s.gradient.as_ref(),
-        S::PieStyle(s) => s.gradient.as_ref(),
-        S::KpiStyle(s) => s.gradient.as_ref(),
-        S::TableStyle(s) => s.gradient.as_ref(),
-        S::GeoshapeStyle(s) => s.gradient.as_ref(),
-        S::PointMapStyle(s) => s.gradient.as_ref(),
-        S::SparkBarStyle(s) => s.gradient.as_ref(),
-        S::CalloutStyle(s) => s.gradient.as_ref(),
-        S::CustomStyle(s) => s.gradient.as_ref(),
-    }
+/// The gradient a chart's `style.color` sets (`None`: it sets none). A family with no
+/// `color:` channel has no color style.
+pub fn style_gradient(chart: &Chart) -> Option<&ScaleTargetConfig> {
+    let color = match chart {
+        Chart::Bar(c) | Chart::Histogram(c) => &c.style.cartesian.painted.color,
+        Chart::Line(c) => &c.style.cartesian.painted.color,
+        Chart::Area(c) => &c.style.cartesian.painted.color,
+        Chart::Scatter(c) => &c.style.cartesian.painted.color,
+        Chart::Heatmap(c) => &c.style.cartesian.painted.color,
+        Chart::Pie(c) | Chart::Donut(c) => &c.style.color,
+        Chart::Geoshape(c) | Chart::Map(c) => return c.style.geo.color.gradient.as_ref(),
+        Chart::PointMap(c) | Chart::BubbleMap(c) => return c.style.geo.color.gradient.as_ref(),
+        Chart::Kpi(_) | Chart::SparkBar(_) | Chart::Table(_) | Chart::Callout(_) | Chart::Custom(_) => return None,
+    };
+    color.base.gradient.as_ref()
 }
 
 /// What a chart authors of its channels.
 struct Authored<'a> {
     color: Option<&'a str>,
     /// A wide `y: [...]` on a family that folds it.
-    wide_measures: Option<&'a [String]>,
+    wide_measures: Option<Vec<&'a str>>,
     has_layers: bool,
-    background: Option<&'a KpiChartBackground>,
+    background: Option<&'a KpiBackground>,
 }
 
-fn authored(chart: &LayoutItemChart) -> Authored<'_> {
-    macro_rules! cartesian {
-        ($c:expr, $wide:ident, $folds:expr) => {
-            Authored {
-                color: $c.color.as_deref(),
-                wide_measures: match &$c.y {
-                    $wide::Array(measures) if $folds => Some(measures.as_slice()),
-                    _ => None,
-                },
-                has_layers: !$c.layers.is_empty(),
-                background: None,
-            }
-        };
+fn authored(chart: &Chart) -> Authored<'_> {
+    fn cartesian<'a>(
+        fields: &'a CartesianChartFields,
+        layers: &'a [CartesianLayer],
+        folds: bool,
+    ) -> Authored<'a> {
+        Authored {
+            color: fields.color.as_ref().map(ColorColumn::as_str),
+            wide_measures: match &fields.y {
+                Some(Columns::Many(measures)) if folds => {
+                    Some(measures.iter().map(ColumnName::as_str).collect())
+                }
+                _ => None,
+            },
+            has_layers: !layers.is_empty(),
+            background: None,
+        }
     }
-    macro_rules! colored {
-        ($c:expr) => {
-            Authored { color: $c.color.as_deref(), wide_measures: None, has_layers: false, background: None }
-        };
+    fn colored(color: &Option<ColorColumn>) -> Authored<'_> {
+        Authored {
+            color: color.as_ref().map(ColorColumn::as_str),
+            wide_measures: None,
+            has_layers: false,
+            background: None,
+        }
     }
     match chart {
-        LayoutItemChart::BarChart(c) => cartesian!(c, BarChartY, c.type_ == BarChartType::Bar),
-        LayoutItemChart::LineChart(c) => cartesian!(c, LineChartY, true),
-        LayoutItemChart::AreaChart(c) => cartesian!(c, AreaChartY, true),
-        LayoutItemChart::ScatterChart(c) => cartesian!(c, ScatterChartY, true),
-        LayoutItemChart::HeatmapChart(c) => colored!(c),
-        LayoutItemChart::PieChart(c) => colored!(c),
-        LayoutItemChart::PointMapChart(c) => colored!(c),
-        LayoutItemChart::GeoshapeChart(c) => colored!(c),
-        LayoutItemChart::SparkBarChart(c) => colored!(c),
-        LayoutItemChart::KpiChart(c) => Authored {
+        Chart::Bar(c) => cartesian(&c.cartesian, &c.layers, true),
+        Chart::Histogram(c) => cartesian(&c.cartesian, &c.layers, false),
+        Chart::Line(c) => cartesian(&c.cartesian, &c.layers, true),
+        Chart::Area(c) => cartesian(&c.cartesian, &c.layers, true),
+        Chart::Scatter(c) => cartesian(&c.cartesian, &c.layers, true),
+        Chart::Heatmap(c) => colored(&c.cartesian.color),
+        Chart::Pie(c) | Chart::Donut(c) => colored(&c.radial.color),
+        Chart::Geoshape(c) | Chart::Map(c) => colored(&c.geo.color),
+        Chart::PointMap(c) | Chart::BubbleMap(c) => colored(&c.geo.color),
+        Chart::Kpi(c) => Authored {
             color: None,
             wide_measures: None,
             has_layers: false,
-            background: Some(&c.background),
+            background: c.background.as_ref(),
         },
-        LayoutItemChart::TableChart(_)
-        | LayoutItemChart::CalloutChart(_)
-        | LayoutItemChart::CustomChart(_) => {
-            Authored { color: None, wide_measures: None, has_layers: false, background: None }
-        }
+        Chart::SparkBar(_) | Chart::Table(_) | Chart::Callout(_) | Chart::Custom(_) => Authored {
+            color: None,
+            wide_measures: None,
+            has_layers: false,
+            background: None,
+        },
     }
 }
 
@@ -127,7 +132,11 @@ fn authored(chart: &LayoutItemChart) -> Authored<'_> {
 /// first rows' present, non-null cells are all numbers or booleans. A field absent
 /// from the first row is not; an all-null sample is, vacuously.
 fn infers_quantitative(dataset: &Dataset, field: &str) -> bool {
-    if !dataset.rows.first().is_some_and(|row| row.contains_key(field)) {
+    if !dataset
+        .rows
+        .first()
+        .is_some_and(|row| row.contains_key(field))
+    {
         return false;
     }
     dataset
@@ -160,9 +169,9 @@ fn validate_field(channel: &str, field: &str, dataset: &Dataset) -> Result<(), D
 /// The channels `chart` binds over its `dataset`. `categorical_fields` are the
 /// fields the board's category scales bind; `gradient` is the chart's own
 /// `style.color.gradient`, which turns its `color:` field into a gradient channel
-/// (geo charts ignore it, as the seam carries none for them).
+/// .
 pub fn bind_channels(
-    chart: &LayoutItemChart,
+    chart: &Chart,
     dataset: &Dataset,
     categorical_fields: &HashSet<&str>,
     gradient: Option<&ScaleTargetConfig>,
@@ -196,8 +205,8 @@ pub fn bind_channels(
         });
     }
     match authored.background {
-        None | Some(KpiChartBackground::Null) => {}
-        Some(KpiChartBackground::String(field)) => {
+        None => {}
+        Some(KpiBackground::Column(field)) => {
             validate_field("background", field, dataset)?;
             channels.background = Some(Channel {
                 data_field: field.clone(),
@@ -206,7 +215,7 @@ pub fn bind_channels(
                 categorical: false,
             });
         }
-        Some(KpiChartBackground::Object(_)) => {
+        Some(KpiBackground::Channel(_)) => {
             return Err(Diagnostic::refused(
                 "background channel literal/gradient/conditional binding is not bound",
             ));

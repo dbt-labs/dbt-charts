@@ -267,38 +267,6 @@ def test_parse_style_channel_when_key_is_unknown():
 
 
 # ============================================================================
-# validate_channel_fields
-# ============================================================================
-
-
-def test_validate_channel_fields_raises_on_missing_field():
-    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
-    from dbt_charts.core.compile.resolve.chart.channel import validate_channel_fields
-
-    ch = ResolvedStyleChannel(channel="color", mode="series", data_field="missing_col")
-    with pytest.raises(ValueError, match="'color'.*'missing_col'"):
-        validate_channel_fields({"color": ch}, {"arr", "segment"})
-
-
-def test_validate_channel_fields_ok_when_field_present():
-    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
-    from dbt_charts.core.compile.resolve.chart.channel import validate_channel_fields
-
-    ch = ResolvedStyleChannel(channel="color", mode="series", data_field="segment")
-    validate_channel_fields({"color": ch}, {"arr", "segment"})  # no raise
-
-
-def test_validate_channel_fields_skips_literal_mode():
-    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
-    from dbt_charts.core.compile.resolve.chart.channel import validate_channel_fields
-
-    ch = ResolvedStyleChannel(channel="color", mode="literal", literal_value="#red")
-    validate_channel_fields(
-        {"color": ch}, {"arr"}
-    )  # no raise — literal has no field ref
-
-
-# ============================================================================
 # normalize_chart_channels
 # ============================================================================
 

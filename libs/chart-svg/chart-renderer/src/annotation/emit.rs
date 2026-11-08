@@ -1,6 +1,6 @@
 //! `Placed` items to nodes: one plane's marks (clipped); all text, connectors and enclosures (unclipped) in the foreground, above the data.
 
-use crate::scene_path::scene_path;
+use ::layout::scene_path::scene_path;
 use d3rs::shape::{line_path, Curve as D3Curve};
 use scene::{Attrs, Node, PathCommand, PathData, Role, Shape};
 
@@ -8,7 +8,7 @@ use super::model::{Curve, Stroke, Style};
 use super::place::{Connector, Mark, Placed};
 use super::{rule_gray, text, AnnotationCtx, DataMark, Plane};
 use ::layout::labels_expr::colors::Color;
-use crate::contract::{aria_attrs, ItemRole};
+use ::layout::contract::{aria_attrs, ItemRole};
 use diagnostic::Diagnostic;
 use crate::vega_fit::Bounds;
 

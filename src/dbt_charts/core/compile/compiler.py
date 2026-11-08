@@ -32,13 +32,16 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any, Literal
 
+import sqlglot
 import yaml
 from pydantic import ValidationError as PydanticValidationError
+from sqlglot import exp
+from sqlglot.errors import SqlglotError
 
 from dbt_charts.core.compile.config import (
     ProjectSourcesConfig,
@@ -118,6 +121,10 @@ from dbt_charts.core.compile.parse.source_map import (
 )
 from dbt_charts.core.compile.parse.yaml_error_formatter import (
     format_validation_errors_structured,
+)
+from dbt_charts.core.compile.resolve.chart.positional import (
+    POSITIONAL_CHANNELS,
+    is_unbound,
 )
 from dbt_charts.core.compile.restated import schema_default_restated, tree_restated
 from dbt_charts.core.compile.sql_guard import dialect_for_source
@@ -922,16 +929,50 @@ def _collect_suppressed_codes(
     return per_query
 
 
+def _bound_x_projection(
+    chart_type: str,
+    query: AnyQuery,
+    sources: dict[str, Any],  # type-state: explicit_any — raw source YAML
+) -> str | None:
+    """The output column a cartesian chart naming no channel binds as x at
+    render: the family's positional shape for the query's projection count.
+    None when the query is not SQL, does not parse, or has a count the family
+    does not bind."""
+    if not is_sql_query(query):
+        return None
+    dialect = query.dialect or dialect_for_source(query.source, sources)
+    try:
+        parsed = sqlglot.parse_one(query.sql, read=dialect)
+    except SqlglotError:
+        return None
+    if not isinstance(parsed, exp.Select):
+        return None
+    order = POSITIONAL_CHANNELS[chart_type].get(len(parsed.expressions))
+    if order is None:
+        return None
+    return parsed.expressions[order.index("x")].alias_or_name or None
+
+
 def _x_columns_by_query(
-    board: Board, query_names: Iterable[str]
+    board: Board, query_registry: Mapping[str, AnyQuery]
 ) -> dict[str, frozenset[str]]:
     """Columns each query supplies as the x of a placed chart or layer."""
-    by_query: dict[str, set[str]] = {name: set() for name in query_names}
+    by_query: dict[str, set[str]] = {name: set() for name in query_registry}
     for chart in board.placed_charts():
         if not isinstance(chart, _CartesianChartFields):
             continue
-        if chart.query_name is not None and chart.x is not None:
-            by_query.setdefault(chart.query_name, set()).add(chart.x)
+        base_x = chart.x
+        if chart.query_name is not None:
+            if (
+                base_x is None
+                and is_unbound(chart)
+                and chart.query_name in query_registry
+            ):
+                base_x = _bound_x_projection(
+                    chart.type, query_registry[chart.query_name], board.sources
+                )
+            if base_x is not None:
+                by_query.setdefault(chart.query_name, set()).add(base_x)
         if isinstance(chart, BarChart | LineChart | AreaChart | ScatterChart):
             for layer in chart.layers:
                 query_name = layer.query or chart.query_name
@@ -1206,7 +1247,7 @@ def _compile_file(
             board_data = merged_board_data
         if board_path.is_markdown:
             board_data = with_document_style(board_data)
-        authored_board = parse_mapping(board_data, yaml_content)
+        authored_board = parse_mapping(board_data, yaml_content, merged=apply_meta)
     except ParseError as e:
         quoted = (
             None

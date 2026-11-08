@@ -74,8 +74,8 @@ def test_an_authored_hidden_legend_stays_hidden_under_a_numeric_color_with_endpo
     def legend_marks(legend: str) -> int:
         svg = _render(
             "    type: bar\n    x: month\n    y: orders\n    color: score\n"
-            "    style:\n      endpoint_labels:\n        visible: true\n"
-            f"      legend:\n        visible: {legend}",
+            "    style:\n      legend:\n        position:\n          edge: endpoints\n"
+            f"        visible: {legend}",
             _SCORES,
         )
         return svg.count("role-legend")
@@ -183,7 +183,9 @@ def test_rows_at_one_x_with_different_numeric_colors_stack_one_segment_each() ->
     assert len(fills) == 3 and len(set(fills)) == 3, fills
 
 
-def test_a_support_table_on_a_chart_with_no_x_names_the_missing_x() -> None:
+def test_a_support_table_on_a_chart_with_no_x_fails_on_the_missing_x() -> None:
+    """The chart's own channel set is judged first: a `y` with no `x` is an
+    incomplete chart before it is a support table with nothing to align to."""
     from dbt_charts.core.compile import compile as compile_board
 
     from .._svg_render import render_board_svg_result
@@ -208,7 +210,7 @@ rows:
 """
     assert compile_board(board).success
     errors = render_board_svg_result(board).chart_errors
-    assert [e.code for e in errors] == ["ERR-SUPPORT-TABLE-NO-X-ENCODING"]
+    assert [e.code for e in errors] == ["ERR-CHART-CHANNELS-INCOMPLETE"]
 
 
 def test_a_link_naming_a_channel_the_chart_does_not_encode_raises_a_coded_error() -> (

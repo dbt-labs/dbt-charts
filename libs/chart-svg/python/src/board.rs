@@ -257,6 +257,14 @@ fn edit_to_py<'py>(py: Python<'py>, edit: &migrate::Edit) -> PyResult<Bound<'py,
             out.set_item("expansion", *expansion)?;
             out.set_item("declared", declared)?;
         }
+        migrate::Edit::Write { path, value } => {
+            out.set_item("kind", "write")?;
+            out.set_item("path", path.iter().map(seg_text).collect::<Vec<_>>())?;
+            match value {
+                Some(v) => out.set_item("value", json_to_py(py, v)?)?,
+                None => out.set_item("value", py.None())?,
+            }
+        }
         migrate::Edit::Delete { path, .. } => {
             out.set_item("kind", "delete")?;
             let parts = PyList::empty(py);
@@ -277,8 +285,9 @@ fn edit_to_py<'py>(py: Python<'py>, edit: &migrate::Edit) -> PyResult<Bound<'py,
 /// `error_kind` one of `unsupported`, `incomplete`, `conflict`, `migration`.
 /// What a `dct migrate` text writer replays: each edit a dict (`kind` `move`
 /// with `from`, `to`, `before`, `after` (absent when `dropped`), `rewrite`,
-/// `value_map`, `expansion`, `item` (the value sat in a list), `declared`; or
-/// `delete` with `path`, a list position an int).
+/// `value_map`, `expansion`, `item` (the value sat in a list), `declared`;
+/// `write` with `path` and `value`, `None` to strike the key; or `delete` with
+/// `path`, a list position an int).
 #[pyfunction]
 fn plan_text_migration<'py>(
     py: Python<'py>,

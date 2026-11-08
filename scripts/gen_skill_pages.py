@@ -345,6 +345,22 @@ class Generator:
         out.append("Also exist: " + _names(rest) + ".")
         return self._wrap("\n".join(out))
 
+    def positional(self) -> str:
+        """The channels a chart naming none binds its query's columns to, per family and
+        column count, from the binder's own table."""
+        from dbt_charts.core.compile.resolve.chart.positional import POSITIONAL_CHANNELS
+
+        groups: dict[tuple[tuple[int, tuple[str, ...]], ...], list[str]] = {}
+        for family, by_count in POSITIONAL_CHANNELS.items():
+            groups.setdefault(tuple(sorted(by_count.items())), []).append(family)
+        out = [
+            ", ".join(f"`{family}`" for family in families)
+            + ": "
+            + " or ".join(f"`{', '.join(channels)}`" for _, channels in orders)
+            for orders, families in groups.items()
+        ]
+        return self._wrap("; ".join(out))
+
     def query_types(self) -> str:
         """Query kinds beyond SQL: each variant's `type` and its model's own summary."""
         schema = _schema()

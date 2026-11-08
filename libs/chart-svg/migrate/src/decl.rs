@@ -73,6 +73,26 @@ pub enum Rewritten {
 
 pub type Rewrite = Arc<dyn Fn(&Json) -> Rewritten + Send + Sync>;
 
+/// What a document-aware rewrite makes of one value.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Rewrote {
+    /// The new value; `None` strikes the source and leaves nothing.
+    pub value: Option<Json>,
+    /// Reported only when the move fires.
+    pub notice: Option<String>,
+    /// Values owed positions no move fires at, written after the move, each
+    /// creating the mappings it passes through; `None` strikes the key and the
+    /// mappings it empties.
+    pub writes: Vec<(KeyPath, Option<Json>)>,
+}
+
+/// A rewrite whose successor depends on the rest of the document: it reads the
+/// document as its boundary began (every rewrite in the boundary reads the same
+/// one), the concrete source path, and the value there. `Err` refuses the
+/// document with that message.
+pub type DocumentRewrite =
+    Arc<dyn Fn(&Json, &[String], &Json) -> Result<Rewrote, String> + Send + Sync>;
+
 /// One adjacent structural rename or move. `old_path == new_path` is a
 /// value-only remap on a key no grammar ever drops.
 #[derive(Clone)]
@@ -90,6 +110,10 @@ pub struct Move {
     pub sub_board_prefixes: Arc<Vec<KeyPath>>,
     pub rewrite: Option<Rewrite>,
     pub rewrite_note: Option<&'static str>,
+    /// Owns an occupied destination: the "both fields exist" refusal does not
+    /// apply, so it refuses or replaces the value there. An identity-path one
+    /// never marks a document old; it runs only beside a key that does.
+    pub rewrite_in_document: Option<DocumentRewrite>,
     /// Fires only inside charts of this `type:`; `""` only outside any chart.
     pub chart_type: Option<String>,
     /// Tails that must be absent beside the source key.
@@ -97,6 +121,12 @@ pub struct Move {
 }
 
 impl Move {
+    /// An identity-path move with a document-aware rewrite: live in both
+    /// grammars, so recognition never reads it as evidence.
+    pub fn rewrites_in_document_in_place(&self) -> bool {
+        self.old_path == self.new_path && self.rewrite_in_document.is_some()
+    }
+
     pub fn new(source: &'static str, target: &'static str, old: KeyPath, new: KeyPath) -> Move {
         Move {
             source,
@@ -109,6 +139,7 @@ impl Move {
             sub_board_prefixes: Arc::default(),
             rewrite: None,
             rewrite_note: None,
+            rewrite_in_document: None,
             chart_type: None,
             conflicts_with: Vec::new(),
         }

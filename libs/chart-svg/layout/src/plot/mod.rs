@@ -2,6 +2,7 @@
 
 pub mod band_axis;
 pub mod negotiate;
+pub mod points;
 pub mod tear;
 pub mod time_axis;
 pub mod time_cadence;

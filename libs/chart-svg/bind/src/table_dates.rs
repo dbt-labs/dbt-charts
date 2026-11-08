@@ -6,7 +6,7 @@
 
 use column_types::ColumnType;
 
-use ::bind::time_locale::active_time_locale;
+use crate::time_locale::active_time_locale;
 use d3rs::calendar::{civil_from_days, days_from_civil, days_in_month, is_leap_year, weekday};
 
 /// glibc's C-locale `%h`, which `portable_strftime` leaves to the host
@@ -23,14 +23,42 @@ const COMPOSITE_ROUNDS: usize = 8;
 /// production's `fromisoformat` rejects with a `ValueError` (its message is
 /// the text); `Unported` is a shape production fails on in some other way.
 #[derive(Debug)]
-pub(super) enum TemporalError {
+pub enum TemporalError {
     Invalid(String),
     Unported(String),
 }
 
+/// `format_table_cell_value`'s remedy when a temporal value meets a numeric spec.
+pub const STRFTIME_REMEDY: &str = "use a strftime spec (e.g. '%-d %b %Y') or remove format: to use date_short";
+
+/// `format_table_cell_value`'s remedy when a number meets a strftime spec.
+pub const NUMERIC_REMEDY: &str =
+    "use a d3-format numeric spec (e.g. '.1f') or remove format: to use the theme default";
+
+/// `format_table_cell_value`'s temporal path once `spec` is a strftime spec: the
+/// parsed cell painted inside the format's affixes, `Ok(None)` for a cell that
+/// holds no date (printed verbatim). `Invalid` is production's
+/// `ERR_*_TEMPORAL_FORMAT_INVALID` reason (the spec's directive, then the parse);
+/// `Unported` a timestamp shape or directive the port does not reach. Each caller
+/// owns the kind check before it and the codes it raises.
+pub fn paint_cell(
+    parsed: Result<Option<Moment>, TemporalError>,
+    spec: &str,
+    prefix: &str,
+    suffix: &str,
+) -> Result<Option<String>, TemporalError> {
+    if matches!(parsed, Ok(None)) {
+        return Ok(None);
+    }
+    validate_spec(spec).map_err(TemporalError::Invalid)?;
+    let Some(moment) = parsed? else { return Ok(None) };
+    let date = strftime(moment, spec).map_err(TemporalError::Unported)?;
+    Ok(Some(format!("{prefix}{date}{suffix}")))
+}
+
 /// `find_unsupported_directive` (`text/format_d3.py`) as production's
 /// `_validate_strftime_spec` words it.
-pub(super) fn validate_spec(spec: &str) -> Result<(), String> {
+pub fn validate_spec(spec: &str) -> Result<(), String> {
     let stripped = spec.replace("%%", "");
     let mut chars = stripped.chars();
     while let Some(c) = chars.next() {
@@ -56,7 +84,7 @@ pub(super) fn validate_spec(spec: &str) -> Result<(), String> {
 /// sees zeros for every time field), a timestamp keeps its time, and an aware
 /// one is already normalized to UTC (`format_temporal_value`).
 #[derive(Clone, Copy)]
-pub(super) struct Moment {
+pub struct Moment {
     year: u32,
     month: u32,
     day: u32,
@@ -69,23 +97,23 @@ pub(super) struct Moment {
 
 impl Moment {
     /// The instant as a tuple that orders chronologically (a moment is already UTC).
-    pub(super) fn instant(&self) -> (u32, u32, u32, u32, u32, u32, u32) {
+    pub fn instant(&self) -> (u32, u32, u32, u32, u32, u32, u32) {
         (self.year, self.month, self.day, self.hour, self.minute, self.second, self.micro)
     }
 }
 
 impl Moment {
     /// A naive date at midnight (`date.strftime` sees zeros for every time field).
-    pub(super) fn midnight(year: u32, month: u32, day: u32) -> Self {
+    pub fn midnight(year: u32, month: u32, day: u32) -> Self {
         Moment { year, month, day, hour: 0, minute: 0, second: 0, micro: 0, utc: false }
     }
 
-    pub(super) fn year(self) -> u32 {
+    pub fn year(self) -> u32 {
         self.year
     }
 
     /// The UTC instant `ms` milliseconds after the Unix epoch.
-    pub(super) fn from_epoch_millis(ms: i64) -> Result<Self, String> {
+    pub fn from_epoch_millis(ms: i64) -> Result<Self, String> {
         let days = ms.div_euclid(86_400_000);
         let (year, month, day) = civil_from_days(days);
         let year = u32::try_from(year).ok().filter(|&y| y >= 1).ok_or_else(|| format!("instant {ms} ms is before year 1"))?;
@@ -101,7 +129,7 @@ impl Moment {
     }
 
     /// A naive date at a wall-clock time of day.
-    pub(super) fn at_clock(year: u32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> Self {
+    pub fn at_clock(year: u32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> Self {
         Moment { hour, minute, second, ..Moment::midnight(year, month, day) }
     }
 
@@ -191,20 +219,20 @@ impl Moment {
 /// calendar day, which the caller prints verbatim. A timestamp that
 /// `fromisoformat` rejects (hour > 23, minute or second > 59, an offset of 24
 /// hours or more, a result outside years 1-9999) errs.
-pub(super) fn parse_temporal(
+pub fn parse_temporal(
     value: &str,
     declared: &ColumnType,
 ) -> Result<Option<Moment>, TemporalError> {
     let utc = match declared {
         ColumnType::DatetimeTz => true,
-        ColumnType::String => ::bind::time_zone::is_aware(value),
+        ColumnType::String => crate::time_zone::is_aware(value),
         _ if declared.is_temporal() => false,
         _ => return Ok(None),
     };
     Ok(parse_iso(value)?.map(|moment| Moment { utc, ..moment }))
 }
 
-pub(super) fn parse_iso(value: &str) -> Result<Option<Moment>, TemporalError> {
+pub fn parse_iso(value: &str) -> Result<Option<Moment>, TemporalError> {
     let b = value.as_bytes();
     let digits =
         |r: std::ops::Range<usize>| b.get(r).is_some_and(|d| d.iter().all(u8::is_ascii_digit));
@@ -350,7 +378,7 @@ fn time_tail(tail: &str) -> Option<TimeTail> {
 
 /// `is_time_format` (`text/format_d3.py`): a d3-time-format directive
 /// (`%<letter>`, optional `-`/`_`/`0` modifier) after dropping `%%` escapes.
-pub(super) fn is_time_format(spec: &str) -> bool {
+pub fn is_time_format(spec: &str) -> bool {
     let spec = spec.replace("%%", "");
     let b = spec.as_bytes();
     (0..b.len()).any(|i| {
@@ -468,13 +496,13 @@ fn locale_word(m: Moment, letter: char) -> Result<String, String> {
 /// zone, with `%z`/`%Z` naming that zone; a naive one prints as written.
 /// Refused by name: a modifier on any other directive, `%s` (host time zone),
 /// a directive `PYTHON_STRFTIME_DIRECTIVES` rejects, and a trailing `%`.
-pub(super) fn strftime(m: Moment, spec: &str) -> Result<String, String> {
+pub fn strftime(m: Moment, spec: &str) -> Result<String, String> {
     if !m.utc {
         return wall_strftime(m, None, spec);
     }
     let instant = m.epoch_millis();
-    let wall = ::bind::time_zone::wall_ms(instant)?;
-    let (offset, name) = ::bind::time_zone::zone_names(instant)?;
+    let wall = crate::time_zone::wall_ms(instant)?;
+    let (offset, name) = crate::time_zone::zone_names(instant)?;
     let zone = Zone { offset, name, instant };
     wall_strftime(Moment { micro: m.micro, ..Moment::from_epoch_millis(wall)? }, Some(&zone), spec)
 }
@@ -559,7 +587,7 @@ fn wall_strftime(m: Moment, zone: Option<&Zone>, spec: &str) -> Result<String, S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ::bind::time_locale::{de_de, en_us, with_time_locale};
+    use crate::time_locale::{de_de, en_us, with_time_locale};
     use d3rs::time_format::Locale;
 
     fn in_locale(locale: &Locale, m: Moment, spec: &str) -> Result<String, String> {
@@ -705,7 +733,7 @@ mod tests {
 
     #[test]
     fn an_aware_cell_prints_in_the_board_zone_and_a_naive_one_as_written() {
-        let _zone = ::bind::time_zone::zone_scope("America/New_York");
+        let _zone = crate::time_zone::zone_scope("America/New_York");
         let at = |s: &str, declared: ColumnType| {
             en_strftime(parse_temporal(s, &declared).unwrap().unwrap(), "%Y-%m-%d %H:%M %Z %z").unwrap()
         };

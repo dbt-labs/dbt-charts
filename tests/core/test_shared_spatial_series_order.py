@@ -21,6 +21,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     PieChart,
 )
 from dbt_charts.core.compile.models.style.authored import (
+    LegendStylePatch,
     PieChartStylePatch,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
@@ -43,8 +44,8 @@ _BOARD_STYLE_NO_ENDPOINT_LABELS, _BOARD_CTX_NO_ENDPOINT_LABELS = (
                     update={
                         "bar": get_theme_style().charts.bar.model_copy(
                             update={
-                                "endpoint_labels": get_theme_style().charts.bar.endpoint_labels.model_copy(
-                                    update={"visible": False}
+                                "legend": LegendStylePatch.model_validate(
+                                    {"position": {"edge": "top"}}
                                 )
                             }
                         )
@@ -130,15 +131,16 @@ charts:
     style:
       orientation: vertical
       stack: zero
-      endpoint_labels:
-        visible: false
+      legend:
+        position:
+          edge: top
 rows:
   - c1
 """
     )
     # SMB is the smallest segment (180) -> top of the stack -> must render
     # first in the legend, ahead of the larger Mid-Market (300) and
-    # Enterprise (520, at the baseline). endpoint_labels: false — a stacked
+    # Enterprise (520, at the baseline). legend.position.edge: top — a stacked
     # bar otherwise names its series directly and draws no legend at all.
     assert legend_label_order(svg) == ["SMB", "Mid-Market", "Enterprise"]
 
@@ -170,8 +172,8 @@ charts:
     style:
       legend:
         visible: true
-      endpoint_labels:
-        visible: false
+        position:
+          edge: top
 rows:
   - c1
 """

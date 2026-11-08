@@ -14,7 +14,7 @@ use crate::rule::Auto;
 use crate::string_enum;
 use crate::style::font::{FontSlant, FontStyle, LetterCase, SymbolShape, TextDecoration};
 use crate::unit::Fraction;
-use model_core::{Cx, Engine, FromNode, Leaf, Merge, Node, ReadScalar, Scalar, TypeExpr};
+use model_core::{Cx, Engine, FromNode, Leaf, Merge, Node, Patch, ReadScalar, Scalar, TypeExpr};
 use model_derive::Model;
 
 string_enum!(
@@ -284,22 +284,29 @@ pub struct ValueLabelFontStyle {
     #[model(absent = "no named font")]
     pub extends: Option<String>,
     /// Font family or CSS stack.
-    pub family: FontFamily,
+    #[model(omit = "the font cascade's value")]
+    pub family: Option<FontFamily>,
     /// Text color as a CSS color string; `series` takes each label's series color.
     #[model(fill = "chrome[7]")]
     pub color: Engine<Color, Series>,
     /// Font size in pixels.
-    pub size: f64,
+    #[model(omit = "the font cascade's value")]
+    pub size: Option<f64>,
     /// How heavy the type is drawn (e.g., 'bold', 400, 700).
-    pub weight: FontWeightValue,
+    #[model(omit = "the font cascade's value")]
+    pub weight: Option<FontWeightValue>,
     /// Upright or slanted type (normal or italic).
-    pub style: FontSlant,
+    #[model(omit = "the font cascade's value")]
+    pub style: Option<FontSlant>,
     /// Line drawn on the text (underline, line-through, or none).
-    pub decoration: TextDecoration,
+    #[model(omit = "the font cascade's value")]
+    pub decoration: Option<TextDecoration>,
     /// Letter-case transform applied at render time.
-    pub case: LetterCase,
+    #[model(omit = "the font cascade's value")]
+    pub case: Option<LetterCase>,
     /// Line height as a unitless multiple of font size.
-    pub line_height: f64,
+    #[model(omit = "the font cascade's value")]
+    pub line_height: Option<f64>,
 }
 
 /// The value-label fields every mark shares, before its font.
@@ -328,8 +335,10 @@ pub struct MarkLabelsBase {
 pub struct MarkLabelsStyle {
     #[flatten]
     pub base: MarkLabelsBase,
-    /// Value label font style (color, size, family, etc.).
-    pub font: FontStyle,
+    /// Value label font style (color, size, family, etc.). Absent: the labels take
+    /// the chart's font (`style.charts.font`) when the chart is resolved.
+    #[model(absent = "the labels take the chart's font (style.charts.font)")]
+    pub font: Option<FontStyle>,
 }
 
 /// Stack total label style for bar marks.
@@ -374,8 +383,10 @@ pub struct BarLabelsStyle {
 pub struct PointLabelsStyle {
     #[flatten]
     pub base: MarkLabelsBase,
-    /// Value label font style (color, size, family, etc.).
-    pub font: ValueLabelFontStyle,
+    /// Value label font style (color, size, family, etc.). Absent: the labels take
+    /// the chart's font (`style.charts.font`) when the chart is resolved.
+    #[model(absent = "the labels take the chart's font (style.charts.font)")]
+    pub font: Option<Patch<ValueLabelFontStyle>>,
     /// Label position relative to the point; 'auto' leaves the spot to the renderer.
     #[model(fill = "auto")]
     pub position: Engine<PointLabelPosition, Auto>,
@@ -559,7 +570,11 @@ pub struct GeoshapeMarkStyle {
 /// Global mark defaults: one style per Vega-Lite mark type (`text` is the renamed `label`).
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct GlobalMarksStyle {
-    /// Global bar mark defaults.
+    /// Global bar mark defaults. Value labels with no font of their own paint in the text mark's:
+    /// family, color, size and weight are what Vega-Lite's text config reads there; style,
+    /// decoration, case and line height are read by no bar-label consumer today and follow the
+    /// same font for consistency. `BarMarkStyle` is also the family mounts', which take this one.
+    #[model(link_at(to = "labels.font", from = "Style.charts.marks.text.font"))]
     pub bar: BarMarkStyle,
     /// Global line mark defaults.
     pub line: LineMarkStyle,
@@ -585,5 +600,6 @@ pub struct GlobalMarksStyle {
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct SubtitleStyle {
     /// Subtitle font style; theme populates font.size directly.
-    pub font: FontStyle,
+    #[model(absent = "the enclosing text font applies")]
+    pub font: Option<Patch<FontStyle>>,
 }

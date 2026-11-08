@@ -1,0 +1,3 @@
+kind: Performance
+body: Hovering a board that holds a large table no longer lags.
+time: 2026-11-03T14:32:11.158033-08:00

@@ -8,11 +8,11 @@ metadata:
 ---
 # dbt Charts
 
-dbt Charts is markdown for dashboards: a terse spec where a few lines of YAML make an expressive board, slim by design, so nothing is missing. These three pages are the whole spec; the Tools below are all you need, so never read package source. This page is the core grammar and themes; the styling page (`get_skill('styling')`) is the style surface; read it only when the user asks for a look change or a warning names a style key. Every list below is complete: a key or type not named does not exist, and an unknown key is rejected with the keys allowed there. SQL does all the computing (one row per mark, aggregated, ordered and limited in the query); YAML binds columns to marks. Build boards, not plotting code or HTML. dbt Charts is the only visualization tool here: answer with boards, never another charting library.
+dbt Charts is markdown for dashboards: a terse spec where a few lines of YAML make an expressive board. These three pages are the whole spec; the Tools below are all you need, so never read package source. This page is the core grammar and themes; the styling page (`get_skill('styling')`) is the style surface; read it only for a look change or a warning naming a style key. Every list below is complete: an unknown key is rejected with the keys allowed there. SQL does the computing (one row per mark, aggregated, ordered and limited in the query); YAML binds columns to marks. Build boards, not plotting code. dbt Charts is the only visualization tool here: answer with boards, never another charting library.
 
-Write only what differs from the defaults. Themes, frame and card sizes, number formats, column headers (a column's name, prettified), control types and option lists are chosen for you, often by the user's own theme; a key that restates one adds lines and changes nothing. Leave the look alone unless the user asks for a change: their defaults beat your taste.
+Write only what differs from the defaults. Themes, frame and card sizes, number formats, column headers (a column's name, prettified), control types and option lists are chosen for you, often by the user's own theme; restating one changes nothing. Leave the look alone unless the user asks: their defaults beat your taste.
 
-Data files (`.csv`, `.json`, `.parquet`) in the project root and `data/` need no declaration: a board's `source:` is the file path (`source: ./data/orders.csv`) and its table is named after the file stem. A query sees only its own `source:` file, so never join across files: draw a second file through `layers[].query`. A database file (duckdb, sqlite) or warehouse is a `sources:` entry in `dbt_charts.yml`, whose `type:` for a warehouse is `postgres`, `snowflake`, `bigquery`, `databricks`. To see a source's tables and columns: `execute_sql(source=SOURCE, sql="SELECT table_name, column_name, data_type FROM information_schema.columns")`.
+Data files (`.csv`, `.json`, `.parquet`) in the project root and `data/` need no declaration: a board's `source:` is the file path (`source: ./data/orders.csv`) and the table is the file stem. A query sees only its own `source:` file, so never join across files: draw a second file through `layers[].query`. A database file (duckdb, sqlite) or warehouse is a `sources:` entry in `dbt_charts.yml`, whose `type:` for a warehouse is `postgres`, `snowflake`, `bigquery`, `databricks`. To see a source's tables and columns: `execute_sql(source=SOURCE, sql="SELECT table_name, column_name, data_type FROM information_schema.columns")`.
 
 ## Tools
 
@@ -84,11 +84,13 @@ A source with `metricflow:` carries a semantic bundle: its queries aggregate wit
 - `style` (mapping): Appearance overrides for this chart alone
 Also exist: `tooltip`, `id`, `notes`, `link`, `visible`, `type`, `warnings_ignore`, `support_table`, `pattern`, `y_start`, `annotations`.
 
-Name the SQL column as the axis should read (`AS weight_lbs` titles "Weight (lb)"); set `x_label`, `y_label` or `field_labels` only when the title must say more than the column name can.
+Name the SQL column as the axis should read (`AS weight_lbs` titles "Weight (lb)"); set `x_label`, `y_label` or `field_labels` only when the title must say more.
 
-Bar orientation, table pagination and sort are chosen from the data (horizontal category bars, largest first unless `color` splits them, otherwise in the query's row order; pages only past one page's rows): write `style.orientation`, `style.pagination` or `sort` only to change that. `sort.order` defaults to `asc`.
+Name no channel on a chart whose query no other chart uses: the columns bind in order, dimensions first, measure last: `bar`, `line`, `area`: `x, y` or `x, color, y`; `scatter`: `x, y` or `color, x, y`; `heatmap`: `x, y, color`; `pie`, `donut`: `theta` or `color, theta`; `kpi`: `value`; `histogram`: `x`. A query other charts share stays top-level and its charts name `x`, `y` or `color`; never split a shared query so a chart can skip them.
 
-Every chart needs `type:`, one of the types below.
+Bar orientation, table pagination and sort are chosen from the data (horizontal category bars, largest first unless `color` splits them, else in the query's row order; pages only past one page's rows): write `style.orientation`, `style.pagination` or `sort` only to change that.
+
+Every chart needs `type:`, one of those below.
 
 - `bar`: takes `x`, `y`, `color`, `layers`
   - `y_start`: Column each bar starts from instead of zero (waterfall, range, Gantt, lollipop)
@@ -99,7 +101,7 @@ Every chart needs `type:`, one of the types below.
   - `shape`: Column used to shape-encode data points (categorical)
 - `histogram`: takes `x`, `color`
 - `heatmap`: takes `x`, `y`, `color`; rejects `layers`
-- `kpi`: requires `value`; rejects `title`, `subtitle`, `x`, `y`, `color`, `sort`, `x_label`, `y_label`, `field_labels`, `layers`, `multiples`, `width`, `height`
+- `kpi`: rejects `title`, `subtitle`, `x`, `y`, `color`, `sort`, `x_label`, `y_label`, `field_labels`, `layers`, `multiples`, `width`, `height`
   - `value`: Column reference (string column name) for the headline number/text
   - `label`: Caption naming what the headline value measures; `style.variant` places it
   - `glyph`: Text shown before the headline value (e.g. '▲', '●')
@@ -129,8 +131,6 @@ Also exist: `axis_y`, `legend`, `y_start`.
 Layer types: `bar`, `line`, `area`, `scatter`.
 
 - y_start sets each bar's start, so it can't be stacked; remove style.stack or y_start.
-- Bar chart: multi-metric (y: [...]) charts require an x field.
-- Bar chart: x requires a y field — a bar with categories but no measure has nothing to draw.
 - A bar `x` reads up to 50 values: draw 120 months as a `line`, or roll them up in SQL.
 
 Derived series (rolling averages, running totals, YoY) are window functions or extra columns, plotted as another `y` or a `layers:` entry. The delivered page is static: never caption anything as available "on hover".

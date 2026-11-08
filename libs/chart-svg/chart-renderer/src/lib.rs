@@ -24,7 +24,6 @@ pub mod payload_schema;
 pub mod pattern;
 pub mod prose;
 pub(crate) mod selected;
-pub mod scene_path;
 pub mod sizing;
 pub mod step_band;
 pub mod svg;

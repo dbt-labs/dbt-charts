@@ -22,7 +22,7 @@ use std::cell::Cell;
 use crate::vega_fit;
 use crate::families::scatter_shape::{self, Bounds};
 use d3rs::vega_symbol::VegaSymbol;
-use crate::scene_path::scene_path;
+use ::layout::scene_path::scene_path;
 
 /// The canvas-colored outline under an overlay legend's labels, in px.
 const LEGEND_HALO_WIDTH: f64 = 5.0;

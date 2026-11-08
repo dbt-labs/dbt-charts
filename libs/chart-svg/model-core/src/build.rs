@@ -1,4 +1,4 @@
-use crate::{Leaf, Lift, Tri};
+use crate::{Empty, Leaf, Lift, Tri};
 use indexmap::IndexMap;
 use std::fmt;
 
@@ -136,6 +136,30 @@ pub fn build_field<T: Build>(slot: T::Patch, at: &str, unset: &mut Vec<String>) 
     }
 }
 
+/// A field with a declared `fill`: when the build found the slot itself unset (and nothing deeper),
+/// the fill is the value, as the model says a total value holds where nothing set it. A slot that is
+/// unset because something inside it is stays named by its paths.
+pub fn or_fill<T>(
+    built: Option<T>,
+    paths: Vec<String>,
+    at: &str,
+    unset: &mut Vec<String>,
+    fill: impl FnOnce() -> Option<T>,
+) -> Option<T> {
+    if built.is_some() {
+        return built;
+    }
+    if let [only] = paths.as_slice() {
+        if only == at {
+            if let Some(v) = fill() {
+                return Some(v);
+            }
+        }
+    }
+    unset.extend(paths);
+    None
+}
+
 /// Build an `Option<T>` field with `absent`: null is `None`, a value is built. Unset is `None` too:
 /// the layers never set it, and `absent` names what that means.
 pub fn build_nullable<T: Build>(
@@ -150,6 +174,66 @@ where
         Tri::Unset | Tri::Null => Some(None),
         Tri::Value(v) => build_field::<T>(<T::Patch as Lift>::put(v), at, unset).map(Some),
     }
+}
+
+/// Build an `omit` field: unset is `None`, anything set is built as for a plain field.
+pub fn build_omitted<T: Build>(
+    slot: T::Patch,
+    at: &str,
+    unset: &mut Vec<String>,
+) -> Option<Option<T>>
+where
+    T::Patch: Empty,
+{
+    if slot.is_empty() {
+        return Some(None);
+    }
+    build_field::<T>(slot, at, unset).map(Some)
+}
+
+/// [`build_omitted`] from the parse output.
+pub fn build_omitted_authored<T: Build>(
+    slot: T::Authored,
+    at: &str,
+    unset: &mut Vec<String>,
+) -> Option<Option<T>>
+where
+    T::Authored: Empty,
+{
+    if slot.is_empty() {
+        return Some(None);
+    }
+    build_field_authored::<T>(slot, at, unset).map(Some)
+}
+
+/// Build a `default_empty` field: unset is the empty value.
+pub fn build_defaulted<T: Build + Default>(
+    slot: T::Patch,
+    at: &str,
+    unset: &mut Vec<String>,
+) -> Option<T>
+where
+    T::Patch: Empty,
+{
+    if slot.is_empty() {
+        return Some(T::default());
+    }
+    build_field::<T>(slot, at, unset)
+}
+
+/// [`build_defaulted`] from the parse output.
+pub fn build_defaulted_authored<T: Build + Default>(
+    slot: T::Authored,
+    at: &str,
+    unset: &mut Vec<String>,
+) -> Option<T>
+where
+    T::Authored: Empty,
+{
+    if slot.is_empty() {
+        return Some(T::default());
+    }
+    build_field_authored::<T>(slot, at, unset)
 }
 
 /// Build one field from the parse output, as [`build_field`] from a patch.

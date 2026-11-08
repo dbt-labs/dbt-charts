@@ -94,14 +94,14 @@ class TestKpiAuthoringContract:
                 {"type": "kpi", "metric": "revenue"}
             )
 
-    def test_kpi_requires_value(self):
+    def test_kpi_value_may_be_left_to_bind_by_position(self):
         from dbt_charts.core.compile.models.chart.authored import (
             KpiChart as AuthoredKpiChart,
         )
 
-        # KpiChart.value is required (str, no default). Pydantic raises ValidationError.
-        with pytest.raises(ValidationError, match="value"):
-            TypeAdapter(AuthoredKpiChart).validate_python({"type": "kpi"})
+        # An unnamed value binds the query's one column at render.
+        chart = TypeAdapter(AuthoredKpiChart).validate_python({"type": "kpi"})
+        assert chart.value is None
 
     def test_kpi_subtitle_rejected_with_migration_hint(self):
         from dbt_charts.core.compile.models.chart.authored import (
@@ -770,20 +770,19 @@ class TestKpiFixedSlotAlignment:
 
 
 class TestKpiValidation:
-    def test_missing_value_rejected_at_resolved_boundary(self):
+    def test_unbound_value_rejected_at_resolve(self):
+        from dbt_charts.core.compile.errors import CompilationError
+
         chart = KpiChart(
             id="t",
             query=_DUMMY_QUERY,
             query_name="q",
             type="kpi",
-            value="revenue",
         )
-        # value is required through the resolved boundary (ResolvedKpiChart.value
-        # is a required str). Forcing it to None — bypassing authoring validation
-        # via model_copy — is rejected when resolve builds the resolved chart.
-        chart = chart.model_copy(update={"value": None})
-        data = [{"revenue": 1}]
-        with pytest.raises(ValidationError, match="value"):
+        # resolve() binds value from a one-column result; two columns fit no
+        # shape, and the resolved contract (a required str) is never reached.
+        data = [{"revenue": 1, "cost": 2}]
+        with pytest.raises(CompilationError, match="names no `value`"):
             resolve(chart, data, chart_style_context=_BOARD_STYLE)
 
     def test_string_value_not_in_row_raises_chart_data_error(self):

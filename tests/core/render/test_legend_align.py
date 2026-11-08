@@ -77,9 +77,9 @@ rows:
     assert "no single plot to align in" in caplog.text
 
 
-def test_a_placed_legend_beside_an_endpoint_label_rail_is_an_error() -> None:
+def test_a_placed_legend_replaces_the_endpoint_label_rail() -> None:
     """Endpoint labels (the default on a multi-series line) already name the
-    series, so an authored legend position is refused outright."""
+    series; an authored legend position replaces them with the legend."""
     board = """
 title: t
 queries:
@@ -106,4 +106,4 @@ rows:
   - c
 """
     svg = render_board_to_svg(board)
-    assert "ERR-ENDPOINT-LABELS-AND-LEGEND-NAME-SERIES-TWICE" in svg
+    assert "ERR-" not in svg

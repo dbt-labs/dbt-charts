@@ -164,7 +164,7 @@ fn fold(kind: Kind, items: &[&Item], values: &[Option<f64>], gap: f64) -> Option
                 .zip(values)
                 .filter_map(|(item, value)| {
                     let width = (*value)?;
-                    let (start, span) = item.cell.map_or((0, 1), |cell| (cell.col, cell.col_span));
+                    let (start, span) = item.place.map_or((0, 1), |place| (place.col.unwrap_or(0), place.col_span));
                     let covered = (start + span)
                         .min(columns)
                         .checked_sub(start)
@@ -231,7 +231,7 @@ pub fn item_widths(board: &Node, available: f64, card_gap: f64) -> Vec<Option<Pl
             let track = (available - gap * columns.saturating_sub(1) as f64) / columns as f64;
             drawn
                 .iter()
-                .map(|item| span_width(track, item.cell.map_or(1, |cell| cell.col_span), gap))
+                .map(|item| span_width(track, item.place.map_or(1, |place| place.col_span), gap))
                 .collect()
         }
         Kind::Tabs { pane_offset, .. } => vec![available - pane_offset; drawn.len()],

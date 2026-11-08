@@ -41,8 +41,20 @@ from ._links import (
     should_synthesize_automatic_link,
 )
 from ._table import infer_pivot_measure_names
+from .positional import (
+    bind_channels,
+    channel_error,
+    columns_of,
+    is_unbound,
+    unbound_error,
+)
 
 __all__ = [
+    "bind_channels",
+    "channel_error",
+    "columns_of",
+    "is_unbound",
+    "unbound_error",
     "AutomaticLinkCandidate",
     "automatic_link_excludes_x",
     "default_chart_width",

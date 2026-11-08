@@ -18,6 +18,7 @@ from dbt_charts.core.compile.models.markers import Channel, DisplayText
 from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
 
 from ._base import _BaseChartFields, _ConditionalFormattingField
+from ._conditional_formatting import FieldConditionalFormatting
 
 
 class KpiSupportConfig(ConstrainedModel):
@@ -101,20 +102,38 @@ class KpiSupportConfig(ConstrainedModel):
         return data
 
 
+def default_rule_beside_good(
+    entry: FieldConditionalFormatting, column: str, key: str
+) -> str | None:
+    """Why a `default: true` rule on the column `good` reads is unreachable;
+    None when the entry carries no such rule."""
+    if not any(rule.default for rule in entry.when):
+        return None
+    return (
+        f"conditional_formatting.{column} has a `default: true` rule "
+        f"beside `{key}`, whose sign rules cover every nonzero value, "
+        "so the default rule would apply only at zero or null. Replace "
+        "it with an explicit predicate such as `eq: 0` or `between`."
+    )
+
+
 class KpiChart(_BaseChartFields, _ConditionalFormattingField):
     """Authored patch for KPI (key performance indicator) charts.
 
-    KPI charts do not use title: (use label: instead) and require value:.
+    KPI charts do not use title: (use label: instead); a query of one column
+    binds value: by position.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     type: Annotated[Literal["kpi"], Field(description="Selects the chart family.")]
+    # None = bound by position from the query's one column.
     value: Annotated[
-        str,
+        str | None,
         Channel(),
         Field(
-            description="Column reference (string column name) for the headline number/text."
+            default=None,
+            description="Column reference (string column name) for the headline number/text.",
         ),
     ]
     # None = no label alongside the headline value.
@@ -177,7 +196,9 @@ class KpiChart(_BaseChartFields, _ConditionalFormattingField):
                     "picks the glyph from the value's sign. Choose the symbols "
                     "with `style.value.glyph.up`, `.down`, and `.neutral`."
                 )
-            self._reject_default_rule_beside_good(self.value, "good")
+            # A `value` left to bind by position names no column to check here.
+            if self.value is not None:
+                self._reject_default_rule_beside_good(self.value, "good")
         support = self.support
         if support is None or support.good is None:
             return self
@@ -197,13 +218,11 @@ class KpiChart(_BaseChartFields, _ConditionalFormattingField):
         if self.conditional_formatting is None:
             return
         entry = self.conditional_formatting.get(column)
-        if entry is not None and any(rule.default for rule in entry.when):
-            raise ValueError(
-                f"conditional_formatting.{column} has a `default: true` rule "
-                f"beside `{key}`, whose sign rules cover every nonzero value, "
-                "so the default rule would apply only at zero or null. Replace "
-                "it with an explicit predicate such as `eq: 0` or `between`."
-            )
+        message = (
+            None if entry is None else default_rule_beside_good(entry, column, key)
+        )
+        if message is not None:
+            raise ValueError(message)
 
     @field_validator("value", mode="before")
     @classmethod

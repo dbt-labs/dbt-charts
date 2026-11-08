@@ -16,7 +16,7 @@
 //! `step` with `loopbacks`, and a label that would overlap another label or
 //! a node.
 
-use crate::scene_path::scene_path;
+use ::layout::scene_path::scene_path;
 use display_text::language::tr;
 use std::collections::HashMap;
 
@@ -27,7 +27,8 @@ use d3rs::sankey::{ribbon_area, Align, Sankey};
 use d3rs::sankey_circular::SankeyCircular;
 
 use crate::common::{plain_title_height, plain_title_node, Font, TitleStyle};
-use crate::contract::{aria_attrs, mark_group, ItemRole, MUTED, ROLE_HEADER};
+use crate::contract::{MUTED, ROLE_HEADER};
+use ::layout::contract::{aria_attrs, mark_group, ItemRole};
 use crate::frame::ChartFrame;
 use measure::FontBook;
 use scene::{Attrs, Bounds, Chars, Escape, Node, PathData, Role, Run, Shape};

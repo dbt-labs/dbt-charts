@@ -8,7 +8,7 @@
 use crate::constants::bar::{HOVER_BAND_EXTEND_FRACTION, HOVER_BAND_TRIGGER_FRACTION};
 use d3rs::scale::Continuous;
 use ::bind::rows::row_num;
-use crate::contract::{aria_attrs, mark_group, ItemRole};
+use ::layout::contract::{aria_attrs, mark_group, ItemRole};
 use scene::{Attrs, Node, PathData, Role};
 use serde_json::{Map, Value};
 use std::collections::HashMap;

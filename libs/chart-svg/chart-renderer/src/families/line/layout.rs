@@ -5,7 +5,7 @@
 use super::bind::Bound;
 use ::bind::time_axis::{Dates, TimeColumns};
 use crate::pattern::Paint;
-use crate::scene_path::scene_path;
+use ::layout::scene_path::scene_path;
 use super::{AXIS_CRISP, label_x, FacetPanelOpts, area_paint, HALO_POINT_STROKE_W, LinePanelGeometry, LineXAxis, LineXAxisBody, PlotRect, Shape, StackColumn, X_AXIS_OFFSET, bare_label_ink, bare_label_layout, bare_label_widths, description_color_title, domain_position, flush_anchor_px, last_y_ascending_order, mirror_ghost_x, nominal_label_anchor, point_mark_reach, quantitative_x_ticks, rail_cascade_bounds, series_dash, series_fill, shape, stack_columns, stack_data, stack_extent, stacked_top_datum, tick_snap, tilted_temporal_label, with_dash, y_family, y_font_size};
 use crate::families::temporal::{interval_axis, interval_labels_allowed, labels_unpinned, BareMark, IntervalAxis};
 use diagnostic::Diagnostic;
@@ -5613,7 +5613,7 @@ pub(super) fn fit(
                 // A reference rule is hidden from screen readers
                 // (`full_rule_at`'s `aria: false`).
                 rules.push(crate::contract::item_group(
-                    "rule", "layer_0_marks", crate::contract::ItemRole::RuleMark, crate::contract::Reads::Hidden,
+                    "rule", "layer_0_marks", ::layout::contract::ItemRole::RuleMark, crate::contract::Reads::Hidden,
                     |aria| {
                         Node::line(Role::Rule, (gx1, gy), (gx2, gy), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
                     },
@@ -6101,7 +6101,7 @@ pub(super) fn fit(
                     continue;
                 }
                 let aria = if tooltip_labels { Some(point_aria(data_key, i, yv)?) } else { None };
-                let label_attrs = crate::contract::aria_attrs(aria.as_deref(), crate::contract::ItemRole::Point)?;
+                let label_attrs = ::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::Point)?;
                 let anchor = r.link_open.anchor(href_at(i, data_key));
                 for px in datum_xs(i) {
                     let py = datum_y(data_key, i, yv);
@@ -6115,7 +6115,7 @@ pub(super) fn fit(
             }
         }
         if tooltip_labels {
-            plot.push(crate::contract::mark_group("symbol", "layer_3_marks", points)?);
+            plot.push(::layout::contract::mark_group("symbol", "layer_3_marks", points)?);
         } else {
             plot.extend(points);
         }
@@ -6141,7 +6141,7 @@ pub(super) fn fit(
                     continue;
                 };
                 let aria = if announce { Some(point_aria(data_key, i, yv)?) } else { None };
-                let label_attrs = crate::contract::aria_attrs(aria.as_deref(), crate::contract::ItemRole::Point)?;
+                let label_attrs = ::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::Point)?;
                 let anchor = r.link_open.anchor(href_at(i, data_key));
                 for px in datum_xs(i) {
                     let py = datum_y(data_key, i, yv);
@@ -6155,7 +6155,7 @@ pub(super) fn fit(
             }
         }
         plot.push(if announce {
-            crate::contract::mark_group("symbol", "layer_3_marks", targets)?
+            ::layout::contract::mark_group("symbol", "layer_3_marks", targets)?
         } else {
             crate::contract::hidden_mark_group("symbol", "layer_3_marks", targets)
         });
@@ -6478,7 +6478,7 @@ pub(super) fn fit(
                 let label_edge = layer_axes[index].label_edge(plot_w, value_axis_right_overhang);
                 let (gx1, gx2) = if paint_value_axis { crate::common::reach_label_edges(joined, label_edge.as_slice()) } else { joined };
                 plot.push(crate::contract::item_group(
-                    "rule", &format!("layer_{}_marks", 1 + overlays.len() + index), crate::contract::ItemRole::RuleMark,
+                    "rule", &format!("layer_{}_marks", 1 + overlays.len() + index), ::layout::contract::ItemRole::RuleMark,
                     crate::contract::Reads::Hidden,
                     |aria| {
                         Node::line(Role::Rule, (gx1, gy), (gx2, gy), Attrs::new().set("stroke", zc).num("stroke-width", *width).extend(aria))
@@ -6701,7 +6701,7 @@ pub(super) fn fit(
             .with_text_bounds(ink.into());
             let texts = vec![label];
             if rail_announces {
-                rail.push(crate::contract::mark_group("text", "concat_1_marks", texts)?);
+                rail.push(::layout::contract::mark_group("text", "concat_1_marks", texts)?);
             } else {
                 rail.extend(texts);
             }
@@ -6811,7 +6811,7 @@ pub(super) fn fit(
             // label and point carry byte-identical aria-labels).
             let aria =
                 if tooltip_labels { Some(point_aria(series, *i, *v)?) } else { None };
-            let label_attrs = crate::contract::aria_attrs(aria.as_deref(), crate::contract::ItemRole::TextMark)?;
+            let label_attrs = ::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::TextMark)?;
             let (label_x, label_y) = req.anchor;
             let anchor = r.link_open.anchor(all_hrefs.get(&(x_domain[*i].clone(), series.to_string())).map(String::as_str));
             let ink = vega_fit::text_ink(label_x + spot.dx, label_y + spot.dy, req.width, value_label_size, spot.align, spot.baseline);
@@ -6853,7 +6853,7 @@ pub(super) fn fit(
             crate::common::warn_value_labels_crowd(payload.chart_id()?, None, label_inks);
         }
         if tooltip_labels {
-            plot.push(crate::contract::value_label_group("layer_4_marks", labels)?);
+            plot.push(::layout::contract::value_label_group("layer_4_marks", labels)?);
         } else {
             plot.extend(labels);
         }

@@ -1735,7 +1735,7 @@ pub fn composed_rows_nodes(
             );
             cells.push(crate::href::linked(anchor, text));
         }
-        out.push(crate::contract::mark_group("text", "strip", cells)?);
+        out.push(::layout::contract::mark_group("text", "strip", cells)?);
         let row_label_color = row.label_color.as_deref().unwrap_or(label_color);
         let stub = Node::text(Role::Label, (stub_x + row.stub_dx, row_y), Attrs::new().set("text-anchor", stub_anchor).vega("font-family", label_family).num("font-size", label_size).quick_some("font-style", style.label.font.style.as_deref()).set("font-weight", label_weight.clone()).set("fill", row_label_color), row.label.as_str());
         out.push(crate::href::linked(undefined, stub));

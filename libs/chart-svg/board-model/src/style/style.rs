@@ -50,7 +50,7 @@ pub struct Style {
     /// Appearance of the stand-in drawn on a chart with no data.
     pub placeholder: PlaceholderStyle,
     /// Root of all chart-type styles and shared chart configuration.
-    pub charts: ChartsStyle,
+    pub charts: Box<ChartsStyle>,
     /// Default look of each annotation type: rule, band, note, trend.
     pub annotations: AnnotationsStyle,
     /// Spacing and arrangement inside the containers (rows, cols, grid, tabs, details).
@@ -66,13 +66,15 @@ pub struct Style {
     /// Format alias map; empty means no aliases at this cascade level.
     pub formats: IndexMap<String, FormatConfig>,
     /// Named fonts as `<name>: {family, size, weight, color}`, never a bare family string; other font slots reference one as `font: <name>` or `font: {extends: <name>, ...}`. `heading` carries the H1–H6 ramp in `sizes` and `section` the H2–H6 section-title sizes. Any other entry no slot references paints nothing.
-    #[model(merge = deep)]
+    #[model(default_empty, merge = deep)]
     pub fonts: IndexMap<String, NamedFont>,
     /// Theme palette role assignments: role name to a built-in palette name, never a color. Custom colors go in `charts.color.categorical.palette: [hex, ...]`. Default seed: chrome, info, negative, positive, warning, category, sequence, diverge.
+    #[model(default_empty)]
     pub palettes: IndexMap<String, PaletteName>,
     /// Semantic tone color palette (positive/negative/warning/info) for KPI support rows, table conditional glyphs, and spark negative_color.
     pub tones: KpiTonesStyle,
     /// Optional top-level theme role aliases: bare name → role address (`role[N]` or `role.alias`). e.g. ink: chrome[10]
+    #[model(default_empty)]
     pub roles: IndexMap<String, String>,
     /// Per-board padding override (CSS shorthand or structured).
     #[model(nested = drop, absent = "no per-board override")]

@@ -4,7 +4,8 @@ use crate::primitives::PatternStyle;
 use crate::rule::Auto;
 use crate::string_enum;
 use crate::style::chart_base::{
-    AnnotatedChartStyleMixin, CartesianChartStyle, QuantitativeAxisChartStyleMixin,
+    AnnotatedChartStyleMixin, CartesianChartStyle, LegendedChartStyleBase,
+    QuantitativeAxisChartStyleMixin,
 };
 use crate::style::endpoint_labels::EndpointLabelsConfig;
 use crate::style::marks::{BarMarkStyle, TextMarkStyle};
@@ -72,6 +73,8 @@ pub struct BarChartStyle {
     pub annotated: AnnotatedChartStyleMixin,
     #[flatten]
     pub quantitative: QuantitativeAxisChartStyleMixin,
+    #[flatten]
+    pub legended: LegendedChartStyleBase,
     #[flatten]
     pub cartesian: CartesianChartStyle,
     /// Preferred bar orientation; unset behaves like 'auto', which picks horizontal for a categorical x and vertical for a continuous one (temporal, quantitative, or date-like). Never remaps x/y.

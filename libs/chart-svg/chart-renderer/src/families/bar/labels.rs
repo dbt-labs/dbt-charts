@@ -1151,7 +1151,7 @@ pub(super) fn mark_labels(
             .set("font-weight", style.font.weight.as_str())
             .set_if(style.font_style.is_some(), "font-style", style.font_style.clone().unwrap_or_default())
             .set("fill", color)
-            .extend(crate::contract::aria_attrs(aria.as_deref(), crate::contract::ItemRole::TextMark)?);
+            .extend(::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::TextMark)?);
         let label = if blank { Node::empty_text(Role::Label, at, attrs) } else { Node::text(Role::Label, at, attrs, text.as_str()) };
         let label = match ink {
             Some(ink) => label.with_text_bounds(scene::Bounds { x1: plot_left + ink.x1, y1: plot_top + ink.y1, x2: plot_left + ink.x2, y2: plot_top + ink.y2 }),
@@ -1164,9 +1164,9 @@ pub(super) fn mark_labels(
     }
     let name = format!("layer_{layer}_marks");
     Ok(vec![if stamp_value_label {
-        crate::contract::value_label_group(&name, labels)?
+        ::layout::contract::value_label_group(&name, labels)?
     } else {
-        crate::contract::mark_group("text", &name, labels)?
+        ::layout::contract::mark_group("text", &name, labels)?
     }])
 }
 

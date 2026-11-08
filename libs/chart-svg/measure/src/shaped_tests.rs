@@ -285,3 +285,28 @@ fn a_verdict_resolves_the_face_as_the_measurer_production_sums_in() {
     assert_eq!(advance("serif"), inter);
     assert_eq!(advance("system-ui"), inter);
 }
+
+#[test]
+fn a_weighted_verdict_on_a_face_without_a_weight_axis_fails_as_production_does() {
+    // Production run, `axis_x.labels.font.family: Source Serif 4 Medium` on a daily line board:
+    // `render error: text: "'Source Serif 4 Medium'" has no wght axis to instance at 400`. The
+    // static Medium file has no `fvar`; the unweighted sum the parity pass takes reads it as is.
+    let book = book();
+    let medium = font("'Source Serif 4 Medium'", 10.0, 400.0);
+    assert_eq!(
+        book.weighted_advance("Wednesday 18", &medium),
+        Err("text: \"'Source Serif 4 Medium'\" has no wght axis to instance at 400".to_string())
+    );
+    assert!(book.raw_advance("Wednesday 18", &medium).unwrap() > 0.0);
+    let inter = font("Inter", 10.0, 600.0);
+    assert!(book.weighted_advance("Wednesday 18", &inter).is_ok());
+}
+
+#[test]
+fn a_shipped_face_beyond_the_painted_ones_is_read_once() {
+    let book = book();
+    let medium = font("'Source Serif 4 Medium'", 10.0, 400.0);
+    let first = book.production_face(medium.family).unwrap();
+    let second = book.production_face(medium.family).unwrap();
+    assert!(std::ptr::eq(first, second));
+}

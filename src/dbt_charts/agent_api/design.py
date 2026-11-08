@@ -60,6 +60,10 @@ from dbt_charts.core.compile.parse.parser import (
     parse_mapping,
 )
 from dbt_charts.core.compile.parse.source_map import build_source_index_from_node
+from dbt_charts.core.compile.resolve.chart.positional import (
+    CHANNELS,
+    REQUIRED_CHANNELS,
+)
 from dbt_charts.core.compile.schema.introspection import (
     AuthorableModel,
     AuthorableSchema,
@@ -232,7 +236,9 @@ _NOT_DESIGN_PATHS = ("style.charts", "style.color.gradient")
 # entry is a field one `type:` of a shared model refuses outright: `BarChart`
 # declares `y_start` and `pattern` for both tags, and the histogram rules refuse
 # them, since its bars count from zero and bin rows — no value a text box can
-# produce compiles there.
+# produce compiles there. The legend edge is the exception: only `endpoints` is
+# refused (a histogram has one series to name), but this table drops a key, not
+# one value, so the sides go with it.
 # GATED (histogram) — the parse sweep (`histogram-no-x`, `histogram-multi-metric`).
 _NOT_DESIGN_ON: dict[str, tuple[tuple[str, str | None], ...]] = {
     "Variable": (
@@ -249,6 +255,7 @@ _NOT_DESIGN_ON: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("style.pattern.steps", None),
         ("style.pattern.palette", None),
         ("style.pattern.ground", None),
+        ("style.legend.position.edge", None),
     ),
 }
 
@@ -433,22 +440,19 @@ _CONDITIONAL_GROUPS = {
     },
 }
 
-# The mirror rule, bar's alone: a multi-metric `y` makes `x` mandatory
-# (`emitters/bar.py`, "multi-metric (y: [...]) charts require an x field").
-# The schema calls `x` optional because a single-metric chart can omit it, so
-# `required` has to be raised here or the panel renders a way to clear it.
-# GATED — the parse sweep.
-_REQUIRED_WITH_LIST = {"bar": {"x": "y"}}
-
-# The unconditional half of the same rule, and the reason the exemption below
-# cannot be all-or-nothing. `_emit_histogram` raises `ERR-HISTOGRAM-NON-NUMERIC`
-# when there is no `x` to bin — on every histogram, whatever `y` holds. Bar's
-# rule is the *weaker* one; histogram's is stronger, not absent. The board parses
-# without an `x`, so the save endpoint's re-parse waves the clear through and the
-# chart stops rendering.
-# AGREED — `test_a_histogram_that_loses_its_x_stops_rendering`. Clearing an `x`
-# is not a `list` edit, so the render sweep never makes it.
-_ALWAYS_REQUIRED = {"histogram": ("x",)}
+# A `y` list needs an `x` beside it (the binder refuses a `y` with no `x` at
+# render, list or not), and a chart naming neither binds its query's columns by
+# position — so this is an ordering constraint rather than an impossibility:
+# set `x` and the list control comes back. The scalar `y` stays a text box
+# meanwhile; the parse sweep walks it and the render sweep does not, which is
+# the same half-step `_REQUIRED_WITH` below leaves open for every text channel.
+# GATED — the render sweep (`line-bare`, `area-bare`).
+_REQUIRED_WITH_LIST = {
+    "bar": {"x": "y"},
+    "LineChart": {"x": "y"},
+    "AreaChart": {"x": "y"},
+    "ScatterChart": {"x": "y"},
+}
 
 # A bar's own start and a stack are one or the other (`_validate_y_start`):
 # a stack computes every start itself. While `y_start` stands, `style.stack` is
@@ -457,14 +461,29 @@ _ALWAYS_REQUIRED = {"histogram": ("x",)}
 # GATED — the parse sweep (`bar-with-y-start`).
 _START_OR_STACK = {"bar": ("y_start", "style.stack", ("zero", "normalize", "center"))}
 
-# Required once a sibling is authored: `{model: {field: (siblings, …)}}`. A
-# bar's `y` is optional to the schema and a bar with neither `x` nor `y`
-# parses and renders, but `BarChart._validate_multi_series` refuses an `x`
-# with no measure ("x requires a y field"). Clearing `y` *is* a `list` edit —
-# `y` stays a list control beside `color:`, since the two compose — so the
-# panel has to withhold the clear exactly while an `x` stands.
-# GATED — the parse sweep. AGREED — `test_a_bar_that_loses_its_y_stops_rendering`.
-_REQUIRED_WITH = {"bar": {"y": ("x",)}}
+# Required once a sibling is authored: `{model: {field: (siblings, …)}}`,
+# derived from the binder's tables (`compile/resolve/chart/positional.py`). A
+# family's channels are named as a set: naming part of it fails at render
+# (ERR-CHART-CHANNELS-INCOMPLETE), naming none binds the query's columns by
+# position. So the panel withholds a channel's clear exactly while a sibling
+# stands, and the whole set clears freely.
+# GATED — the render sweep. AGREED — `test_a_bar_that_loses_its_y_stops_rendering`,
+# `test_channels_bind_as_a_set_so_the_panel_withholds_the_clear`,
+# `test_a_histogram_with_no_x_binds_its_one_column`.
+_REQUIRED_WITH = {
+    key: {
+        slot: tuple(channel for channel in CHANNELS[family] if channel != slot)
+        for slot in REQUIRED_CHANNELS[family]
+    }
+    for family, key in (
+        ("bar", "bar"),
+        ("line", "LineChart"),
+        ("area", "AreaChart"),
+        ("scatter", "ScatterChart"),
+        ("heatmap", "HeatmapChart"),
+        ("pie", "PieChart"),
+    )
+}
 
 # The tables above are filed by model, and one model backs two `type:` values.
 # `BarChart` covers `Literal["bar", "histogram"]` and `_validate_multi_series`
@@ -1019,9 +1038,6 @@ def _takes_a_list(rules: str, name: str, instance: Any) -> bool:
         # `color: ""` collides there while passing a truthiness check here.
         if any(getattr(instance, other, None) is not None for other in conflict[1]):
             return False
-    # Bar's multi-metric `y` requires an `x` (`emitters/bar.py`), and a
-    # single-metric bar may legally omit one — so this is an ordering constraint
-    # rather than an impossibility: set `x` and the control comes back.
     return not any(
         gated == name and not getattr(instance, needs, None)
         for needs, gated in _REQUIRED_WITH_LIST.get(rules, {}).items()
@@ -1166,15 +1182,12 @@ def _describe(
             and getattr(instance, field.name, None) is None
         ):
             continue
-        gate = _REQUIRED_WITH_LIST.get(rules, {}).get(field.name)
         required = (
             field.required
-            or field.name in _ALWAYS_REQUIRED.get(rules, ())
             or any(
                 getattr(instance, sibling, None) is not None
                 for sibling in _REQUIRED_WITH.get(rules, {}).get(field.name, ())
             )
-            or (gate is not None and isinstance(getattr(instance, gate, None), list))
             # Only while the chart is actually pivoting: a flat table clears its
             # `rows:` freely, and the raise needs a `columns:` to fire at all.
             or (
@@ -1535,6 +1548,8 @@ def _support_table_attach_blocked(instance: Any) -> bool:
         chart_type not in CHART_SUPPORT_TABLE_SUPPORTED_TYPES
         or isinstance(getattr(instance, "y", None), list)
         or getattr(instance, "multiples", None) is not None
+        # The strip aligns to the chart's `x`; a chart naming no channel binds
+        # one at render, but the control is offered once it is named here.
         or not getattr(instance, "x", None)
         or bool(getattr(instance, "color", None))
         or (

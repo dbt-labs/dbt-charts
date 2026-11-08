@@ -6,28 +6,39 @@ y-axis datasets, then passes those facts once into compile resolution.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import date
 from types import EllipsisType, MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from dbt_charts.core.compile.models.board.normalized import VariableValues
+from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
 from dbt_charts.core.compile.models.chart.authored import BarLayer
 from dbt_charts.core.compile.models.chart.normalized.area import AreaChart
 from dbt_charts.core.compile.models.chart.normalized.bar import BarChart
 from dbt_charts.core.compile.models.chart.normalized.line import LineChart
 from dbt_charts.core.compile.models.chart.normalized.scatter import ScatterChart
 from dbt_charts.core.compile.models.primitives import LinkOpen, ResolvedFontStyle
+from dbt_charts.core.compile.normalize.single_series_allocation import (
+    is_single_series_eligible,
+    single_series_slots,
+)
 from dbt_charts.core.compile.resolve import (
     AutomaticLinkCandidate,
+    bind_channels,
+    columns_of,
+    is_unbound,
     layers_own_y_scale,
     resolve,
 )
 from dbt_charts.core.compile.template.display_text import DisplayTextInputs
 from dbt_charts.core.compile.template.query_result import QueryResult
+from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.cache_backend import CacheRows
 from dbt_charts.core.execute.chart_columns import raise_missing_chart_column
-from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
+from dbt_charts.core.execute.chart_data_provider import (
+    ChartDataProvider,
+    ResolveDataProvider,
+)
 from dbt_charts.core.execute.column_formats import raise_column_format_error
 from dbt_charts.core.execute.date_range_axis import proven_range
 
@@ -155,6 +166,82 @@ def chart_x_date_range(
         return None
     sql, dialect, filters = rendered
     return proven_range(sql, dialect, chart.x, filters)
+
+
+def _map_charts(board: Board, fn: Callable[[Chart], Chart]) -> Board:
+    """``board`` with ``fn`` applied to every placed chart, copying only the
+    path to a chart ``fn`` replaced; the same instance when none was.
+
+    A chart placed twice at one board level is one instance and maps to one
+    instance, so the sharing the slot allocator counts on survives the copy.
+    """
+    mapped_by_chart: dict[int, Chart] = {}
+
+    def walk(node: Board) -> Board:
+        items = []
+        for item in node.layout.items:
+            if item.board is not None:
+                nested = walk(item.board)
+                if nested is not item.board:
+                    item = item.model_copy(update={"board": nested})
+            if item.chart is not None:
+                key = id(item.chart)
+                if key not in mapped_by_chart:
+                    mapped_by_chart[key] = fn(item.chart)
+                if mapped_by_chart[key] is not item.chart:
+                    item = item.model_copy(update={"chart": mapped_by_chart[key]})
+            items.append(item)
+        if all(new is old for new, old in zip(items, node.layout.items, strict=True)):
+            return node
+        return node.model_copy(
+            update={"layout": node.layout.model_copy(update={"items": items})}
+        )
+
+    return walk(board)
+
+
+def with_bound_channels(
+    board: Board, results: ChartDataProvider, variables: VariableValues
+) -> Board:
+    """The board with every placed chart's channels bound to its query's columns.
+
+    Runs before the board-wide passes (category colors, automatic links,
+    sizing), which read a chart's channels. A query that fails, or columns
+    that fit no shape, leave the chart as authored: its own resolve reports
+    that, and nothing else on the board should.
+
+    Slots are recounted only when binding made a chart ineligible (a bound
+    ``color`` uses the categorical palette and takes no slot), so later charts
+    shift up; a focused board recounts over its narrowed tree. The compiled
+    board is shared across renders; the recount lands on copies.
+    """
+    lost_eligibility = False
+
+    def bind(chart: Chart) -> Chart:
+        nonlocal lost_eligibility
+        if chart.query_name is None or not is_unbound(chart):
+            return chart
+        try:
+            rows = results.execute_query(chart.query_name, variables)
+            bound = bind_channels(chart, columns_of(rows))
+        except DbtChartsError:
+            return chart
+        lost_eligibility |= is_single_series_eligible(
+            chart
+        ) and not is_single_series_eligible(bound)
+        return bound
+
+    bound_board = _map_charts(board, bind)
+    if not lost_eligibility:
+        return bound_board
+    slots = single_series_slots(bound_board)
+
+    def reslot(chart: Chart) -> Chart:
+        if id(chart) not in slots or slots[id(chart)] == chart.rhythm_slot:
+            return chart
+        return chart.model_copy(update={"rhythm_slot": slots[id(chart)]})
+
+    return _map_charts(bound_board, reslot)
 
 
 def resolve_chart_with_runtime_inputs(

@@ -4,7 +4,7 @@
 //! this paints a row's value with them, and refuses a value that does not fit.
 
 use column_types::ColumnTypes;
-use super::table_dates::{is_time_format, parse_temporal, strftime, TemporalError};
+use ::bind::table_dates::{is_time_format, parse_temporal, strftime, TemporalError};
 use crate::common::{format_mark_label, FormatSlot};
 use crate::contract::{extra_row, SEMICOLON_ESCAPE};
 use d3rs::native::NULL_DISPLAY;

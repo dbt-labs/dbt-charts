@@ -17,7 +17,7 @@
 //! `bind` holds what the data decides; `layout` fits it to the cell and returns
 //! nodes, which `render` prints between the frame and the title.
 
-use crate::scene_path::scene_path;
+use ::layout::scene_path::scene_path;
 use std::collections::HashMap;
 use std::sync::Arc;
 

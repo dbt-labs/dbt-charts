@@ -209,6 +209,63 @@ rows:
         assert hits[0].message.startswith("Query 'sent': week is a date turned")
 
 
+class TestShorthandWiring:
+    def test_warns_for_the_x_a_shorthand_chart_binds(self) -> None:
+        """A chart naming no channel binds the query's first column as x at
+        render; the lint reads that column at compile from the SQL itself."""
+        result = compile(
+            """
+source: examples_db
+queries:
+  sent:
+    dialect: duckdb
+    sql: |
+      SELECT strftime(date_trunc('week', sent_at), '%b %-d') AS week,
+             strftime(date_trunc('week', sent_at), '%b %-d') AS label,
+             count(*) AS sent
+      FROM documents GROUP BY 1, 2
+charts:
+  weekly:
+    query: sent
+    type: bar
+rows:
+  - weekly
+"""
+        )
+        assert result.success
+        validate_compiled_queries(result)
+        hits = [w for w in result.warnings if w.code == CODE]
+        assert len(hits) == 1
+        assert hits[0].message.startswith("Query 'sent': week is a date turned")
+
+    @pytest.mark.parametrize(
+        ("projections", "hits_expected"),
+        [
+            ("count(*) AS n, strftime(sent_at, '%b %-d') AS week, count(*) AS m", 1),
+            ("strftime(sent_at, '%b %-d') AS week, count(*) AS n, count(*) AS m", 0),
+        ],
+        ids=["x-is-the-second-column", "the-date-is-the-color-column"],
+    )
+    def test_reads_x_from_the_familys_shape_not_the_first_column(
+        self, projections: str, hits_expected: int
+    ) -> None:
+        """A 3-column scatter binds `color`, `x`, `y`: the lint reads the second
+        projection as x, and leaves the first alone."""
+        result = compile(
+            "source: examples_db\n"
+            "queries:\n  sent:\n    dialect: duckdb\n"
+            f"    sql: SELECT {projections} FROM documents GROUP BY 1, 2\n"
+            "charts:\n  weekly:\n    query: sent\n    type: scatter\n"
+            "rows:\n  - weekly\n"
+        )
+        assert result.success
+        validate_compiled_queries(result)
+        hits = [w for w in result.warnings if w.code == CODE]
+        assert len(hits) == hits_expected
+        if hits:
+            assert "week" in hits[0].message
+
+
 class TestEdgeCases:
     @pytest.mark.parametrize("dialect", ["snowflake", "oracle"])
     def test_one_argument_to_char_does_not_crash(self, dialect: str) -> None:

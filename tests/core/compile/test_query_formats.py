@@ -375,7 +375,7 @@ def test_a_continuous_color_legend_uses_the_colors_column_format(family: str) ->
     chart = f"    type: {family}\n    {axes}\n    color: revenue\n"
     if family in ("line", "area"):  # which hide their legend for endpoint labels
         chart += "    style:\n      legend:\n        visible: true\n"
-        chart += "      endpoint_labels:\n        visible: false\n"
+        chart += "        position:\n          edge: top\n"
     assert not any("$" in t for t in _tick_labels(_board(chart, formats="")))
     labels = _tick_labels(_board(chart))
     assert any("$" in t for t in labels), labels

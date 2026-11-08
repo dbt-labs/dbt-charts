@@ -29,7 +29,10 @@ _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 @pytest.fixture
 def make_area_resolved_chart(make_chart, model_copy_at):
     """Build a resolved multi-series area chart with endpoint_labels configured."""
-    from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
+    from dbt_charts.core.compile.models.style.authored import (
+        EndpointLabelsConfig,
+        LegendStylePatch,
+    )
 
     def _build(enabled: bool, chart_width: int = 400):
         chart = make_chart("area", x="date", y="value", color="series")
@@ -43,7 +46,14 @@ def make_area_resolved_chart(make_chart, model_copy_at):
         seed = model_copy_at(
             get_theme_style(),
             "charts.area.endpoint_labels",
-            EndpointLabelsConfig(visible=enabled, label_offset=6.0, height=20.0),
+            EndpointLabelsConfig(label_offset=6.0, height=20.0),
+        )
+        seed = model_copy_at(
+            seed,
+            "charts.area.legend",
+            LegendStylePatch.model_validate(
+                {"position": {"edge": "endpoints" if enabled else "top"}}
+            ),
         )
         board_style = resolve_chart_style_context(seed)
 
@@ -65,13 +75,21 @@ def seed_with_area_endpoint_labels(model_copy_at):
     """Resolved style with area.endpoint_labels override applied, seeded from stark."""
 
     def _build(enabled: bool, label_offset: float = 5.0):
-        from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
+        from dbt_charts.core.compile.models.style.authored import (
+            EndpointLabelsConfig,
+            LegendStylePatch,
+        )
 
         seed = model_copy_at(
             get_theme_style("stark"),
             "charts.area.endpoint_labels",
-            EndpointLabelsConfig(
-                visible=enabled, label_offset=label_offset, height=20.0
+            EndpointLabelsConfig(label_offset=label_offset, height=20.0),
+        )
+        seed = model_copy_at(
+            seed,
+            "charts.area.legend",
+            LegendStylePatch.model_validate(
+                {"position": {"edge": "endpoints" if enabled else "top"}}
             ),
         )
         return resolve_chart_style_context(seed)

@@ -49,6 +49,7 @@ from dbt_charts.core.compile.resolve.chart.geo import (
 from dbt_charts.core.compile.resolve.chart.heatmap import _resolve_heatmap
 from dbt_charts.core.compile.resolve.chart.line import _resolve_line
 from dbt_charts.core.compile.resolve.chart.pie import _resolve_pie
+from dbt_charts.core.compile.resolve.chart.positional import bind_channels, columns_of
 from dbt_charts.core.compile.resolve.chart.scatter import _resolve_scatter
 from dbt_charts.core.compile.resolve.chart.simple import (
     _resolve_callout,
@@ -128,6 +129,9 @@ def resolve(
     normalized = expand_named_fonts(
         normalized, chart_style_context.pre_style.fonts, f"charts.{normalized.id}"
     )
+    # Board renders bind every chart ahead of their board-wide passes
+    # (with_bound_channels); this is the guarantee for every other caller.
+    normalized = bind_channels(normalized, columns_of(data))
     normalized = resolve_layer_labels(
         normalized, display_text, chart_style_context.formats
     )

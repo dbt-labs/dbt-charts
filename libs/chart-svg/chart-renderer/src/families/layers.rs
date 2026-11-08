@@ -15,7 +15,7 @@
 //! a scale of its own (`ScaledLayer`, `LayerAxis`) is also shared: both
 //! families measure, fit and paint its independent axis through this module.
 
-use crate::scene_path::scene_path;
+use ::layout::scene_path::scene_path;
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -1537,7 +1537,7 @@ pub(crate) fn line_layer_marks(
             points.push(crate::href::linked(crate::href::anchor_for(mark_link, href), point));
         }
         if announced {
-            marks.push(crate::contract::mark_group("symbol", "layer_2_marks", points)?);
+            marks.push(::layout::contract::mark_group("symbol", "layer_2_marks", points)?);
         } else {
             marks.extend(points);
         }
@@ -1554,7 +1554,7 @@ pub(crate) fn line_layer_marks(
                 Attrs::new()
                     .set("fill", series_color)
                     .num("opacity", 0.0)
-                    .extend(crate::contract::aria_attrs(aria, crate::contract::ItemRole::Point)?),
+                    .extend(::layout::contract::aria_attrs(aria, ::layout::contract::ItemRole::Point)?),
             )
             .translate(px, py);
             targets.push(crate::href::linked(crate::href::anchor_for(mark_link, href), target));
@@ -1562,7 +1562,7 @@ pub(crate) fn line_layer_marks(
         marks.push(if drawn.is_some() {
             crate::contract::hidden_mark_group("symbol", "layer_3_marks", targets)
         } else {
-            crate::contract::mark_group("symbol", "layer_3_marks", targets)?
+            ::layout::contract::mark_group("symbol", "layer_3_marks", targets)?
         });
     }
     // An area clips itself; a line's own marks clip as a group, its value labels do not.
@@ -1768,13 +1768,13 @@ pub(crate) fn layer_value_labels(
             &style.font.weight,
             style.font_style.as_deref(),
             &m.caption.color,
-            crate::contract::aria_attrs(m.aria.as_deref(), crate::contract::ItemRole::TextMark)?,
+            ::layout::contract::aria_attrs(m.aria.as_deref(), ::layout::contract::ItemRole::TextMark)?,
             &m.caption.text,
         );
         labels.push(crate::href::linked(anchor, label));
     }
     if stamped {
-        return Ok(vec![crate::contract::value_label_group("layer_4_marks", labels)?]);
+        return Ok(vec![::layout::contract::value_label_group("layer_4_marks", labels)?]);
     }
     Ok(labels)
 }
@@ -1810,7 +1810,7 @@ fn overlay_point(
     };
     let attrs = attrs
         .set_if(aria.is_some(), "opacity", "1")
-        .extend(crate::contract::aria_attrs(aria, crate::contract::ItemRole::Point)?);
+        .extend(::layout::contract::aria_attrs(aria, ::layout::contract::ItemRole::Point)?);
     Ok(Node::circle(Role::Mark { layer, series: None, datum: None }, (0.0, 0.0), r_pt, attrs).translate(px, py))
 }
 
@@ -1945,7 +1945,7 @@ pub(crate) fn scatter_layer_marks(
             }
         }
     }
-    let group = crate::contract::mark_group("symbol", &format!("layer_{layer_index}_marks"), points)?;
+    let group = ::layout::contract::mark_group("symbol", &format!("layer_{layer_index}_marks"), points)?;
     let mut out = match clip {
         Some((plot, clips)) => clips.wrap(plot, vec![group]),
         None => vec![group],

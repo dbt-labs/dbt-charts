@@ -11,7 +11,6 @@ from dbt_charts.core.compile.models.constraints import (
     Forbids,
     IsList,
     IsSet,
-    Requires,
     ValueIn,
 )
 from dbt_charts.core.compile.models.markers import Channel
@@ -55,6 +54,16 @@ class BarChart(_PatternChannelField, _CartesianChartFields, _TooltipFields):
             "pattern is not supported on type: histogram: its bars are bins of "
             "rows, so a column has no single value to pattern by.",
             when=(ValueIn("type", ("histogram",)),),
+        ),
+        Forbids(
+            ("style.legend.position.edge",),
+            "legend position `endpoints` is not supported on type: histogram: "
+            "it has one series, so there are no endpoint labels to print. Set "
+            "the edge to `top`, `bottom`, `left` or `right`, or remove it.",
+            when=(
+                ValueIn("type", ("histogram",)),
+                ValueIn("style.legend.position.edge", ("endpoints",)),
+            ),
         ),
         Forbids(
             ("annotations",),
@@ -106,20 +115,6 @@ class BarChart(_PatternChannelField, _CartesianChartFields, _TooltipFields):
             "(y: [...]) charts. Use a long-form query with one y field.",
             when=(ValueIn("type", ("bar",)), IsList("y")),
             nonempty=("layers",),
-        ),
-        # Folded measures group side by side within each x band.
-        Requires(
-            ("x",),
-            "Bar chart: multi-metric (y: [...]) charts require an x field.",
-            when=(ValueIn("type", ("bar",)), IsList("y")),
-        ),
-        # Bands with nothing to measure: VL cannot compile a null measure field.
-        Requires(
-            ("y",),
-            "Bar chart: x requires a y field — a bar with categories but no "
-            "measure has nothing to draw.",
-            when=(ValueIn("type", ("bar",)), IsSet("x")),
-            nonempty=("y",),
         ),
     )
 

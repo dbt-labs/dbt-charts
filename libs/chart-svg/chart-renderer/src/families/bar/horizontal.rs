@@ -1675,7 +1675,7 @@ pub(super) fn render_horizontal_panel(
                 rail_labels.push(Node::text(Role::Label, (seg_mid, rail_y), label_attrs, series.as_str()));
             }
             if tooltip_labels {
-                head.push(crate::contract::mark_group("text", "concat_0_marks", rail_labels)?);
+                head.push(::layout::contract::mark_group("text", "concat_0_marks", rail_labels)?);
             } else {
                 head.extend(rail_labels);
             }

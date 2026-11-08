@@ -22,6 +22,7 @@ from dbt_charts.core.compile.models.markers import (
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _AnnotatedChartStyleMixin,
     _CartesianChartStyle,
+    _LegendedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
@@ -68,14 +69,17 @@ class LineLayerStyle(BaseModel):
 
 
 class LineChartStyle(
-    _CartesianChartStyle, _QuantitativeAxisChartStyleMixin, _AnnotatedChartStyleMixin
+    _CartesianChartStyle,
+    _LegendedChartStyleBaseAllOptional,
+    _QuantitativeAxisChartStyleMixin,
+    _AnnotatedChartStyleMixin,
 ):
     """Line chart style: chart-level fields + marks sub-block."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     endpoint_labels: EndpointLabelsConfig = Field(
-        description="Series names printed at the end of each line instead of in a legend."
+        description="Styling of the series names printed at the end of each line (`legend.position.edge: endpoints`)."
     )
     marks: Annotated[
         LineChartMarksStyle, InheritSlot(from_path="Style.charts.marks")

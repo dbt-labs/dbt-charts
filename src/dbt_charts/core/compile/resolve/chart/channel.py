@@ -181,20 +181,6 @@ def _parse_channel_scale(
     return bake_scale_target_stops(ScaleTargetConfig.model_validate(scale_dict))
 
 
-def validate_channel_fields(
-    channels: dict[str, ResolvedStyleChannel],
-    available_columns: set[str],
-) -> None:
-    """Raise ValueError if any channel references a field not in available_columns.
-
-    Only validates data-bound channels (mode in series/gradient/conditional).
-    """
-    for channel_name, ch in channels.items():
-        if ch.mode == "literal":
-            continue
-        _validate_channel_field(channel_name, ch.data_field, available_columns)
-
-
 def _validate_channel_field(
     channel_name: str,
     data_field: str,
@@ -223,8 +209,8 @@ def validate_label_field_columns(
 
     ``labels.field`` sources value-label text from a named column; an unknown
     column silently renders blank labels (Vega-Lite emits empty text), so validate
-    it like a channel column. Sibling of ``validate_channel_fields`` so the raise
-    lives in ``compile/`` (not ``render/``, which requires stamped errors).
+    it like a channel column. The raise lives in ``compile/``, not ``render/``,
+    which requires stamped errors.
     """
     for field in label_fields:
         if field not in available_columns:

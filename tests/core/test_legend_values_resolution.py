@@ -116,8 +116,11 @@ class TestWideMeasureAllNullDoesNotRaise:
                 {
                     "orientation": "vertical",
                     "stack": "zero",
-                    "legend": {"visible": True, "values": ["Alpha", "Beta"]},
-                    "endpoint_labels": {"visible": False},
+                    "legend": {
+                        "visible": True,
+                        "values": ["Alpha", "Beta"],
+                        "position": {"edge": "right"},
+                    },
                 },
                 rows,
                 x="month",

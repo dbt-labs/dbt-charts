@@ -709,6 +709,8 @@ def with_link_schema(
     """
     from dbt_charts.core.compile.resolve import (  # noqa: PLC0415
         automatic_link_excludes_x,
+        bind_channels,
+        columns_of,
         should_fetch_table_fk_links,
         should_synthesize_automatic_link,
     )
@@ -726,6 +728,7 @@ def with_link_schema(
         except Exception:  # noqa: BLE001 — a backend may raise anything; resolve reports that chart's failure
             continue
         try:
+            chart = bind_channels(chart, columns_of(data))
             if should_synthesize_automatic_link(chart, data, links_auto):
                 synthesize_automatic_link(
                     chart, probe, exclude_x=automatic_link_excludes_x(chart, data)

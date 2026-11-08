@@ -67,6 +67,12 @@ macro_rules! facet {
             }
         }
 
+        impl AsRef<str> for $name {
+            fn as_ref(&self) -> &str {
+                &self.0
+            }
+        }
+
         impl TryFrom<String> for $name {
             type Error = String;
             fn try_from(v: String) -> Result<Self, String> {
@@ -104,6 +110,13 @@ facet!(
     ColorOrColumn = "color_or_column",
     unchecked
 );
+impl From<Color> for ColorOrColumn {
+    /// A named font's color fills a table column's font color as written.
+    fn from(c: Color) -> Self {
+        ColorOrColumn(c.as_str().to_string())
+    }
+}
+
 /// The names `format` takes beside a d3 spec: the engine's predefined formats, plus `email` and
 /// `url`, which render text and have no d3 spec.
 pub const FORMAT_NAMES: &[&str] = &[
@@ -153,6 +166,12 @@ macro_rules! open_names {
             fn try_from(v: &str) -> Result<Self, String> {
                 let check: fn(&str) -> Result<String, String> = $check;
                 check(v).map(Self)
+            }
+        }
+
+        impl AsRef<str> for $name {
+            fn as_ref(&self) -> &str {
+                &self.0
             }
         }
 

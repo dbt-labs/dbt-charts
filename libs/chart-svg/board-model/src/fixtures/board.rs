@@ -14,6 +14,7 @@
 //! | [`tabs`] | one tab per `(title, charts)` |
 //! | [`nested`] | a chart above a half-width nested board of two charts |
 //! | [`layout_tree`] | rows holding a chart and a nested board of each other kind |
+//! | [`with_visible`] | a board whose placements of one chart carry a `visible` |
 
 // Test support behind a feature: a literal that fails to parse is a bug in the fixture itself.
 #![allow(clippy::expect_used)]
@@ -22,7 +23,10 @@ use crate::board::layout::{
     GridItemAuthored, GridLayoutAuthored, LayoutAuthored, LayoutItemAuthored, NestedBoardAuthored,
     TabItemAuthored, TabLayoutAuthored,
 };
-use crate::board::{Board, BoardBodyAuthored, BoardBodyPatch, BoardPatch, HtmlPolicy, Length};
+use crate::board::layout::{Layout, LayoutItem};
+use crate::board::{
+    Board, BoardBodyAuthored, BoardBodyPatch, BoardPatch, HtmlPolicy, Length, Visible,
+};
 use crate::facet::{DisplayText, Markdown};
 use crate::ids::{BoardId, ChartId};
 use model_core::Tri;
@@ -177,4 +181,27 @@ pub fn layout_tree() -> Board {
         tabs_layout(&[("One", &["f"]), ("Two", &["g", "h"])]),
     ));
     built(board("tree", LayoutAuthored::Rows(stack)))
+}
+
+/// `board` with every placement of the chart named `name`, in every nested layout, drawn only
+/// where `visible` says. Normalize does this move from the authored chart to its placement.
+pub fn with_visible(mut board: Board, name: &str, visible: &Visible) -> Board {
+    set_visible(&mut board.body.layout, name, visible);
+    board
+}
+
+fn set_visible(layout: &mut Layout, name: &str, visible: &Visible) {
+    let place = |item: &mut LayoutItem| match item {
+        LayoutItem::Chart { id, visible: v } if id.as_str() == name => *v = Some(visible.clone()),
+        LayoutItem::Chart { .. } => {}
+        LayoutItem::Board(b) => set_visible(&mut b.body.layout, name, visible),
+    };
+    match layout {
+        Layout::Rows(items) | Layout::Cols(items) => items.iter_mut().for_each(place),
+        Layout::Grid(g) => g.items.iter_mut().for_each(|cell| place(&mut cell.item)),
+        Layout::Tabs(t) => t
+            .items
+            .iter_mut()
+            .for_each(|tab| set_visible(&mut tab.layout, name, visible)),
+    }
 }

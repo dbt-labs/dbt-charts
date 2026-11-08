@@ -214,43 +214,36 @@ class TestDescriptionContent:
             offenders
         )
 
-    def test_endpoint_labels_visible_states_the_shipped_default(self) -> None:
-        """Pinned against the themes, so the prose cannot drift from the value.
-
-        Every family the sentence names is read, over every shipped theme.
-        """
+    def test_legend_edge_states_the_shipped_default(self) -> None:
+        """Pinned against the themes, so the prose cannot drift from the value."""
         from typing import get_args
 
         from dbt_charts.core.compile.config import get_theme_style
         from dbt_charts.core.compile.models.schema_names import ThemeName
 
         shipped = {
-            getattr(get_theme_style(name).charts, family).endpoint_labels.visible
+            get_theme_style(name).charts.legend.position.edge
             for name in get_args(ThemeName)
-            for family in ("bar", "line", "area")
         }
         assert shipped == {"auto"}
-        text = (EndpointLabelsConfig.model_fields["visible"].description or "").lower()
-        assert "'auto' on every built-in theme" in text
+        assert "'auto' (engine decides)" in self._edge_description()
 
-    def test_endpoint_labels_visible_scopes_the_claim_to_shapes_that_get_a_rail(
-        self,
-    ) -> None:
-        """A bar only direct-labels when stacked, and grouped is the default.
+    def test_legend_edge_description_is_one_short_sentence(self) -> None:
+        """The detail (which shapes get a rail, which refuse `endpoints`) is in the docs."""
+        text = self._edge_description()
+        assert len(text.split()) <= 12
+        assert text.count(". ") == 0
+        assert text.endswith(".")
 
-        The first draft of this copy said "multi-series bar" flat, which reads
-        as a promise the commonest bar shape does not keep: `stack` is `none`
-        on every shipped theme, and resolve hands a grouped bar its legend
-        back. Without this the correction can be undone with CI green.
-        """
-        text = (EndpointLabelsConfig.model_fields["visible"].description or "").lower()
-        assert "stacked bars" in text
-        assert "grouped bars" in text
+    def test_legend_edge_names_endpoint_labels(self) -> None:
+        """A reader hunting "endpoint labels" has to land on the edge that sets them."""
+        assert "endpoints" in self._edge_description()
 
-    def test_endpoint_labels_visible_names_the_legend_relationship(self) -> None:
-        """A reader hunting "the legend" has to land here, not on `legend:`."""
-        text = (EndpointLabelsConfig.model_fields["visible"].description or "").lower()
-        assert "legend" in text
+    @staticmethod
+    def _edge_description() -> str:
+        from dbt_charts.core.compile.models.style.theme import LegendPositionStyle
+
+        return (LegendPositionStyle.model_fields["edge"].description or "").lower()
 
     def test_endpoint_labels_help_carries_the_words_a_user_searches(self) -> None:
         blob = " ".join(

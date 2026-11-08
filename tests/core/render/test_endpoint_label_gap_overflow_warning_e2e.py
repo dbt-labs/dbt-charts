@@ -49,8 +49,9 @@ charts:
     y: value
     color: series
     style:
-      endpoint_labels:
-        visible: true
+      legend:
+        position:
+          edge: endpoints
 queries:
   q:
     sql: SELECT * FROM t
@@ -71,8 +72,9 @@ charts:
     y: value
     color: series
     style:
-      endpoint_labels:
-        visible: true
+      legend:
+        position:
+          edge: endpoints
 queries:
   q:
     sql: SELECT * FROM t
@@ -100,8 +102,9 @@ charts:
     color: series
     height: 80
     style:
-      endpoint_labels:
-        visible: true
+      legend:
+        position:
+          edge: endpoints
 queries:
   q:
     sql: SELECT * FROM t
@@ -215,8 +218,9 @@ charts:
     y: value
     color: series
     style:
-      endpoint_labels:
-        visible: true
+      legend:
+        position:
+          edge: endpoints
       axis_y:
         scale:
           continuous:
@@ -305,8 +309,9 @@ charts:
     y: value
     color: series
     style:
-      endpoint_labels:
-        visible: true
+      legend:
+        position:
+          edge: endpoints
   filler:
     query: q
     type: line

@@ -77,6 +77,7 @@ from dbt_charts.core.compile.resolve.chart.pie_attachment import (
     resolve_hybrid_heading_font,
     validate_theta_values,
 )
+from dbt_charts.core.compile.resolve.chart.positional import unbound_error
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
@@ -111,10 +112,10 @@ __all__ = [
 ]
 
 
-def _auto_total_label(normalized: PieChart) -> str:
-    label = normalized.field_labels.get(normalized.theta)
+def _auto_total_label(normalized: PieChart, theta: str) -> str:
+    label = normalized.field_labels.get(theta)
     if label is None:
-        label = inferred_display_name(normalized.theta)
+        label = inferred_display_name(theta)
         if board_word("pie.total_word").lower() in label.lower():
             return label
         return board_word("pie.total", label=inline_derived_label(label))
@@ -132,9 +133,14 @@ def _resolve_pie(
     display_text: ChartDisplayText = None,
     title_font: ResolvedFontStyle | EllipsisType = ...,
 ) -> ResolvedPieChart:
+    theta = normalized.theta
+    if theta is None:
+        # The rows bind theta before dispatch; only a resolve with none (a
+        # zero-row result, the data-free skeleton) still arrives without it.
+        raise unbound_error(normalized, ())
     authored_color = normalized.color
     normalized = pattern_series(normalized)
-    validate_theta_values(normalized.id, normalized.theta, data)
+    validate_theta_values(normalized.id, theta, data)
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
     )
@@ -144,7 +150,7 @@ def _resolve_pie(
     # The center total and every slice tooltip vote on one set (theta values
     # plus their sum) so they never disagree about the same sub-$1 value --
     # see resolve_format_parts_for_values's per-set contract.
-    theta_values = _column_numeric_values(data, normalized.theta)
+    theta_values = _column_numeric_values(data, theta)
     format_vote_values = [*theta_values, sum(theta_values)] if theta_values else []
     channels = _channels_for(normalized, data)
     # `pie` is the family merged over its board tier, so the chart's own
@@ -188,7 +194,7 @@ def _resolve_pie(
     resolved_color_field: str | None = (
         color_channel.data_field
         if color_channel is not None
-        else normalized.color or infer_implicit_color_field(normalized.theta, data)
+        else normalized.color or infer_implicit_color_field(theta, data)
     )
 
     # Bake dark-companion stops for label color encoding.  Computed here so
@@ -223,7 +229,7 @@ def _resolve_pie(
         normalized.format,
         board=chart_style_context.tooltip.format,
         query_formats=normalized.query.formats if normalized.query else None,
-        columns=normalized.theta,
+        columns=theta,
         values=format_vote_values,
     )
     effective_template = _slice_labels.template
@@ -259,7 +265,7 @@ def _resolve_pie(
         )
         and (total is None or total.label is None)
     ):
-        auto_label = _auto_total_label(normalized)
+        auto_label = _auto_total_label(normalized, theta)
         total = (
             ChartTotal(visible=True, label=auto_label)
             if total is None
@@ -286,7 +292,7 @@ def _resolve_pie(
             chart_total_format,
             board=board_total_format,
             query_formats=normalized.query.formats if normalized.query else None,
-            columns=normalized.theta,
+            columns=theta,
             engine_default=lambda: PredefinedNumberFormat.integer,
             values=format_vote_values,
         )
@@ -297,9 +303,9 @@ def _resolve_pie(
         value=resolved_as(ResolvedTotalValueSlot, pie.total.value, format=total_format),
     )
 
-    shares = compute_shares(normalized.theta, data)
+    shares = compute_shares(theta, data)
     slice_label_lines = finalize_pie_label_lines(
-        normalized.theta,
+        theta,
         resolved_color_field,
         data,
         resolved_labels,
@@ -327,7 +333,7 @@ def _resolve_pie(
         if normalized.format is not None
         else declared_column_format(
             normalized.query.formats if normalized.query else None,
-            normalized.theta,
+            theta,
             chart_style_context.formats,
             time=False,
         )
@@ -345,7 +351,7 @@ def _resolve_pie(
             data,
             eff_palette,
             resolved_color_field,
-            normalized.theta,
+            theta,
             slice_format,
             chart_style_context.table,
             width,
@@ -451,7 +457,7 @@ def _resolve_pie(
         **_shared_kwargs(normalized, display_text, chart_local_style_context),
         tooltip=resolve_tooltip(normalized, data, chart_style_context.formats),
         chart_type="pie",
-        theta=normalized.theta,
+        theta=theta,
         field_labels=normalized.field_labels,
         color=normalized.color,
         identity_field=resolved_color_field,

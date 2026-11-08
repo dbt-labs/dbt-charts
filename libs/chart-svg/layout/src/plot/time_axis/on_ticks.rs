@@ -8,7 +8,7 @@
 //! `labelOverlap: parity` over the labels' ink `:3549`.
 
 use bind::temporal::TimeUnit;
-use d3rs::calendar::{civil_from_days, days_from_civil};
+use d3rs::calendar::{civil_from_days, days_from_civil, MS_PER_DAY};
 use diagnostic::{diag, Diagnostic};
 use measure::baseline_shift;
 use measure::shaped::Font;
@@ -17,12 +17,27 @@ use scene::{Bounds, Transform};
 use super::{gutter_of, parity_visible, Align, Baseline, Grained, PlacedLabel, Placement};
 use crate::geom::Size;
 use crate::plot::time_axis::TimeAxis;
-use crate::plot::time_cadence::{decision_width, label_rows, labeled, Rows};
+use crate::plot::time_cadence::{
+    decision_width, label_rows, labeled, opens_label, tick_opens_label, Date, Rows,
+};
 use crate::time_ladder::{interval_instants, native_tick_interval};
 
 /// The share of the tick spacing an end-point label leaves empty beside its neighbor
 /// (`EDGE_LABEL_MIN_GAP_RATIO`, `constants/axis.rs:10`).
 const EDGE_LABEL_MIN_GAP_RATIO: f64 = 0.45;
+
+/// Whether an end-point label `w` wide keeps its place: empty space of at least
+/// [`EDGE_LABEL_MIN_GAP_RATIO`] of the tick spacing `pitch` (a fraction of the plot `plot_w`) beside the
+/// label it neighbors, `beside` being that label's distance from the end (a fraction) and width. A label
+/// with no width, or no neighbor, always fits.
+pub(super) fn edge_clear(plot_w: f64, w: f64, beside: Option<(f64, f64)>, pitch: f64) -> bool {
+    match beside {
+        Some((at, beside_w)) if w > 0.0 => {
+            at * plot_w - beside_w / 2.0 - w >= EDGE_LABEL_MIN_GAP_RATIO * pitch * plot_w
+        }
+        _ => true,
+    }
+}
 
 /// A label before it is measured: the day it stands on and what it says.
 struct Slot {
@@ -38,7 +53,12 @@ impl TimeAxis<'_> {
         plot: Size,
     ) -> Result<Placement, Diagnostic> {
         let (ticks, slots) = self.tick_slots(grained)?;
-        let slots = self.with_end_points(grained, slots, &ticks, plot.width)?;
+        // An authored cadence pins its labels: no end point is named (`labels_unpinned`).
+        let slots = if self.cadence.is_some() {
+            slots
+        } else {
+            self.with_end_points(grained, slots, &ticks, plot.width)?
+        };
         let labels = self.on_tick_labels(grained, &slots, plot)?;
         let gutter = gutter_of(&labels, plot.width);
         Ok(Placement {
@@ -61,6 +81,13 @@ impl TimeAxis<'_> {
         } = grained;
         let (lo, hi) = self.extent;
         let quarters = self.labels.quarters;
+        if let Some(cadence) = self.cadence {
+            let ticks = cadence
+                .bucketed_ticks(*data, self.extent)
+                .map_err(Diagnostic::refused)?;
+            let slots = self.authored_slots(grained, &ticks)?;
+            return Ok((ticks, slots));
+        }
         // One bucket has no extent to tick or measure against: production (`label_extent` is
         // `None`) labels the openers it holds and d3 centers them, so no native tick, no clip.
         let one = hi <= lo;
@@ -99,6 +126,64 @@ impl TimeAxis<'_> {
             }
         }
         Ok((slots.iter().map(|s| s.day).collect(), slots))
+    }
+
+    /// The labels on an authored cadence's ticks (`interval_tick_labels`): a tick speaks because its own
+    /// date opens a label period, never because a row sits on it. The anchor, which carries the year
+    /// context, is the tick on the first opener of the data's span when the labels name a coarser
+    /// period than the data (the first tick otherwise). A week labeled in the week vocabulary reads
+    /// each Sunday tick as its Monday. Only the years divisible by the cadence's year step speak.
+    fn authored_slots(&self, grained: &Grained, ticks: &[f64]) -> Result<Vec<Slot>, Diagnostic> {
+        let Grained {
+            data,
+            fiscal_start,
+            span,
+            cadence,
+        } = grained;
+        let monday = i64::from(*data == TimeUnit::YearWeek && cadence.format == TimeUnit::YearWeek);
+        // `anchor_formats`: the data grain's own `utcFormat` pattern, a week comparing as `%Y-%U`.
+        let locale = bind::time_locale::active_time_locale().map_err(diag::err_internal)?;
+        let spec = match data {
+            TimeUnit::Year => "%Y",
+            TimeUnit::YearQuarter | TimeUnit::YearMonth => "%Y-%m",
+            TimeUnit::YearWeek => "%Y-%U",
+            TimeUnit::YearMonthDate => "%Y-%m-%d",
+        };
+        let key = |(y, m, d): Date| {
+            let ms = days_from_civil(y, m, d) as f64 * MS_PER_DAY;
+            d3rs::time_format::format(spec, ms, 0.0, &locale).map_err(diag::err_internal)
+        };
+        let anchor = if cadence.visibility == *data {
+            None
+        } else {
+            let first = span
+                .iter()
+                .find(|&&date| opens_label(date, *data, cadence.visibility, *fiscal_start))
+                .unwrap_or(&span[0]);
+            Some(key(*first)?)
+        };
+        let mut slots = Vec::new();
+        for (k, &day) in ticks.iter().enumerate() {
+            let date = civil_from_days(day.floor() as i64 + monday);
+            if date.0 % cadence.year_step != 0 {
+                continue;
+            }
+            let anchored = match &anchor {
+                Some(anchor) => key(date)? == *anchor,
+                None => k == 0,
+            };
+            if anchored || tick_opens_label(date, *data, cadence.visibility, *fiscal_start) {
+                let rows = label_rows(
+                    date,
+                    cadence.format,
+                    anchored,
+                    *fiscal_start,
+                    self.labels.quarters,
+                )?;
+                slots.push(Slot { day, rows });
+            }
+        }
+        Ok(slots)
     }
 
     /// The width a text advances, uncut, as painted: ink and positions.
@@ -181,12 +266,8 @@ impl TimeAxis<'_> {
             .collect::<Result<Vec<_>, _>>()?;
         let (first_w, last_w) = (widths(&first)?, widths(&last)?);
         let end = slots.len() - 1;
-        let clear = |w: f64, beside: Option<(f64, f64)>, pitch: f64| match beside {
-            Some((at, beside_w)) if w > 0.0 => {
-                at * width - beside_w / 2.0 - w >= EDGE_LABEL_MIN_GAP_RATIO * pitch * width
-            }
-            _ => true,
-        };
+        let clear =
+            |w: f64, beside: Option<(f64, f64)>, pitch: f64| edge_clear(width, w, beside, pitch);
         let n = tick_fracs.len();
         let (head_pitch, tail_pitch) = (
             tick_fracs[1] - tick_fracs[0],
@@ -279,13 +360,14 @@ impl TimeAxis<'_> {
             };
             let ink_width = widest(&|t| self.advance(t))?;
             let verdict_width = widest(&|t| self.parity_advance(t))?;
-            let x = if hi <= lo {
-                width / 2.0
+            let frac = if hi <= lo {
+                0.5
             } else {
-                (slot.day - lo) / (hi - lo) * width
+                (slot.day - lo) / (hi - lo)
             };
+            let x = self.x_at(frac, width);
             let (align, baseline) = if angle == 0.0 {
-                (TimeAxis::align(x, width), Baseline::Top)
+                (self.range_align(frac, width), Baseline::Top)
             } else {
                 tilted_anchor(angle)
             };

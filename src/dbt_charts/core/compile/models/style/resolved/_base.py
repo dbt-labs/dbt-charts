@@ -623,12 +623,20 @@ class ResolvedLegendStyle(BaseModel):
     symbol_fill: bool | None = None
     # Internal, resolved-only fact — never authored, absent from every patch
     # model (LegendStyle/LegendStylePatch declare no such field). Set to the
-    # author's own `position.edge` when the tiny-width tier forced this legend
-    # back to `top` over it (cartesian_series_naming's
-    # legend_position_overridden_by_width); None otherwise, including a
-    # tiny-width chart that authored no position or authored `top` itself.
+    # author's own `position.edge` (a side, or `endpoints`) when the tiny-width
+    # tier forced this legend back to `top` over it
+    # (cartesian_series_naming's legend_position_overridden_by_width); None
+    # otherwise, including a tiny-width chart that authored no position or
+    # authored `top` itself.
     # Read by the WARN-LEGEND-POSITION-WIDTH-FALLBACK render-stage detector.
-    position_overridden_by_width: LegendEdge | None = None
+    position_overridden_by_width: LegendEdge | Literal["endpoints"] | None = None
+    # Internal, resolved-only fact, like the one above. Set to the authored side
+    # when the legend is hidden under it on a chart whose `auto` would have
+    # printed endpoint labels, so the chart names its series nowhere
+    # (cartesian_series_naming's hidden_under_edge). Read by the
+    # WARN-LEGEND-HIDDEN-UNDER-EDGE render-stage detector. Excluded from dumps:
+    # only Python's detector reads it, so it stays off the Rust wire.
+    hidden_under_edge: LegendEdge | None = Field(default=None, exclude=True)
 
 
 @dataclasses.dataclass(frozen=True)

@@ -140,9 +140,13 @@ impl Schema {
 
 static NO_ATTRS: Attrs = Attrs {
     absent: None,
+    omit: None,
+    default_empty: false,
     inherit: None,
     inherit_slot: None,
     links: &[],
+    links_at: &[],
+    fills_at: &[],
     local: false,
     nested_drop: false,
     nullable: false,
@@ -213,7 +217,12 @@ fn lower_field(
     f: &'static Field,
     infos: &mut IndexMap<&'static str, &'static ModelInfo>,
 ) -> Result<SchemaField, SchemaError> {
-    let mut ty = lower(owner, f, f.ty, infos)?;
+    // An `omit` field is omittable, not nullable: its schema is the inner type's.
+    let shown = match f.ty {
+        TypeExpr::Option(inner) if f.attrs.omit.is_some() => *inner,
+        t => t,
+    };
+    let mut ty = lower(owner, f, shown, infos)?;
     if let Some(also) = f.attrs.accept {
         let also = lower(owner, f, also, infos)?;
         ty = match ty {
@@ -256,6 +265,7 @@ fn lower(
                 .map(|t| lower(owner, f, t, infos))
                 .collect::<Result<_, _>>()?,
         ),
+        TypeExpr::Const(b) => Ty::Const(*b),
         TypeExpr::Unit => Ty::Unit,
         TypeExpr::List(i) => Ty::List(Box::new(lower(owner, f, i, infos)?)),
         TypeExpr::Map(i) => Ty::Map(Box::new(lower(owner, f, i, infos)?)),

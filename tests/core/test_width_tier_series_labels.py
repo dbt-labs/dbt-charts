@@ -9,7 +9,10 @@ import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.resolved import ResolvedLineChart
-from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
+from dbt_charts.core.compile.models.style.authored import (
+    EndpointLabelsConfig,
+    LegendStylePatch,
+)
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
@@ -47,7 +50,12 @@ def _board_with_distinctive_series_label_sizes(
     seed = model_copy_at(
         seed,
         "charts.line.endpoint_labels",
-        EndpointLabelsConfig(visible=True, label_offset=5.0, height=20.0),
+        EndpointLabelsConfig(label_offset=5.0, height=20.0),
+    )
+    seed = model_copy_at(
+        seed,
+        "charts.line.legend",
+        LegendStylePatch.model_validate({"position": {"edge": "endpoints"}}),
     )
     seed = model_copy_at(seed, "charts.legend.compact_columns", 7)
     return resolve_chart_style_context(seed)
@@ -111,7 +119,7 @@ def test_series_label_font_size_follows_width_tier(
     assert resolved.style.series_label.font_weight == expected_weight
 
 
-def test_tiny_width_owns_legend_position_when_endpoint_labels_are_disabled(
+def test_tiny_width_owns_an_authored_legend_edge(
     make_chart: Callable[..., Any],
     model_copy_at: Callable[[Any, str, Any], Any],
 ) -> None:
@@ -124,7 +132,6 @@ def test_tiny_width_owns_legend_position_when_endpoint_labels_are_disabled(
         y="value",
         color="series",
         style={
-            "endpoint_labels": {"visible": False},
             "legend": {"position": {"edge": "right"}, "direction": "vertical"},
         },
     )
@@ -158,7 +165,6 @@ def test_top_horizontal_legend_title_defaults_hidden_with_explicit_opt_in(
         y="value",
         color="series",
         style={
-            "endpoint_labels": {"visible": False},
             "legend": {
                 "position": {"edge": "top"},
                 "direction": "horizontal",
@@ -199,7 +205,6 @@ def test_top_horizontal_legend_preserves_board_level_title_opt_in(
         x="date",
         y="value",
         color="series",
-        style={"endpoint_labels": {"visible": False}},
     )
 
     resolved = resolve(chart, _multi_series_data(), board_style, width=700.0)

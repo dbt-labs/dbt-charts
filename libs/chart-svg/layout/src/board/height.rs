@@ -25,7 +25,7 @@ pub struct NaturalPlan {
     pub title: Option<TitleMetrics>,
 }
 
-pub type Natural<'a> = dyn FnMut(&Chart, f64) -> NaturalPlan + 'a;
+pub type Natural<'a> = dyn FnMut(&Chart, f64) -> Result<NaturalPlan, Diagnostic> + 'a;
 
 /// A board measured: its height, and what each drawn item needs. Heights are
 /// measured once; assignment reads them back, so the two cannot disagree.
@@ -90,13 +90,13 @@ struct Drawn<'a> {
 /// Measures `board` in `available` px of content width. `natural` is asked once
 /// for each drawn chart, at the width its box will have. Every `cols` row's
 /// title band is resolved before any height is, so each cell's height holds its
-/// own shift.
-pub fn measure(board: &Node, available: f64, card_gap: f64, natural: &mut Natural) -> Measured {
+/// own shift. A chart whose natural height cannot be found is that error.
+pub fn measure(board: &Node, available: f64, card_gap: f64, natural: &mut Natural) -> Result<Measured, Diagnostic> {
     let placed = item_widths(board, available, card_gap);
-    let mut measured = plan(board, available, &placed, natural);
+    let mut measured = plan(board, available, &placed, natural)?;
     shift_rows(board, &mut measured);
     finish(board, &mut measured, card_gap);
-    measured
+    Ok(measured)
 }
 
 /// The slots of `board`'s drawn items, each chart asked, no height folded yet.
@@ -105,16 +105,16 @@ fn plan(
     available: f64,
     placed: &[Option<Placed>],
     natural: &mut Natural,
-) -> Measured {
+) -> Result<Measured, Diagnostic> {
     let items: Vec<Option<Slot>> = board
         .items
         .iter()
         .zip(placed)
         .map(|(item, placed)| {
-            let placed = placed.as_ref()?;
+            let Some(placed) = placed.as_ref() else { return Ok(None) };
             let (content, title, nested) = match &item.content {
                 Content::Chart(chart) => {
-                    let plan = natural(chart, placed.width);
+                    let plan = natural(chart, placed.width)?;
                     (plan.height, plan.title, None)
                 }
                 Content::Board(Node {
@@ -130,29 +130,29 @@ fn plan(
                         .board
                         .as_deref()
                         .expect("item_widths places a nested board's items");
-                    let planned = plan(inner, placed.width - inner.chrome, inner_placed, natural);
+                    let planned = plan(inner, placed.width - inner.chrome, inner_placed, natural)?;
                     (0.0, None, Some(planned))
                 }
             };
-            Some(Slot {
+            Ok(Some(Slot {
                 width: placed.width,
                 content,
                 title,
                 shift: TitleShift::default(),
                 board: nested,
-            })
+            }))
         })
-        .collect();
+        .collect::<Result<_, Diagnostic>>()?;
     let cells = match board.kind {
         Kind::Grid { columns } => place_grid(columns, board, &items),
         _ => vec![None; items.len()],
     };
-    Measured {
+    Ok(Measured {
         height: 0.0,
         width: available,
         items,
         cells,
-    }
+    })
 }
 
 /// Gives every `cols` row's titled cells their shifts, inner boards first: a
@@ -426,16 +426,24 @@ fn grid_rows(items: &[Drawn], available: f64) -> (BTreeMap<usize, f64>, BTreeSet
     (rows, pinned)
 }
 
-/// Every drawn item's cell: explicit ones as authored, the rest flowed in order
-/// into the first free track at or after the last one placed, one track each.
+/// Every drawn item's cell (`_calculate_grid_dimensions`): an item with both a row
+/// and a column sits there; every other item, in order, takes the first position
+/// from the cursor on where all its tracks are free, a row ending where its span
+/// would pass the last column, and the cursor moves past it.
 fn place_grid(columns: usize, board: &Node, slots: &[Option<Slot>]) -> Vec<Option<Cell>> {
     assert!(columns > 0, "a grid has at least one column");
+    let spans = |item: &Item| item.place.map_or((1, 1), |p| (p.row_span, p.col_span));
     let mut taken = HashSet::new();
     let mut cells: Vec<Option<Cell>> = board
         .items
         .iter()
         .zip(slots)
-        .map(|(item, slot)| slot.as_ref().and(item.cell))
+        .map(|(item, slot)| {
+            slot.as_ref()?;
+            let place = item.place?;
+            let (row_span, col_span) = spans(item);
+            Some(Cell { row: place.row?, col: place.col?, row_span, col_span })
+        })
         .collect();
     for cell in cells.iter().flatten() {
         for row in cell.row..cell.row + cell.row_span {
@@ -443,25 +451,28 @@ fn place_grid(columns: usize, board: &Node, slots: &[Option<Slot>]) -> Vec<Optio
         }
     }
     let (mut row, mut col) = (0, 0);
-    for (cell, slot) in cells.iter_mut().zip(slots) {
+    for ((cell, slot), item) in cells.iter_mut().zip(slots).zip(&board.items) {
         if cell.is_some() || slot.is_none() {
             continue;
         }
-        while col >= columns || taken.contains(&(row, col)) {
-            if col >= columns {
+        let (row_span, col_span) = spans(item);
+        assert!(col_span <= columns, "a flowed item fits the grid's columns");
+        loop {
+            if col + col_span > columns {
                 (row, col) = (row + 1, 0);
-            } else {
-                col += 1;
+                continue;
             }
+            let free = (row..row + row_span).all(|r| (col..col + col_span).all(|c| !taken.contains(&(r, c))));
+            if free {
+                break;
+            }
+            col += 1;
         }
-        taken.insert((row, col));
-        *cell = Some(Cell {
-            row,
-            col,
-            row_span: 1,
-            col_span: 1,
-        });
-        col += 1;
+        for r in row..row + row_span {
+            taken.extend((col..col + col_span).map(|c| (r, c)));
+        }
+        *cell = Some(Cell { row, col, row_span, col_span });
+        col += col_span;
     }
     cells
 }

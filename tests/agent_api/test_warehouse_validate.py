@@ -126,6 +126,25 @@ class TestWarehouseValidateDuckDB:
         r = _validate(tmp_path, *_setup_duckdb_project(tmp_path, board_yml=broken))
         assert "ERR-WAREHOUSE-QUERY-INVALID" in {e.code for e in r.errors}
 
+    def test_unbound_chart_binds_the_warehouse_columns_by_position(self, tmp_path):
+        board = _HEALTHY_BOARD.replace("    x: id\n    y: revenue\n", "")
+        r = _validate(tmp_path, *_setup_duckdb_project(tmp_path, board_yml=board))
+        assert r.success is True
+        assert r.errors == []
+
+    def test_unbound_chart_with_a_column_count_outside_the_table_produces_err(
+        self, tmp_path
+    ):
+        """The query returns one column; a bar binds two or three."""
+        board = _HEALTHY_BOARD.replace(
+            "SELECT id, revenue FROM orders", "SELECT id FROM orders"
+        ).replace("    x: id\n    y: revenue\n", "")
+        r = _validate(tmp_path, *_setup_duckdb_project(tmp_path, board_yml=board))
+        assert r.success is False
+        err = next(e for e in r.errors if e.code == "ERR-CHART-CHANNELS-UNBOUND")
+        assert "my_chart" in err.message
+        assert "id" in err.message
+
     def test_chart_channel_absent_from_result_produces_err(self, tmp_path):
         """The query returns id + revenue; the chart asks for missing_col."""
         project, registry = _setup_duckdb_project(

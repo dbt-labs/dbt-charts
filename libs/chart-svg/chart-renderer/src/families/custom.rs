@@ -1796,7 +1796,7 @@ mod tests {
         );
         for name in ["circle", "cross", "diamond", "square", "star", "triangle", "wye", "plus", "times", "triangle2", "asterisk", "square2", "diamond2"] {
             let drawn = template_svg(&format!("<path d=\"{{{{ d3.symbol('{name}', 50) }}}}\"/>"));
-            let want = format!("<path d=\"{}\"/>", print::path_d(&crate::scene_path::scene_path(&d3rs::symbol::SymbolType::from_name(name).unwrap().draw(50.0))));
+            let want = format!("<path d=\"{}\"/>", print::path_d(&::layout::scene_path::scene_path(&d3rs::symbol::SymbolType::from_name(name).unwrap().draw(50.0))));
             assert!(drawn.contains(&want), "{name}: {drawn}");
         }
         for (name, first, len) in [

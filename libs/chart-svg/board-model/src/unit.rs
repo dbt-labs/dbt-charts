@@ -93,34 +93,48 @@ unit!(
     "Input should be greater than 0"
 );
 
-/// A number written as a float or an integer: a scale's `min`/`max`, which pydantic types
-/// `float | int` and so states as two arms.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Limit(f64);
+/// A number pydantic types as a union of `float` and `int`, which the schema states as two arms in
+/// the order the annotation writes them.
+macro_rules! float_or_int {
+    ($(#[$m:meta])* $name:ident, $first:ident, $second:ident) => {
+        $(#[$m])*
+        #[derive(Debug, Clone, Copy, PartialEq)]
+        pub struct $name(f64);
 
-impl Limit {
-    pub fn get(self) -> f64 {
-        self.0
-    }
+        impl $name {
+            pub fn get(self) -> f64 {
+                self.0
+            }
+        }
+
+        impl TryFrom<f64> for $name {
+            type Error = String;
+            fn try_from(v: f64) -> Result<Self, String> {
+                Ok(Self(v))
+            }
+        }
+
+        model_core::from_scalar!($name, f64);
+
+        impl model_core::Leaf for $name {
+            type Whole = $name;
+            type Authored = Option<$name>;
+            type Patch = Option<$name>;
+            const MERGE: model_core::Merge = model_core::Merge::Override;
+            const EXPR: model_core::TypeExpr = model_core::TypeExpr::Either(
+                &model_core::TypeExpr::Scalar(model_core::Scalar::$first),
+                &model_core::TypeExpr::Scalar(model_core::Scalar::$second),
+            );
+        }
+        model_core::build_leaf!($name);
+    };
 }
 
-impl TryFrom<f64> for Limit {
-    type Error = String;
-    fn try_from(v: f64) -> Result<Self, String> {
-        Ok(Self(v))
-    }
-}
-
-model_core::from_scalar!(Limit, f64);
-
-impl model_core::Leaf for Limit {
-    type Whole = Limit;
-    type Authored = Option<Limit>;
-    type Patch = Option<Limit>;
-    const MERGE: model_core::Merge = model_core::Merge::Override;
-    const EXPR: model_core::TypeExpr = model_core::TypeExpr::Either(
-        &model_core::TypeExpr::Scalar(model_core::Scalar::Float),
-        &model_core::TypeExpr::Scalar(model_core::Scalar::Int),
-    );
-}
-model_core::build_leaf!(Limit);
+float_or_int!(
+    /// A scale's `min`/`max`, typed `float | int`.
+    Limit, Float, Int
+);
+float_or_int!(
+    /// A chart size or a rule's threshold, typed `int | float`.
+    Number, Int, Float
+);

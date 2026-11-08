@@ -8,6 +8,9 @@ slot consumption, and multi-series skip are all pinned here.
 from __future__ import annotations
 
 from dbt_charts.core.compile import compile as compile_yaml
+from dbt_charts.core.compile.normalize.single_series_allocation import (
+    single_series_slots,
+)
 from dbt_charts.core.compile.resolve import resolve
 
 
@@ -106,7 +109,7 @@ def test_scatter_and_circle_eligible_for_rhythm():
     from dbt_charts.core.compile.models.query.normalized import SqlQuery
     from dbt_charts.core.compile.normalize.single_series_allocation import (
         SINGLE_INK_CHART_TYPES,
-        _is_single_series_eligible,
+        is_single_series_eligible,
     )
 
     assert "circle" in SINGLE_INK_CHART_TYPES
@@ -118,7 +121,7 @@ def test_scatter_and_circle_eligible_for_rhythm():
     c = ScatterChart(
         id="scatter", type="scatter", query=q, query_name="q", x="x", y="y"
     )
-    assert _is_single_series_eligible(c) is True, "scatter should be eligible"
+    assert is_single_series_eligible(c) is True, "scatter should be eligible"
 
     # End-to-end: a scatter row mixed with bars cycles slots correctly.
     board = _compile(
@@ -141,14 +144,14 @@ def test_histogram_eligible_for_rhythm():
     from dbt_charts.core.compile.models.query.normalized import SqlQuery
     from dbt_charts.core.compile.normalize.single_series_allocation import (
         SINGLE_INK_CHART_TYPES,
-        _is_single_series_eligible,
+        is_single_series_eligible,
     )
 
     assert "histogram" in SINGLE_INK_CHART_TYPES
 
     q = SqlQuery(sql="SELECT 1", source="test")
     c = BarChart(id="hist", type="histogram", query=q, query_name="q", x="x")
-    assert _is_single_series_eligible(c) is True, "histogram should be eligible"
+    assert is_single_series_eligible(c) is True, "histogram should be eligible"
 
 
 def test_histogram_shifts_downstream_chart_slot():
@@ -377,3 +380,22 @@ rows:
         item.board for item in board.layout.items if item.type == "board" and item.board
     )
     assert _slots(nested) == [1, 2]
+
+
+def test_a_chart_placed_twice_ends_with_its_last_placements_slot() -> None:
+    board = _compile(
+        """\
+queries:
+  q: {sql: 'SELECT 1 AS month, 1 AS revenue', source: duckdb}
+charts:
+  a: {type: bar, query: q, x: month, y: revenue}
+  b: {type: bar, query: q, x: month, y: revenue}
+rows:
+  - a
+  - b
+  - a
+"""
+    )
+    slots = single_series_slots(board)
+    assert {cid: slots[id(c)] for cid, c in board.charts.items()} == {"a": 2, "b": 1}
+    assert {cid: c.rhythm_slot for cid, c in board.charts.items()} == {"a": 2, "b": 1}

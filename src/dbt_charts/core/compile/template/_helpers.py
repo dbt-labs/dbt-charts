@@ -6,10 +6,13 @@ this module is the single canonical home. Consumers import from here.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
-from jinja2 import TemplateSyntaxError, Undefined
+from jinja2 import Environment, TemplateSyntaxError, Undefined, meta
 from jinja2.exceptions import TemplateError
+
+from dbt_charts.core.diagnostics.hints import backticked_list, suggest_close_variable
 
 
 def template_error_location(template: str, exc: TemplateError) -> str:
@@ -25,6 +28,26 @@ def template_error_location(template: str, exc: TemplateError) -> str:
     # Jinja counts only \n, \r\n and \r; str.splitlines() also splits on \x0c etc.
     lines = template.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     return f" (template line {lineno}: {lines[lineno - 1].strip()})"
+
+
+def undefined_variable_advice(
+    env: Environment,
+    template: str,
+    context: Mapping[str, Any],  # type-state: explicit_any — the Jinja render context
+) -> str:
+    """The names the render context defines, and the close one for each name the
+    template reads that it does not; "" when every name read is defined (the
+    undefined thing was an attribute or key of one)."""
+    missing = sorted(meta.find_undeclared_variables(env.parse(template)) - set(context))
+    missing = [name for name in missing if name not in env.globals]
+    if not missing:
+        return ""
+    defined = sorted(name for name, value in context.items() if not callable(value))
+    advice = f" Variables defined here: {backticked_list(defined)}."
+    for name in missing:
+        if close := suggest_close_variable(name, defined):
+            advice += f" {close}"
+    return advice
 
 
 class _LenientUndefined(Undefined):

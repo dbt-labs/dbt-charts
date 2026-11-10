@@ -77,7 +77,7 @@ def _warning_codes(yaml_text: str) -> set[str]:
 
 
 def test_many_irregular_dates_on_a_narrow_chart_warn_on_collision() -> None:
-    codes = _warning_codes(_board(n_points=60, width=120))
+    codes = _warning_codes(_board(n_points=60, width=100))
     assert "WARN-AXIS-LABEL-COLLISION" in codes
 
 
@@ -86,7 +86,7 @@ def test_collision_message_reports_the_measured_label_count_not_the_row_count() 
     raw x values step to the year openers of their calendar span, halved by
     parity skipping to 11, before the fit-check measures them. The message
     must report that 11, not a recount of the 60 raw values."""
-    warnings = _render_warnings(_board(n_points=60, width=120))
+    warnings = _render_warnings(_board(n_points=60, width=100))
     collision = next(w for w in warnings if w.code == "WARN-AXIS-LABEL-COLLISION")
     assert "60 tick labels" not in collision.message
     assert "11 tick labels" in collision.message

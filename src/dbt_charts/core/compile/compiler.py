@@ -406,7 +406,7 @@ def compile_authored_board(
     # everywhere a locally-declared one would be — including
     # `validate_variable_references`, which is what makes an importer's
     # missing variable declaration a hard compile error for free.
-    cross_board_queries: dict[str, AnyQuery] = {}
+    cross_board_queries = ImportedQueries()
     try:
         chart_registry = build_chart_registry(
             authored,
@@ -1535,7 +1535,7 @@ def _process_queries_for_registry(
 def _process_charts_for_registry(
     board: AuthoredBoard,
     registry: dict[str, RegisteredChart],
-    cross_board_queries: dict[str, AnyQuery],
+    cross_board_queries: ImportedQueries,
     base_dir: ProjectDirectory | None = None,
     *,
     sources: dict[str, Any],
@@ -1594,9 +1594,9 @@ def _process_charts_for_registry(
 def build_query_registry(
     board: AuthoredBoard,
     base_dir: ProjectDirectory | None = None,
-    registry: dict[str, AnyQuery] | None = None,
     default_source: str | None = None,
     *,
+    registry: ImportedQueries,
     sources: dict[str, Any],
     cache_root: CachePatch | None = None,
     board_cache: CachePatch = INHERIT_CACHE,
@@ -1609,7 +1609,9 @@ def build_query_registry(
     Args:
         board: AuthoredBoard to process
         base_dir: ProjectDirectory anchor for the board file (used to resolve sub-file refs).
-        registry: Existing registry to add to
+        registry: The import pool; it seeds the registry, and its `origin` says
+            where each imported key was declared, so a root query named like one
+            is a duplicate.
         default_source: Default source to apply to queries without explicit source
         sources: Named source config dicts (project + board level).
         board_cache: The cache layer this board inherits from the boards it is
@@ -1630,13 +1632,13 @@ def build_query_registry(
         base_dir=base_dir,
         default_source=default_source,
         sources=sources,
-        declared_at={},
+        declared_at=dict(registry.origin),
     )
 
 
 def build_chart_registry(
     board: AuthoredBoard,
-    cross_board_queries: dict[str, AnyQuery],
+    cross_board_queries: ImportedQueries,
     base_dir: ProjectDirectory | None = None,
     registry: dict[str, RegisteredChart] | None = None,
     *,
@@ -1835,14 +1837,26 @@ _CROSS_BOARD_KEY_UNSAFE_RE = re.compile(r"[^0-9A-Za-z_]")
 _CROSS_BOARD_QUERY_PREFIX = "_ximport_"
 
 
+class ImportedQueries(dict[str, AnyQuery]):
+    """The pool imported charts' queries resolve into, keyed by
+    `_cross_board_query_key`. `origin` names the `file#name` that first took
+    each key, so a second import sanitizing to it is refused by name."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.origin: dict[str, str] = {}
+
+
 def _cross_board_query_key(file_relpath: str, name: str) -> str:
-    """Identifier-safe, collision-free key for a query pulled in by lexical
+    """Identifier-safe key for a query pulled in by lexical
     scoping from a cross-board chart import (see compile/AGENTS.md's
     "Cross-board chart imports scope queries lexically" invariant). Like
     `synthetic_query_name`, this is an internal pointer
     only — nothing parses it back — so it only needs to be unique and stable
     within one compile, and to never collide with a name a user would author
-    (the leading underscore + reserved token guarantee that).
+    (the leading underscore + reserved token guarantee that). Two imports can
+    sanitize to one key (`_c.yml#b`, `_c_yml#b`), so the key is unique only
+    because `_resolve_cross_board_query` refuses a clash.
     """
     file_token = _CROSS_BOARD_KEY_UNSAFE_RE.sub("_", file_relpath)
     return f"{_CROSS_BOARD_QUERY_PREFIX}{file_token}_{name}"
@@ -1895,7 +1909,7 @@ def _resolve_cross_board_query(
     file_dir: ProjectDirectory,
     file_relpath: str,
     queries_section: dict[str, YamlValue],
-    pool: dict[str, AnyQuery],
+    pool: ImportedQueries,
     key_cache: dict[tuple[str, str], str],
     resolving: set[tuple[str, str]],
     chart_ref: str,
@@ -1936,8 +1950,17 @@ def _resolve_cross_board_query(
             f"declared in {file_relpath}'s queries: section."
         )
 
-    resolving.add(cache_key)
     qualified_key = _cross_board_query_key(file_relpath, name)
+    site = f"{file_relpath}#{name}"
+    first = pool.origin.setdefault(qualified_key, site)
+    if first != site:
+        raise CompilationError.from_code(
+            ERR_DUPLICATE_QUERY_NAME,
+            name=qualified_key,
+            first=first,
+            second=site,
+        )
+    resolving.add(cache_key)
     key_cache[cache_key] = qualified_key
 
     raw_def: Any = queries_section[name]  # type-state: explicit_any — raw YAML
@@ -2024,7 +2047,7 @@ def _resolve_cross_board_query(
 def _load_chart_ref_with_lexical_queries(
     chart_ref: ChartRef,
     base_dir: ProjectDirectory | None,
-    cross_board_queries: dict[str, AnyQuery],
+    cross_board_queries: ImportedQueries,
     *,
     sources: dict[str, Any],
     cache_root: CachePatch | None,

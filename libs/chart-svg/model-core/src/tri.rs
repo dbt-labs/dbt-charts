@@ -32,6 +32,15 @@ pub enum Engine<T, R> {
     Value(T),
 }
 
+impl<T: crate::Spell, R: crate::Spell> crate::Spell for Engine<T, R> {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Engine::Rule(r) => r.spell(),
+            Engine::Value(v) => v.spell(),
+        }
+    }
+}
+
 impl<T, R> From<T> for Engine<T, R> {
     /// A value is the engine slot's own value.
     fn from(v: T) -> Self {

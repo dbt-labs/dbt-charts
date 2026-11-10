@@ -48,8 +48,7 @@ class TestTextRuleIsAuthorable:
         Enumerated from the theme directory rather than hand-listed, so a new
         theme is covered the day it lands.
         """
-        # `_base` is the base layer, not a standalone loadable theme.
-        for theme in (t for t in list_built_in_themes() if t != "_base"):
+        for theme in list_built_in_themes():
             color = resolve_style(get_theme_style(theme)).text.divider.color
             assert color and color.startswith("#"), (theme, color)
 

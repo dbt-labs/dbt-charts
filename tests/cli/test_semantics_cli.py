@@ -197,3 +197,9 @@ def test_search_with_no_match_says_so(project_dir: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Nothing matches 'zzzqqq'." in result.stdout
+
+
+def test_semantics_is_hidden_from_root_help() -> None:
+    result = runner.invoke(cli_main.app, ["--help"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0
+    assert "semantics" not in result.output

@@ -27,7 +27,7 @@ use crate::query::Query;
 use crate::rule::Auto;
 use crate::string_enum;
 use model_core::{
-    Build, Cx, Engine, FromNode, Leaf, Merge, Model, Node, ReadScalar, Scalar, TypeExpr,
+    Build, Cx, Engine, FromNode, Leaf, Merge, Model, Node, ReadScalar, Scalar, Spell, TypeExpr,
 };
 use model_derive::Model;
 use serde_json::{Number, Value};
@@ -86,6 +86,15 @@ impl ReadScalar for StaticOptions {
             ));
         }
         bad(cx)
+    }
+}
+
+impl Spell for StaticOptions {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Strings(s) => s.spell(),
+            Self::Numbers(n) => n.spell(),
+        }
     }
 }
 
@@ -149,6 +158,15 @@ impl ReadScalar for OptionsQuery {
     }
 }
 
+impl Spell for OptionsQuery {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Name(n) => n.spell(),
+            Self::Sql(s) => s.spell(),
+        }
+    }
+}
+
 impl FromNode for OptionsQuery {
     fn authored(node: &Node, cx: &mut Cx) -> Self::Authored {
         Self::read(node, cx)
@@ -186,6 +204,15 @@ impl ReadScalar for VariableQuery {
         match &node.kind {
             Kind::Map(_) => <Query as FromNode>::whole(node, cx).map(|q| Self::Inline(Box::new(q))),
             _ => QueryName::read(node, cx).map(Self::Name),
+        }
+    }
+}
+
+impl Spell for VariableQuery {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Name(n) => n.spell(),
+            Self::Inline(q) => q.spell(),
         }
     }
 }
@@ -257,6 +284,16 @@ impl ReadScalar for Enabled {
                     }
                 }
             }
+        }
+    }
+}
+
+impl Spell for Enabled {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Static(b) => b.spell(),
+            Self::Expression(e) => e.spell(),
+            Self::Probe(p) => serde_json::json!({ "query": p.query, "column": p.column }),
         }
     }
 }
@@ -333,6 +370,19 @@ impl ReadScalar for DefaultValue {
     }
 }
 
+impl Spell for DefaultValue {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Null => Value::Null,
+            Self::Bool(b) => b.spell(),
+            Self::Number(n) => Value::Number(n.clone()),
+            Self::Text(s) | Self::Date(s) | Self::DateTime(s) => s.spell(),
+            Self::List(items) => items.spell(),
+            Self::Map(m) => m.clone(),
+        }
+    }
+}
+
 impl FromNode for DefaultValue {
     fn authored(node: &Node, cx: &mut Cx) -> Self::Authored {
         Self::read(node, cx)
@@ -389,6 +439,7 @@ pub struct Variable {
     pub column: Option<String>,
     /// Query name for populating options.
     #[model(absent = "no option query")]
+    #[model(arm_pattern)]
     pub query: Option<VariableQuery>,
     /// Dropdown values come from a query column, or (rarely) a written-out list.
     #[model(absent = "no options")]

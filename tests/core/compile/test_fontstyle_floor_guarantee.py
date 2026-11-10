@@ -19,9 +19,7 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-# All named (non-infrastructure) themes.  _base is the abstract root — it has no
-# font.color and is never used directly at render time.
-_RENDERABLE_THEMES = [t for t in list_built_in_themes() if t != "_base"]
+_RENDERABLE_THEMES = list_built_in_themes()
 
 
 @pytest.mark.parametrize("theme_name", _RENDERABLE_THEMES)

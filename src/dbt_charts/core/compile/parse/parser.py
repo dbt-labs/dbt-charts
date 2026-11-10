@@ -300,6 +300,10 @@ def parse_mapping(
     """
     from pydantic import ValidationError as PydanticValidationError
 
+    from dbt_charts.core.compile.parse.yaml_error_formatter import (
+        format_validation_errors_structured,
+    )
+
     try:
         return AUTHORED_BOARD_ADAPTER.validate_python(
             parsed_data, context=MERGED_AUTHORED_INPUT if merged else AUTHORED_INPUT
@@ -311,7 +315,9 @@ def parse_mapping(
         # stringify this ParseError directly, so build the message from e.errors()
         # rather than str(e) -- the latter's header names the internal
         # BeforeValidator-wrapped adapter type, not AuthoredBoard.
-        error_summary = "; ".join(err["msg"] for err in e.errors())
+        error_summary = "; ".join(
+            d.message for d in format_validation_errors_structured(e, content)
+        )
         raise ParseError(f"Board schema validation failed: {error_summary}") from e
     except (TypeError, ValueError) as e:
         raise ParseError(f"Failed to parse board structure: {e}") from e

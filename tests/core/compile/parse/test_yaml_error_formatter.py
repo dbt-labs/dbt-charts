@@ -526,11 +526,9 @@ rows: []
         assert not result.success
         error = result.errors[0]
 
-        # The union member tag appears in the path — same shape as chart-family
-        # union errors (charts.c1.bar.<field>).
         assert (
             error.message
-            == "Unknown field 'timeout_ms' at queries.q1.sql. Full path: queries.q1.sql.timeout_ms."
+            == "Unknown field 'timeout_ms' at queries.q1. Full path: queries.q1.timeout_ms."
         )
         assert error.hint is not None
         assert "Allowed keys:" in error.hint
@@ -556,7 +554,7 @@ rows:
         assert len(result.errors) == 1
         error = result.errors[0]
 
-        assert error.message.startswith("Unknown field 'sq' at charts.c1.bar.query")
+        assert error.message.startswith("Unknown field 'sq' at charts.c1.query")
         assert "QueryRef" not in error.message
         assert "tagged-union" not in error.message
         assert error.hint is not None
@@ -590,7 +588,7 @@ rows:
 
         assert (
             error.message
-            == "Unknown field 'disable' at charts.c1.line.style.legend. Full path: charts.c1.line.style.legend.disable."
+            == "Unknown field 'disable' at charts.c1.style.legend. Full path: charts.c1.style.legend.disable."
         )
         assert error.hint is not None
         assert "Allowed keys:" in error.hint
@@ -1992,7 +1990,7 @@ class TestRequiredFieldListsTheBlocksFields:
     def test_missing_required_field_lists_accepted_fields(self) -> None:
         result = compile(_CHART_BOARD.format(extra="    sort:\n      order: asc"))
 
-        error = next(e for e in result.errors if e.path == "charts.rev.bar.sort.by")
+        error = next(e for e in result.errors if e.path == "charts.rev.sort.by")
         assert error.hint is not None
         assert "`by` is required at `charts.rev.sort`" in error.hint
         assert "Fields accepted there: by, order." in error.hint
@@ -2019,14 +2017,14 @@ class TestLayerPathsGetShallowPathAdvice:
     def test_unknown_layer_style_key_lists_the_layer_styles_keys(self) -> None:
         result = compile(_LAYER_BOARD.format(style="          color: red"))
 
-        error = next(e for e in result.errors if e.path.endswith("line.style.color"))
+        error = next(e for e in result.errors if e.path.endswith("style.color"))
         assert error.hint is not None
         assert "Allowed keys: " in error.hint
         assert "marks" in error.hint.split("Allowed keys: ")[1]
 
 
 def _color_hint(errors: list[Diagnostic]) -> str:
-    hint = next(e for e in errors if e.path == "charts.rev.bar.color").hint
+    hint = next(e for e in errors if e.path == "charts.rev.color").hint
     assert hint is not None
     return hint
 
@@ -2044,6 +2042,44 @@ class TestScalarTypeMismatchNamesWhatWasReceived:
 
         hint = _color_hint(result.errors)
         assert "received a list: ['a', 'b']" in hint
+
+    def test_null_where_string_expected_says_null(self) -> None:
+        result = compile(_CHART_BOARD.format(extra="    sort:\n      by: null"))
+
+        hint = next(e.hint for e in result.errors if e.path.endswith("sort.by"))
+        assert hint is not None
+        assert "received null" in hint
+        assert "None" not in hint
+
+
+class TestInlineLayerQueryInNestedSection:
+    def test_nested_section_reports_the_inner_error_with_its_full_path(self) -> None:
+        nested = """rows:
+  - title: Section
+    charts:
+      rev:
+        type: line
+        query: q
+        x: a
+        y: b
+        layers:
+          - type: scatter
+            query:
+              sql: SELECT 1 AS a, 2 AS b
+            x: a
+            y: b
+    rows: [rev]
+"""
+        result = compile(f"queries:\n  q:\n    sql: SELECT 1 AS a, 2 AS b\n{nested}")
+
+        assert len(result.errors) == 1
+        error = result.errors[0]
+        assert error.path == "rows.0.charts.rev.layers.0.query"
+        assert "Unable to extract tag" not in error.message
+        assert error.hint is not None
+        assert "received a mapping" in error.hint
+        assert "move the mapping under the board's `queries:`" in error.hint
+        assert "`query: <name>`" in error.hint
 
 
 class TestFontsKeyExplainsFontMapping:

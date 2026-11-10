@@ -72,6 +72,22 @@ class TestUnknownQueryCarriesCode:
             f"Expected ERR-UNKNOWN-QUERY but got {err.code!r}"
         )
 
+    def test_misspelled_query_gets_the_nearest_name_hint(self) -> None:
+        from dbt_charts.core.compile.compiler import compile
+
+        result = compile(
+            _MISSING_QUERY_YAML.replace(
+                "charts:",
+                "queries:\n  missing_sale:\n    sql: SELECT 1 AS date, 2 AS revenue\n    source: test\ncharts:",
+                1,
+            )
+        )
+
+        err = result.errors[0]
+        assert err.code == "ERR-UNKNOWN-QUERY"
+        assert err.hint == "Did you mean 'missing_sale'?"
+        assert "Available queries: missing_sale." in err.message
+
 
 class TestExtraFieldCarriesCode:
     """Pydantic extra_forbidden field in style.charts → ParseError with ERR-EXTRA-FIELD."""

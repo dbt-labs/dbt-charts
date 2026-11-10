@@ -26,6 +26,7 @@ from dbt_charts.core.column_types import (
 from dbt_charts.core.compile.models.source import SnowflakeSourceConfig
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.dialects import SQLDialect
+from dbt_charts.core.dialects.identifier import result_column_name
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
 if TYPE_CHECKING:
@@ -200,7 +201,9 @@ class SnowparkBackend:
         # Streamed and cut off at the fetch limit, so the SQL text is never
         # rewritten (DataFrame.limit() would wrap it in a subquery).
         frame = self._session.sql(query.inline("snowflake"))
-        columns = [_raw_name(name).lower() for name in frame.columns]
+        columns = [
+            result_column_name(_raw_name(name), "snowflake") for name in frame.columns
+        ]
         types = [
             _snowpark_column_type(name, field.datatype)
             for name, field in zip(columns, frame.schema.fields, strict=True)

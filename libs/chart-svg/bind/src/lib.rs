@@ -24,11 +24,13 @@ pub mod legend;
 pub mod model;
 pub mod multiples;
 pub mod pattern;
+pub mod pie;
 pub mod plot;
 pub mod rows;
 pub mod run;
 pub mod stack;
 pub mod style;
+pub mod table;
 pub mod table_dates;
 pub mod temporal;
 pub mod time_axis;
@@ -272,7 +274,7 @@ pub fn query_id(chart: &Chart) -> Result<Option<&QueryId>, Diagnostic> {
 
 /// Only an authored `color:` channel names a category, and only on the families
 /// whose marks paint from a board scale (a histogram's do not).
-fn color_field(chart: &Chart) -> Option<&str> {
+pub(crate) fn color_field(chart: &Chart) -> Option<&str> {
     let color: &Option<ColorColumn> = match chart {
         Chart::Bar(c) => &c.cartesian.color,
         Chart::Line(c) => &c.cartesian.color,

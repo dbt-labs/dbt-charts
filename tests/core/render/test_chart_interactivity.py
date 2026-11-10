@@ -26,8 +26,20 @@ def test_the_source_is_static_and_carries_no_placeholders() -> None:
 
     assert "__DCT_" not in source
     assert "<script" not in source
-    assert "readBoardConfig" in source
+    assert "useBoard" in source
     assert "window.dbtChartHover" in source
+
+
+def test_the_source_is_safe_inside_an_inline_script_tag() -> None:
+    """The Markdown extension ships the source between <script> tags; an HTML
+    parser ends the element at the first "</script" and changes mode at "<!--",
+    whatever the JS around them means."""
+    from dbt_charts.core.render.chart_interactivity import hover_runtime_source
+
+    source = hover_runtime_source().lower()
+
+    assert "</script" not in source
+    assert "<!--" not in source
 
 
 def test_the_board_root_publishes_the_theme_facts() -> None:

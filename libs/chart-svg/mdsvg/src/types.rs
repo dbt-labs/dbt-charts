@@ -191,5 +191,48 @@ pub fn contains_raw_html(blocks: &[AnyBlock]) -> bool {
     })
 }
 
+/// `markdown_blocks.image_urls`: every image destination, standalone or inline, in document order.
+pub fn image_urls(blocks: &[AnyBlock]) -> Vec<&str> {
+    fn run<'a>(spans: &'a [Span], out: &mut Vec<&'a str>) {
+        out.extend(
+            spans
+                .iter()
+                .filter(|s| s.span_type == SpanType::Image)
+                .filter_map(|s| s.url.as_deref()),
+        );
+    }
+    fn items<'a>(items: &'a [ListItem], out: &mut Vec<&'a str>) {
+        for i in items {
+            run(&i.spans, out);
+            walk(&i.children, out);
+        }
+    }
+    fn walk<'a>(blocks: &'a [AnyBlock], out: &mut Vec<&'a str>) {
+        for block in blocks {
+            match block {
+                AnyBlock::ImageBlock(i) => out.push(&i.url),
+                AnyBlock::Paragraph(p) => run(&p.spans, out),
+                AnyBlock::Heading(h) => run(&h.spans, out),
+                AnyBlock::Blockquote(q) => walk(&q.blocks, out),
+                AnyBlock::UnorderedList(l) => items(&l.items, out),
+                AnyBlock::OrderedList(l) => items(&l.items, out),
+                AnyBlock::Table(t) => {
+                    for row in std::iter::once(&t.header).chain(&t.rows) {
+                        for cell in &row.cells {
+                            run(&cell.spans, out);
+                        }
+                    }
+                }
+                AnyBlock::CodeBlock(_)
+                | AnyBlock::HorizontalRule(_)
+                | AnyBlock::RawHtmlBlock(_) => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(blocks, &mut out);
+    out
+}
+
 /// Type alias for the AST: a list of blocks.
 pub type Document = Vec<AnyBlock>;

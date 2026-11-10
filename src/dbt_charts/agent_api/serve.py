@@ -60,24 +60,16 @@ def prepare_serve(
     uncaught; the CLI's own `try/except` around this call handles that,
     unchanged from before this function existed.
     """
-    from dbt_charts.core.compile.config import list_built_in_themes, load_config
-    from dbt_charts.core.diagnostics import ERR_INVALID_DEFAULT_THEME
+    from dbt_charts.core.compile.config import get_default_theme_name, load_config
     from dbt_charts.core.serve.port import resolve_port
     from dbt_charts.core.serve.server import create_server
     from dbt_charts.core.serve.shutdown import build_server
 
-    env_theme = os.environ.get("DCT_DEFAULT_THEME")  # noqa: TID251 — DCT_DEFAULT_THEME knob
-    # Empty string is treated as unset (matches get_default_theme_name, which
-    # falls back to the shipped default) — only a non-empty unknown name errors.
-    if env_theme:
-        available = list_built_in_themes()
-        if env_theme not in available:
-            return DbtChartsError.from_code(
-                ERR_INVALID_DEFAULT_THEME,
-                source="DCT_DEFAULT_THEME env var",
-                theme=env_theme,
-                available=available,
-            ).to_diagnostic()
+    # Surface a bad DCT_DEFAULT_THEME before the server binds.
+    try:
+        get_default_theme_name()
+    except DbtChartsError as exc:
+        return exc.to_diagnostic()
 
     # Validate dbt_charts.yml wholesale: stray keys (style:, board:, theme:, etc.) are a
     # hard error here at startup rather than silently ignored.

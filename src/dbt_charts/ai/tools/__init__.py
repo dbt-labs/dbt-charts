@@ -89,7 +89,6 @@ def _handle_render(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, A
         as_link=parsed.as_link,
         server_port=ctx.server_port,
         max_rows_per_query=MODEL_MAX_ROWS_PER_QUERY,
-        restated_check=True,
     ).model_dump(mode="json", exclude_none=True)
 
 

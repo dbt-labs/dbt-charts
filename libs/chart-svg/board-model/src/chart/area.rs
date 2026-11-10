@@ -21,7 +21,7 @@ pub struct AreaChart {
     #[flatten]
     pub pattern: PatternChannelField,
     /// Appearance overrides for this chart alone.
-    #[model(nullable)]
+    #[model(fill = fill_style, nullable)]
     pub style: AreaChartStyle,
     /// Extra marks on one shared x, each with its own type. Not supported with a multi-measure `y:` list.
     #[model(fill = fill_empty, nullable)]

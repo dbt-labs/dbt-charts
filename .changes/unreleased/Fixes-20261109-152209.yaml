@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct import sigma lists a tile's tooltip columns, and the migrate skill carries them and the source's control placement into the board.
+time: 2026-11-09T15:22:09.894727-08:00

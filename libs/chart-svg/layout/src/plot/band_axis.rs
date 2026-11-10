@@ -7,6 +7,7 @@ use measure::shaped::{Font, FontBook};
 use scene::{Bounds, Transform};
 
 use crate::geom::Insets;
+use crate::plot::label::{tilted_anchor, vega_space, Align, Baseline};
 
 /// How an axis's labels may resolve crowding, as the axis style sets it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -113,23 +114,9 @@ pub struct BandLabels<'a> {
     pub offset: f64,
 }
 
-/// Where a label's anchor sits along its text and across it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Align {
-    Left,
-    Center,
-    Right,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Baseline {
-    Top,
-    Middle,
-    Bottom,
-}
-
 /// A drawn label: its text, its anchor in plot coordinates (the axis line at
-/// `y = 0`), how the text sits on the anchor, and its ink.
+/// `y = 0`), how the text sits on the anchor, its ink, and the room production
+/// reserves for it ([`vega_space`]), which the gutter reads.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlacedLabel {
     pub text: String,
@@ -139,6 +126,7 @@ pub struct PlacedLabel {
     pub align: Align,
     pub baseline: Baseline,
     pub ink: Bounds,
+    pub space: Bounds,
 }
 
 /// The labels placed for one plot width, and how far their ink reaches past the plot.
@@ -154,7 +142,9 @@ pub struct Placement {
 pub struct BandAxis {
     tilt: Tilt,
     offset: f64,
-    drawn: Vec<(String, f64)>,
+    /// Each label's drawn text, its advance, and its full advance capped at the limit.
+    drawn: Vec<(String, f64, f64)>,
+    font_size: f64,
     ascent: f64,
     descent: f64,
 }
@@ -176,12 +166,14 @@ impl BandAxis {
             let run = book.run(&cut, &labels.font)?;
             ascent = ascent.max(run.ascent);
             descent = descent.max(run.descent);
-            drawn.push((cut, run.advance));
+            let full = book.run(text, &labels.font)?.advance.min(labels.limit);
+            drawn.push((cut, run.advance, full));
         }
         Ok(Self {
             tilt,
             offset: labels.offset,
             drawn,
+            font_size: labels.font.size,
             ascent,
             descent,
         })
@@ -201,7 +193,9 @@ impl BandAxis {
     /// The labels on a plot `plot_width` wide: each anchored `offset` below its
     /// band's center, aligned as Vega-Lite aligns a label at its angle, and
     /// inked as a box of its advance by the face's ascent plus descent (quirk
-    /// class Q2d) turned about the anchor.
+    /// class Q2d) turned about the anchor. The gutter is the room production
+    /// reserves: the full advance capped at the limit by Vega's line, turned
+    /// as production turns it.
     pub fn place(&self, geometry: &BandGeometry, plot_width: f64) -> Placement {
         let scale = Band::new(
             self.drawn.len(),
@@ -211,7 +205,7 @@ impl BandAxis {
             geometry.align,
             geometry.round,
         );
-        let (align, baseline) = anchor(self.tilt.angle);
+        let (align, baseline) = tilted_anchor(self.tilt.angle);
         let height = self.ascent + self.descent;
         let turn = Transform::Rotate {
             deg: self.tilt.angle,
@@ -222,13 +216,15 @@ impl BandAxis {
             .drawn
             .iter()
             .enumerate()
-            .map(|(i, (text, width))| {
+            .map(|(i, (text, width, full))| {
                 let x = scale.position(i) + scale.bandwidth / 2.0;
-                let (x1, x2) = match align {
-                    Align::Left => (0.0, *width),
+                let across = |width: f64| match align {
+                    Align::Left => (0.0, width),
                     Align::Center => (-width / 2.0, width / 2.0),
                     Align::Right => (-width, 0.0),
                 };
+                let (x1, x2) = across(*width);
+                let (s1, s2) = across(*full);
                 let (y1, y2) = match baseline {
                     Baseline::Top => (0.0, height),
                     Baseline::Middle => (-height / 2.0, height / 2.0),
@@ -249,37 +245,23 @@ impl BandAxis {
                     align,
                     baseline,
                     ink,
+                    space: vega_space(
+                        (x + s1, x + s2),
+                        (x, self.offset),
+                        baseline,
+                        self.font_size,
+                        1,
+                        self.tilt.angle,
+                    ),
                 }
             })
             .collect();
         let gutter = labels.iter().fold(Insets::ZERO, |g, l| Insets {
             top: 0.0,
-            right: g.right.max(l.ink.x2 - plot_width),
-            bottom: g.bottom.max(l.ink.y2),
-            left: g.left.max(-l.ink.x1),
+            right: g.right.max(l.space.x2 - plot_width),
+            bottom: g.bottom.max(l.space.y2),
+            left: g.left.max(-l.space.x1),
         });
         Placement { labels, gutter }
     }
-}
-
-/// Vega-Lite's default label anchor on a bottom axis for an angle: centered and
-/// hanging at 0° and 180°, else the text's start or end on the anchor by which
-/// half-turn the angle is in, its middle on the anchor within 45° of vertical.
-fn anchor(angle: f64) -> (Align, Baseline) {
-    let angle = angle.rem_euclid(360.0);
-    let align = if angle % 180.0 == 0.0 {
-        Align::Center
-    } else if 0.0 < angle && angle < 180.0 {
-        Align::Left
-    } else {
-        Align::Right
-    };
-    let baseline = if (45.0 < angle && angle < 135.0) || (225.0 < angle && angle < 315.0) {
-        Baseline::Middle
-    } else if angle <= 45.0 || 315.0 <= angle {
-        Baseline::Top
-    } else {
-        Baseline::Bottom
-    };
-    (align, baseline)
 }

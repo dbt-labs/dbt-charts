@@ -199,7 +199,7 @@ AXIS_GRID_BOARDS = {
           gap: 4
 rows:
   - c1""",
-        "charts.c1.line.style.axis_x.grid.gap",
+        "charts.c1.style.axis_x.grid.gap",
     ),
     "layer axis": (
         """charts:
@@ -216,7 +216,7 @@ rows:
             gap: 4
 rows:
   - c1""",
-        "charts.c1.line.layers.0.line.axis_y.grid.gap",
+        "charts.c1.layers.0.axis_y.grid.gap",
     ),
     "inline chart in rows": (
         """rows:
@@ -230,7 +230,7 @@ rows:
         axis_y:
           grid:
             gap: 4""",
-        "rows.0.line.layers.0.line.axis_y.grid.gap",
+        "rows.0.layers.0.axis_y.grid.gap",
     ),
 }
 

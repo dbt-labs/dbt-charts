@@ -76,9 +76,8 @@ def load_macro_manifest(adapter_type: str) -> MacroManifest:
             raise DbtMacroLoaderError(
                 f"dbt {package_name} macros not found at {macros_dir}. "
                 f"This usually means the dbt-core or dbt-{adapter_type} "
-                f"package layout changed; run the smoke test in "
-                f"test_dbt_macro_loader.py to see what dbt-core version "
-                f"this code was last validated against."
+                f"package layout changed; reinstall dbt-core and "
+                f"dbt-{adapter_type}."
             )
         # MacroParser only reads project_root / project_name / macro_paths off
         # the project arg, so a SimpleNamespace duck-type is sufficient.

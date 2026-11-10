@@ -62,8 +62,6 @@ Jinja helpers in query SQL:
 - `filter(column: str, value: Any, operator: str = '=', none: str = 'allow')`: Filter clause `{{ filter('col', var) }}`; when the variable is All or unset it is no constraint, so never wrap it in `{% if %}`. A date value compares the column by its calendar date, so pass a timestamp column bare (no DATE() or wrapping subquery). `none`: Fallback when value is null/empty/_NullValue. 'allow' (default) returns '1=1' (no constraint, show all rows). 'deny' returns '1=0' (zero rows).
 - `filter_date_range(column: str, date_range: Any, is_naive_utc: bool = False)`: Date range filter `{{ filter_date_range('col', range_var) }}`. The column may be a date or a timestamp and compares by its calendar date, so pass it bare (no DATE(), CAST or wrapping subquery). The range may be a preset name literal such as 'last_30_days'. Pass `is_naive_utc=true` only for a naive timestamp column that stores UTC, to compare by its date in the board's `regional.time_zone`. `date_range`: `[start, end]` dates, or a preset name
 
-A source with `metricflow:` carries a semantic bundle: its queries aggregate with `AGG()`, follow `relationship.attribute` paths instead of joins and read constellations as tables. Read the semantic-query skill before writing one.
-
 ## Charts
 
 `charts.<name>`:

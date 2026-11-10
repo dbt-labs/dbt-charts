@@ -10,7 +10,7 @@ import urllib.request
 from collections.abc import Callable
 from email.message import Message
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -48,7 +48,9 @@ def _body(request: urllib.request.Request) -> dict[str, Any]:
 
 def _plan(request: urllib.request.Request) -> bytes:
     body = _body(request)
-    assert body["planOnly"] is True
+    if "planOnly" not in body:
+        assert body["resultType"] == "csv"
+        return _fixture("kpi_1.csv")
     first_field = body["query"]["fields"][0]
     return _fixture(
         "plan_1.ndjson" if first_field == "orders.total_revenue" else "plan_2.ndjson"
@@ -61,7 +63,6 @@ def _routes(export: bytes) -> dict[tuple[str, str], Handler]:
         ("GET", f"/unstable/documents/{DOC}/export"): lambda r: export,
         ("GET", f"/v1/documents/{DOC}/queries"): lambda r: _fixture("queries.json"),
         ("POST", "/v1/query/run"): _plan,
-        ("POST", f"/v1/documents/{DOC}/queries/1/run"): lambda r: _fixture("kpi_1.csv"),
         ("POST", f"/v1/dashboards/{DOC}/download"): lambda r: b'{"job_id": "j1"}',
         ("GET", f"/v1/dashboards/{DOC}/download/j1/status"): lambda r: next(polls),
         ("GET", f"/v1/dashboards/{DOC}/download/j1"): lambda r: b"\x89PNG-bytes",
@@ -370,7 +371,10 @@ def test_a_kpi_whose_value_run_fails_is_kept_without_a_values_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     routes = _routes(_fixture("export.json"))
-    routes[("POST", f"/v1/documents/{DOC}/queries/1/run")] = _fail_with(408)
+    plan = routes[("POST", "/v1/query/run")]
+    routes[("POST", "/v1/query/run")] = lambda r: (
+        plan(r) if "planOnly" in _body(r) else _fail_with(408)(r)
+    )
     _install(monkeypatch, routes)
 
     import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
@@ -931,3 +935,233 @@ def test_unrecognized_step_shape_fails_naming_the_tile(
 ) -> None:
     with pytest.raises(BundleError, match=r"tile `\d+`.*two-step"):
         _import_with_sql(monkeypatch, tmp_path, sql)
+
+
+def _kpi_routes(
+    markdown_config: list[dict[str, Any]],
+    csv_body: bytes,
+    query_extra: dict[str, Any] | None = None,
+) -> dict[tuple[str, str], Handler]:
+    export = json.loads(_fixture("export.json"))
+    memberships = export["dashboard"]["queryPresentationCollection"][
+        "queryPresentationCollectionMemberships"
+    ]
+    memberships[0]["queryPresentation"]["visConfig"]["spec"] = {
+        "markdownConfig": markdown_config
+    }
+    queries = json.loads(_fixture("queries.json"))
+    queries["queries"][0]["query"]["fields"] = ["orders.total_revenue", "orders.count"]
+    queries["queries"][0]["query"].update(query_extra or {})
+    routes = _routes(json.dumps(export).encode())
+    routes[("GET", f"/v1/documents/{DOC}/queries")] = lambda r: json.dumps(
+        queries
+    ).encode()
+    routes[("POST", "/v1/query/run")] = lambda r: (
+        _plan(r) if "planOnly" in _body(r) else csv_body
+    )
+    return routes
+
+
+def _number(field: str, row: str = "_first") -> dict[str, Any]:
+    return {
+        "type": "number",
+        "config": {"field": {"row": row, "field": {"name": field}}},
+    }
+
+
+def _kpi_csv(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    markdown_config: list[dict[str, Any]],
+    body: bytes,
+    query_extra: dict[str, Any] | None = None,
+) -> list[str]:
+    _install(monkeypatch, _kpi_routes(markdown_config, body, query_extra))
+    import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+    return (tmp_path / "kpi/closed-won-1.csv").read_text().splitlines()
+
+
+_THREE_ROWS = b'Revenue,Orders\n"$1,110",17\n$20,"4,000"\n$7,9\n'
+
+
+def test_a_kpi_file_leads_with_the_headline_column_and_the_first_row(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lines = _kpi_csv(
+        monkeypatch,
+        tmp_path,
+        [{"type": "text"}, _number("orders.count")],
+        _THREE_ROWS,
+    )
+
+    assert lines == ["Orders,Revenue", '17,"$1,110"']
+
+
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [("_second", '"4,000",$20'), ("_last", "9,$7")],
+)
+def test_a_kpi_keeps_the_row_its_tile_displays(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, row: str, expected: str
+) -> None:
+    lines = _kpi_csv(monkeypatch, tmp_path, [_number("orders.count", row)], _THREE_ROWS)
+
+    assert lines == ["Orders,Revenue", expected]
+
+
+def test_a_totals_kpi_is_the_total_row_and_last_skips_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    body = b"Region,Revenue,Orders\nEMEA,$20,3\nAPAC,$7,9\n,$27,12\n"
+    extra = {
+        "fields": ["orders.region", "orders.total_revenue", "orders.count"],
+        "column_totals": {"::total::": {"type": "aggregation"}},
+    }
+    totals = _kpi_csv(
+        monkeypatch,
+        tmp_path / "t",
+        [_number("orders.count", "_totals.0")],
+        body,
+        extra,
+    )
+    last = _kpi_csv(
+        monkeypatch, tmp_path / "l", [_number("orders.count", "_last")], body, extra
+    )
+
+    assert totals == ["Orders,Region,Revenue", "12,,$27"]
+    assert last == ["Orders,Region,Revenue", "9,APAC,$7"]
+
+
+def test_a_totals_kpi_without_a_total_row_is_an_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install(
+        monkeypatch,
+        _kpi_routes([_number("orders.count", "_totals.0")], _THREE_ROWS),
+    )
+
+    with pytest.raises(BundleError, match=r"Closed Won.*_totals\.0"):
+        import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+
+
+def test_a_kpi_with_an_unknown_row_spec_is_an_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install(
+        monkeypatch,
+        _kpi_routes([_number("orders.count", "_median")], _THREE_ROWS),
+    )
+
+    with pytest.raises(BundleError, match=r"Closed Won.*'_median'"):
+        import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+
+
+def test_a_kpi_without_a_number_entry_keeps_the_first_row(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lines = _kpi_csv(monkeypatch, tmp_path, [{"type": "text"}], _THREE_ROWS)
+
+    assert lines == ["Revenue,Orders", '"$1,110",17']
+
+
+def test_a_kpi_headline_that_is_not_a_query_field_keeps_its_columns(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lines = _kpi_csv(
+        monkeypatch, tmp_path, [_number("measure_value", "_last")], _THREE_ROWS
+    )
+
+    assert lines == ["Revenue,Orders", "$7,9"]
+
+
+def test_a_pivoted_kpi_keeps_the_csv_as_omni_returned_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    body = b"Period,Now,Before\nWeek,Orders,Orders\n1,5,6\nTotal,5,6\n"
+    _install(
+        monkeypatch,
+        _kpi_routes(
+            [_number("orders.count", "_totals.0")], body, {"pivots": ["orders.region"]}
+        ),
+    )
+
+    import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+
+    assert (tmp_path / "kpi/closed-won-1.csv").read_bytes() == body
+
+
+def test_hidden_lines_skip_tiles_also_placed_on_a_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    export = json.loads(_fixture("export.json"))
+    export["dashboard"]["metadata"]["hiddenTiles"] = ["1", "3"]
+    _install(monkeypatch, _routes(json.dumps(export).encode()))
+
+    import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+
+    outline = (tmp_path / "outline.md").read_text()
+    assert "**hidden** `3`" in outline
+    assert "**hidden** `1`" not in outline
+
+
+def _filter_routes(
+    tile_filter_map: dict[str, dict[str, str | Literal[False]]],
+) -> tuple[dict[tuple[str, str], Handler], list[dict[str, Any]]]:
+    export = json.loads(_fixture("export.json"))
+    export["dashboard"]["metadata"]["tileFilterMap"] = tile_filter_map
+    routes = _routes(json.dumps(export).encode())
+    bodies: list[dict[str, Any]] = []
+    inner = routes[("POST", "/v1/query/run")]
+
+    def run(request: urllib.request.Request) -> bytes:
+        bodies.append(_body(request))
+        return inner(request)
+
+    routes[("POST", "/v1/query/run")] = run
+    return routes, bodies
+
+
+def test_dashboard_filter_defaults_replace_the_tiles_filters_before_plan_and_values(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    routes, bodies = _filter_routes(
+        {"1": {"f2": "orders.status", "f1": "orders.created_at[date]"}}
+    )
+    _install(monkeypatch, routes)
+
+    import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+
+    tile_1 = [
+        b["query"] for b in bodies if b["query"]["fields"] == ["orders.total_revenue"]
+    ]
+    assert len(tile_1) == 2
+    for sent in tile_1:
+        assert sent["filters"]["orders.status"] == {
+            "kind": "EQUALS",
+            "type": "string",
+            "values": ["EMEA"],
+            "is_negative": False,
+        }
+        assert sent["filters"]["orders.created_at"]["left_side"] == "90 days ago"
+        assert "label" not in sent["filters"]["orders.created_at"]
+    assert [b.get("planOnly") for b in bodies if b["query"] in tile_1] == [True, None]
+    outline = (tmp_path / "outline.md").read_text()
+    assert "filter: orders.status EQUALS values=['EMEA']" in outline
+    assert "filter: orders.status EQUALS values=['Closed Won']" not in outline
+    assert "dashboard filter applied: Region = EQUALS values=['EMEA']" in outline
+    assert "dashboard filter applied: Order date = " in outline
+
+
+def test_a_dashboard_filter_without_a_default_leaves_the_tiles_filter_alone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    routes, bodies = _filter_routes({"1": {"f3": "orders.status"}})
+    _install(monkeypatch, routes)
+
+    import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+
+    sent = next(
+        b["query"] for b in bodies if b["query"]["fields"] == ["orders.total_revenue"]
+    )
+    assert sent["filters"]["orders.status"]["values"] == ["Closed Won"]
+    assert "dashboard filter applied" not in (tmp_path / "outline.md").read_text()

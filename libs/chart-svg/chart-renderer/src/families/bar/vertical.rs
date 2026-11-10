@@ -2201,13 +2201,25 @@ pub(crate) fn render_vertical_panel(
             if strip_ordered {
                 support_table_strip::skip_strip(&r.id, &mut strip_rows, strip_labeled(w)?.as_deref(), strip_style.row.padding.horizontal, val_on_right.then_some(w + ax_y.labels.padding.unwrap_or(6.0)));
             }
-            if !val_on_right {
+            if val_on_right {
+                support_table_strip::clear_right_stubs(&mut strip_rows, w);
+            } else {
                 let reach = support_table_strip::composed_left_overhang(&strip_rows);
                 support_table_strip::clear_left_stubs(&mut strip_rows, reach);
             }
         Some((strip_rows, strip_h, strip_style))
             }
         };
+    let x_labels_drawn = facet.is_none() && ax_x.labels.visible.unwrap_or(true);
+    let strip_above = match shape {
+        Shape::RailConcat => rail_strip_cfg.is_some() && r.effective_support_table_style.as_ref().is_some_and(|style| style.position != "bottom"),
+        _ => composed.as_ref().is_some_and(|(_, _, strip_style)| strip_style.position != "bottom"),
+    };
+    let val_corners = crate::common::YEdges {
+        below: x_labels_drawn && x_edge == crate::common::XEdge::Bottom,
+        above: strip_above || (x_labels_drawn && x_edge == crate::common::XEdge::Top),
+        base: val_baseline,
+    };
     if time.is_some() && time_axis.is_some() && !r.annotations.is_empty() {
         return Err(annotations_unsupported(r, "time-axis bar"));
     }
@@ -2968,7 +2980,7 @@ pub(crate) fn render_vertical_panel(
                         } else {
                             (-(ax_off_y + val_tick_size + base_label_pad), "right")
                         };
-                        vega_fit::text_ink_rows(x, y, lw.min(val_limit), val_font_size, align, val_baseline, lines)
+                        vega_fit::text_ink_rows(x, y, lw.min(val_limit), val_font_size, align, val_corners.baseline(y, ph), lines)
                     })
                     .collect();
                 let visible = vega_fit::parity_visible(&label_ink, val_separation);
@@ -4932,7 +4944,6 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
     } else {
         (plot_left - ax_off_y + 0.5 - val_tick_size - base_label_pad, "end")
     };
-    let val_baseline_shift = measure::baseline_shift(val_baseline, val_font_size);
     let val_y_delta = 0.5;
     // One mark per rung, from the axis edge outward; label overlap thins the
     // labels, never the marks.
@@ -4996,7 +5007,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
         if tick_y < plot_top - 1.0 || tick_y > plot_bottom + 1.0 || val_visible.as_ref().is_some_and(|v| !v[i]) {
             continue;
         }
-        let abs_y = tick_y + val_baseline_shift;
+        let abs_y = tick_y + measure::baseline_shift(val_corners.baseline(linear.scale(tv), plot_bottom - plot_top), val_font_size);
         let label_y = if val_above {
             crate::common::above_label_y(&crate::common::thresholds(&val_rules), crate::common::tick_row(plot_top, linear.scale(tv)), ax_y.grid.width.unwrap_or(1.0), val_font_size)
         } else {

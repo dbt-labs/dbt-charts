@@ -11,7 +11,7 @@
 //! title) and what each chart needs come from [`Facts`].
 
 use bind::model::DrawnSet;
-use board_model::board::layout::{GridItem, Layout, LayoutItem, Placement};
+use board_model::board::layout::{GridItem, Layout, LayoutItem, Placement, TabItem, TabLayout};
 use board_model::board::value::Length;
 use board_model::board::{items, Board, BoardBody};
 use board_model::ids::{ChartId, ItemId};
@@ -21,7 +21,8 @@ use diagnostic::{diag, refuse, Diagnostic};
 use model_core::{Leaf, Tri};
 
 use crate::board::height::{boxes, measure, Boxed, NaturalPlan};
-use crate::board::tree::{Chart, Content, Dim, Item, Kind, Node, Place, Title};
+use crate::board::tree::{Chart, Content, Details, Dim, Item, Kind, Node, Place, Title};
+use crate::board::width::IntrinsicWidth as Width;
 use crate::board::width::{container_width, intrinsic, Frame, IntrinsicWidth};
 
 /// A body's effective style patch: the theme, its `extends:` and its own `style:`.
@@ -51,6 +52,12 @@ pub trait Facts {
     fn chart(&mut self, at: &ItemId, id: &ChartId) -> Result<Chart, Diagnostic>;
     /// A drawn chart's natural plan at a width.
     fn natural(&mut self, chart: &Chart, width: f64) -> Result<NaturalPlan, Diagnostic>;
+    /// The effective style patch tab `tab` of the tabs board `body` lays out with.
+    fn pane_style(&self, body: &BoardBody, tab: usize) -> Result<&StylePatch, Diagnostic>;
+    /// Where the pane of `body`'s tabs layout starts below its tab strip.
+    fn pane_top(&mut self, body: &BoardBody, tabs: &TabLayout) -> Result<f64, Diagnostic>;
+    /// The height of `body`'s details summary bar.
+    fn summary_height(&mut self, body: &BoardBody) -> Result<f64, Diagnostic>;
 }
 
 /// The tree's item ids beside its items, nested as the tree nests.
@@ -75,11 +82,15 @@ pub struct Placed {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+    /// Whether a board other than the root holds it.
+    pub nested: bool,
 }
 
 /// One board's drawn items in layout order, each in the box its layout gives it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LaidBoard {
+    /// Where the board that owns this layout sits (a tab pane's position is its tab's).
+    pub at: ItemId,
     pub kind: Kind,
     /// What separates one item's edge from the next: the board's gap and the card gap.
     pub pitch: f64,
@@ -149,11 +160,11 @@ pub fn lay_out(board: &Board, drawn: &DrawnSet, facts: &mut impl Facts) -> Resul
     let mut natural = |chart: &Chart, at: f64| facts.natural(chart, at);
     let measured = measure(&root, available, card_gap, &mut natural)?;
     let laid = boxes(&root, &measured, measured.height, card_gap);
-    let root = collect(&root, &ids, &laid.items, card_gap);
+    let root = collect(&root, &ItemId::root(), &ids, &laid.items, card_gap, false);
     Ok(Laid { width, height: measured.height, root, diagnostics: laid.diagnostics })
 }
 
-fn collect(node: &Node, ids: &Ids, boxes: &[Option<Boxed>], card_gap: f64) -> LaidBoard {
+fn collect(node: &Node, at: &ItemId, ids: &Ids, boxes: &[Option<Boxed>], card_gap: f64, nested: bool) -> LaidBoard {
     let mut items = Vec::new();
     for ((item, (id, held)), boxed) in node.items.iter().zip(&ids.items).zip(boxes) {
         let Some(boxed) = boxed else { continue };
@@ -165,6 +176,7 @@ fn collect(node: &Node, ids: &Ids, boxes: &[Option<Boxed>], card_gap: f64) -> La
                 y: boxed.y,
                 width: boxed.width,
                 height: boxed.height,
+                nested,
             })),
             (Content::Board(inner_node), Held::Board(inner_ids), Some(inner_boxes)) => {
                 items.push(LaidItem::Board(PlacedBoard {
@@ -173,13 +185,24 @@ fn collect(node: &Node, ids: &Ids, boxes: &[Option<Boxed>], card_gap: f64) -> La
                     y: boxed.y,
                     width: boxed.width,
                     height: boxed.height,
-                    layout: collect(inner_node, inner_ids, inner_boxes, card_gap),
+                    layout: collect(inner_node, id, inner_ids, inner_boxes, card_gap, true),
+                }))
+            }
+            // A collapsed details board is placed with nothing inside it: only its bar is drawn.
+            (Content::Board(inner_node), Held::Board(_), None) if inner_node.details.is_some_and(|d| d.collapsed) => {
+                items.push(LaidItem::Board(PlacedBoard {
+                    item: id.clone(),
+                    x: boxed.x,
+                    y: boxed.y,
+                    width: boxed.width,
+                    height: boxed.height,
+                    layout: LaidBoard { at: id.clone(), kind: inner_node.kind, pitch: inner_node.gap + card_gap, items: Vec::new() },
                 }))
             }
             _ => {}
         }
     }
-    LaidBoard { kind: node.kind, pitch: node.gap + card_gap, items }
+    LaidBoard { at: at.clone(), kind: node.kind, pitch: node.gap + card_gap, items }
 }
 
 /// `body` as a tree node: the root takes the page frame's minimum height and
@@ -193,14 +216,14 @@ fn node(
     drawn: &DrawnSet,
     facts: &mut impl Facts,
 ) -> Result<(Node, Ids), Diagnostic> {
-    if body.details.is_some() {
-        return Err(Diagnostic::refused(refuse!("laying out a details board is not supported")));
-    }
+    let details = match &body.details {
+        None => None,
+        Some(_) if root => return Err(Diagnostic::refused(refuse!("a details root board is not supported"))),
+        Some(_) => Some(Details { summary_height: facts.summary_height(body)?, collapsed: drawn.details_open(&body.id) != Some(true) }),
+    };
     let (kind, layout_gap) = match &body.layout {
-        Layout::Rows(_) => (Kind::Rows, geometry.rows_gap),
-        Layout::Cols(_) => (Kind::Cols, geometry.cols_gap),
-        Layout::Grid(g) => (Kind::Grid { columns: g.columns as usize }, geometry.grid_gap),
-        Layout::Tabs(_) => return Err(Diagnostic::refused(refuse!("laying out a tabs board is not supported"))),
+        Layout::Tabs(tabs) => (Kind::Tabs { pane_offset: 0.0, pane_top: facts.pane_top(body, tabs)?, rail: 0.0 }, geometry.rows_gap),
+        layout => kind_of(layout, geometry),
     };
     // `get_board_gap`: card gap owns the spacing when it is on.
     let hug_gap = if body.card_gap { 0.0 } else { layout_gap };
@@ -210,10 +233,26 @@ fn node(
     let own = facts.own(body, root)?;
     let mut node_items = Vec::new();
     let mut ids = Vec::new();
-    for placement in items(body, at) {
-        let (item, inner) = item(body, &placement, drawn, facts)?;
-        node_items.push(item);
-        ids.push((placement.id, inner));
+    // A collapsed details board draws its summary bar alone.
+    if details.is_none_or(|d| !d.collapsed) {
+        match &body.layout {
+            Layout::Tabs(tabs) => {
+                let open = drawn.active_tab(&body.id).ok_or_else(|| diag::err_internal(format!("no open tab for the tabs board {}", body.id)))?;
+                for (index, tab) in tabs.items.iter().enumerate() {
+                    let id = at.key("tabs").key("items").index(index);
+                    let (pane, inner) = pane(body, tab, index, (index == open).then(|| items(body, at).filter(|p| p.pane == [index]).collect::<Vec<_>>()), drawn, facts)?;
+                    node_items.push(Item { width: None, height: None, place: None, drawn: index == open, drawn_without_data: true, content: Content::Board(pane) });
+                    ids.push((id, Held::Board(inner)));
+                }
+            }
+            layout => {
+                for placement in items(body, at) {
+                    let (item, inner) = item(layout, &placement, drawn, facts)?;
+                    node_items.push(item);
+                    ids.push((placement.id, inner));
+                }
+            }
+        }
     }
     let node = Node {
         kind,
@@ -228,14 +267,70 @@ fn node(
         band: own.band,
         min_height,
         fill_height: !root,
+        details,
+    };
+    Ok((node, Ids { items: ids }))
+}
+
+fn kind_of(layout: &Layout, geometry: &BoardGeometry) -> (Kind, f64) {
+    match layout {
+        Layout::Rows(_) => (Kind::Rows, geometry.rows_gap),
+        Layout::Cols(_) => (Kind::Cols, geometry.cols_gap),
+        Layout::Grid(g) => (Kind::Grid { columns: g.columns as usize }, geometry.grid_gap),
+        Layout::Tabs(_) => unreachable!("a tabs layout is not a pane's layout: `pane` refuses it"),
+    }
+}
+
+/// One tab's pane: a nested board of the tab's own layout, in the tab's scope (`pane_style`), holding
+/// `placements` when it is the open tab. A tab with `text`, an icon or notes, and a
+/// tabs layout written inside a pane, are refused by name.
+fn pane(
+    body: &BoardBody,
+    tab: &TabItem,
+    index: usize,
+    placements: Option<Vec<Placement>>,
+    drawn: &DrawnSet,
+    facts: &mut impl Facts,
+) -> Result<(Node, Ids), Diagnostic> {
+    for (set, what) in [(tab.text.is_some(), "text"), (tab.icon.is_some(), "icon"), (tab.notes.is_some(), "notes")] {
+        if set {
+            return Err(Diagnostic::refused(refuse!("a tab with its own `{what}` is not supported")));
+        }
+    }
+    if matches!(tab.layout, Layout::Tabs(_)) {
+        return Err(Diagnostic::refused(refuse!("a tabs layout inside a tab is not supported")));
+    }
+    let geometry = board_geometry(facts.pane_style(body, index)?)?;
+    let (kind, layout_gap) = kind_of(&tab.layout, &geometry);
+    let (chrome, chrome_height, chrome_top) = geometry.chrome();
+    let mut node_items = Vec::new();
+    let mut ids = Vec::new();
+    for placement in placements.into_iter().flatten() {
+        let (item, inner) = item(&tab.layout, &placement, drawn, facts)?;
+        node_items.push(item);
+        ids.push((placement.id, inner));
+    }
+    let node = Node {
+        kind,
+        items: node_items,
+        hug_gap: if body.card_gap { 0.0 } else { layout_gap },
+        gap: geometry.gap.unwrap_or(0.0),
+        own: Width::NONE,
+        chrome,
+        chrome_height,
+        chrome_top,
+        title: Title::None,
+        band: 0.0,
+        min_height: 0.0,
+        fill_height: true,
         details: None,
     };
     Ok((node, Ids { items: ids }))
 }
 
-fn item(parent: &BoardBody, placement: &Placement, drawn: &DrawnSet, facts: &mut impl Facts) -> Result<(Item, Held), Diagnostic> {
+fn item(layout: &Layout, placement: &Placement, drawn: &DrawnSet, facts: &mut impl Facts) -> Result<(Item, Held), Diagnostic> {
     let is_drawn = !drawn.is_hidden(&placement.id);
-    let place = match (placement.cell, &parent.layout) {
+    let place = match (placement.cell, layout) {
         (Some(grid), Layout::Grid(layout)) => Some(grid_place(grid, layout.columns as usize)?),
         _ => None,
     };

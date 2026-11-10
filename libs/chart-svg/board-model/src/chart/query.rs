@@ -8,7 +8,7 @@
 
 use crate::ids::{QueryId, QueryRef};
 use crate::query::Query;
-use model_core::{Cx, FromNode, Leaf, Model, Node, ReadScalar, Scalar, TypeExpr};
+use model_core::{Cx, FromNode, Leaf, Model, Node, ReadScalar, Scalar, Spell, TypeExpr};
 use yaml::{Kind, Value};
 
 /// A chart's data link.
@@ -40,6 +40,17 @@ impl ReadScalar for ChartQuery {
     }
 }
 
+impl Spell for ChartQuery {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Self::Name(n) => n.as_str().into(),
+            Self::Inline(q) => q.spell(),
+            Self::Ref(r) => r.spell(),
+            Self::Hoisted(id) => id.to_string().into(),
+        }
+    }
+}
+
 union_leaf!(
     ChartQuery,
     TypeExpr::Either(
@@ -61,6 +72,15 @@ pub enum LayerQuery {
 impl ReadScalar for LayerQuery {
     fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
         String::read(node, cx).map(Self::Name)
+    }
+}
+
+impl Spell for LayerQuery {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Self::Name(n) => n.as_str().into(),
+            Self::Hoisted(id) => id.to_string().into(),
+        }
     }
 }
 

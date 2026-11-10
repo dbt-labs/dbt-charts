@@ -9807,6 +9807,7 @@ pub static OPAQUE_FONTS: [&str; 74] = ["text.code.font", "text.blockquote.font",
 pub fn expand(style: &mut crate::style::style::StylePatch) -> Result<(), Vec<::model_core::Refused>> {
     let mut refused = Vec::new();
     let names: Vec<String> = style.fonts.keys().cloned().collect();
+    let extended: Vec<(String, String)> = style.fonts.iter().filter_map(|(n, e)| match &e.extends { ::model_core::Tri::Value(from) => Some((n.clone(), from.clone())), _ => None }).collect();
     for _ in 0..=names.len() {
         for name in &names {
             let Some(::model_core::Tri::Value(from)) = style.fonts.get(name).map(|e| e.extends.clone()) else { continue };
@@ -9833,6 +9834,7 @@ pub fn expand(style: &mut crate::style::style::StylePatch) -> Result<(), Vec<::m
     if style.fonts.values().any(|e| matches!(e.extends, ::model_core::Tri::Value(_))) {
         refused.push(::model_core::Refused { at: "fonts", why: "Fonts extend in a cycle at style.fonts.".to_string() });
     }
+    crate::style::font::hook::registry(&style.fonts, &extended, &mut refused);
     let fonts = style.fonts.clone();
     let expand_0 = |style: &mut crate::style::style::StylePatch, refused: &mut Vec<::model_core::Refused>| {
         let named = if let ::model_core::Tri::Value(n) = &style.title.base.subtitle.font.extends { Some(n.clone()) } else { None };

@@ -24,7 +24,9 @@
 //!
 //! Dissolved validators: `_validate_incremental` is [`Incremental`]'s read;
 //! `SchemaQuery._no_jinja` is [`LiteralText`]; the schema query's `Requires` rules are
-//! `requires` constraints; `normalize_query_value` is the query union's tag inference
+//! `requires` constraints, as are the SQL query's `sql` and the values query's two shapes: one
+//! table, read by the JSON Schema and, over a folded query, by [`QueryAuthored::violation`];
+//! `normalize_query_value` is the query union's tag inference
 //! plus the board's `QueryOrRef` accept arm (bare SQL string, `{ref}`), not ported here.
 
 use crate::cache::CacheLayer;
@@ -32,7 +34,10 @@ use crate::facet::{facet, DisplayText, Facet, FormatName};
 use crate::names::WarningCode;
 use crate::string_enum;
 use indexmap::IndexMap;
-use model_core::{Cx, FromNode, Keywords, Leaf, Merge, Node, ReadScalar, Scalar, TypeExpr};
+use model_core::{
+    first_violation, Cx, FromNode, Keyed, Keywords, Leaf, Merge, Model as _, ModelInfo, Node,
+    ReadScalar, Scalar, Spell, State, Tri, TypeExpr, Unanswerable,
+};
 use model_derive::Model;
 use serde_json::Value;
 
@@ -73,6 +78,12 @@ pub struct Cell(pub Value);
 impl ReadScalar for Cell {
     fn read(node: &Node, _: &mut Cx) -> Option<Self> {
         Some(Self(node.to_json()))
+    }
+}
+
+impl Spell for Cell {
+    fn spell(&self) -> Value {
+        self.0.clone()
     }
 }
 
@@ -125,6 +136,15 @@ impl ReadScalar for Incremental {
     }
 }
 
+impl Spell for Incremental {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Off => false.into(),
+            Self::Column(c) => c.as_str().into(),
+        }
+    }
+}
+
 impl FromNode for Incremental {
     fn authored(node: &Node, cx: &mut Cx) -> Self::Authored {
         Self::read(node, cx)
@@ -173,6 +193,10 @@ pub struct QueryBase {
 
 /// Raw SQL query: the default query type.
 #[derive(Debug, Clone, PartialEq, Model)]
+#[model(constraint(requires(
+    sql,
+    message = "Query '{query}': SQL queries must have 'sql' field"
+)))]
 pub struct SqlQuery {
     #[flatten]
     pub base: QueryBase,
@@ -197,6 +221,12 @@ impl ReadScalar for Row {
             return None;
         };
         Some(Self(cells.into_iter().map(|(k, v)| (k, Cell(v))).collect()))
+    }
+}
+
+impl Spell for Row {
+    fn spell(&self) -> Value {
+        self.0.iter().map(|(k, c)| (k.clone(), c.spell())).collect()
     }
 }
 
@@ -226,11 +256,31 @@ model_core::build_leaf!(Row);
 // One constraint names one rule, so the same kind repeats.
 #[allow(clippy::duplicated_attributes)]
 #[model(
-    constraint(at_least_one_of(rows, values)),
-    constraint(at_most_one_of(rows, values)),
-    constraint(at_most_one_of(rows, columns)),
-    constraint(requires(columns, when(set(values)))),
-    constraint(requires(values, when(set(columns))))
+    constraint(at_least_one_of(
+        rows,
+        values,
+        message = "Query '{query}': give `rows`, or `columns` with `values`"
+    )),
+    constraint(at_most_one_of(
+        rows,
+        values,
+        message = "Query '{query}': `rows` and `values` both give the data; use one"
+    )),
+    constraint(at_most_one_of(
+        rows,
+        columns,
+        message = "Query '{query}': `columns` goes with `values`, not with `rows`"
+    )),
+    constraint(requires(
+        columns,
+        when(set(values)),
+        message = "Query '{query}': `values` needs `columns`"
+    )),
+    constraint(requires(
+        values,
+        when(set(columns)),
+        message = "Query '{query}': `columns` needs `values`"
+    ))
 )]
 pub struct ValuesQuery {
     #[flatten]
@@ -256,9 +306,21 @@ crate::style::axis::non_empty_list!(
 #[derive(Debug, Clone, PartialEq, Model)]
 #[allow(clippy::duplicated_attributes)]
 #[model(
-    constraint(requires(source, when(set(schema)))),
-    constraint(requires(schema, when(set(table)))),
-    constraint(requires(table, when(set(column))))
+    constraint(requires(
+        source,
+        when(set(schema)),
+        message = "Value error, schema: 'schema' requires 'source' to be set"
+    )),
+    constraint(requires(
+        schema,
+        when(set(table)),
+        message = "Value error, schema: 'table' requires 'schema' to be set"
+    )),
+    constraint(requires(
+        table,
+        when(set(column)),
+        message = "Value error, schema: 'column' requires 'table' (and 'schema') to be set"
+    ))
 )]
 pub struct SchemaQuery {
     #[flatten]
@@ -295,4 +357,100 @@ pub enum Query {
     Sql(SqlQuery),
     Values(ValuesQuery),
     Schema(SchemaQuery),
+}
+
+fn tri<T>(slot: &Tri<T>) -> State {
+    match slot {
+        Tri::Unset => State::Unset,
+        Tri::Null => State::Null,
+        Tri::Value(_) => State::Set,
+    }
+}
+
+fn written<T>(slot: &Option<T>) -> State {
+    if slot.is_some() {
+        State::Set
+    } else {
+        State::Unset
+    }
+}
+
+fn base_state(base: &QueryBaseAuthored, key: &str) -> Option<State> {
+    Some(match key {
+        "source" => tri(&base.source),
+        "notes" => tri(&base.notes),
+        "ignore" => tri(&base.ignore),
+        "cache" => tri(&base.cache),
+        "incremental" => tri(&base.incremental),
+        _ => return None,
+    })
+}
+
+impl Keyed for SqlQueryAuthored {
+    fn state(&self, key: &str) -> Option<State> {
+        Some(match key {
+            "sql" => written(&self.sql),
+            "setup_sql" => tri(&self.setup_sql),
+            "dialect" => tri(&self.dialect),
+            _ => return base_state(&self.base, key),
+        })
+    }
+}
+
+impl Keyed for ValuesQueryAuthored {
+    fn state(&self, key: &str) -> Option<State> {
+        Some(match key {
+            "rows" => written(&self.rows),
+            "columns" => tri(&self.columns),
+            "values" => tri(&self.values),
+            _ => return base_state(&self.base, key),
+        })
+    }
+}
+
+impl Keyed for SchemaQueryAuthored {
+    fn state(&self, key: &str) -> Option<State> {
+        Some(match key {
+            "schema" => tri(&self.schema),
+            "table" => tri(&self.table),
+            "column" => tri(&self.column),
+            "fields" => tri(&self.fields),
+            _ => return base_state(&self.base, key),
+        })
+    }
+}
+
+impl QueryAuthored {
+    /// The first rule of its type's declared constraints that this query breaks, as the message
+    /// the constraint carries with `{query}` filled by `name`. Python reads a query another file
+    /// declares through the normalized model alone, which gives a values query no rule, so
+    /// `authored` is false for it, and a `null` `columns` or `values` there reads as absent. In
+    /// the authored model neither is ever null.
+    pub fn violation(&self, name: &str, authored: bool) -> Result<Option<String>, Unanswerable> {
+        if let (true, Self::Values(q)) = (authored, self) {
+            for key in ["columns", "values"] {
+                if q.state(key) == Some(State::Null) {
+                    return Ok(Some(format!("Query '{name}': `{key}` is a list, not null")));
+                }
+            }
+        }
+        let (info, view): (&ModelInfo, &dyn Keyed) = match self {
+            Self::Sql(q) => (SqlQuery::info(), q),
+            Self::Values(_) if !authored => return Ok(None),
+            Self::Values(q) => (ValuesQuery::info(), q),
+            Self::Schema(q) => (SchemaQuery::info(), q),
+        };
+        Ok(first_violation(info.constraints, view)?.map(|c| {
+            c.message.map_or_else(
+                || {
+                    format!(
+                        "Query '{name}': breaks {:?}({})",
+                        c.kind,
+                        c.fields.join(", ")
+                    )
+                },
+                |m| m.replace("{query}", name),
+            )
+        }))
+    }
 }

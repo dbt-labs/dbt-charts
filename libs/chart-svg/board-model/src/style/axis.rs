@@ -30,7 +30,9 @@ use crate::string_enum;
 use crate::style::board::PaddingStyle;
 use crate::style::font::FontStyle;
 use crate::unit::Fraction;
-use model_core::{Cx, Engine, FromNode, Leaf, Merge, Node, ReadScalar, Scalar, Tri, TypeExpr};
+use model_core::{
+    Cx, Engine, FromNode, Leaf, Merge, Node, ReadScalar, Scalar, Spell, Tri, TypeExpr,
+};
 use model_derive::Model;
 use serde_json::Value;
 
@@ -152,6 +154,12 @@ macro_rules! non_empty_list {
             }
         }
 
+        impl model_core::Spell for $name {
+            fn spell(&self) -> model_core::serde_json::Value {
+                model_core::Spell::spell(&self.0)
+            }
+        }
+
         impl FromNode for $name {
             fn authored(node: &Node, cx: &mut Cx) -> Self::Authored {
                 Self::read(node, cx)
@@ -194,6 +202,14 @@ impl ReadScalar for SwitchOrPixels {
         f64::read(node, cx).map(Self::Pixels)
     }
 }
+impl Spell for SwitchOrPixels {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Switch(b) => b.spell(),
+            Self::Pixels(p) => p.spell(),
+        }
+    }
+}
 scalar_leaf!(
     SwitchOrPixels,
     TypeExpr::Either(
@@ -215,6 +231,11 @@ impl TickValue {
 impl ReadScalar for TickValue {
     fn read(node: &Node, _: &mut Cx) -> Option<Self> {
         Some(Self(node.to_json()))
+    }
+}
+impl Spell for TickValue {
+    fn spell(&self) -> Value {
+        self.0.clone()
     }
 }
 scalar_leaf!(TickValue, "tick_value", Json);
@@ -283,6 +304,15 @@ impl ReadScalar for ScaleDomain {
         }
     }
 }
+impl Spell for ScaleDomain {
+    fn spell(&self) -> Value {
+        let bound = |b: &DomainBound| match b {
+            DomainBound::Number(n) => n.spell(),
+            DomainBound::Text(t) => t.spell(),
+        };
+        Value::Array(vec![bound(&self.low), bound(&self.high)])
+    }
+}
 const DOMAIN_BOUND: TypeExpr = TypeExpr::Either(
     &TypeExpr::Either(
         &TypeExpr::Scalar(Scalar::Int),
@@ -320,6 +350,16 @@ impl ReadScalar for AxisMirror {
         };
         cx.invalid(node.span, format!("Value error, {message}"));
         None
+    }
+}
+
+impl Spell for AxisMirror {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Off => false.into(),
+            Self::Verbatim => true.into(),
+            Self::Relabel(style) => style.spell(),
+        }
     }
 }
 

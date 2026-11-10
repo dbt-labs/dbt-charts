@@ -5,9 +5,10 @@ use crate::facet::{facet, BorderColor, Color, Facet, FormatName, Palette, Scheme
 use crate::rule::Auto;
 use crate::string_enum;
 use crate::unit::Px;
-use model_core::{Cx, Engine, FromNode, Leaf, Merge, Node, ReadScalar, Scalar, TypeExpr};
+use model_core::{Cx, Engine, FromNode, Leaf, Merge, Node, ReadScalar, Scalar, Spell, TypeExpr};
 use model_derive::Model;
 use regex::Regex;
+use serde_json::Value;
 use std::sync::OnceLock;
 
 string_enum!(
@@ -320,6 +321,15 @@ impl ReadScalar for PaletteChoice {
         Palette::read(node, cx).map(Self::Name)
     }
 }
+impl Spell for PaletteChoice {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Name(n) => n.spell(),
+            Self::Colors(c) => c.spell(),
+        }
+    }
+}
+
 union_leaf!(PaletteChoice, palette_choice_expr());
 
 /// The ink a chart with no color column uses: a palette name or at least one color.
@@ -339,6 +349,12 @@ impl ReadScalar for SeriesInk {
         Some(Self(choice))
     }
 }
+impl Spell for SeriesInk {
+    fn spell(&self) -> Value {
+        self.0.spell()
+    }
+}
+
 union_leaf!(
     SeriesInk,
     TypeExpr::Keyed(
@@ -362,6 +378,15 @@ impl ReadScalar for ColumnPalette {
         SchemeName::read(node, cx).map(Self::Name)
     }
 }
+impl Spell for ColumnPalette {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Name(n) => n.spell(),
+            Self::Colors(c) => c.spell(),
+        }
+    }
+}
+
 union_leaf!(
     ColumnPalette,
     TypeExpr::Either(
@@ -389,6 +414,16 @@ impl ReadScalar for ScalePalette {
         SchemeName::read(node, cx).map(Self::Name)
     }
 }
+impl Spell for ScalePalette {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Name(n) => n.spell(),
+            Self::Colors(c) => c.spell(),
+            Self::Stops(s) => s.spell(),
+        }
+    }
+}
+
 union_leaf!(
     ScalePalette,
     TypeExpr::Either(
@@ -686,6 +721,15 @@ impl ReadScalar for FormatSpec {
     }
 }
 
+impl Spell for FormatSpec {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Name(n) => n.spell(),
+            Self::Block(b) => b.spell(),
+        }
+    }
+}
+
 impl FromNode for FormatSpec {
     fn authored(node: &Node, cx: &mut Cx) -> Self::Authored {
         Self::read(node, cx)
@@ -724,6 +768,15 @@ impl ReadScalar for LinkSpec {
             return Link::whole(node, cx).map(Self::Block);
         }
         Url::read(node, cx).map(Self::Url)
+    }
+}
+
+impl Spell for LinkSpec {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Url(u) => u.spell(),
+            Self::Block(b) => b.spell(),
+        }
     }
 }
 

@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct import omni computes each tile's SQL and KPI value at the dashboard's filter defaults and writes the row a KPI actually shows.
+time: 2026-11-08T18:00:17.878825-08:00

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A board whose two imported charts read queries that map to the same internal name now errors, naming both, instead of one silently replacing the other.
+time: 2026-11-09T15:14:36.011569554Z

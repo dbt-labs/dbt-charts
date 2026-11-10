@@ -54,6 +54,7 @@ from typing import Literal, get_args
 import yaml
 from importlib_resources import files
 
+from dbt_charts._docs_site import docs_site_url
 from dbt_charts.core.colors import (
     VARIANT_WORDS,
     CanvasTone,
@@ -609,7 +610,7 @@ def palette(
     if name in HARD_FAIL_PALETTE_NAMES:
         raise UnknownPaletteError(
             f"palette '{name}' is a known perceptual anti-pattern and is not "
-            "shipped. See docs/guides/palette-resolver.md#anti-patterns"
+            f"shipped. See {docs_site_url()}/guides/palette-resolver/#anti-patterns"
         )
     if name in PALETTE_WARN_ALIASES:
         name = PALETTE_WARN_ALIASES[name]
@@ -1147,7 +1148,8 @@ def _bound_palette(
         raise UnknownColorError(
             f"color token {token!r}: theme has no palette assigned to role '{role}'."
             f"{_retired_companion_hint(token)} "
-            f"Defined roles: {sorted(palettes)}"
+            f"Roles with a palette: {', '.join(sorted(palettes))}. "
+            "Write a token as `<role>.<alias>` or `<role>[N]` with one of those roles."
         )
     palette_name, bound_variant = _split_trailing_variant(bound)
     entry = _get_index().get(palette_name)

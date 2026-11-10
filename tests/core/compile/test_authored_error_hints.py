@@ -77,6 +77,12 @@ def test_chart_warnings_ignore_names_the_query_scoped_home() -> None:
         AuthoredBoard.model_validate(_board(charts={"c": chart}))
 
 
+def test_callout_warnings_ignore_refuses_an_unregistered_code() -> None:
+    chart = {"type": "callout", "message": "hi", "warnings_ignore": ["WARN-NOPE"]}
+    with pytest.raises(ValidationError, match=r"unknown or query-domain warning code"):
+        AuthoredBoard.model_validate(_board(charts={"c": chart}))
+
+
 def test_glyph_names_the_rule() -> None:
     from dbt_charts.core.compile.models.style.authored import TableColumnConfig
 

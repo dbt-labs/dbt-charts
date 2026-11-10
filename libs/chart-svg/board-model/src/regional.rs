@@ -8,7 +8,7 @@ use crate::string_enum;
 use diagnostic::{diag, Diagnostic};
 use model_core::{
     build_leaf, from_scalar, Bounds, Cx, FromNode, Keywords, Kind, Leaf, Merge, Node, ReadScalar,
-    Scalar, TypeExpr,
+    Scalar, Spell, TypeExpr,
 };
 use model_core::{Authored, Tri};
 use model_derive::Model;
@@ -80,6 +80,11 @@ impl TryFrom<u32> for PositiveInt {
         }
     }
 }
+impl Spell for PositiveInt {
+    fn spell(&self) -> serde_json::Value {
+        self.0.spell()
+    }
+}
 from_scalar!(PositiveInt, u32);
 impl Leaf for PositiveInt {
     type Whole = PositiveInt;
@@ -108,6 +113,11 @@ impl TryFrom<u32> for Month {
             1..=12 => Ok(Self(v)),
             _ => Err("Input should be less than or equal to 12".to_string()),
         }
+    }
+}
+impl Spell for Month {
+    fn spell(&self) -> serde_json::Value {
+        self.0.spell()
     }
 }
 from_scalar!(Month, u32);
@@ -142,6 +152,11 @@ impl ReadScalar for Grouping {
             return None;
         }
         Some(Self(sizes))
+    }
+}
+impl Spell for Grouping {
+    fn spell(&self) -> serde_json::Value {
+        self.0.spell()
     }
 }
 leaf!(
@@ -180,6 +195,11 @@ macro_rules! strings {
                     out.push(s);
                 }
                 out.try_into().ok().map(Self)
+            }
+        }
+        impl Spell for $name {
+            fn spell(&self) -> serde_json::Value {
+                self.0.spell()
             }
         }
         leaf!($name, TypeExpr::Tuple(&[&$item; $n]));
@@ -248,6 +268,11 @@ macro_rules! time_pattern {
                 Some(Self(s))
             }
         }
+        impl Spell for $name {
+            fn spell(&self) -> serde_json::Value {
+                self.0.spell()
+            }
+        }
         leaf!($name, TypeExpr::Keyed(&Keywords::pattern($pattern), &STR));
     };
 }
@@ -303,6 +328,14 @@ macro_rules! locale_choice {
                     return $def::whole(node, cx).map(|d| Self::Definition(Box::new(d)));
                 }
                 $names::read(node, cx).map(Self::Name)
+            }
+        }
+        impl Spell for $name {
+            fn spell(&self) -> serde_json::Value {
+                match self {
+                    Self::Name(n) => n.spell(),
+                    Self::Definition(d) => d.spell(),
+                }
             }
         }
         leaf!(

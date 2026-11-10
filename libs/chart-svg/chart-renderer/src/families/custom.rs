@@ -12,8 +12,8 @@
 //! case, so a string that passes an XML check can still carry live markup to
 //! a browser.
 //!
-//! minijinja has no attribute reflection to escape from (see `compile/src/
-//! template/environment.rs`), so a template reaches exactly the names this
+//! minijinja has no attribute reflection to escape from (see `template/src/
+//! environment.rs`), so a template reaches exactly the names this
 //! module puts in its context: `rows`, `columns`, `channels`, `options`,
 //! `width`, `height`, `uid`, `style`, `variables`, `math`, `d3` (d3's scales,
 //! shapes and layouts over the `d3rs` ports; `custom_d3.rs`), the helpers

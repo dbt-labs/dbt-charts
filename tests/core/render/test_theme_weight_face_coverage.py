@@ -26,9 +26,7 @@ from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.fonts import WEIGHT_FACE_ALIASES
 
 _PRODUCTION_THEMES = [
-    name
-    for name in list_built_in_themes()
-    if name != "_base" and not name.startswith("diagnostics-")
+    name for name in list_built_in_themes() if not name.startswith("diagnostics-")
 ]
 _TARGET_FAMILIES = set(WEIGHT_FACE_ALIASES)
 

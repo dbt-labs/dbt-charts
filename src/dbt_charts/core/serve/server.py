@@ -537,7 +537,6 @@ def _render_board_file(
         board=board,
         variables=variables,
         strict_variables=False,
-        restated_check=True,
         project=project,
         env=env,
         format="html",

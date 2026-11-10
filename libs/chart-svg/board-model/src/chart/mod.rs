@@ -7,7 +7,7 @@
 //!
 //! The pieces every family composes with `#[flatten]`, as the Python bases do:
 //!
-//! - [`ChartBase`]: the data link, notes, link and ignored warnings of every chart.
+//! - [`ChartBase`]: the id, data link, notes, link and ignored warnings of every chart.
 //! - [`SharedChartFields`]: the base plus the title and subtitle of every family but KPI.
 //! - [`TooltipFields`]: the `tooltip:` of the families whose marks carry a hover card.
 //! - [`CartesianChartFields`], [`GeoChartFields`], [`RadialChartFields`]: the channels of the
@@ -36,7 +36,8 @@
 //! [`conditional_formatting::FieldConditionalFormatting::default_position`],
 //! [`layer::BarLayer::null_y_start`] and [`annotation::NoteAnnotation::pairing`].
 //!
-//! Off the spine, on purpose: `id` (the key in `Board.charts`, or the tree position),
+//! `id` is read and not used: the key in `Board.charts`, or the title or tree position, names
+//! the chart (`BoardIndex::public_ids`). Off the spine, on purpose:
 //! `visible` (the layout item's), `type` (the enum tag), and the facts normalize derives
 //! (`query_name`, `query_is_inline`, `variable_dependencies`, `text_queries`,
 //! `defined_in_other_file`: `BoardIndex`).
@@ -99,7 +100,7 @@ use crate::style::style::Style;
 use annotation::{ChartSort, ChartTotal};
 use conditional_formatting::FieldConditionalFormatting;
 use indexmap::IndexMap;
-use model_core::Leaf;
+use model_core::{Leaf, Spell};
 use model_derive::Model;
 use projection::ProjectionChoice;
 use support_table::SupportTableSpec;
@@ -219,6 +220,27 @@ impl ChartAuthored {
 }
 
 impl ChartAuthored {
+    /// The fields every family but a callout takes.
+    pub fn base(&self) -> Option<&ChartBaseAuthored> {
+        Some(match self {
+            Self::Scatter(c) => &c.cartesian.shared.base,
+            Self::Bar(c) | Self::Histogram(c) => &c.cartesian.shared.base,
+            Self::Line(c) => &c.cartesian.shared.base,
+            Self::Area(c) => &c.cartesian.shared.base,
+            Self::Heatmap(c) => &c.cartesian.shared.base,
+            Self::Kpi(c) => &c.base,
+            Self::Pie(c) | Self::Donut(c) => &c.radial.shared.base,
+            Self::SparkBar(c) => &c.shared.base,
+            Self::Table(c) => &c.shared.base,
+            Self::Geoshape(c) | Self::Map(c) => &c.geo.shared.base,
+            Self::PointMap(c) | Self::BubbleMap(c) => &c.geo.shared.base,
+            Self::Custom(c) => &c.shared.base,
+            Self::Callout(_) => return None,
+        })
+    }
+}
+
+impl ChartAuthored {
     /// The hoisted queries the chart reads: its own and each layer's.
     pub fn hoisted_queries(&self) -> Vec<crate::ids::QueryId> {
         let mut chart = self.clone();
@@ -238,6 +260,30 @@ impl ChartAuthored {
 }
 
 impl ChartAuthored {
+    /// The heading and base every family takes but a KPI (which labels itself) and a callout.
+    pub fn shared(&self) -> Option<&SharedChartFieldsAuthored> {
+        Some(match self {
+            Self::Scatter(c) => &c.cartesian.shared,
+            Self::Bar(c) | Self::Histogram(c) => &c.cartesian.shared,
+            Self::Line(c) => &c.cartesian.shared,
+            Self::Area(c) => &c.cartesian.shared,
+            Self::Heatmap(c) => &c.cartesian.shared,
+            Self::Pie(c) | Self::Donut(c) => &c.radial.shared,
+            Self::SparkBar(c) => &c.shared,
+            Self::Table(c) => &c.shared,
+            Self::Geoshape(c) | Self::Map(c) => &c.geo.shared,
+            Self::PointMap(c) | Self::BubbleMap(c) => &c.geo.shared,
+            Self::Custom(c) => &c.shared,
+            Self::Kpi(_) | Self::Callout(_) => return None,
+        })
+    }
+
+    /// The chart's `title:`, for the families that take one.
+    pub fn title(&self) -> Option<&str> {
+        use model_core::first_set;
+        first_set([self.shared()?.title.as_ref()]).map(DisplayText::as_str)
+    }
+
     /// Every field that renders Jinja for display (Python's `display_texts`): a KPI's label and
     /// its support label, a callout's title and message, any other family's title and subtitle,
     /// and a cartesian layer's label.
@@ -246,24 +292,7 @@ impl ChartAuthored {
         fn text(t: Tri<&DisplayText>) -> Option<&str> {
             first_set([t]).map(DisplayText::as_str)
         }
-        fn shared(s: &SharedChartFieldsAuthored) -> Vec<&str> {
-            [text(s.title.as_ref()), text(s.subtitle.as_ref())]
-                .into_iter()
-                .flatten()
-                .collect()
-        }
         let mut out = match self {
-            Self::Scatter(c) => shared(&c.cartesian.shared),
-            Self::Bar(c) | Self::Histogram(c) => shared(&c.cartesian.shared),
-            Self::Line(c) => shared(&c.cartesian.shared),
-            Self::Area(c) => shared(&c.cartesian.shared),
-            Self::Heatmap(c) => shared(&c.cartesian.shared),
-            Self::Pie(c) | Self::Donut(c) => shared(&c.radial.shared),
-            Self::SparkBar(c) => shared(&c.shared),
-            Self::Table(c) => shared(&c.shared),
-            Self::Geoshape(c) | Self::Map(c) => shared(&c.geo.shared),
-            Self::PointMap(c) | Self::BubbleMap(c) => shared(&c.geo.shared),
-            Self::Custom(c) => shared(&c.shared),
             Self::Kpi(c) => [
                 text(c.label.as_ref()),
                 first_set([c.support.as_ref()]).and_then(|s| text(s.label.as_ref())),
@@ -278,6 +307,12 @@ impl ChartAuthored {
             .into_iter()
             .flatten()
             .collect(),
+            _ => self.shared().map_or_else(Vec::new, |s| {
+                [text(s.title.as_ref()), text(s.subtitle.as_ref())]
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            }),
         };
         let layers = match self {
             Self::Scatter(c) => &c.layers,
@@ -385,6 +420,14 @@ impl model_core::ReadScalar for ChartLink {
         }
     }
 }
+impl Spell for ChartLink {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Self::Off => false.into(),
+            Self::On(l) => l.spell(),
+        }
+    }
+}
 union_leaf!(
     ChartLink,
     model_core::TypeExpr::Either(
@@ -399,6 +442,9 @@ union_leaf!(
 /// Fields every chart family takes.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct ChartBase {
+    /// Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position.
+    #[model(absent = "the id comes from the chart's `charts:` key, or its title, or its position")]
+    pub id: Option<String>,
     /// Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels.
     #[model(absent = "no notes")]
     pub notes: Option<DisplayText>,
@@ -588,9 +634,20 @@ impl model_core::ReadScalar for GeoSource {
         }
     }
 }
+impl Spell for GeoSource {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Self::Name(n) => n.as_str().into(),
+            Self::Inline(g) => g.clone(),
+        }
+    }
+}
 union_leaf!(
     GeoSource,
-    ::model_core::TypeExpr::Facet("geo_source", ::model_core::Scalar::Str)
+    ::model_core::TypeExpr::Either(
+        &::model_core::TypeExpr::Facet("geo_source", ::model_core::Scalar::Str),
+        &::model_core::TypeExpr::Scalar(::model_core::Scalar::Object),
+    )
 );
 
 /// Channels of the map families (geoshape, point_map).

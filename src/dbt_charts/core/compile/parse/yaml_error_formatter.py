@@ -75,7 +75,15 @@ _UNION_DISCRIMINATOR_PREFIXES = (
 )
 
 # Branch names that are literal Pydantic type names (not real YAML fields)
-_PRIMITIVE_TYPE_DISCRIMINATORS = {"str", "int", "float", "bool", "bytes", "None"}
+_PRIMITIVE_TYPE_DISCRIMINATORS = {
+    "str",
+    "constrained-str",
+    "int",
+    "float",
+    "bool",
+    "bytes",
+    "None",
+}
 
 
 def _is_union_discriminator(part: Any) -> bool:
@@ -109,9 +117,10 @@ def _branch_score(err: dict[str, Any]) -> int:
     model_type, or a union that cannot tag the value, at the branch's own root
                     → the branch rejected the whole value → 3 (noisiest: a
                       branch that parsed the value and failed inside says more)
-    string_type of a mapping → the `str` arm of a row item, never the arm the
-                    author meant → 4 (a nested board's real error is in a
-                    mapping arm)
+    string_type of a mapping at the branch's own root → the `str` arm of a row
+                    item, never the arm the author meant → 4 (a nested board's
+                    real error is in a mapping arm; a string_type deeper in is
+                    that arm's real error, e.g. an inline layer `query:`)
     """
     from dbt_charts.core.diagnostics.registry import CODED_VALIDATION_ERROR
 
@@ -123,11 +132,10 @@ def _branch_score(err: dict[str, Any]) -> int:
     if t == "missing":
         return 1
     loc = err["loc"]
-    if t == "string_type" and isinstance(err.get("input"), dict):
+    at_branch_root = _find_discriminator_index(loc) == len(loc) - 1
+    if t == "string_type" and at_branch_root and isinstance(err.get("input"), dict):
         return 4
-    if t in ("model_type", "union_tag_not_found") and (
-        _find_discriminator_index(loc) == len(loc) - 1
-    ):
+    if t in ("model_type", "union_tag_not_found") and at_branch_root:
         return 3
     return 2
 
@@ -523,23 +531,45 @@ def _segment_is_tag(
     return False
 
 
-def _display_path(path: list[str]) -> list[str]:
+def _authored_child(
+    node: Any,  # type-state: explicit_any — YAML value
+    segment: str,
+) -> Any:  # type-state: explicit_any — YAML value
+    if isinstance(node, dict):
+        return node.get(segment)
+    if isinstance(node, list) and segment.isdigit() and int(segment) < len(node):
+        return node[int(segment)]
+    return None
+
+
+def _display_path(path: list[str], authored: "JsonObject | None" = None) -> list[str]:
     """*path* with pure schema-plumbing segments (union-tag discriminators)
     dropped, for messages an author reads -- unlike ``_annotations_at_path``,
     which needs those segments to walk the type tree and must see the full
-    (tagged) path."""
+    (tagged) path.
+
+    A chart-type tag is dropped only where the *authored* mapping says
+    ``type: <tag>``: a layout item ``- bar: {...}`` names a chart *id* ``bar``,
+    which the schema alone cannot tell from the tag."""
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 
+    chart_tags = _authored_chart_fields_by_type()
     annotations: list[Any] = [AuthoredBoard]  # type-state: explicit_any — typing value
     display: list[str] = []
-    for segment in path:
-        if not any(_segment_is_tag(annotation, segment) for annotation in annotations):
+    node: Any = authored  # type-state: explicit_any — YAML value
+    for i, segment in enumerate(path):
+        is_tag = any(_segment_is_tag(annotation, segment) for annotation in annotations)
+        if is_tag and authored is not None and segment in chart_tags:
+            is_tag = isinstance(node, dict) and node.get("type") == segment
+        if not is_tag:
             display.append(segment)
+            node = _authored_child(node, segment)
         next_annotations: list[Any] = []  # type-state: explicit_any — typing value
         for annotation in annotations:
             next_annotations.extend(_next_annotations_for_segment(annotation, segment))
         annotations = next_annotations
         if not annotations:
+            display.extend(path[i + 1 :])
             break
     return display
 
@@ -865,7 +895,10 @@ def _bar_label_position_fix(
     orientation = _authored_at(
         yaml_content, [*display_path[:2], "style", "orientation"]
     )
-    message = f"Field '{field_path_str}': {word!r} is not a bar label position"
+    shown = ".".join(
+        _display_path(field_path_str.split("."), _raw_mapping(yaml_content))
+    )
+    message = f"Field '{shown}': {word!r} is not a bar label position"
     edit = f"write `position: {replacement}`"
     if orientation in _BAR_POSITION_MEANING:
         meaning = _BAR_POSITION_MEANING[orientation][replacement]
@@ -896,8 +929,9 @@ def _extra_field_diagnostic(
     parent_path = field_path[:-1]
     allowed_keys = _allowed_keys_at_path(parent_path)
     docs_topic = _docs_topic_for_field_path(field_path)
-    parent = _format_parent_path(parent_path)
-    full_path = ".".join(field_path)
+    shown_path = _display_path(field_path, _raw_mapping(yaml_content))
+    full_path = ".".join(shown_path)
+    parent = _format_parent_path(shown_path[:-1])
     message = f"Unknown field {field_name!r} at {parent}. Full path: {full_path}."
 
     fields: dict[str, Any] = {
@@ -908,7 +942,6 @@ def _extra_field_diagnostic(
         "docs_topic": docs_topic,
     }
 
-    shown_path = _display_path(field_path)
     retired_key = retired.get(tuple(shown_path))
     if retired_key is not None:
         old, history, action = _retired_key_story(retired_key)
@@ -1351,6 +1384,13 @@ def format_validation_errors_structured(
         )
         if chart_type_msg is not None:
             err_msg = chart_type_msg
+        if layout_item := _layout_item_discriminator_error(err, field_path_parts):
+            field_path_parts, err_msg = layout_item
+            field_path_str = ".".join(field_path_parts)
+        # Internal analysis walks the tagged path; the author sees the YAML keys.
+        shown_path_str = ".".join(
+            _display_path(field_path_parts, _raw_mapping(yaml_content))
+        )
 
         extra_field_diagnostic: _ExtraFieldDiagnostic | None = None
         if err_type == "extra_forbidden":
@@ -1396,10 +1436,16 @@ def format_validation_errors_structured(
         elif bar_position_fix is not None:
             message = bar_position_fix[0]
         elif field_path_str:
-            if isinstance(input_val, str):
-                message = f"Field '{field_path_str}': {err_msg} (got: {input_val!r})"
+            # The value rides the first line: a message that ends in a YAML snippet
+            # must end in YAML an agent can copy as written.
+            if isinstance(input_val, str) and repr(input_val) not in err_msg:
+                first, newline, rest = err_msg.partition("\n")
+                message = (
+                    f"Field '{shown_path_str}': {first} (got: {input_val!r})"
+                    f"{newline}{rest}"
+                )
             else:
-                message = f"Field '{field_path_str}': {err_msg}"
+                message = f"Field '{shown_path_str}': {err_msg}"
         else:
             message = err_msg
 
@@ -1494,6 +1540,17 @@ def format_validation_errors_structured(
                 f"`{field_path_parts[-1]}` expects a string; received "
                 f"{_received_phrase(input_val)}. Quote it: {quote_it}."
             )
+        elif (
+            err_type == "string_type"
+            and field_path_parts[-1:] == ["query"]
+            and "layers" in field_path_parts
+            and isinstance(input_val, dict)
+        ):
+            hint = (
+                "`query` expects a string; received a mapping. A layer names a "
+                "query: move the mapping under the board's `queries:` and write "
+                "`query: <name>`."
+            )
         elif err_type in _EXPECTED_BY_SCALAR_ERROR and field_path_parts:
             hint = (
                 f"`{field_path_parts[-1]}` expects "
@@ -1544,7 +1601,7 @@ def format_validation_errors_structured(
                 ec,
                 message=message,
                 fields=fields,
-                path=field_path_str or None,
+                path=shown_path_str or None,
                 hint=hint,
             )
         )
@@ -1610,6 +1667,8 @@ _EXPECTED_BY_SCALAR_ERROR = {
 
 def _received_phrase(value: Any) -> str:  # type-state: explicit_any — raw YAML input
     """Name an authored YAML value's kind and show it, e.g. ``a number: 3``."""
+    if value is None:
+        return "null"
     if isinstance(value, bool):
         kind = "a boolean"
     elif isinstance(value, (int, float)):
@@ -1937,3 +1996,54 @@ def _missing_chart_type_message(
     if renamed is not None:
         return f"{lead} Rename `{renamed}:` to `type:`."
     return f"{lead} Add `type:` to `charts.{chart}`, one of: {supported}."
+
+
+def _layout_item_discriminator_error(
+    err: dict[str, Any],  # type-state: explicit_any — pydantic error dict
+    field_path: list[str],
+) -> tuple[list[str], str] | None:
+    """Path and message for a layout item that is no chart id, container or
+    typed inline chart.
+
+    Pydantic reports a bad ``cols`` item against the ``dict[str, chart]`` arm of
+    the row union, with the whole ``cols`` list as the input and no index in the
+    path. The offending item is read back out of that input so the path points at
+    it.
+    """
+    if err.get("type") != "union_tag_not_found" or not any(
+        key in field_path for key in _LAYOUT_KEYS
+    ):
+        return None
+    value = err.get("input")
+    if isinstance(value, dict):
+        items = [(field_path, value)]
+    elif isinstance(value, list):
+        items = [
+            ([*field_path, str(i)], item)
+            for i, item in enumerate(value)
+            if isinstance(item, dict)
+        ]
+    else:
+        return None
+    valid_types = get_valid_chart_types()
+    for path, item in items:
+        if any(key in item for key in _LAYOUT_KEYS):
+            continue
+        accepted = (
+            "Accepted here: a chart id, a layout container (rows, cols, grid or "
+            "tabs), or an inline chart whose `type:` is one of: "
+            f"{', '.join(valid_types)}."
+        )
+        authored_type = item.get("type")
+        if not item or authored_type in valid_types:
+            continue
+        if authored_type is None:
+            held = f"has no `type:` (keys present: {', '.join(map(str, item))})"
+            return path, f"this item {held}. {accepted}"
+        close = suggest_similar_value(str(authored_type), valid_types)
+        did_you_mean = f" Did you mean {close!r}?" if close else ""
+        return path, (
+            f"this item has `type: {authored_type}`, which is not a chart "
+            f"type.{did_you_mean} {accepted}"
+        )
+    return None

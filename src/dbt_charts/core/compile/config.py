@@ -74,6 +74,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_PROJECT_CONFIG_SCHEMA,
     ERR_SOURCE_CONFIG_INVALID,
 )
+from dbt_charts.core.diagnostics.codes_serve import ERR_INVALID_DEFAULT_THEME
 from dbt_charts.core.diagnostics.hints import CHART_RENDERING_SUCCESSORS
 from dbt_charts.core.diagnostics.suppression import validate_suppression_codes
 from dbt_charts.core.utils import UniqueKeyLoader, deep_merge_dict
@@ -711,9 +712,18 @@ def get_project_markdown_metadata_table(project: Project) -> bool:
 
 
 @cache
-def list_built_in_themes() -> list[str]:
-    """Return sorted stem names of all built-in unified themes."""
+def list_built_in_theme_fragments() -> list[str]:
+    """Sorted stems of every shipped theme file, private fragments included."""
     return built_in_theme_stems(_built_in_unified_theme_dir)
+
+
+def list_built_in_themes() -> list[str]:
+    """Sorted names a board may take as `theme:`/`extends:` or as the default theme.
+
+    Excludes `_`-prefixed fragments: `_base` binds no axis, tick, grid or root-font
+    color and leaves them to the themes that extend it.
+    """
+    return [n for n in list_built_in_theme_fragments() if not n.startswith("_")]
 
 
 def user_facing_theme_names() -> list[str]:
@@ -888,14 +898,25 @@ def get_default_theme_name() -> str:
     and the ``theme_name or get_default_theme_name()`` fallback in the normalizer.
     Reads ``DCT_DEFAULT_THEME`` at call time (a process-level override the VS Code
     inspector sets per session — no module mutation), falling back to
-    ``SHIPPED_DEFAULT_THEME_NAME`` when unset.
+    ``SHIPPED_DEFAULT_THEME_NAME`` when unset (an empty value counts as unset).
+    A non-empty value outside ``list_built_in_themes()`` — ``_base`` included —
+    raises ``ERR_INVALID_DEFAULT_THEME``; this is the one place it is checked.
 
     This is distinct from per-board theming: ``extends:``/``theme:`` on a board (or
     ``charts/meta.yml``) resolves through the cascade and wins over this default
     via ``theme_name or get_default_theme_name()``.
     """
     env_value = os.getenv("DCT_DEFAULT_THEME")  # noqa: TID251 — DCT_DEFAULT_THEME knob
-    return env_value if env_value else SHIPPED_DEFAULT_THEME_NAME
+    if not env_value:
+        return SHIPPED_DEFAULT_THEME_NAME
+    if env_value not in list_built_in_themes():
+        raise CompilationError.from_code(
+            ERR_INVALID_DEFAULT_THEME,
+            source="DCT_DEFAULT_THEME env var",
+            theme=env_value,
+            available=user_facing_theme_names(),
+        )
+    return env_value
 
 
 # ============================================================================

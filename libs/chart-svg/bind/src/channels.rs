@@ -162,7 +162,7 @@ fn validate_field(channel: &str, field: &str, dataset: &Dataset) -> Result<(), D
     }
     if field.starts_with('#') {
         return Err(Diagnostic::refused(format!(
-            "Channel '{channel}': '{field}' looks like a literal color; use {{{channel}: {{value: \"{field}\"}}}}"
+            "Channel '{channel}': '{field}' looks like a literal color, but a channel binds a data column. Set a literal color in the chart's style:\n  style:\n    color:\n      static: \"{field}\""
         )));
     }
     let mut available: Vec<&str> = dataset.schema.0.keys().map(String::as_str).collect();

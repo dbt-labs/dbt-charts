@@ -5,7 +5,7 @@ use crate::facet::{Channel, DisplayText};
 use crate::string_enum;
 use crate::style::kpi::KpiChartStyle;
 use diagnostic::{diag, Diagnostic};
-use model_core::{Authored, Tri};
+use model_core::{Authored, Spell, Tri};
 use model_derive::Model;
 
 string_enum!(
@@ -87,9 +87,21 @@ impl model_core::ReadScalar for KpiBackground {
         }
     }
 }
+impl Spell for KpiBackground {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Self::Column(c) => c.as_str().into(),
+            Self::Channel(c) => c.clone(),
+        }
+    }
+}
+
 union_leaf!(
     KpiBackground,
-    ::model_core::TypeExpr::Facet("style_channel", ::model_core::Scalar::Str)
+    ::model_core::TypeExpr::Either(
+        &::model_core::TypeExpr::Facet("style_channel", ::model_core::Scalar::Str),
+        &::model_core::TypeExpr::Scalar(::model_core::Scalar::Object),
+    )
 );
 
 impl KpiChart {

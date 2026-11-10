@@ -170,10 +170,8 @@ pub fn is_unknown_color_name(value: &str) -> bool {
 /// whitespace itself (a `%` or `deg` suffix can leave a padded token, as in
 /// `rgb(50 %, 0, 0)`), and its grammar allows a single `_` between two
 /// digits; anything else with an underscore is rejected, as `float()`
-/// rejects it. `pub`: `resolve/src/format.rs` reuses this for `core/utils.py::
-/// coerce_numeric_cell`'s own string branch — the same `float(str)` grammar,
-/// never a second hand-rolled parser.
-pub fn finite_float(token: &str) -> Result<f64, String> {
+/// rejects it.
+fn finite_float(token: &str) -> Result<f64, String> {
     let token = token.trim();
     let cleaned = if token.contains('_') {
         let bytes = token.as_bytes();

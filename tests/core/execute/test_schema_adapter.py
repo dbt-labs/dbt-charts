@@ -16,7 +16,7 @@ from dbt_charts.core.compile.models.query.normalized import SchemaQuery
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.env import ExecEnv, make_exec_env
 from dbt_charts.core.execute.query_result import QueryResult
-from dbt_charts.core.execute.schema_adapter import schema_rows
+from dbt_charts.core.execute.schema_adapter import fetch_fk_edges, schema_rows
 
 FAKE_SCHEMAS_ENVELOPE = {
     "sources": {
@@ -267,6 +267,7 @@ class TestSchemaAdapterListTables:
             result = adapter(query)
         assert result.error is not None
         assert "typo_schema" in str(result.error)
+        assert result.error.code.code == "ERR-SCHEMA-NOT-FOUND"
         assert result.data == []
 
     def test_list_tables_respects_limit(
@@ -314,6 +315,7 @@ class TestSchemaAdapterProfileTable:
             result = adapter(query)
         assert result.error is not None
         assert "missing_table" in str(result.error)
+        assert result.error.code.code == "ERR-TABLE-NOT-FOUND"
         assert result.data == []
 
 
@@ -353,6 +355,7 @@ class TestSchemaAdapterProfileColumn:
             result = adapter(query)
         assert result.error is not None
         assert "missing_table" in str(result.error)
+        assert result.error.code.code == "ERR-TABLE-NOT-FOUND"
         assert result.data == []
 
     def test_profile_column_not_found_returns_error(
@@ -374,6 +377,7 @@ class TestSchemaAdapterProfileColumn:
             result = adapter(query)
         assert result.error is not None
         assert "nonexistent" in str(result.error)
+        assert result.error.code.code == "ERR-COLUMN-NOT-FOUND"
         assert result.data == []
 
 
@@ -436,3 +440,58 @@ class TestFieldsProjection:
     def test_jinja_in_fields_is_rejected(self) -> None:
         with pytest.raises(PydanticValidationError):
             SchemaQuery(source="warehouse", fields=["name", "{{ col }}"])
+
+
+def test_snowflake_fk_edges_read_relations_in_catalog_spelling() -> None:
+    """Manifest names fold as dbt created them (unquoted); cache names are
+    already the catalog's. Both come back with board-named columns."""
+    resolver = MagicMock()
+    resolver._all_manifest_relationships.return_value = [
+        {
+            "from_table": "tickets",
+            "from_column": "customer_id",
+            "to_table": "customers",
+            "to_column": "id",
+        },
+        {
+            "from_table": "orders",
+            "from_column": "customer_id",
+            "to_table": "customers",
+            "to_column": "id",
+        },
+    ]
+    resolver.cache._read_raw.return_value = {
+        "tables": {
+            "t": {
+                "table_name": "TICKETS",
+                "relationships": [
+                    {
+                        "left_table": "TICKETS",
+                        "left_column": "AGENT_ID",
+                        "right_table": "AGENTS",
+                        "right_column": "ID",
+                        "is_recommended": True,
+                    }
+                ],
+            }
+        }
+    }
+    with patch(
+        "dbt_charts.core.inspect.cache_factory.build_resolver", return_value=resolver
+    ):
+        edges = fetch_fk_edges(MagicMock(), "TICKETS", "snowflake")
+
+    assert edges == [
+        {
+            "from_table": "TICKETS",
+            "from_column": "customer_id",
+            "to_table": "CUSTOMERS",
+            "to_column": "id",
+        },
+        {
+            "from_table": "TICKETS",
+            "from_column": "agent_id",
+            "to_table": "AGENTS",
+            "to_column": "id",
+        },
+    ]

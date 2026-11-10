@@ -2,7 +2,7 @@
 //! never a literal color, a one-or-many column list, and fixed-size number lists.
 
 use crate::facet::{facet, Channel, Facet};
-use model_core::{Cx, FromNode, Node, ReadScalar};
+use model_core::{Cx, FromNode, Node, ReadScalar, Spell};
 
 const NOT_A_COLOR: &str = r"^(?:[^#]|$)";
 
@@ -77,6 +77,15 @@ impl ReadScalar for Columns {
         Channel::read(node, cx).map(Self::One)
     }
 }
+impl Spell for Columns {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Self::One(c) => c.spell(),
+            Self::Many(c) => c.spell(),
+        }
+    }
+}
+
 union_leaf!(
     Columns,
     ::model_core::TypeExpr::Either(
@@ -109,6 +118,11 @@ macro_rules! number_list {
                         None
                     }
                 }
+            }
+        }
+        impl ::model_core::Spell for $name {
+            fn spell(&self) -> ::model_core::serde_json::Value {
+                ::model_core::Spell::spell(&self.0)
             }
         }
         union_leaf!($name, $expr);

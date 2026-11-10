@@ -186,7 +186,6 @@ ALL_TOOLS: list[dict[str, Any]] = [
     FIND_QUERIES,
     SEARCH_FILES,
     DESCRIBE_BOARD,
-    DESCRIBE_SEMANTICS,
     LIST_SKILLS,
     GET_SKILL,
     LIST_DIAGNOSTIC_CODES,
@@ -255,12 +254,9 @@ SUGGEST_BOARD_PLACEMENT = _ai_tool(
     read_only=False,
 )
 
-# `describe_semantics` is left out: Cloud classifies every in-process agent tool by
-# what authorizes it, and a bundle's names are not gated on the caller's access
-# to the source's connection.
 # find_queries is MCP-only: the in-process agent's hosts keep a cache with no listing.
 AGENT_TOOLS: list[dict[str, Any]] = [
-    *(t for t in ALL_TOOLS if t not in (DESCRIBE_SEMANTICS, FIND_QUERIES)),
+    *(t for t in ALL_TOOLS if t is not FIND_QUERIES),
     *FILE_TOOLS,
     APPLY_PATCH,
 ]

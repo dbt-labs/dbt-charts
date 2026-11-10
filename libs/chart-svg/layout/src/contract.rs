@@ -15,14 +15,24 @@ pub fn mark_group(kind: &str, name: &str, children: Vec<Node>) -> Result<Node, S
     Ok(Node::group(Role::Chrome, mark_group_attrs(kind, name, false)?, children))
 }
 
+/// A mark set hidden from the accessibility tree: its marks carry no description, so a hit on one
+/// resolves to the nearest labeled mark.
+pub fn hidden_mark_group(kind: &str, name: &str, children: Vec<Node>) -> Node {
+    Node::group(Role::Chrome, Attrs::new().set("class", mark_class(kind, name)).set("aria-hidden", "true"), children)
+}
+
 pub fn value_label_group(name: &str, children: Vec<Node>) -> Result<Node, String> {
     Ok(Node::group(Role::Chrome, mark_group_attrs("text", name, true)?, children))
+}
+
+fn mark_class(kind: &str, name: &str) -> String {
+    format!("mark-{kind} role-mark {name}")
 }
 
 fn mark_group_attrs(kind: &str, name: &str, value_label: bool) -> Result<Attrs, String> {
     let container = tr(&format!("aria.container_{kind}"), None, &[])?;
     Ok(Attrs::new()
-        .set("class", format!("mark-{kind} role-mark {name}"))
+        .set("class", mark_class(kind, name))
         .set_if(value_label, "data-dbt-value-label", "true")
         .set("role", "graphics-object")
         .set("aria-roledescription", container))

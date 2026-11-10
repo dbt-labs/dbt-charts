@@ -15,7 +15,7 @@ pub struct LineChart {
     #[flatten]
     pub cartesian: CartesianChartFields,
     /// Appearance overrides for this chart alone.
-    #[model(nullable)]
+    #[model(fill = fill_style, nullable)]
     pub style: LineChartStyle,
     /// Column whose order the line follows, instead of x.
     #[model(absent = "the line follows x")]

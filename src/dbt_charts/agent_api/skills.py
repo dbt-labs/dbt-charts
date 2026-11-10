@@ -72,6 +72,10 @@ RETIRED_INSTALL_PREFIX = "dct-"
 # goal here.
 AUTHORED_SKILL_BODY_MAX_CHARS = 10_000
 
+# Served by get_skill but never listed: the describe_semantics tool, listed only
+# on a project that declares `metricflow:`, points agents at it.
+_UNLISTED_SKILLS = frozenset({"semantic-query"})
+
 SkillKind = Literal["workflow", "pattern"]
 _VALID_KINDS: tuple[SkillKind, ...] = ("workflow", "pattern")
 _VALID_SURFACES: tuple[SkillSurface, ...] = ("tool", "cli")
@@ -614,6 +618,7 @@ def list_skills(
         _render_for_surface(s, surface)
         for s in merged.values()
         if surface in s.surfaces
+        and not (s.source == "builtin" and s.name in _UNLISTED_SKILLS)
     ]
     skills.sort(key=lambda s: s.name)
     return SkillList(skills=skills, errors=errors)

@@ -192,8 +192,9 @@ def _validate_channel_field(
     # The string shorthand parses as series mode with data_field="#fff".
     if data_field.startswith("#"):
         raise ValueError(
-            f"Channel '{channel_name}': '{data_field}' looks like a literal color — "
-            f'use {{{channel_name}: {{value: "{data_field}"}}}}'
+            f"Channel '{channel_name}': '{data_field}' looks like a literal color, "
+            "but a channel binds a data column. Set a literal color in the "
+            f'chart\'s style:\n  style:\n    color:\n      static: "{data_field}"'
         )
     raise ValueError(
         f"Channel '{channel_name}' column '{data_field}' not found. "

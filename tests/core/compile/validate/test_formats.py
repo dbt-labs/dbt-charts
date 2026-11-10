@@ -59,6 +59,32 @@ def test_typo_format_fails_compile_with_did_you_mean() -> None:
     )
 
 
+def test_invalid_d3_type_lists_only_the_types_the_engine_draws() -> None:
+    result = compile_board(_board_with_format("'.2='"))
+
+    message = result.errors[0].message
+    assert "invalid type '='" in message
+    assert "f, %, s, d, r, g, p, e" in message
+    for undrawn in ("n,", "b,", "o,", "x,", "X,", "c,"):
+        assert undrawn not in message
+
+
+@pytest.mark.parametrize(
+    "spreadsheet_code",
+    ["'[>=1000000]0.0,,\"M\";0'", "'#,##0'", "'0.0,,\"M\"'"],
+)
+def test_spreadsheet_format_code_names_compact_instead_of_d3_types(
+    spreadsheet_code: str,
+) -> None:
+    result = compile_board(_board_with_format(spreadsheet_code))
+
+    message = result.errors[0].message
+    assert "spreadsheet" in message
+    assert "`compact`" in message
+    assert "`currency_compact`" in message
+    assert "invalid type" not in message
+
+
 def test_valid_alias_compiles_clean() -> None:
     """A real alias (percent) is unaffected by the new validation."""
     result = compile_board(_board_with_format("percent"))

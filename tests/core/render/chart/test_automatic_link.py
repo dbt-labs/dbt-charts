@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
+    from dbt_charts.core.compile.models.chart.normalized import Chart
     from dbt_charts.core.compile.template.query_result import QueryResult
     from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.registered_views.router import RouteMatch
@@ -22,9 +23,22 @@ if TYPE_CHECKING:
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve.chart.link_keys import plan_link_keys
-from dbt_charts.core.execute.link_schema import LinkProbe
+from dbt_charts.core.execute.link_schema import LinkProbe, LinkSchema
 from dbt_charts.core.execute.plan import make_context
 from dbt_charts.core.project import Project
+
+
+class _DuckdbSources(dict[str, str | None]):
+    """Every source runs on DuckDB, which keeps names as written."""
+
+    def __missing__(self, source: str) -> str | None:
+        return "duckdb"
+
+    def __contains__(self, source: object) -> bool:
+        return True
+
+
+_DUCKDB = LinkSchema(columns={}, fk_edges={}, dialects=_DuckdbSources(), errors={})
 
 
 def _probe(env: ExecEnv) -> LinkProbe:
@@ -215,7 +229,7 @@ class TestResolveColumnSetLinkTablePath:
         query = SqlQuery(
             sql="SELECT * FROM analytics.orders WHERE status = 'open'", source="dw"
         )
-        loc = source_schema_table(query, require_row_grain=True)
+        loc = source_schema_table(query, _DUCKDB, require_row_grain=True)
         assert loc  # sanity: single-table SQL should resolve
         rows = [{"name": "id", "actual_type": "BIGINT"}]
         channel_cols = _table_channel_cols(rows)
@@ -287,7 +301,7 @@ class TestSourceSchemaTableBailConditions:
         query = _sql_query(
             "SELECT o.id, c.name FROM orders o JOIN customers c ON o.cust_id = c.id"
         )
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_cte_returns_empty(self) -> None:
         """Bails because `orders` has no schema prefix — not because of the CTE
@@ -296,20 +310,20 @@ class TestSourceSchemaTableBailConditions:
         from dbt_charts.core.render.chart.automatic_link import source_schema_table
 
         query = _sql_query("WITH cte AS (SELECT * FROM orders) SELECT * FROM cte")
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_subquery_returns_empty(self) -> None:
         from dbt_charts.core.render.chart.automatic_link import source_schema_table
 
         query = _sql_query("SELECT * FROM (SELECT id, name FROM orders) sub")
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_no_schema_bails(self) -> None:
         """SQL FROM bare table (no schema prefix) — can't build canonical path."""
         from dbt_charts.core.render.chart.automatic_link import source_schema_table
 
         query = _sql_query("SELECT * FROM orders")
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_group_by_bails_with_require_row_grain(self) -> None:
         """Aggregated query with require_row_grain=True bails."""
@@ -318,25 +332,25 @@ class TestSourceSchemaTableBailConditions:
         query = _sql_query(
             "SELECT customer_id, COUNT(*) AS n FROM analytics.orders GROUP BY customer_id"
         )
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_distinct_bails_with_require_row_grain(self) -> None:
         from dbt_charts.core.render.chart.automatic_link import source_schema_table
 
         query = _sql_query("SELECT DISTINCT customer_id FROM analytics.orders")
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_aggregate_function_bails_with_require_row_grain(self) -> None:
         from dbt_charts.core.render.chart.automatic_link import source_schema_table
 
         query = _sql_query("SELECT id, SUM(amount) AS total FROM analytics.orders")
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_catalog_qualified_bails(self) -> None:
         from dbt_charts.core.render.chart.automatic_link import source_schema_table
 
         query = _sql_query("SELECT id FROM mydb.analytics.orders")
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +372,7 @@ class TestCteGrainResolution:
         query = _sql_query(
             "WITH cte AS (SELECT * FROM analytics.orders) SELECT * FROM cte"
         )
-        loc = source_schema_table(query, require_row_grain=True)
+        loc = source_schema_table(query, _DUCKDB, require_row_grain=True)
         assert loc == ("dw", "analytics", "orders")
 
     def test_cte_aggregate_in_body_bails(self) -> None:
@@ -369,7 +383,7 @@ class TestCteGrainResolution:
             "WITH agg AS (SELECT user_id, COUNT(*) AS n FROM analytics.events GROUP BY 1)"
             " SELECT * FROM agg"
         )
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_cte_distinct_in_body_bails(self) -> None:
         """DISTINCT inside CTE body → still bails."""
@@ -378,7 +392,7 @@ class TestCteGrainResolution:
         query = _sql_query(
             "WITH cte AS (SELECT DISTINCT user_id FROM analytics.orders) SELECT * FROM cte"
         )
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_cte_agg_function_in_body_bails(self) -> None:
         """Aggregate function inside CTE body → still bails."""
@@ -388,7 +402,7 @@ class TestCteGrainResolution:
             "WITH cte AS (SELECT id, SUM(amount) AS total FROM analytics.orders)"
             " SELECT * FROM cte"
         )
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_cte_subquery_in_body_bails(self) -> None:
         """Subquery inside CTE body → still bails."""
@@ -398,7 +412,7 @@ class TestCteGrainResolution:
             "WITH cte AS (SELECT * FROM analytics.orders"
             " WHERE id = (SELECT MAX(id) FROM analytics.orders)) SELECT * FROM cte"
         )
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_cte_join_in_body_bails(self) -> None:
         """JOIN inside CTE body → bails (can't prove grain without FK proof here)."""
@@ -408,7 +422,7 @@ class TestCteGrainResolution:
             "WITH cte AS (SELECT o.id, c.name FROM analytics.orders o"
             " JOIN analytics.customers c ON o.cust_id = c.id) SELECT * FROM cte"
         )
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_cte_chart_mark_path_still_bails(self) -> None:
         """require_row_grain=False (chart mark path) → CTE still bails (unchanged)."""
@@ -417,7 +431,7 @@ class TestCteGrainResolution:
         query = _sql_query(
             "WITH cte AS (SELECT * FROM analytics.orders) SELECT * FROM cte"
         )
-        assert not source_schema_table(query, require_row_grain=False)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=False)
 
     def test_cte_catalog_qualified_base_bails(self) -> None:
         """CTE over catalog-qualified base table (3-part name) → bails."""
@@ -426,7 +440,7 @@ class TestCteGrainResolution:
         query = _sql_query(
             "WITH cte AS (SELECT * FROM db.schema.orders) SELECT * FROM cte"
         )
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_outer_select_ignores_cte_bails(self) -> None:
         """Outer FROM doesn't reference the CTE at all → must not resolve to the
@@ -443,7 +457,7 @@ class TestCteGrainResolution:
         query = _sql_query(
             "WITH x AS (SELECT a FROM analytics.t1) SELECT b FROM analytics.t2"
         )
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_outer_select_references_unrelated_name_bails(self) -> None:
         """Outer FROM is a bare name that isn't the CTE's alias → bails.
@@ -458,7 +472,7 @@ class TestCteGrainResolution:
         query = _sql_query(
             "WITH cte AS (SELECT * FROM analytics.orders) SELECT * FROM other_name"
         )
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_outer_select_distinct_bails(self) -> None:
         """DISTINCT on the *outer* SELECT (CTE body itself is clean) → bails.
@@ -475,7 +489,7 @@ class TestCteGrainResolution:
             "WITH c AS (SELECT * FROM analytics.tickets)"
             " SELECT DISTINCT owner_id, status FROM c"
         )
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_outer_select_aggregate_function_bails(self) -> None:
         """Aggregate function on the *outer* SELECT (CTE body itself is clean)
@@ -486,7 +500,7 @@ class TestCteGrainResolution:
             "WITH c AS (SELECT amount FROM analytics.orders)"
             " SELECT SUM(amount) AS total FROM c"
         )
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1002,7 +1016,7 @@ class TestJoinGrainResolution:
             sql="SELECT o.id, c.name FROM main.orders o JOIN main.customers c ON o.cust_id = c.id",
             source="dw",
         )
-        assert not source_schema_table(query, require_row_grain=True)
+        assert not source_schema_table(query, _DUCKDB, require_row_grain=True)
 
     def test_join_with_fk_edge_resolves(
         self, tmp_path, local_project: Callable[..., Project]
@@ -4358,3 +4372,97 @@ charts:
     assert rendered.board_error is None
     assert rendered.output is not None
     assert rendered.chart_errors
+
+
+class TestSnowflakeCatalogSpelling:
+    """Snowflake's catalog lists unquoted names uppercase; links read relations
+    in that spelling and columns as board names."""
+
+    _TICKETS = ("db", "DUNDERSIGN", "TICKETS")
+
+    def _schema(self, fk_edges: list[dict[str, str]]) -> LinkSchema:
+        return LinkSchema(
+            columns={
+                self._TICKETS: [
+                    {"name": "id", "actual_type": "NUMBER"},
+                    {"name": "priority", "actual_type": "TEXT"},
+                    {"name": "customer_id", "actual_type": "NUMBER"},
+                ]
+            },
+            fk_edges={("db", "TICKETS"): fk_edges},
+            dialects={"db": "snowflake"},
+            errors={},
+        )
+
+    def _chart(self, sql: str, chart_yaml: str) -> Chart:
+        result = compile(
+            f"""\
+title: Tickets
+links:
+  auto: true
+queries:
+  q:
+    source: db
+    sql: {sql!r}
+charts:
+  c:
+    query: q
+{chart_yaml}
+rows:
+  - c
+"""
+        )
+        assert result.board is not None, result.errors
+        return result.board.charts["c"]
+
+    def test_a_bar_links_to_the_catalog_table_by_board_column(self) -> None:
+        from dbt_charts.core.render.chart.automatic_link import (
+            synthesize_automatic_link,
+        )
+
+        chart = self._chart(
+            "select priority, count(*) as n from dundersign.tickets group by 1",
+            "    type: bar\n    x: priority\n    y: n",
+        )
+        link = synthesize_automatic_link(chart, self._schema([]))
+        assert link == "/data/db/DUNDERSIGN/TICKETS/?priority={{ x }}"
+
+    def test_a_table_row_links_to_its_detail_by_board_key(self) -> None:
+        from dbt_charts.core.render.chart.automatic_link import (
+            synthesize_automatic_link,
+        )
+
+        chart = self._chart(
+            "select id, priority from dundersign.tickets", "    type: table"
+        )
+        link = synthesize_automatic_link(chart, self._schema([]))
+        assert link.startswith("/data/db/DUNDERSIGN/TICKETS/detail/?id=")
+
+    def test_a_quoted_mixed_case_table_keeps_its_spelling(self) -> None:
+        from dbt_charts.core.render.chart.automatic_link import source_schema_table
+
+        query = SqlQuery(sql='select * from dundersign."Tickets"', source="db")
+        assert source_schema_table(query, self._schema([])) == (
+            "db",
+            "DUNDERSIGN",
+            "Tickets",
+        )
+
+    def test_a_join_proves_its_spine_through_board_named_fk_columns(self) -> None:
+        from dbt_charts.core.render.chart.automatic_link import (
+            fetch_column_rows_for_link,
+        )
+
+        edge = {
+            "from_table": "TICKETS",
+            "from_column": "customer_id",
+            "to_table": "CUSTOMERS",
+            "to_column": "id",
+        }
+        query = SqlQuery(
+            sql="select t.id, c.name from dundersign.tickets t"
+            " join dundersign.customers c on t.customer_id = c.id",
+            source="db",
+        )
+        rows = fetch_column_rows_for_link(self._schema([edge]), query)
+        assert [row["name"] for row in rows] == ["id", "priority", "customer_id"]

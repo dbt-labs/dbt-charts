@@ -744,8 +744,8 @@ def _render(
             these before calling render() — typically via ``ProjectSession.warnings_ignore``
             or get_project_warnings_ignore(). Defaults to frozenset() (no suppression).
         restated_check: Re-render each chart without its authored keys to find
-            ones that change nothing (WARN-RESTATED-*). Roughly doubles render
-            time, so only authoring surfaces ask for it.
+            ones that change nothing (WARN-RESTATED-*). It re-resolves a chart
+            once per authored key, so no surface turns it on.
         max_rows_per_query: Cap on rows embedded per chart in the data-bearing
             formats (json/text/yaml); each truncation is declared in the output
             (``rows_truncated`` record / comment header). Defaults to

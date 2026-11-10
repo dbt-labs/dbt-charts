@@ -427,7 +427,7 @@ class TestAntiPatterns:
     def test_hard_fail_error_message_points_at_palette_resolver(self):
         with pytest.raises(UnknownPaletteError) as excinfo:
             palette("jet")
-        assert "docs/guides/palette-resolver.md#anti-patterns" in str(excinfo.value)
+        assert "/guides/palette-resolver/#anti-patterns" in str(excinfo.value)
 
 
 class TestResolvePaletteAlias:

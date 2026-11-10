@@ -61,6 +61,7 @@ def _make_executor(board: Any) -> Any:
     assert isinstance(board, Board)
 
     executor = MagicMock()
+    executor.link_schema.dialect_of.return_value = "duckdb"
     executor.render_with_range_filters.return_value = None
     results: dict[str, list[dict[str, Any]]] = {
         "bar_chart": [{"cat": "A", "val": 10}, {"cat": "B", "val": 20}],
@@ -241,6 +242,7 @@ def test_repeated_pie_layout_items_carry_their_slot_width_resolution() -> None:
 
     board = _make_repeated_pie_board()
     executor = MagicMock()
+    executor.link_schema.dialect_of.return_value = "duckdb"
     executor.render_with_range_filters.return_value = None
     pie_rows = [
         {"series": name, "value": value}
@@ -392,6 +394,7 @@ def test_overlay_layer_board_path_includes_non_primary_layer_data() -> None:
     overlay = _make_resolved_overlay_two_queries()
 
     executor = MagicMock()
+    executor.link_schema.dialect_of.return_value = "duckdb"
     executor.render_with_range_filters.return_value = None
     query_data: dict[str, list[dict[str, Any]]] = {
         "q_a": [{"cat": "A", "metric_a": 10}],

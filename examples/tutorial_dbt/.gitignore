@@ -10,3 +10,4 @@ dbt_modules/
 # IDE
 .idea/
 *.iml
+dbt_internal_packages/

@@ -7,12 +7,17 @@ URLs, or the render context — that half lives in ``automatic_link.py``, which
 consumes ``resolve_cte_spine``, ``resolve_join_spine``, and
 ``build_col_output_alias_map`` as its grain/lineage layer.
 
+Names: ``parse_sql`` respells the tree once, so everything here compares
+relations in the catalog's spelling and columns as board names
+(``dialects.identifier``), the spellings ``LinkSchema`` answers in.
+
 Entry points:
+  - ``parse_sql(sql, dialect)`` — the respelled AST, or None.
   - ``resolve_cte_spine(tree)`` — resolve a single-CTE-wrap query to its base
     (schema, table), or ``_BAIL``. Pure AST walk, no adapter needed.
   - ``resolve_join_spine(tree, fk_edges_of)`` — resolve a JOIN query to
     its spine (schema, table) via FK-edge proof, or ``_BAIL``.
-  - ``build_col_output_alias_map(sql)`` — map base column names to their
+  - ``build_col_output_alias_map(sql, dialect)`` — map base column names to their
     output names, traced through CTEs and subqueries, plus whether an
     unlisted column is still safe to assume identity for. See its docstring
     for the full contract: never assume an unlisted column shares its base
@@ -31,6 +36,7 @@ from sqlglot import exp
 from sqlglot.optimizer.scope import Scope, build_scope
 
 from dbt_charts.core.column_refs import fold_relation_names, resolve_source
+from dbt_charts.core.dialects.identifier import catalog_name, result_column_name
 
 if TYPE_CHECKING:
     from sqlglot.expressions import Expression as _SqlglotExpression
@@ -40,10 +46,12 @@ if TYPE_CHECKING:
 _BAIL: tuple[()] = ()
 
 
-def parse_sql(sql: str) -> _SqlglotExpression | None:
+def parse_sql(sql: str, dialect: str | None) -> _SqlglotExpression | None:
     """Strip Jinja tokens and parse ``sql`` into a sqlglot AST, or None on failure.
 
-    Shared by every resolver in this module that needs to parse raw SQL.
+    Every identifier is respelled as *dialect*'s warehouse sees it: a relation
+    (table, schema, alias, qualifier) in the catalog's spelling, a column as its
+    board name. Shared by every resolver in this module that needs to parse raw SQL.
     """
     import sqlglot
     import sqlglot.errors
@@ -56,7 +64,24 @@ def parse_sql(sql: str) -> _SqlglotExpression | None:
         parsed = sqlglot.parse_one(stripped)
     except sqlglot.errors.ParseError:
         return None
-    return as_expression(parsed)
+    tree = as_expression(parsed)
+    if tree is None:
+        return None
+    for ident in tree.find_all(exp.Identifier):
+        name = catalog_name(ident.name, ident.quoted, dialect)
+        if not _names_relation(ident):
+            name = result_column_name(name, dialect)
+        ident.set("this", name)
+    return tree
+
+
+def _names_relation(ident: exp.Identifier) -> bool:
+    parent = ident.parent
+    if isinstance(parent, exp.Table):
+        return True
+    if isinstance(parent, exp.TableAlias):
+        return ident.arg_key == "this"
+    return isinstance(parent, exp.Column) and ident.arg_key != "this"
 
 
 def resolve_cte_spine(tree: _SqlglotExpression) -> tuple[str, str] | tuple[()]:
@@ -453,7 +478,9 @@ def _is_identity(scope: Scope) -> bool:
     )
 
 
-def build_col_output_alias_map(sql: str) -> tuple[dict[str, str], bool]:
+def build_col_output_alias_map(
+    sql: str, dialect: str | None
+) -> tuple[dict[str, str], bool]:
     """Map base table column names to their output aliases.
 
     The base table is the one the query's first FROM entry reads, followed
@@ -484,8 +511,9 @@ def build_col_output_alias_map(sql: str) -> tuple[dict[str, str], bool]:
 
     Args:
         sql: Raw SQL string (Jinja tokens are stripped before parsing).
+        dialect: The sqlglot dialect of the query's source.
     """
-    query = parse_sql(sql)
+    query = parse_sql(sql, dialect)
     if not isinstance(query, exp.Select) or (
         query.find(exp.CTE) and query.find(exp.Join)
     ):

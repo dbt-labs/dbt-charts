@@ -1,8 +1,47 @@
 //! A chart's title block: its title and subtitle as they draw in the width the
 //! card gives.
 
+use board_model::facet::FontWeightValue;
+use board_model::style::style::Style;
 use diagnostic::{diag, Diagnostic};
 use measure::shaped::{Font, FontBook};
+use model_core::Engine;
+
+use crate::markdown_style::heading_ramp;
+use crate::tier::WidthTier;
+
+/// An object title sits at this heading level before its width tier's offset
+/// (typography.py:`OBJECT_TITLE_ANCHOR_LEVEL`).
+const OBJECT_TITLE_ANCHOR_LEVEL: i64 = 2;
+
+/// The size, weight and family stack an object title paints in at a card's outer `width`
+/// (typography.py:`chart_title_spec`): the heading ramp at the tier's level, the compact weight on a
+/// tiny card, the title slot's family on a medium or wide one and the chart font's below.
+pub fn chart_title_spec(style: &Style, width: f64) -> Result<(f64, FontWeightValue, String), Diagnostic> {
+    let title = &style.charts.title;
+    let sizes = heading_ramp(style, "heading")?;
+    let tier = WidthTier::of(width);
+    let offset = match tier {
+        WidthTier::Tiny => title.base.width_offsets.tiny,
+        WidthTier::Narrow => title.base.width_offsets.narrow,
+        WidthTier::Medium => title.base.width_offsets.medium,
+        WidthTier::Wide => title.base.width_offsets.wide,
+    };
+    let level = (OBJECT_TITLE_ANCHOR_LEVEL + i64::from(offset)).clamp(1, sizes.len() as i64);
+    let size = sizes[(level - 1) as usize].trunc();
+    // An `auto` weight or family is the board title's (`style.title.font`, which the chart slot inherits).
+    let weight = match (tier, &title.font.weight) {
+        (WidthTier::Tiny, _) => title.base.compact_weight.clone(),
+        (_, Engine::Value(weight)) => weight.clone(),
+        (_, Engine::Rule(_)) => style.title.font.weight.clone(),
+    };
+    let family = match (tier, &title.font.family) {
+        (WidthTier::Medium | WidthTier::Wide, Engine::Value(family)) if !family.as_str().is_empty() => family.as_str().to_string(),
+        (WidthTier::Medium | WidthTier::Wide, Engine::Rule(_)) => style.title.font.family.as_str().to_string(),
+        _ => style.charts.font.family.as_str().to_string(),
+    };
+    Ok((size, weight, family))
+}
 
 /// How a title's text fits its limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

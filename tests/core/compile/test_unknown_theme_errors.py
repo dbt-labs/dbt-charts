@@ -57,6 +57,13 @@ class TestUnknownThemeName:
         assert not result.success
         assert "ERR-UNKNOWN-THEME" in _codes(result)
 
+    def test_private_base_fragment_is_not_a_theme(self) -> None:
+        for header in ("theme: _base", "extends: _base", "extends: [clarity, _base]"):
+            result = compile(_board(f"title: t\n{header}"))
+
+            assert not result.success, header
+            assert "ERR-UNKNOWN-THEME" in _codes(result), header
+
     def test_extends_list_with_unknown_plain_name_errors(self) -> None:
         result = compile(_board("title: t\nextends: [clarity, editorial-cream]"))
 

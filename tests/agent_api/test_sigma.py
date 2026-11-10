@@ -773,3 +773,29 @@ def test_a_value_given_as_a_formula_is_listed() -> None:
     lines = module._describe(progress, {}, {}, set(), {})
 
     assert "value: Sum([Hours])" in lines
+
+
+def test_a_tiles_tooltip_columns_are_listed_by_name_with_their_format() -> None:
+    scatter = {
+        "id": "s",
+        "kind": "scatter-chart",
+        "columns": [
+            {"id": "a", "name": "Region", "formula": "[Region]"},
+            {"id": "b", "name": "Share", "formula": "Sum([Share])"},
+        ],
+        "tooltip": {
+            "columns": [{"id": "a"}, {"id": "b"}],
+            "format": {"valueFormat": "percent"},
+        },
+    }
+    bare = {"id": "t", "kind": "scatter-chart", "columns": []}
+
+    lines = module._describe(scatter, {}, {}, set(), {})
+
+    assert (
+        'tooltip: Region = [Region]; Share = Sum([Share]) [format: {"valueFormat":"percent"}]'
+        in lines
+    )
+    assert not any(
+        s.startswith("tooltip") for s in module._describe(bare, {}, {}, set(), {})
+    )

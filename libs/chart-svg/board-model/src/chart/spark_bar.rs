@@ -3,7 +3,7 @@
 use super::SharedChartFields;
 use crate::facet::Channel;
 use crate::style::spark_bar::SparkBarChartStyle;
-use model_core::{Cx, FromNode, Kind, Node, ReadScalar};
+use model_core::{Cx, FromNode, Kind, Node, ReadScalar, Spell};
 use model_derive::Model;
 
 /// The bar-label column: a column name, or a list holding exactly one (one row of bars has no
@@ -35,9 +35,27 @@ impl ReadScalar for LabelColumn {
         }
     }
 }
+impl Spell for LabelColumn {
+    fn spell(&self) -> serde_json::Value {
+        self.0.spell()
+    }
+}
+
 union_leaf!(
     LabelColumn,
-    ::model_core::TypeExpr::Facet("columns", ::model_core::Scalar::Str)
+    ::model_core::TypeExpr::Either(
+        &::model_core::TypeExpr::Scalar(::model_core::Scalar::Str),
+        &::model_core::TypeExpr::Keyed(
+            &::model_core::Keywords {
+                min_items: Some(1),
+                max_items: Some(1),
+                ..::model_core::Keywords::NONE
+            },
+            &::model_core::TypeExpr::List(&::model_core::TypeExpr::Scalar(
+                ::model_core::Scalar::Str
+            )),
+        ),
+    )
 );
 
 /// Compact horizontal bars against one label column.

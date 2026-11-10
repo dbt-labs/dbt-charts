@@ -4,7 +4,7 @@
 use d3rs::calendar::days_from_civil;
 use diagnostic::{py_str_repr, Diagnostic};
 
-use crate::model::{Month, TimeDomain};
+use crate::model::{GrainDrop, Month, TimeDomain};
 use crate::temporal::{complete_buckets, detect_time_unit, floor_to_bucket_start, TimeUnit};
 use crate::time_axis::{Dates, Grain, TimeAxis, Unreadable};
 use crate::x_type::parse_date;
@@ -39,6 +39,10 @@ pub struct TimeInput<'a> {
     pub family: &'a str,
     pub x_field: &'a str,
     pub time_unit: TimeUnitSetting,
+    /// Why production labels the axis without its grain, when it does: the grain is still read
+    /// into `TimeDomain.unit`, and the reason lands in `TimeDomain.grain_drop`. An axis with no
+    /// grain to read has none to drop, so it carries no reason.
+    pub grain_drop: Option<GrainDrop>,
     /// Whether the axis synthesizes the buckets no row falls in (`axis_x.fill`).
     pub fill_gaps: bool,
     /// `axis_x.fiscal_year_start_month`; `None` is a calendar year.
@@ -91,7 +95,7 @@ pub fn time_domain(x: &[String], input: &TimeInput) -> Result<Option<TimeDomain>
         }
     };
     let buckets = keys.iter().map(|key| axis.read(key).cloned().map_err(unreadable)).collect::<Result<_, _>>()?;
-    Ok(Some(TimeDomain { axis, unit, buckets, fiscal_start: input.fiscal_start }))
+    Ok(Some(TimeDomain { axis, unit, grain_drop: input.grain_drop.filter(|_| unit.is_some()), buckets, fiscal_start: input.fiscal_start }))
 }
 
 /// `detect_time_unit` over the distinct x texts: `None` below two dates, for a sub-daily value
@@ -126,7 +130,7 @@ mod tests {
     use super::*;
 
     fn input(fill_gaps: bool) -> TimeInput<'static> {
-        TimeInput { chart_id: "c", family: "line", x_field: "d", time_unit: TimeUnitSetting::Absent, fill_gaps, fiscal_start: None }
+        TimeInput { chart_id: "c", family: "line", x_field: "d", time_unit: TimeUnitSetting::Absent, grain_drop: None, fill_gaps, fiscal_start: None }
     }
 
     fn domain(dates: &[&str], input: &TimeInput) -> Option<TimeDomain> {
@@ -196,5 +200,26 @@ mod tests {
         assert_eq!((a.unit, keys(&a)), (b.unit, keys(&b)));
         assert!(!TimeUnitSetting::Absent.is_set());
         assert!(TimeUnitSetting::Auto.is_set() && TimeUnitSetting::Unit(TimeUnit::Year).is_set());
+    }
+
+    #[test]
+    fn a_dropped_grain_is_flagged_with_its_reason_and_keeps_the_grain_it_dropped() {
+        let dates = ["2024-01-01", "2024-02-01", "2024-04-01"];
+        let kept = |drop| {
+            let d = domain(&dates, &TimeInput { grain_drop: drop, ..input(false) }).unwrap();
+            (d.unit, d.grain_drop)
+        };
+        let month = Some(TimeUnit::YearMonth);
+        assert_eq!(kept(None), (month, None));
+        assert_eq!(kept(Some(GrainDrop::ScaffoldBudget)), (month, Some(GrainDrop::ScaffoldBudget)));
+        assert_eq!(kept(Some(GrainDrop::AuthoredNone)), (month, Some(GrainDrop::AuthoredNone)));
+    }
+
+    #[test]
+    fn an_axis_with_no_grain_has_none_to_drop() {
+        let x = vec!["2024-01-03".to_string()];
+        let input = TimeInput { grain_drop: Some(GrainDrop::AuthoredNone), ..input(false) };
+        let domain = time_domain(&x, &input).unwrap().unwrap();
+        assert_eq!((domain.unit, domain.grain_drop), (None, None));
     }
 }

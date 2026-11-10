@@ -1,6 +1,7 @@
 //! The cartesian frame every bar, line, area, scatter, histogram and heatmap lays out through.
 
 pub mod band_axis;
+pub mod label;
 pub mod negotiate;
 pub mod points;
 pub mod tear;

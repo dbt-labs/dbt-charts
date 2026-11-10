@@ -46,8 +46,8 @@ Entry points:
     pass ``row_detail=True``; chart marks leave it ``False`` (default).
     The caller resolves location via ``source_schema_table`` first and passes
     the resulting ``loc=(source, schema, table)`` directly.
-  - ``source_schema_table(query, require_row_grain)`` — extract (source, schema,
-    table) from a query (CTE/plain only), or an empty tuple on bail. Internal
+  - ``source_schema_table(query, schema, require_row_grain)`` — extract (source,
+    schema, table) from a query (CTE/plain only), or an empty tuple on bail. Internal
     callers that hold a ``LinkSchemaReader`` use the private
     ``_loc_for_query`` instead, which additionally attempts FK-proven JOIN
     resolution.
@@ -70,6 +70,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Set as AbstractSet
 from contextvars import ContextVar
 from dataclasses import replace
+from functools import partial
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
@@ -143,6 +144,7 @@ def resolve_filter_cell_link(
 
 def _extract_single_base_table(
     sql: str,
+    dialect: str | None,
     require_row_grain: bool = True,
 ) -> tuple[str, str] | tuple[()]:
     """Extract (schema, table) from SQL with exactly one base table, or _BAIL.
@@ -168,11 +170,12 @@ def _extract_single_base_table(
 
     Args:
         sql: Raw SQL string (Jinja tokens are stripped before parsing).
+        dialect: The sqlglot dialect of the query's source.
         require_row_grain: When True, enforce row-grain; CTEs may resolve.
     """
     from sqlglot import exp
 
-    tree = parse_sql(sql)
+    tree = parse_sql(sql, dialect)
     if tree is None:
         return _BAIL
 
@@ -238,7 +241,7 @@ def _loc_for_query(
         query: The compiled query to inspect.
         schema: The planned schema, for the FK edges JOIN resolution proves with.
     """
-    loc = source_schema_table(query, require_row_grain=True)
+    loc = source_schema_table(query, schema, require_row_grain=True)
     if loc:
         return loc
     from dbt_charts.core.compile.models.query.normalized import (  # noqa: PLC0415
@@ -247,10 +250,10 @@ def _loc_for_query(
 
     if not (is_sql_query(query) and query.source):
         return _BAIL
-    tree = parse_sql(query.sql)
+    tree = parse_sql(query.sql, schema.dialect_of(query.source))
     if tree is None:
         return _BAIL
-    result = resolve_join_spine(tree, schema.fk_edges_of)
+    result = resolve_join_spine(tree, partial(schema.fk_edges_of, query.source))
     if not result:
         return _BAIL
     schema_name, table = result
@@ -259,6 +262,7 @@ def _loc_for_query(
 
 def source_schema_table(
     query: AnyQuery,
+    schema: LinkSchemaReader,
     require_row_grain: bool = True,
 ) -> tuple[str, str, str] | tuple[()]:
     """Extract (source, schema, table) from a query, or an empty tuple on bail.
@@ -273,6 +277,7 @@ def source_schema_table(
 
     Args:
         query: The compiled query to inspect.
+        schema: The planned schema, which names the source's dialect.
         require_row_grain: Enforce row-grain; enables CTE resolution.
     """
     from dbt_charts.core.compile.models.query.normalized import (
@@ -291,12 +296,13 @@ def source_schema_table(
             return _BAIL
         result = _extract_single_base_table(
             query.sql,
+            schema.dialect_of(raw_source),
             require_row_grain=require_row_grain,
         )
         if not result:
             return _BAIL
-        schema, table = result
-        return raw_source, schema, table
+        schema_name, table = result
+        return raw_source, schema_name, table
 
     return _BAIL
 
@@ -529,7 +535,7 @@ def _table_row_detail_link(chart_query: AnyQuery, schema: LinkSchemaReader) -> s
     # regardless of what the query renamed it to for display). These are
     # two different roles that happen to coincide when nothing is aliased.
     alias_map, identity_safe_for_unlisted = (
-        build_col_output_alias_map(chart_query.sql)
+        build_col_output_alias_map(chart_query.sql, schema.dialect_of(_loc[0]))
         if is_sql_query(chart_query)
         else ({}, True)
     )
@@ -607,7 +613,7 @@ def synthesize_automatic_link(
     if not dim_cols:
         return ""
 
-    _loc = source_schema_table(_chart_query, require_row_grain=False)
+    _loc = source_schema_table(_chart_query, schema, require_row_grain=False)
     if not _loc:
         return ""
 
@@ -617,7 +623,7 @@ def synthesize_automatic_link(
     if not dim_cols:
         return ""
 
-    _fk_edges = schema.fk_edges_of(_loc[2])
+    _fk_edges = schema.fk_edges_of(_loc[0], _loc[2])
 
     return resolve_column_set_link(
         channel_cols=dim_cols,
@@ -666,7 +672,7 @@ def fk_column_links(
     if is_sql_query(query):
         from sqlglot import exp  # noqa: PLC0415
 
-        tree = parse_sql(query.sql)
+        tree = parse_sql(query.sql, None)
         # Only the CTE case needs an explicit check here: source_schema_table
         # (called below, require_row_grain=True) resolves some CTE shapes via
         # resolve_cte_spine, which is exactly the widening this function must
@@ -675,11 +681,13 @@ def fk_column_links(
         if tree is not None and list(tree.find_all(exp.CTE)):
             return {}
 
-    loc = source_schema_table(query)
+    loc = source_schema_table(query, schema)
     if not loc:
         return {}
     src, schema_name, table = loc
-    return resolve_fk_column_links(src, schema_name, table, schema.fk_edges_of(table))
+    return resolve_fk_column_links(
+        src, schema_name, table, schema.fk_edges_of(src, table)
+    )
 
 
 def _drawn_charts(board: Board, variables: VariableValues) -> Iterator[Chart]:

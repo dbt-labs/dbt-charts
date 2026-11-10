@@ -346,7 +346,7 @@ fn constraint(span: Span, kind: &str, args: Vec<Item>) -> Result<TokenStream> {
     };
     let variant = Ident::new(variant, span);
     let (mut fields, mut when, mut nonempty, mut auto) = (vec![], vec![], vec![], vec![]);
-    let (mut vals, mut pattern) = (vec![], None);
+    let (mut vals, mut pattern, mut message) = (vec![], None, None);
     let mut bounds = [None, None, None, None];
     for a in &args {
         match a {
@@ -361,6 +361,7 @@ fn constraint(span: Span, kind: &str, args: Vec<Item>) -> Result<TokenStream> {
             Item::Call(sp, n, inner) if n == "nonempty" => nonempty = strs(inner, *sp)?,
             Item::Call(sp, n, inner) if n == "auto" => auto = strs(inner, *sp)?,
             Item::Eq(n, Lit::Str(s)) if n == "pattern" => pattern = Some(s.value()),
+            Item::Eq(n, Lit::Str(s)) if n == "message" => message = Some(s.value()),
             Item::Eq(n, l) if matches!(n.as_str(), "gt" | "ge" | "lt" | "le") => {
                 let v: f64 = match l {
                     Lit::Int(i) => i.base10_parse()?,
@@ -461,6 +462,10 @@ fn constraint(span: Span, kind: &str, args: Vec<Item>) -> Result<TokenStream> {
         Some(p) => quote!(Some(#p)),
         None => quote!(None),
     };
+    let msg = match message {
+        Some(m) => quote!(Some(#m)),
+        None => quote!(None),
+    };
     let b = bounds.map(|b| match b {
         Some(v) => quote!(Some(#v)),
         None => quote!(None),
@@ -472,6 +477,7 @@ fn constraint(span: Span, kind: &str, args: Vec<Item>) -> Result<TokenStream> {
             fields: &[#(#fields),*], when: &[#(#when),*], nonempty: &[#(#nonempty),*],
             auto: &[#(#auto),*], values: &[#(#vals),*], pattern: #pat,
             bounds: ::model_core::Bounds { gt: #gt, ge: #ge, lt: #lt, le: #le },
+            message: #msg,
         }
     })
 }

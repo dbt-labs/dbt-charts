@@ -1,6 +1,6 @@
 """Type stub for the PyO3 extension `dbt_charts._engine` (crate at libs/chart-svg/python)."""
 
-from typing import Any, TypedDict
+from typing import Any, Protocol, TypedDict
 
 class RenderDiagnostic(TypedDict):
     code: str
@@ -13,6 +13,30 @@ class RenderDiagnosticError(ValueError):
 class Rows:
     """One query result parsed by the engine, shared by every call that draws from it."""
 
+class ProjectFiles(Protocol):
+    def read(self, path: str, /) -> str | None: ...
+    def list(self, dir: str, /) -> list[str]: ...
+    def exists(self, path: str, /) -> bool: ...
+
+class CompileError(ValueError):
+    diagnostics: list[RenderDiagnostic]
+
+class CompiledBoard:
+    """A board compiled in Rust. Opaque: no board model crosses to Python."""
+
+    def diagnostics(self) -> list[RenderDiagnostic]: ...
+    def index_json(self) -> str: ...
+
+def compile(
+    files: ProjectFiles,
+    path: str,
+    *,
+    boards_root: str,
+    today: str,
+    default_theme: str,
+    html_policy_ceiling: str | None,
+    sources: list[str],
+) -> CompiledBoard: ...
 def load_rows(rows_json: str) -> Rows: ...
 def render_chart(
     rows: Rows, datasets: dict[str, Rows], layout_json: str

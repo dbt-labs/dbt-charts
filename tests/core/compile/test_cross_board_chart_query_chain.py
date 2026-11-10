@@ -872,3 +872,81 @@ def test_imported_query_inherits_the_declaring_files_meta_source(
         importer, base_dir=local_project(root=tmp_path).directory("charts")
     )
     assert result.success, [e.code for e in result.errors]
+
+
+def test_root_query_named_as_an_imported_registry_key_is_a_coded_duplicate(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    (tmp_path / "_c.yml").write_text(
+        """
+queries:
+  b:
+    sql: SELECT 2 AS a
+    source: db
+charts:
+  rev:
+    type: table
+    query: b
+    columns:
+      - a
+"""
+    )
+    project = local_project(root=tmp_path)
+    main_yaml = """
+queries:
+  _ximport__c_yml_b:
+    sql: SELECT 1 AS a
+    source: db
+charts:
+  one: _c.yml.charts.rev
+rows:
+  - one
+"""
+    result = compile(main_yaml, base_dir=project.directory())
+
+    assert [e.code for e in result.errors] == ["ERR-DUPLICATE-QUERY-NAME"]
+    message = result.errors[0].message
+    assert "'_ximport__c_yml_b'" in message
+    assert "_c.yml#b" in message
+    assert "queries._ximport__c_yml_b" in message
+
+
+def test_two_imports_sanitizing_to_one_registry_key_are_refused_by_name(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """`sub/c.yml#q` and `sub_c.yml#q` both become `_ximport_sub_c_yml_q`; the
+    second would silently replace the first's query, so the board is refused."""
+    (tmp_path / "sub").mkdir()
+    chart = (
+        "source: db\nqueries:\n  q:\n    sql: SELECT {n} AS x\n"
+        "charts:\n  c:\n    type: table\n    query: q\nrows:\n  - c\n"
+    )
+    (tmp_path / "sub" / "c.yml").write_text(chart.format(n=1))
+    (tmp_path / "sub_c.yml").write_text(chart.format(n=2))
+    importer = (
+        "title: B\ncharts:\n  one: sub/c.charts.c\n  two: sub_c.charts.c\n"
+        "rows:\n  - one\n  - two\n"
+    )
+    result = compile(importer, base_dir=local_project(root=tmp_path).directory("."))
+    assert [e.code for e in result.errors] == ["ERR-DUPLICATE-QUERY-NAME"]
+    assert "sub/c.yml#q and sub_c.yml#q" in result.errors[0].message
+
+
+def test_a_placed_board_import_sanitizing_to_the_outer_key_is_refused(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """The clash is refused across the placed-board seam too, not only within
+    one board's imports: the outer chart must not read the inner file's rows."""
+    (tmp_path / "sub").mkdir()
+    chart = (
+        "source: db\nqueries:\n  q:\n    sql: SELECT {n} AS x\n"
+        "charts:\n  c:\n    type: table\n    query: q\nrows:\n  - c\n"
+    )
+    (tmp_path / "sub" / "c.yml").write_text(chart.format(n=1))
+    (tmp_path / "sub_c.yml").write_text(chart.format(n=2))
+    (tmp_path / "inner.yml").write_text(
+        "title: Inner\ncharts:\n  two: sub_c.charts.c\nrows:\n  - two\n"
+    )
+    outer = "title: B\ncharts:\n  one: sub/c.charts.c\nrows:\n  - one\n  - inner.yml\n"
+    result = compile(outer, base_dir=local_project(root=tmp_path).directory("."))
+    assert [e.code for e in result.errors] == ["ERR-DUPLICATE-QUERY-NAME"]

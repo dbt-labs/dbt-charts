@@ -115,7 +115,7 @@ def test_chart_tooltip_script_uses_inter_and_tabular_values() -> None:
     )
     script = hover_runtime_source()
     assert f'data-dbt-font-family="{_FONT_FAMILY_PRIMARY},' in attrs
-    assert "tooltip.style.fontFamily = DCT_FONT_FAMILY;" in script
+    assert "tooltip.style.fontFamily = active.fontFamily;" in script
     assert "font-variant-numeric:tabular-nums lining-nums;" in script
 
 

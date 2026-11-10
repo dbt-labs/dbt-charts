@@ -1,5 +1,7 @@
 //! A cartesian plot's value axis: which rungs it draws at a plot size, their
 //! text, where the labels sit, and the gutter their ink takes past the plot.
+//! One law serves both orientations: a left or right axis rungs over the plot's
+//! height, a bottom or top one over its width.
 //!
 //! Bind owns the domain's final bounds; the rungs of a `BySize` ladder are
 //! chosen here, because they follow the axis's pixel length.
@@ -13,6 +15,10 @@ use measure::shaped::{Font, FontBook};
 use scene::Bounds;
 
 use crate::geom::{Insets, Size};
+use crate::plot::label::{
+    flush_align, parity_advance, parity_visible, vega_baseline, vega_line, vega_space, Align,
+    Baseline,
+};
 
 /// Which edge of the plot the axis labels hang from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +30,10 @@ pub enum Side {
     /// A right axis whose labels start `padding` past the tick: a base axis
     /// re-pinned onto the right, or one with an authored `labels.expr`.
     RightAway,
+    /// A horizontal axis whose labels hang below the plot.
+    Bottom,
+    /// A horizontal axis whose labels stand above the plot.
+    Top,
 }
 
 /// The room a right-aligned right axis leaves past its widest label
@@ -150,7 +160,12 @@ pub enum Mirror<'a> {
 /// A value axis's labels as resolved: the face, the number format and locale
 /// that print a `BySize` rung, the least gap Vega's parity rule leaves between
 /// labels (`labelSeparation`), the width a label's box is capped at, the tick
-/// length and the label padding.
+/// length and the label padding. `rule`, `estimate_extent` and `mirror` are read
+/// by a left or right axis only; `title` by a bottom or top axis only.
+///
+/// A bottom or top axis draws its labels flat, as production draws every
+/// continuous x axis: it takes no tilt verdict, so the caller refuses an authored
+/// `labels.angle`, which production ignores there.
 #[derive(Clone, Copy)]
 pub struct ValueLabels<'a> {
     pub font: Font<'a>,
@@ -170,18 +185,43 @@ pub struct ValueLabels<'a> {
     /// The mirror axis on the other edge, if the chart asks for one; see [`Mirror`] for what
     /// the caller must refuse before stating one.
     pub mirror: Option<Mirror<'a>>,
+    pub title: Option<AxisTitle<'a>>,
+}
+
+/// An axis title as resolved: one line of text, its face and its padding from the labels.
+#[derive(Debug, Clone, Copy)]
+pub struct AxisTitle<'a> {
+    pub text: &'a str,
+    pub font: Font<'a>,
+    pub padding: f64,
 }
 
 /// A rung's label as placed: its anchor in plot coordinates (the plot's top
-/// left at the origin), and whether the parity rule keeps it. Hidden rungs
-/// still draw their tick and gridline.
+/// left at the origin), how the text sits on it, whether the parity rule
+/// keeps it, its ink, and the room production reserves for it
+/// ([`vega_space`]), which the gutter reads. Hidden rungs still draw their
+/// tick and gridline.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlacedRung {
     pub value: f64,
     pub text: String,
     pub x: f64,
     pub y: f64,
+    pub align: Align,
+    pub baseline: Baseline,
     pub visible: bool,
+    pub ink: Bounds,
+    pub space: Bounds,
+}
+
+/// An axis title as placed: centered on its anchor in plot coordinates, the
+/// edge `baseline` names on it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlacedTitle {
+    pub text: String,
+    pub x: f64,
+    pub y: f64,
+    pub baseline: Baseline,
     pub ink: Bounds,
 }
 
@@ -189,6 +229,7 @@ pub struct PlacedRung {
 pub struct Placement {
     pub rungs: Vec<PlacedRung>,
     pub gutter: Insets,
+    pub title: Option<PlacedTitle>,
 }
 
 /// A value axis over one domain: it holds the face's ascent and descent, and
@@ -370,6 +411,14 @@ impl<'a> ValueAxis<'a> {
     /// not knowing the rungs Vega will draw: always for `Right`, and for
     /// `RightAway` when the rule says `Estimated`.
     pub fn place(&self, plot: Size) -> Result<Placement, Diagnostic> {
+        if matches!(self.labels.side, Side::Bottom | Side::Top) {
+            return self.place_across(plot);
+        }
+        if self.labels.title.is_some() {
+            return Err(Diagnostic::refused(refuse!(
+                "a left or right value axis title is not supported"
+            )));
+        }
         let ValueLabels {
             font,
             side,
@@ -403,7 +452,7 @@ impl<'a> ValueAxis<'a> {
         let by_size = matches!(self.domain.ladder, Ladder::BySize { .. });
         let estimated = by_size
             && match side {
-                Side::Left => false,
+                Side::Left | Side::Bottom | Side::Top => false,
                 Side::Right => true,
                 Side::RightAway => rule.away_by_size == AwayReach::Estimated,
             };
@@ -429,6 +478,7 @@ impl<'a> ValueAxis<'a> {
                     };
                 (plot.width + reach, true, reach)
             }
+            Side::Bottom | Side::Top => unreachable!("a horizontal axis is placed across"),
             Side::RightAway => {
                 let away = if by_size {
                     match rule.away_by_size {
@@ -477,19 +527,36 @@ impl<'a> ValueAxis<'a> {
         let rungs: Vec<PlacedRung> = texts
             .into_iter()
             .zip(shown)
-            .map(|((value, text, width, y), visible)| PlacedRung {
-                value,
-                text,
-                x: distance,
-                y,
-                visible,
-                ink: boxed(y, width.min(limit), height),
+            .map(|((value, text, width, y), visible)| {
+                let ink = boxed(y, width.min(limit), height);
+                PlacedRung {
+                    value,
+                    text,
+                    x: distance,
+                    y,
+                    align: if left_of_anchor {
+                        Align::Right
+                    } else {
+                        Align::Left
+                    },
+                    baseline: Baseline::Middle,
+                    visible,
+                    ink,
+                    space: vega_space(
+                        (ink.x1, ink.x2),
+                        (distance, y),
+                        Baseline::Middle,
+                        font.size,
+                        1,
+                        0.0,
+                    ),
+                }
             })
             .collect();
         let (mut top, mut bottom) = (0.0_f64, 0.0_f64);
         for rung in rungs.iter().filter(|r| r.visible) {
-            top = top.max(-rung.ink.y1);
-            bottom = bottom.max(rung.ink.y2 - plot.height);
+            top = top.max(-rung.space.y1);
+            bottom = bottom.max(rung.space.y2 - plot.height);
         }
         // The ghost starts where the primary's labels do on its own edge, so a left axis's ghost
         // hangs from the right tick and a right axis's ends at the far edge of the primary's
@@ -508,46 +575,201 @@ impl<'a> ValueAxis<'a> {
                 bottom,
                 left: ghost.map_or(0.0, |width| reach + width),
             },
+            Side::Bottom | Side::Top => unreachable!("a horizontal axis is placed across"),
         };
-        Ok(Placement { rungs, gutter })
+        Ok(Placement {
+            rungs,
+            gutter,
+            title: None,
+        })
     }
-}
 
-/// Vega's `labelOverlap: parity` over label boxes in axis order: while three or
-/// more labels remain and any neighboring pair sits closer than `separation`
-/// (the larger of the pair's x and y gaps), every odd-indexed survivor goes;
-/// once fewer than three remain with the axis's last label gone, that last
-/// label shows in place of the last survivor.
-fn parity_visible(ink: &[Bounds], separation: f64) -> Vec<bool> {
-    let close = |a: &Bounds, b: &Bounds| {
-        separation
-            > (b.x1 - a.x2)
-                .max(a.x1 - b.x2)
-                .max(b.y1 - a.y2)
-                .max(a.y1 - b.y2)
-    };
-    let crowded = |kept: &[usize]| kept.windows(2).any(|w| close(&ink[w[0]], &ink[w[1]]));
-    let mut kept: Vec<usize> = (0..ink.len()).collect();
-    if kept.len() < 3 || !crowded(&kept) {
-        return vec![true; ink.len()];
-    }
-    while kept.len() >= 3 && crowded(&kept) {
-        kept = kept.into_iter().step_by(2).collect();
-    }
-    let mut visible: Vec<bool> = (0..ink.len()).map(|i| kept.contains(&i)).collect();
-    let last = ink.len() - 1;
-    if kept.len() < 3 && !visible[last] {
-        if kept.len() > 1 {
-            visible[kept[kept.len() - 1]] = false;
+    /// A bottom or top axis on a plot of `plot` px. Which labels show is Vega's
+    /// parity rule over boxes of production's measure ([`parity_advance`], capped
+    /// at the limit) by the font size; where they are inked a box is the shaped advance (capped)
+    /// by the face's ascent plus descent (quirk class Q2d). Space is production's: the
+    /// gutter reaches the labels' room ([`vega_space`]) and then the title's band,
+    /// and the title's baseline sits the label size plus its padding past theirs (`axis_title_flat`), or
+    /// `padding` off the plot edge when nothing is rung, since no tick is drawn. The
+    /// outermost ticks' stroke is the caller's.
+    fn place_across(&self, plot: Size) -> Result<Placement, Diagnostic> {
+        let ValueLabels {
+            font,
+            side,
+            tick,
+            padding,
+            limit,
+            min_gap,
+            ..
+        } = self.labels;
+        if self.labels.mirror.is_some() {
+            return Err(diag::err_internal(
+                "a mirror reached a bottom or top value axis: only axis_y mirrors",
+            ));
         }
-        visible[last] = true;
+        let below = side == Side::Bottom;
+        let edge = if below { plot.height } else { 0.0 };
+        let away = |distance: f64| {
+            if below {
+                edge + distance
+            } else {
+                edge - distance
+            }
+        };
+        let anchor = away(tick + padding);
+        let baseline = if below {
+            Baseline::Top
+        } else {
+            Baseline::Bottom
+        };
+        let boxed = |x: f64, width: f64, align: Align, height: f64| {
+            let x1 = match align {
+                Align::Left => x,
+                Align::Center => x - width / 2.0,
+                Align::Right => x - width,
+            };
+            let y1 = if below { anchor } else { anchor - height };
+            Bounds {
+                x1,
+                y1,
+                x2: x1 + width,
+                y2: y1 + height,
+            }
+        };
+        let height = self.ascent + self.descent;
+        let (mut vega, mut placed) = (Vec::new(), Vec::new());
+        for (value, text) in self.rungs(plot.width)? {
+            let x = plot.width * fraction(self.domain, value);
+            let align = flush_align(x, plot.width);
+            let decided = parity_advance(self.book, &text, &font)?;
+            let advance = self
+                .book
+                .run(&text, &font)
+                .map_err(diag::err_internal)?
+                .advance;
+            vega.push(boxed(x, decided.min(limit), align, font.size));
+            let ink = boxed(x, advance.min(limit), align, height);
+            let space = vega_space((ink.x1, ink.x2), (x, anchor), baseline, font.size, 1, 0.0);
+            placed.push((value, text, x, align, ink, space));
+        }
+        let shown = parity_visible(&vega, min_gap);
+        let rungs: Vec<PlacedRung> = placed
+            .into_iter()
+            .zip(shown)
+            .map(
+                |((value, text, x, align, ink, space), visible)| PlacedRung {
+                    value,
+                    text,
+                    x,
+                    y: anchor,
+                    align,
+                    baseline,
+                    visible,
+                    ink,
+                    space,
+                },
+            )
+            .collect();
+        let outer = |reach: f64, ink: Bounds| {
+            if below {
+                reach.max(ink.y2)
+            } else {
+                reach.min(ink.y1)
+            }
+        };
+        let mut reach = edge;
+        let mut gutter = Insets::ZERO;
+        for space in rungs.iter().filter(|r| r.visible).map(|r| r.space) {
+            reach = outer(reach, space);
+            gutter.left = gutter.left.max(-space.x1);
+            gutter.right = gutter.right.max(space.x2 - plot.width);
+        }
+        let label_baseline =
+            (!rungs.is_empty()).then(|| (vega_baseline(anchor, baseline, font.size), font.size));
+        let title = self
+            .labels
+            .title
+            .map(|title| self.place_title(title, plot, label_baseline, below))
+            .transpose()?;
+        // Production's title band (`x_title_extra`): the padding and the title's Vega line, below
+        // its top anchor.
+        let band = self.labels.title.map_or(0.0, |title| {
+            title.padding + vega_line(0.0, Baseline::Top, title.font.size).1
+        });
+        if below {
+            gutter.bottom = reach - edge + band;
+        } else {
+            gutter.top = edge - reach + band;
+        }
+        Ok(Placement {
+            rungs,
+            gutter,
+            title,
+        })
     }
-    visible
+
+    /// A bottom or top axis title centered on the plot: its baseline the label
+    /// size plus `padding` past the labels' (`label_baseline`, with their size), or
+    /// `padding` off the plot edge's baseline when nothing is rung. Its anchor is
+    /// where Vega's baseline offset puts that baseline; its ink is the face's own.
+    /// A title wider than the plot is refused: production wraps it at the chart's
+    /// width, which this axis does not see. A line break never reaches here, since
+    /// production joins an authored one.
+    fn place_title(
+        &self,
+        title: AxisTitle,
+        plot: Size,
+        label_baseline: Option<(f64, f64)>,
+        below: bool,
+    ) -> Result<PlacedTitle, Diagnostic> {
+        if title.text.contains('\n') || title.text.contains(measure::LINE_SEP) {
+            return Err(diag::err_internal(
+                "an axis title reached layout on more than one line: production joins an authored break",
+            ));
+        }
+        let run = self
+            .book
+            .run(title.text, &title.font)
+            .map_err(diag::err_internal)?;
+        if run.advance > plot.width {
+            return Err(Diagnostic::refused(refuse!(
+                "a value axis title wider than its plot is not supported"
+            )));
+        }
+        let height = run.ascent + run.descent;
+        let sign = if below { 1.0 } else { -1.0 };
+        let baseline = if below {
+            Baseline::Top
+        } else {
+            Baseline::Bottom
+        };
+        let edge = if below { plot.height } else { 0.0 };
+        let y = match label_baseline {
+            None => edge + sign * title.padding,
+            Some((at, size)) => {
+                let title_baseline = at + sign * (size + title.padding);
+                title_baseline - vega_baseline(0.0, baseline, title.font.size)
+            }
+        };
+        let y1 = if below { y } else { y - height };
+        let x = plot.width / 2.0;
+        Ok(PlacedTitle {
+            text: title.text.to_string(),
+            x,
+            y,
+            baseline,
+            ink: Bounds {
+                x1: x - run.advance / 2.0,
+                y1,
+                x2: x + run.advance / 2.0,
+                y2: y1 + height,
+            },
+        })
+    }
 }
 
 /// RL §2e. Whether the value axis's gridlines cap the plot's bottom edge, which
-/// decides the other axis's tick stubs (`_y_gridline_caps_bottom`, ported in
-/// `resolve/src/cartesian/domain.rs`). False when the grid is hidden; true when
+/// decides the other axis's tick stubs (`_y_gridline_caps_bottom`). False when the grid is hidden; true when
 /// the floor is unknown; else whether the first rung of the baked ladder is the
 /// floor. A `BySize` ladder bakes none, so its floor
 /// is unknown and the verdict is true: production's, not the rung layout picks.

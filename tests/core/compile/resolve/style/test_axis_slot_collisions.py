@@ -17,7 +17,7 @@ from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_cont
 
 _CHANNEL = ("axis_x", "axis_y")
 _TYPE = ("axis_quantitative", "axis_band")
-_THEMES = [name for name in list_built_in_themes() if name != "_base"]
+_THEMES = list_built_in_themes()
 # Themes whose y-axis restyles grid color for the same leaf as
 # axis_quantitative.
 _Y_STYLED = {"clarity", "neon", "paper", "vivid"}

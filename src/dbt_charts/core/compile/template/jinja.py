@@ -59,6 +59,7 @@ from dbt_charts.core.compile.template._helpers import (
     _LenientUndefined,
     _QueryNamespace,
     template_error_location,
+    undefined_variable_advice,
 )
 from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
 from dbt_charts.core.compile.template.listings import (
@@ -579,8 +580,10 @@ def resolve_jinja_template(
             emitted_bytes=e.emitted_bytes, ceiling=e.ceiling
         ) from e
     except UndefinedError as e:
+        advice = undefined_variable_advice(jinja_env, template, context)
         raise JinjaError(
-            f"Undefined variable: {e}{template_error_location(template, e)}", template
+            f"Undefined variable: {e}{template_error_location(template, e)}.{advice}",
+            template,
         ) from e
     except TemplateSyntaxError as e:
         raise JinjaError(
@@ -588,7 +591,7 @@ def resolve_jinja_template(
             template,
         ) from e
     except TemplateError as e:
-        raise JinjaError(f"Template error: {e}", template) from e
+        raise JinjaError(f"{e}{template_error_location(template, e)}", template) from e
     except TypeError as e:
         if query_results is None:
             raise

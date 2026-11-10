@@ -6,7 +6,7 @@
 
 use super::columns::LonLat;
 use crate::string_enum;
-use model_core::{Cx, FromNode, Kind, Leaf, Node, ReadScalar};
+use model_core::{Cx, FromNode, Kind, Leaf, Node, ReadScalar, Spell};
 use model_derive::Model;
 
 string_enum!(
@@ -46,6 +46,12 @@ impl ReadScalar for Rotation {
         Some(Self(items))
     }
 }
+impl Spell for Rotation {
+    fn spell(&self) -> serde_json::Value {
+        self.0.spell()
+    }
+}
+
 union_leaf!(
     Rotation,
     ::model_core::TypeExpr::Either(
@@ -72,6 +78,12 @@ impl ReadScalar for ClipExtent {
         Some(Self([a?, b?]))
     }
 }
+impl Spell for ClipExtent {
+    fn spell(&self) -> serde_json::Value {
+        self.0.spell()
+    }
+}
+
 union_leaf!(
     ClipExtent,
     ::model_core::TypeExpr::Tuple(&[
@@ -137,6 +149,15 @@ impl ReadScalar for ProjectionChoice {
         ProjectionType::read(node, cx).map(Self::Name)
     }
 }
+impl Spell for ProjectionChoice {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Self::Name(n) => n.spell(),
+            Self::Block(b) => b.spell(),
+        }
+    }
+}
+
 union_leaf!(
     ProjectionChoice,
     ::model_core::TypeExpr::Either(

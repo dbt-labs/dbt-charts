@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from dbt_charts.core.dialects.identifier import sql_identifier
+from dbt_charts.core.dialects.identifier import (
+    catalog_name,
+    result_column_name,
+    sql_identifier,
+)
 
 
 class TestSqlIdentifierDialect:
@@ -75,3 +79,39 @@ class TestSqlIdentifierDialect:
     def test_empty_identifier_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="not a valid SQL identifier"):
             sql_identifier("", "postgres")
+
+
+class TestCatalogName:
+    @pytest.mark.parametrize(
+        ("name", "quoted", "dialect", "expected"),
+        [
+            ("tickets", False, "snowflake", "TICKETS"),
+            ("tickets", True, "snowflake", "tickets"),
+            ("Tickets", False, "postgres", "tickets"),
+            ("Tickets", True, "postgres", "Tickets"),
+            ("Tickets", False, "duckdb", "Tickets"),
+            ("tickets", False, None, "tickets"),
+        ],
+    )
+    def test_unquoted_folds_as_the_dialect_folds(
+        self, name: str, quoted: bool, dialect: str | None, expected: str
+    ) -> None:
+        assert catalog_name(name, quoted, dialect) == expected
+
+
+class TestResultColumnName:
+    @pytest.mark.parametrize(
+        ("name", "dialect", "expected"),
+        [
+            ("PRIORITY", "snowflake", "priority"),
+            ("Priority", "snowflake", "priority"),
+            ("Priority", "bigquery", "priority"),
+            ("Priority", "duckdb", "Priority"),
+            ("Priority", "sqlite", "Priority"),
+            ("PRIORITY", None, "PRIORITY"),
+        ],
+    )
+    def test_lowercases_except_on_local_engines(
+        self, name: str, dialect: str | None, expected: str
+    ) -> None:
+        assert result_column_name(name, dialect) == expected

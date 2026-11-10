@@ -119,7 +119,7 @@ class BoardLoader(yaml.CSafeLoader):
                     if depth > MAX_YAML_NESTING:
                         raise NestingTooDeepError(
                             problem=f"nesting deeper than {MAX_YAML_NESTING} levels",
-                            problem_mark=event.start_mark,
+                            problem_mark=event.start_mark,  # pyright: ignore[reportArgumentType] — stub types problem_mark as yaml.error.Mark, but libyaml's own C loader raises MarkedYAMLError with C marks
                         )
                 elif isinstance(event, yaml.SequenceEndEvent | yaml.MappingEndEvent):
                     depth -= 1

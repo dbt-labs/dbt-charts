@@ -3,7 +3,8 @@
 
 use board_model::ids::{ChartId, QueryId};
 use column_types::Dataset;
-use diagnostic::Diagnostic;
+use diagnostic::{diag, Diagnostic};
+use serde_json::json;
 use indexmap::IndexMap;
 use std::collections::BTreeSet;
 
@@ -13,7 +14,9 @@ pub struct RunResult {
     /// Each executed query's rows and declared column types. A query from an imported
     /// file has its own id, so same-named queries of two files never collide.
     pub datasets: IndexMap<QueryId, Dataset>,
-    /// The resolved variable values, as `plan` returned them.
+    /// The resolved variable values, as `plan` returned them: the board's visible variables and the
+    /// hidden ones normalize generates for tabs and details, each at its default unless set, in
+    /// declaration order (a toggle link carries every one).
     pub variables: IndexMap<String, board_model::variable_value::VariableValue>,
     /// The variables the caller set a value for, whatever it equals the default to
     /// (`current_overridden_variables`): the board's reset item is enabled by them. Run input,
@@ -22,6 +25,16 @@ pub struct RunResult {
     /// The charts whose query failed, each with its execute error: that chart's card.
     pub chart_errors: IndexMap<ChartId, Diagnostic>,
     pub env: RenderEnv,
+}
+
+impl RunResult {
+    /// The result of `query` for the chart `id` reading it; a run without one needs the data
+    /// before the chart can bind.
+    pub fn dataset(&self, query: &QueryId, id: &ChartId) -> Result<&Dataset, Diagnostic> {
+        self.datasets
+            .get(query)
+            .ok_or_else(|| diag::err_engine_needs_data(query.to_string()).with_sink_param("chart_id", json!(id.as_str())))
+    }
 }
 
 /// The ambient inputs of a render, passed as data: the engine reads no clock or env.

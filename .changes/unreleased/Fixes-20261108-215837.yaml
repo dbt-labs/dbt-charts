@@ -1,0 +1,3 @@
+kind: Fixes
+body: Error messages now name the fix for spreadsheet number formats, inline layer queries, Jinja in annotations, and mistyped query references.
+time: 2026-11-08T21:58:37.461898-08:00

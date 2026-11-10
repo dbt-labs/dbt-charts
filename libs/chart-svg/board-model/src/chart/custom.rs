@@ -2,7 +2,7 @@
 
 use super::{Columns, SharedChartFields};
 use crate::facet::{facet, Facet};
-use model_core::{Cx, FromNode, Kind, Node, ReadScalar};
+use model_core::{Cx, FromNode, Kind, Node, ReadScalar, Spell};
 use model_derive::Model;
 use yaml::Value;
 
@@ -54,6 +54,18 @@ impl ReadScalar for OptionValue {
         }
     }
 }
+impl Spell for OptionValue {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Self::Null => serde_json::Value::Null,
+            Self::Bool(b) => (*b).into(),
+            Self::Number(n) => n.clone().into(),
+            Self::Text(t) => t.as_str().into(),
+            Self::List(l) => l.spell(),
+        }
+    }
+}
+
 union_leaf!(OptionValue, {
     use ::model_core::{Scalar::*, TypeExpr::*};
     Either(
@@ -123,6 +135,6 @@ pub struct CustomChart {
     #[model(fill = fill_empty)]
     pub options: indexmap::IndexMap<String, OptionValue>,
     /// Sizing overrides for this chart alone.
-    #[model(nullable)]
+    #[model(fill = fill_style, nullable)]
     pub style: CustomChartStyle,
 }

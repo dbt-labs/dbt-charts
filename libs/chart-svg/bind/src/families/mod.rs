@@ -4,3 +4,4 @@ pub mod bar;
 pub mod cartesian;
 pub mod line;
 pub mod scatter;
+pub mod spark_bar;

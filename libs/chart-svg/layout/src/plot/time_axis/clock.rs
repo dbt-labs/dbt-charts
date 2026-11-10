@@ -10,8 +10,8 @@
 //! at noon between midnight ticks, replace the clock labels when asked for or when the ticks are
 //! a day or more apart, and the data's first and last instants are named where there is room.
 //!
-//! The axis is the line and area axis. Production's scatter builds the same plan but draws only the clock
-//! ticks (no end points, no day labels: `scatter_axis.rs:675, 908-934`), so a scatter caller must not reach it.
+//! A line or area axis names points beside the ticks (`Clock::points`); production's scatter builds the
+//! same plan but draws only the clock ticks (no end points, no day labels: `scatter_axis.rs:675, 908-934`).
 //!
 //! What layout cannot see and production reads is the caller's to refuse: `labels.values`, `labels.expr`
 //! and `scale.continuous.domain` (each makes production keep Vega's own labels or extent).
@@ -78,10 +78,14 @@ pub struct Clock<'a> {
     /// The day labels a line or area axis derives (production's `plan_for`) from `labels.time_unit`,
     /// `labels.align`, `labels.visible` and the formats: `Authored` for `yearmonthdate`, `OnDayTicks` for
     /// an unset or `auto` unit when interval labels are allowed (`interval_labels_allowed`), else `Off`.
-    /// A scatter has no day labels and never reaches this axis.
+    /// Read only where `points` is set.
     pub day_labels: DayLabels,
     /// Midnight and noon in the board language (`bind::time_locale::clock_words`).
     pub words: &'a [String; 2],
+    /// Whether the axis names points beside its ticks: day labels and the data's first and last
+    /// instants (`SubdayPlan::with_points`). A line or area axis does (`line/layout.rs:2646`); a
+    /// scatter draws only the ticks (`scatter_axis.rs:908-934`).
+    pub points: bool,
 }
 
 /// How a tick paints: both, a boundary with no label between, or a label no tick marks.
@@ -378,6 +382,9 @@ impl TimeAxis<'_> {
         ticks: Vec<Bare>,
         plot_w: f64,
     ) -> Result<Vec<Bare>, Diagnostic> {
+        if !self.labels.clock.points {
+            return Ok(ticks);
+        }
         let (lo, hi) = self.extent;
         let day_ticks = ticks.len() >= 2 && ticks.windows(2).all(|p| p[1].day - p[0].day >= 0.5);
         if plan.day_labels == DayLabels::Authored

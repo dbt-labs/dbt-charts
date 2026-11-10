@@ -4,8 +4,9 @@ Resources: dct://boards, dct://board/{path},
            dct://guide/*
 
 Tools: all tools from dbt_charts.ai.tool_schemas.ALL_TOOLS (render_board,
-       execute_sql, search_files, describe_board, describe_semantics,
-       list_skills, get_skill, list_diagnostic_codes, get_diagnostic_code)
+       execute_sql, search_files, describe_board, list_skills, get_skill,
+       list_diagnostic_codes, get_diagnostic_code), plus describe_semantics
+       when a source declares `metricflow:`
 
 Usage: dct mcp serve
 """
@@ -20,13 +21,20 @@ if TYPE_CHECKING:
     from dbt_charts.cli.filesystem_project import FilesystemProject
     from dbt_charts.core.execute.cache_backend import QueryResultCache
 
-from pydantic import AnyUrl, TypeAdapter
+import yaml
+from pydantic import AnyUrl, TypeAdapter, ValidationError
 
 from dbt_charts._install_hint import install_hint
 from dbt_charts.agent_api.query_csv import model_json
 from dbt_charts.ai.context import DbtChartsAIContext
-from dbt_charts.ai.tool_schemas import ALL_TOOLS, SINGLE_VALUE_RULE
+from dbt_charts.ai.tool_schemas import (
+    ALL_TOOLS,
+    DESCRIBE_SEMANTICS,
+    SINGLE_VALUE_RULE,
+)
 from dbt_charts.ai.tools import dispatch_tool_call
+from dbt_charts.core.compile.models.source import declares_metricflow
+from dbt_charts.core.diagnostics.base import DbtChartsError
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +175,16 @@ def create_server(context: DbtChartsAIContext) -> Any:
     async def handle_read_resource(uri: AnyUrl) -> str:
         return _read_resource_content(str(uri), context=context)
 
+    def _tools() -> list[dict[str, Any]]:
+        project = context.project_session.project
+        try:
+            semantic = declares_metricflow(project.declared_sources.sources)
+        except (yaml.YAMLError, ValidationError, DbtChartsError):
+            # A broken dbt_charts.yml must not take down the tools that report
+            # it; every source-reading tool raises the error itself.
+            return ALL_TOOLS
+        return [*ALL_TOOLS, DESCRIBE_SEMANTICS] if semantic else ALL_TOOLS
+
     @server.list_tools()
     async def handle_list_tools() -> list[Tool]:
         return [
@@ -176,7 +194,7 @@ def create_server(context: DbtChartsAIContext) -> Any:
                 inputSchema=cast(dict[str, Any], t["input_schema"]),
                 annotations=ToolAnnotations(**t["annotations"]),
             )
-            for t in ALL_TOOLS
+            for t in _tools()
         ]
 
     @server.call_tool()

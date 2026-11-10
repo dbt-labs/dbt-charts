@@ -15,6 +15,8 @@ pub enum Scalar {
     Str,
     /// Any JSON value: a cell of inline data, a variable's default.
     Json,
+    /// Any mapping, as Python's `dict[str, Any]` states it: `{"type": "object"}` with no value type.
+    Object,
 }
 
 /// A field's type as written, for schema emission. Built by [`Leaf::EXPR`]
@@ -311,6 +313,9 @@ pub struct Constraint {
     pub values: &'static [Value],
     pub pattern: Option<&'static str>,
     pub bounds: Bounds,
+    /// What a violation says when a caller refuses a value over it (`{query}` is the caller's
+    /// name for the offender); the JSON Schema states the rule and never this text.
+    pub message: Option<&'static str>,
 }
 
 /// What a model is, which decides how its fields read.

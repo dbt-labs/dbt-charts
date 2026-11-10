@@ -64,7 +64,6 @@ class TestSkillsList:
             "custom-chart-build",
             "mcp-setup",
             "report-design",
-            "semantic-query",
             "styling",
         }
 

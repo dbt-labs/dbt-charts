@@ -474,6 +474,7 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
                 quote!(::model_core::Empty::is_empty(&self.#n))
             });
             let set_leaves = reads.iter().map(set_leaves_stmt);
+            let leaf_values = reads.iter().map(leaf_values_stmt);
             let to_patch = slots.iter().map(|s| {
                 let n = &s.name;
                 if s.authored.to_string() == s.patch.to_string() {
@@ -563,6 +564,20 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
                         #(#set_leaves)*
                     }
                 }
+                impl ::model_core::Spell for #patch {
+                    fn spell(&self) -> ::model_core::serde_json::Value { ::model_core::spell_leaves(self) }
+                }
+                impl ::model_core::Spell for #authored {
+                    fn spell(&self) -> ::model_core::serde_json::Value {
+                        ::model_core::Spell::spell(&::model_core::ToPatch::to_patch(self.clone()))
+                    }
+                }
+                impl ::model_core::LeafValues for #patch {
+                    #[allow(unused_variables)]
+                    fn leaf_values(&self, at: &str, f: &mut dyn FnMut(&str, &dyn ::model_core::Spell)) {
+                        #(#leaf_values)*
+                    }
+                }
                 impl ::model_core::Lift for #authored {
                     type Value = Self;
                     fn lift(self) -> Option<Self> { Some(self) }
@@ -575,6 +590,9 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
                     fn put(v: Self) -> Self { v }
                     fn leaves(v: &Self, at: &str, f: &mut dyn FnMut(&str)) {
                         ::model_core::SetLeaves::set_leaves(v, at, f);
+                    }
+                    fn values(v: &Self, at: &str, f: &mut dyn FnMut(&str, &dyn ::model_core::Spell)) {
+                        ::model_core::LeafValues::leaf_values(v, at, f);
                     }
                 }
                 #build
@@ -657,33 +675,63 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
                     quote!(#authored::#id(w) => Ok(#name::#id(::model_core::build_payload::<#ty>(w, #payload_at)?)))
                 }
             });
-            Ok(quote! {
-                #from_node
-                impl ::model_core::Build for #name {
-                    fn build(slot: Option<#authored>, at: &str) -> Result<Self, ::model_core::Unset> {
-                        <Self as ::model_core::Build>::build_authored(slot, at)
-                    }
-                    fn build_authored(slot: Option<#authored>, at: &str) -> Result<Self, ::model_core::Unset> {
-                        match slot {
-                            None => Err(::model_core::Unset { paths: vec![at.to_string()] }),
-                            Some(a) => match a { #(#cases,)* },
+            let spelling = |owner: &Ident| {
+                arms.iter()
+                    .map(|a| {
+                        let (id, key) = (&a.id, &a.key);
+                        if a.unit {
+                            quote!(#owner::#id => ::model_core::serde_json::Value::from(#key))
+                        } else {
+                            quote!(#owner::#id(w) => ::model_core::Spell::spell(w))
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let spells = spelling(&authored);
+            // A leaf slot holds the enum itself only when it is a plain keyword set.
+            let name_spell = arms.iter().all(|a| a.unit).then(|| {
+                let spells = spelling(name);
+                quote! {
+                    impl ::model_core::Spell for #name {
+                        fn spell(&self) -> ::model_core::serde_json::Value {
+                            match self { #(#spells,)* }
                         }
                     }
                 }
-                #[derive(Debug, Clone, PartialEq)]
-                #vis enum #authored { #(#variants),* }
+            });
+            Ok(quote! {
+                            #from_node
+            impl ::model_core::Spell for #authored {
+                                fn spell(&self) -> ::model_core::serde_json::Value {
+                                    match self { #(#spells,)* }
+                                }
+                            }
+                            #name_spell
+                            impl ::model_core::Build for #name {
+                                fn build(slot: Option<#authored>, at: &str) -> Result<Self, ::model_core::Unset> {
+                                    <Self as ::model_core::Build>::build_authored(slot, at)
+                                }
+                                fn build_authored(slot: Option<#authored>, at: &str) -> Result<Self, ::model_core::Unset> {
+                                    match slot {
+                                        None => Err(::model_core::Unset { paths: vec![at.to_string()] }),
+                                        Some(a) => match a { #(#cases,)* },
+                                    }
+                                }
+                            }
+                            #[derive(Debug, Clone, PartialEq)]
+                            #vis enum #authored { #(#variants),* }
 
-                impl ::model_core::Leaf for #name {
-                    type Whole = #authored;
-                    type Authored = Option<#authored>;
-                    type Patch = Option<#authored>;
-                    const MERGE: ::model_core::Merge = ::model_core::Merge::Override;
-                    const EXPR: ::model_core::TypeExpr = ::model_core::TypeExpr::Ref(#name_s, <#name as ::model_core::Model>::info);
-                }
-                impl ::model_core::Model for #name {
-                    #info
-                }
-            })
+                            impl ::model_core::Leaf for #name {
+                                type Whole = #authored;
+                                type Authored = Option<#authored>;
+                                type Patch = Option<#authored>;
+                                const MERGE: ::model_core::Merge = ::model_core::Merge::Override;
+                                const EXPR: ::model_core::TypeExpr = ::model_core::TypeExpr::Ref(#name_s, <#name as ::model_core::Model>::info);
+                            }
+                            impl ::model_core::Model for #name {
+                                #info
+                            }
+                        })
         }
         Data::Union(_) => Err(Error::new_spanned(name, "unions are not models")),
     }
@@ -714,6 +762,39 @@ fn set_leaves_stmt(r: &Read) -> TokenStream {
         }
         (Some((n, _)), _) if n == "Patch" => quote!(if !#inner { f(#path); }),
         _ => quote!(if !#inner { ::model_core::SetLeaves::set_leaves(&self.#id, #path, f); }),
+    }
+}
+
+/// The statement of `LeafValues` for one field, [`set_leaves_stmt`]'s walk with the values: a
+/// `Patch<_>` overlay is walked like a model, and a path with leaves below it is not a leaf.
+fn leaf_values_stmt(r: &Read) -> TokenStream {
+    let (id, key, ty) = (&r.id, &r.key, &r.ty);
+    let inner = quote!(::model_core::Empty::is_empty(&self.#id));
+    if r.fa.flatten {
+        return quote!(if !#inner { ::model_core::LeafValues::leaf_values(&self.#id, at, f); });
+    }
+    let path = quote!(&::model_core::join(at, #key));
+    match (args(ty), &r.fa.absent) {
+        _ if absent_patch_ty(ty, &r.fa) => {
+            quote!(if let ::model_core::Tri::Value(v) = &self.#id {
+                f(#path, v);
+                ::model_core::LeafValues::leaf_values(v, #path, f);
+            })
+        }
+        (Some((n, a)), Some(_)) if n == "Option" => {
+            let t = a.first();
+            quote!(if let ::model_core::Tri::Value(v) = &self.#id {
+                f(#path, v);
+                <<#t as ::model_core::Leaf>::Patch as ::model_core::Lift>::values(v, #path, f)
+            })
+        }
+        (Some((n, _)), _) if n == "Patch" => {
+            quote!(if let ::model_core::Tri::Value(v) = &self.#id {
+                f(#path, v);
+                ::model_core::LeafValues::leaf_values(v, #path, f);
+            })
+        }
+        _ => quote!(if !#inner { ::model_core::LeafValues::leaf_values(&self.#id, #path, f); }),
     }
 }
 

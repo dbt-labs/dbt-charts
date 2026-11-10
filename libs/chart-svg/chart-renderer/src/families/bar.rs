@@ -1045,6 +1045,7 @@ mod tests {
                 "min_gap": null,
                 "format": null,
                 "visible": true,
+                "flush": true,
                 "align": "right"
             },
             "title": {"font": {"family": TEST_FONT, "weight": "600"}, "padding": 0.0, "visible": false},
@@ -4421,6 +4422,31 @@ mod tests {
         assert!(!ws.is_empty() && ws.iter().all(|w| (w - 6.0).abs() < 1e-6), "{ws:?}");
     }
 
+    /// Anchors of the x-axis labels the continuous arm draws (axis `<text>` in drawn order).
+    fn continuous_x_label_anchors(flush: Option<bool>) -> Vec<String> {
+        let xs: Vec<(f64, f64)> = (1..=9).map(|h| (7000.0 + h as f64, 100.0 + h as f64)).collect();
+        let mut payload_json = make_continuous_payload(&xs);
+        payload_json["resolved"]["style"]["axis_x"]["scale"] = serde_json::json!({"padding": 0.0});
+        payload_json["resolved"]["style"]["axis_x"]["labels"]["format"] = serde_json::json!(",.0f");
+        // A hairline bar pads the domain by a pixel, which `nice` rounds out to 7000..7010, so both end ticks sit on the plot edges.
+        payload_json["resolved"]["style"]["mark"]["size"] = serde_json::json!(1.0);
+        if let Some(f) = flush {
+            payload_json["resolved"]["style"]["axis_x"]["labels"]["flush"] = serde_json::json!(f);
+        }
+        let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
+        ["7,000", "7,010"].map(|t| anchor_of(&svg, &format!(">{t}</text>"))).to_vec()
+    }
+
+    #[test]
+    fn continuous_x_end_labels_center_on_their_ticks_by_default() {
+        assert_eq!(continuous_x_label_anchors(None), ["middle", "middle"]);
+    }
+
+    #[test]
+    fn continuous_x_flush_true_insets_the_end_labels() {
+        assert_eq!(continuous_x_label_anchors(Some(true)), ["start", "end"]);
+    }
+
     fn make_time_payload(dates: &[String]) -> serde_json::Value {
         let xs: Vec<(f64, f64)> = dates.iter().enumerate().map(|(i, _)| (0.0, 100.0 + i as f64)).collect();
         let mut payload_json = make_continuous_payload(&xs);
@@ -4431,6 +4457,7 @@ mod tests {
             .collect();
         payload_json["rows"] = serde_json::json!(rows);
         payload_json["resolved"]["style"]["axis_x"]["labels"]["format"] = serde_json::json!(null);
+        payload_json["resolved"]["style"]["axis_x"]["labels"]["flush"] = serde_json::json!(true);
         payload_json["resolved"]["style"]["axis_x"]["labels"]["overlap"] = serde_json::json!({"skip": true, "tilt": true});
         payload_json["resolved"]["style"]["axis_x"]["ticks"] =
             serde_json::json!({"color": "#DFE1E5", "visible": false, "count": null});
@@ -4444,7 +4471,9 @@ mod tests {
     #[test]
     fn a_stepped_year_bar_axis_leaves_a_first_point_crowding_its_neighbor_unlabeled() {
         let dates: Vec<String> = (0..100).map(|i| format!("{}-01-01", 1901 + i)).collect();
-        let svg = render(&make_payload(make_time_payload(&dates)), &test_fonts()).expect("renders");
+        let mut payload = make_payload(make_time_payload(&dates));
+        payload.width = 700.0;
+        let svg = render(&payload, &test_fonts()).expect("renders");
         assert_eq!(svg_year_labels(&svg), [1910, 1920, 1930, 1940, 1950, 1960, 1970, 1980, 1990, 2000]);
     }
 
@@ -4604,6 +4633,45 @@ mod tests {
             let svg = render(&make_payload(p), &test_fonts()).expect("renders");
             crate::families::support_table_strip::assert_cells_sit_in_label_cells(&svg, &test_fonts(), TEST_FONT);
         }
+    }
+
+    /// A vertical bar with a one-row strip above its plot: the y label on the plot's top edge hangs
+    /// below its gridline, clear of the strip.
+    #[test]
+    fn a_vertical_bars_top_y_label_hangs_below_its_gridline_under_a_strip() {
+        let mut p = make_vertical_payload(&[("A", 40.0), ("B", 100.0)], false);
+        let axis_y = &mut p["resolved"]["style"]["axis_y"];
+        axis_y["tick_values"] = serde_json::json!([0.0, 50.0, 100.0]);
+        axis_y["domain_max"] = serde_json::json!(100.0);
+        p["resolved"]["support_table"] = serde_json::json!({"entries": [{"source": "revenue", "format": ",d", "label": "Value"}]});
+        p["resolved"]["effective_support_table_style"] = support_table_style_json();
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        let plot_top: f64 = svg.split("<g transform=\"translate(").nth(1).unwrap().split(')').next().unwrap().split(',').nth(1).unwrap().parse().unwrap();
+        let label_y = |text: &str| -> f64 {
+            let end = svg.find(&format!(">{text}</text>")).unwrap_or_else(|| panic!("{text}: {svg}"));
+            let head = &svg[svg[..end].rfind("<text").unwrap()..end];
+            head.split("y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
+        };
+        let top = label_y("100");
+        assert!(top - plot_top >= 9.0, "the top label's ink starts at or below its gridline (plot_top {plot_top}): baseline {top}");
+    }
+
+    /// A vertical bar with its x labels below: the `0` on the plot's bottom edge sits above its gridline.
+    #[test]
+    fn a_vertical_bars_bottom_y_label_sits_above_its_gridline() {
+        let mut p = make_vertical_payload(&[("A", 40.0), ("B", 100.0)], false);
+        let axis_y = &mut p["resolved"]["style"]["axis_y"];
+        axis_y["tick_values"] = serde_json::json!([0.0, 50.0, 100.0]);
+        axis_y["domain_max"] = serde_json::json!(100.0);
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        let label_y = |text: &str| -> f64 {
+            let end = svg.find(&format!(">{text}</text>")).unwrap_or_else(|| panic!("{text}: {svg}"));
+            let head = &svg[svg[..end].rfind("<text").unwrap()..end];
+            head.split("y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
+        };
+        let (y0, y50, y100) = (label_y("0"), label_y("50"), label_y("100"));
+        let centered = y50 + (y50 - y100);
+        assert!(y0 < centered - 3.0, "the bottom label rises off its tick (centered would be {centered}): {y0}");
     }
 
     /// Monthly bars from March 1998 on a time axis whose year labels step past some years, out of phase with the
@@ -7150,7 +7218,7 @@ mod tests {
                     "ticks": {"color": "#D0D3D9", "visible": true, "count": 6.0},
                     "labels": {
                         "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"},
-                        "padding": 6.0, "min_gap": null, "format": null, "visible": true
+                        "padding": 6.0, "min_gap": null, "format": null, "visible": true, "flush": true
                     },
                     "title": {"font": {"family": TEST_FONT, "weight": "600"}, "padding": 0.0, "visible": false},
                     "position": "left", "mirror": null, "band_position": 0.5, "scale": {},
@@ -7626,7 +7694,7 @@ mod tests {
 
     /// `labels.flush` is Vega-Lite's `labelFlush`: `false` centers every
     /// label (no edge flush at all), a number is the threshold in range
-    /// pixels, `true`/unset is the 1px default. Anything else refuses.
+    /// pixels, `true` is the 1px threshold, unset centers like `false`. Anything else refuses.
     fn render_with_flush(flush: serde_json::Value) -> Result<String, String> {
         use serde_json::json;
         let mut payload_json = make_horizontal_payload();
@@ -7733,6 +7801,7 @@ mod tests {
         payload_json["resolved"]["stacked_domain_max"] = serde_json::json!(domain_max);
         let axis_y = &mut payload_json["resolved"]["style"]["axis_y"];
         axis_y["grid"]["visible"] = serde_json::json!(true);
+        axis_y["labels"]["flush"] = serde_json::json!(true);
         axis_y["tick_values"] = ladder;
         axis_y["domain_max"] = serde_json::json!(domain_max);
         payload_json["resolved"]["style"]["mark"]["border"] =
@@ -12067,6 +12136,7 @@ mod tests {
         let mut payload_json = make_stacked_payload("horizontal", "zero");
         payload_json["resolved"]["style"]["axis_y"]["tick_values"] = json!(ladder);
         payload_json["resolved"]["style"]["axis_y"]["labels"]["min_gap"] = json!(30.0);
+        payload_json["resolved"]["style"]["axis_y"]["labels"]["flush"] = json!(true);
         payload_json["resolved"]["stacked_domain_max"] = json!(600.0);
         let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
         let drawn = drawn_value_labels(&svg, &["0", "100", "200", "300", "400", "500", "600"]);

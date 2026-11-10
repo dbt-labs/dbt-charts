@@ -93,7 +93,7 @@ def test_validation_error_snapshot() -> None:
     )
 
     assert render_diagnostics(result.errors) == (
-        "error[ERR-VALIDATION-FIELD]: Field 'charts.k.kpi': Value error, "
+        "error[ERR-VALIDATION-FIELD]: Field 'charts.k': Value error, "
         "`title:` is not used on `type: kpi`. Use `label:` instead.\n\n"
         f"Docs: ERR-VALIDATION-FIELD {_DOCS}/reference/errors/#err-validation-field"
     )

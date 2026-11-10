@@ -1,0 +1,29 @@
+[package]
+name = "normalize"
+version = "0.0.1"
+edition = "2021"
+publish = false
+description = "The spine's project fold: the project seam and the extends resolver."
+
+[features]
+# Builders returning a board with its layout facts, for bind's tests.
+fixtures = ["board-model/fixtures"]
+
+[dependencies]
+board-model = { path = "../board-model", features = ["cascade"] }
+d3rs = { path = "../d3rs" }
+diagnostic = { path = "../diagnostic" }
+migrate = { path = "../migrate" }
+mdsvg = { path = "../mdsvg" }
+model-core = { path = "../model-core" }
+project = { path = "../project" }
+template = { path = "../template" }
+serde_json = "1"
+indexmap = "2"
+jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bundle-always"] }
+yaml = { path = "../yaml" }
+unicode-ident = "1"
+unicode-properties = { version = "0.1.4", default-features = false, features = ["general-category"] }
+
+[dev-dependencies]
+normalize = { path = ".", features = ["fixtures"] }

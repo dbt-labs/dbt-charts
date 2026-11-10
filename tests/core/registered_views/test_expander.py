@@ -447,3 +447,17 @@ def test_render_template_reports_a_query_result_error_as_expansion_error() -> No
     results = {"q": QueryResult("q", [{"x": 1}, {"x": 2}])}
     with pytest.raises(ExpansionError, match="returned 2 rows"):
         render_template("[[ queries.q.one.x ]]", {}, results)
+
+
+def test_snowflake_variables_are_named_by_board_name() -> None:
+    """Variables carry the name the page's result columns and links use; a
+    mixed-case column, which filter() cannot reach unquoted, gets none."""
+    board = expand_registered_view(
+        _make_match(),
+        query_results=_table_index_columns("PRIORITY", "Status"),
+        resolve_dialect=lambda: "snowflake",
+    )
+    assert board.variables is not None
+    assert set(board.variables) == {"priority"}
+    rows_query = board.queries["rows"]
+    assert "filter('priority', priority)" in rows_query.sql  # type: ignore[union-attr]

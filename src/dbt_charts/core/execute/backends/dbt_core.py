@@ -23,10 +23,12 @@ from dbt_charts.core.compile.config import (
     resolve_max_query_duration_seconds,
     resolve_max_workers,
 )
+from dbt_charts.core.compile.sql_guard import sqlglot_dialect
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_INTERRUPTED
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.dialects import SQLDialect, get_dialect
+from dbt_charts.core.dialects.identifier import result_column_name
 from dbt_charts.core.execute.backends.base import LIVENESS_SQL, source_config_hash
 from dbt_charts.core.execute.backends.dbt_adapter_factory import (
     AdapterNotInstalledError,
@@ -36,6 +38,7 @@ from dbt_charts.core.execute.backends.dbt_adapter_factory import (
 from dbt_charts.core.execute.backends.typed_fetch import fetch_typed
 from dbt_charts.core.execute.query_result import QueryDurationExceeded
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
+from dbt_charts.core.execute.sql_translate import engine_dialect
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
@@ -509,15 +512,17 @@ class DbtBackend:
         self._interrupted = False
 
     def execute(self, source: ResolvedSourceConfig, query: ResolvedQuery) -> TypedRows:
-        # Lowercased: warehouses disagree on the case of unquoted names.
         typed = self._get_source_pool(source.model_dump(by_alias=True)).execute(
             query.inline(source.type),
             ";\n".join(s.rstrip().rstrip(";") for s in query.setup_sql) or None,
             query.time_zone,
             limit=query.limit.fetch_limit,
         )
+        dialect = sqlglot_dialect(engine_dialect(source.type, source))
         return TypedRows(
-            [col.lower() for col in typed.columns], typed.rows, typed.types
+            [result_column_name(col, dialect) for col in typed.columns],
+            typed.rows,
+            typed.types,
         )
 
     def _get_source_pool(

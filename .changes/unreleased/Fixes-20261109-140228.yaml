@@ -1,0 +1,3 @@
+kind: Fixes
+body: A board that names the private `_base` fragment as its theme, or `dct serve` with `DCT_DEFAULT_THEME=_base`, is refused, and `_base` no longer appears among the built-in themes.
+time: 2026-11-09T14:02:28.738687484Z

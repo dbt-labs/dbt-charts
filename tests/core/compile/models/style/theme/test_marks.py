@@ -29,5 +29,5 @@ def test_an_empty_where_is_rejected_by_name(where: str) -> None:
 
     assert not result.success
     [error] = result.errors
-    assert error.path == "charts.my_pie.pie.style.marks.slice.labels.where"
+    assert error.path == "charts.my_pie.style.marks.slice.labels.where"
     assert "must be a non-empty expression or be omitted" in error.message

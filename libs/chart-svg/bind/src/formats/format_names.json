@@ -1,0 +1,59 @@
+{
+ "number": [
+  "bytes",
+  "compact",
+  "currency",
+  "currency_compact",
+  "currency_full",
+  "currency_whole",
+  "delta",
+  "duration",
+  "id",
+  "integer",
+  "latitude",
+  "longitude",
+  "number",
+  "number_full",
+  "percent",
+  "percent_delta",
+  "percent_number",
+  "percent_number_delta",
+  "percent_whole",
+  "percentage_points_delta",
+  "rating",
+  "year"
+ ],
+ "time": [
+  "date_month",
+  "date_quarter",
+  "date_short",
+  "date_week",
+  "date_year",
+  "time_short"
+ ],
+ "text": [
+  "email",
+  "url"
+ ],
+ "python_only_native": [
+  "percent_number",
+  "percent_number_delta",
+  "percentage_points_delta"
+ ],
+ "grain": [
+  "date_month",
+  "date_quarter",
+  "date_week",
+  "date_year"
+ ],
+ "grain_strftime": {
+  "date_month": "%b %Y",
+  "date_quarter": "%b %Y",
+  "date_week": "%-d %b %Y",
+  "date_year": "%Y"
+ },
+ "analytic_notation": [
+  "compact",
+  "currency_compact"
+ ]
+}

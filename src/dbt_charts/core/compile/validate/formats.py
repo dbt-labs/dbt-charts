@@ -79,6 +79,9 @@ from dbt_charts.core.text.predefined_formats import (
     PYTHON_ONLY_NATIVE_NAMES,
 )
 
+# The d3 type letters the Rust engine implements (libs/chart-svg/d3rs format.rs).
+ENGINE_NUMBER_TYPES = frozenset("f%sdrgpe")
+
 # Field names whose subtree may also carry a strftime spec: axis ticks, table
 # columns, and the footer timestamp are the slots that render a date. Matched on
 # structural field names during the walk, never on the flattened path -- a
@@ -366,20 +369,59 @@ def _validate_spec(
             _raise_if_unsupported_time_directives(spec, field_path)
         return
     try:
-        _d3_parse(spec)
+        parsed = _d3_parse(spec)
     except D3FormatError as e:
         raise CompilationError.from_code(
             ERR_FORMAT_INVALID,
             spec=spec,
             field_path=field_path,
             kind_noun="number",
-            explanation=(
-                "it is not an engine-predefined format name, not a key in "
-                f"`style.formats`, and is not a valid d3-format spec ({e.reason} "
-                f"at position {e.position})."
-            ),
+            explanation=_number_spec_explanation(spec, e),
             available=sorted({*aliases, *ALL_PREDEFINED_NAMES}),
         ) from e
+    # d3 accepts any letter (an unknown one formats as `.12~g`); the engine
+    # draws only its implemented types, so anything else is refused at render.
+    if parsed.type and parsed.type not in ENGINE_NUMBER_TYPES:
+        raise CompilationError.from_code(
+            ERR_FORMAT_INVALID,
+            spec=spec,
+            field_path=field_path,
+            kind_noun="number",
+            explanation=(
+                f"type {parsed.type!r} is not one the engine draws. Use one of "
+                f"{', '.join(sorted(ENGINE_NUMBER_TYPES))}, or omit the type."
+            ),
+            available=sorted({*aliases, *ALL_PREDEFINED_NAMES}),
+        )
+
+
+# The number types the engine draws; d3-format parses more (`n`, `b`, `o`, `x`, `c`).
+_ENGINE_NUMBER_TYPES = "f, %, s, d, r, g, p, e"
+
+# Excel/Sheets number codes: a `[` condition, a `"` literal, a `#` placeholder, a
+# `;` section break, a `,,` scaling run, or a `0.0` placeholder.
+_SPREADSHEET_CODE = re.compile(r'[\["#;]|,,|0\.0')
+
+
+def _number_spec_explanation(spec: str, error: D3FormatError) -> str:
+    """Why `spec` is no number format: spreadsheet codes get the named fix."""
+    if _SPREADSHEET_CODE.search(spec):
+        return (
+            "spreadsheet number codes are not supported. For thousands, millions "
+            "and billions write `compact` (money: `currency_compact`); otherwise "
+            "use a d3-format spec such as `,.0f`."
+        )
+    reason = error.reason
+    if reason.startswith("invalid type"):
+        reason = (
+            f"invalid type {spec[error.position]!r}; the engine draws the types "
+            f"{_ENGINE_NUMBER_TYPES}, or none for the default"
+        )
+    return (
+        "it is not an engine-predefined format name, not a key in "
+        f"`style.formats`, and is not a valid d3-format spec ({reason} "
+        f"at position {error.position})."
+    )
 
 
 def _check_redefinition_kind(name: str, target: str | FormatConfig) -> None:

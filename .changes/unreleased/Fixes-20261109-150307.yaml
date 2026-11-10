@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'An unknown query in a chart''s query: now suggests the nearest declared query name.'
+time: 2026-11-09T15:03:07.119871743Z

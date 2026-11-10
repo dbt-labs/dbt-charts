@@ -7,6 +7,7 @@ from dbt_charts.core.diagnostics.hints import (
     suggest_close_extends,
     suggest_close_format,
     suggest_close_palette,
+    suggest_close_query,
     suggest_close_source,
     suggest_close_theme,
     suggest_layout_chart,
@@ -50,9 +51,9 @@ ERR_DUPLICATE_QUERY_NAME = REGISTRY.register(
     ErrorCode(
         code="ERR-DUPLICATE-QUERY-NAME",
         domain="compile",
-        title="Two boards in a file declare the same query",
-        message_template="Duplicate query name {name!r}: declared in {first} and {second}. Every board in a file shares one set of query names, so delete one if they are the same query, or rename one and update the `query:` of each chart that reads it.",
-        doc="Fired when two boards in the same file, a board and one nested in it or two nested boards, declare the same query name. A chart on any board in the file can read a query declared on any other, so one declaration is enough.",
+        title="Two queries share one name",
+        message_template="Duplicate query name {name!r}: declared in {first} and {second}. Every board in a file shares one set of query names, and a query read from another file takes a name of its own, so delete one if they are the same query, or rename one and update the `query:` of each chart that reads it.",
+        doc="Fired when two boards in the same file, a board and one nested in it or two nested boards, declare the same query name, or when a query declared on a board is named like the key a query read from another file is registered under (`_ximport_<file>_<name>`), or when two other files' queries share one such key. A chart on any board in the file can read a query declared on any other, so one declaration is enough.",
         docs_topic="queries",
     )
 )
@@ -73,10 +74,11 @@ ERR_UNKNOWN_QUERY = REGISTRY.register(
         code="ERR-UNKNOWN-QUERY",
         domain="compile",
         title="Chart references an unknown query",
-        message_template="Chart {chart_name!r} references unknown query {query_name!r}. Declare the query under `queries:` or fix the typo in `query:`.",
+        message_template="Chart {chart_name!r} references unknown query {query_name!r}. Available queries: {available}. Declare the query under `queries:` or fix the typo in `query:`.",
         doc="Fired when a chart's `query:` names a query that is not declared under `queries:` in the board or any included meta.yml. Check for typos and ensure the query is declared.",
         summary="Fired when a chart's `query:` names a query that isn't declared under `queries:`.",
         docs_topic="queries",
+        hint_generator=suggest_close_query,
     )
 )
 
@@ -990,6 +992,18 @@ ERR_PALETTE_UNKNOWN = REGISTRY.register(
     )
 )
 
+ERR_PALETTE_UNUSABLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-PALETTE-UNUSABLE",
+        domain="compile",
+        title="A shipped palette cannot be used as written",
+        message_template="Palette {authored!r} at {field_path} cannot be used as written: {reason}",
+        doc="Fired when an authored `palette:` names a palette that exists but not in the form written: more stops requested than the palette has (`vivid-10:14`), a tone or pattern palette where color stops are expected, or a surface the palette cannot carve. The reason is the palette resolver's own message and names what to change. A name that matches no palette is ERR-PALETTE-UNKNOWN instead.",
+        summary="Fired when a known palette is requested in a form it cannot supply.",
+        docs_topic="charts",
+    )
+)
+
 ERR_PALETTE_REBIND_UNSATISFIED = REGISTRY.register(
     ErrorCode(
         code="ERR-PALETTE-REBIND-UNSATISFIED",
@@ -1567,8 +1581,8 @@ WARN_HTML_POLICY_CAPPED = REGISTRY.register(
         domain="compile",
         title="Board html_policy downgraded by deployment ceiling",
         message_template="Board requested html_policy={requested!r} but the {ceiling_source} ceiling is {ceiling!r}; effective policy is {effective!r}. Raw HTML in this board will be treated as {effective!r}.",
-        fix_template="Either lower the board's `html_policy:` to {effective!r} to match what is actually rendered, or raise the deployment ceiling (DCT_HTML_POLICY_CEILING or markdown.html_policy_ceiling in dbt_charts.yml) if the deployment operator permits it.",
-        doc="Fires when a board's authored `html_policy` is above the effective deployment ceiling (set by DCT_HTML_POLICY_CEILING env var or `markdown.html_policy_ceiling` in dbt_charts.yml). The board compiles successfully but the policy is downgraded at normalize time; this warning makes the downgrade visible so the author knows their html_policy setting is not being honored. Emitted by `compile/compiler.py`.",
+        fix_template="Either lower the board's `html_policy:` to {effective!r} to match what is actually rendered, or raise the deployment ceiling (DCT_HTML_POLICY_CEILING or html_policy_ceiling in dbt_charts.yml) if the deployment operator permits it.",
+        doc="Fires when a board's authored `html_policy` is above the effective deployment ceiling (set by DCT_HTML_POLICY_CEILING env var or `html_policy_ceiling` in dbt_charts.yml). The board compiles successfully but the policy is downgraded at normalize time; this warning makes the downgrade visible so the author knows their html_policy setting is not being honored. Emitted by `compile/compiler.py`.",
         summary="Fired when the board's html_policy exceeds the deployment ceiling and is silently downgraded to the ceiling value.",
         docs_topic="board",
     )
@@ -1708,14 +1722,14 @@ WARN_LINK_TARGET_NOT_FOUND = REGISTRY.register(
     )
 )
 
-ERR_VARIABLE_NAME_INVALID = REGISTRY.register(
+ERR_NAME_INVALID = REGISTRY.register(
     ErrorCode(
-        code="ERR-VARIABLE-NAME-INVALID",
+        code="ERR-NAME-INVALID",
         domain="compile",
-        title="Variable name is not an identifier",
-        message_template="Variable {name!r} must be a valid identifier: letters, digits and underscores, not starting with a digit.",
-        doc="Fired when a name under `variables:` is not a valid identifier. Variables are referenced as bare Jinja names in queries and templates, so a name with a space, hyphen, or leading digit never actually worked — this catches it at compile instead of a confusing render-time failure.",
-        summary="Fired when a variable name is not a valid identifier.",
+        title="Name is not an identifier",
+        message_template="{kind} {name!r} at {path} must be a valid identifier: letters, digits and underscores, not starting with a digit.",
+        doc="Fired when a chart, query or variable name is not a valid identifier. Names are referenced as bare words in layouts, queries and Jinja templates, so a name with a space, hyphen, dot, leading digit or leading `@` never worked reliably, so this catches it at compile instead of a confusing failure later.",
+        summary="Fired when a chart, query or variable name is not a valid identifier.",
         docs_topic="variables",
     )
 )

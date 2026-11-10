@@ -163,6 +163,9 @@ if TYPE_CHECKING:
         posix_relpath as posix_relpath,
     )
     from dbt_charts.core.render.board_links import LinkContext as LinkContext
+    from dbt_charts.core.render.chart_interactivity import (
+        hover_runtime_source as hover_runtime_source,
+    )
     from dbt_charts.core.render.errors import RenderError as RenderError
     from dbt_charts.core.render_format import (
         RenderOutputFormat as RenderOutputFormat,
@@ -218,6 +221,7 @@ __all__ = [
     "describe_semantics",
     "design_target",
     "get_fonts_dir",
+    "hover_runtime_source",
     "init_project",
     "run_doctor",
     "migrate_paths",
@@ -259,6 +263,10 @@ __all__ = [
 # stack several of them drag in) eagerly at `import dbt_charts.agent_api` time.
 _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "warm_process": ("dbt_charts.agent_api.warmup", "warm_process"),
+    "hover_runtime_source": (
+        "dbt_charts.core.render.chart_interactivity",
+        "hover_runtime_source",
+    ),
     "board_import_closure": (
         "dbt_charts.agent_api.import_closure",
         "board_import_closure",

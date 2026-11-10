@@ -6,7 +6,7 @@
 //! boundary leaves ambiguous (a Unicode-digit year) is refused by name.
 
 use column_types::ColumnTypes;
-use diagnostic::Diagnostic;
+use diagnostic::{refuse, Diagnostic};
 use serde_json::{Map, Value};
 
 /// Which of the three kinds of axis a field draws: `Quantitative` and `Temporal`
@@ -29,12 +29,10 @@ const YEAR_MIN: i64 = 1700;
 const YEAR_MAX: i64 = 2100;
 
 
-/// `enrich.py::classify_column_type`, reduced to the two-way split this
-/// crate's one caller reads (`"temporal"` vs anything else — production's
-/// own `"numeric"`/`"categorical"` split is unobservable through `_classify_
-/// to_channel_type`, since both map to `"nominal"` there; no caller in
-/// this crate needs the split itself, so it is not ported — reintroduce
-/// `is_numeric_string`/the numeric vote if one ever does).
+/// `enrich.py::classify_column_type`, reduced to the `"temporal"` verdict
+/// versus anything else: `_classify_to_channel_type` maps production's
+/// `"numeric"` and `"categorical"` alike to `"nominal"`, and the one reader of
+/// the numeric vote, `y_is_numeric`, tallies it itself.
 ///
 /// A column-NAME gate (any of twelve temporal-word patterns, `re.search`
 /// over the lowercased name — not anchored, so `"day"` matches inside
@@ -45,7 +43,7 @@ const YEAR_MAX: i64 = 2100;
 /// string alike (`enrich.py:108-122`), so a `date` serialized through
 /// `rows.json` as `YYYY-MM-DD` votes temporal with no need to tell it from a
 /// genuine string of the same shape. A native number counts toward neither
-/// side here (production's numeric tally is unobservable at the one caller).
+/// side here.
 fn classify_column_type(field: &str, samples: &[&Value]) -> &'static str {
     let name_lower = field.to_lowercase();
     let first_five = &samples[..samples.len().min(5)];
@@ -201,4 +199,89 @@ pub fn classify(
     } else {
         ChannelType::Nominal
     })
+}
+
+/// Whether a line's or a bar's `y` is numeric as `_domain.py::_first_non_numeric_y` reads it:
+/// by `classify_column_type` over the first 20 non-null cells, so a numeric-looking string
+/// counts as a number and a column with no non-null cell never trips the guard. `Ok(false)` is
+/// production's "y is not numeric" error, which the caller raises with its own code.
+///
+/// The engine draws only a declared number, so a column production does not call non-numeric
+/// but the schema declares otherwise (text that reads as numbers, or no value at all) refuses
+/// by name: production draws it, and the production error would be the wrong answer.
+pub fn y_is_numeric(types: &ColumnTypes, rows: &Rows, field: &str) -> Result<bool, Diagnostic> {
+    let declared = types.get(field).map_err(Diagnostic::refused)?;
+    let samples = first_non_null_samples(rows, field, 20);
+    if !samples.is_empty() && !numeric_vote(field, &samples)? {
+        return Ok(false);
+    }
+    if declared.is_number() {
+        return Ok(true);
+    }
+    Err(Diagnostic::refused(refuse!(
+        "a `y` column declared as text, whose cells read as numbers or hold no value, is not supported"
+    )))
+}
+
+/// `classify_column_type`'s `"numeric"` verdict: not temporal, and over 80% of the samples are
+/// native numbers or numeric strings (`enrich.py::_is_numeric_string`).
+fn numeric_vote(field: &str, samples: &[&Value]) -> Result<bool, Diagnostic> {
+    if classify_column_type(field, samples) == "temporal" {
+        return Ok(false);
+    }
+    let mut numeric = 0usize;
+    for cell in samples {
+        numeric += match cell {
+            Value::Number(_) => 1,
+            Value::String(text) if !crate::column_kind::is_date_text(text) => usize::from(is_numeric_string(text)?),
+            _ => 0,
+        };
+    }
+    Ok(numeric as f64 / samples.len() as f64 > 0.8)
+}
+
+/// `enrich.py::_is_numeric_string`: Python's `float()` over the text with `,`, `$` and `%`
+/// removed. A shape only Python's `float()` reads (an underscore or a Unicode digit) refuses
+/// by name rather than guessing.
+fn is_numeric_string(text: &str) -> Result<bool, Diagnostic> {
+    let stripped = text.replace([',', '$', '%'], "");
+    let stripped = stripped.trim();
+    if stripped.parse::<f64>().is_ok() {
+        return Ok(true);
+    }
+    let python_only = stripped.replace('_', "").parse::<f64>().is_ok_and(|_| stripped.contains('_'))
+        || stripped.chars().any(|c| !c.is_ascii() && c.is_numeric());
+    if python_only {
+        return Err(Diagnostic::refused(refuse!(
+            "a numeric string read by Python's `float()` through an underscore or a Unicode digit is not supported"
+        )));
+    }
+    Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn vote(field: &str, cells: &[Value]) -> Result<bool, Diagnostic> {
+        numeric_vote(field, &cells.iter().collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn numeric_strings_and_native_numbers_vote_numeric_text_and_dates_do_not() {
+        assert!(vote("y", &[json!("12.5"), json!("3,000"), json!("$4"), json!(7)]).unwrap());
+        assert!(!vote("y", &[json!("a"), json!("b")]).unwrap());
+        assert!(!vote("y", &[json!("12"), json!("b"), json!("c")]).unwrap());
+        assert!(!vote("y", &[json!("2024-01-01"), json!("2024-02-01")]).unwrap());
+        assert!(!vote("y", &[json!(true), json!(false)]).unwrap());
+        assert!(!vote("month", &[json!("2024-01-01"), json!("5")]).unwrap());
+    }
+
+    #[test]
+    fn a_shape_only_pythons_float_reads_refuses_by_name() {
+        assert!(vote("y", &[json!("1_000")]).unwrap_err().to_string().contains("is not supported"));
+        assert!(vote("y", &[json!("١٢")]).unwrap_err().to_string().contains("is not supported"));
+        assert!(!vote("y", &[json!("café"), json!("a_b")]).unwrap());
+    }
 }

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A DCT_DEFAULT_THEME that names an unknown theme or _base is now refused with a clear error everywhere, not only by dct serve.
+time: 2026-11-09T16:46:44.133650233Z

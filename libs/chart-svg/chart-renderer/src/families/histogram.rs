@@ -433,7 +433,8 @@ mod tests {
                     "padding": 6.0,
                     "min_gap": 4.0,
                     "format": ".3~s",
-                    "visible": true
+                    "visible": true,
+                    "flush": true
                 },
                 "title": {"font": {"family": TEST_FONT, "weight": "600"}, "padding": 0.0, "visible": true},
                 "position": position,
@@ -869,6 +870,7 @@ mod tests {
         payload["width"] = serde_json::json!(width);
         payload["resolved"]["style"]["axis_y"]["position"] = serde_json::json!(position);
         payload["resolved"]["style"]["axis_y"]["labels"]["align"] = serde_json::json!(position);
+        payload["resolved"]["style"]["axis_x"]["labels"]["flush"] = serde_json::json!(true);
         payload["resolved"]["style"]["axis_y"]["scale"]["continuous"]["domain"] =
             serde_json::json!(domain);
         let payload: Payload = serde_json::from_value(payload).unwrap();

@@ -35,6 +35,7 @@ pub fn callout_chart(message: &str, style: CalloutChartStyle) -> Result<Chart, S
 /// A family builder takes this as its `base`.
 pub fn chart_base_with_query(query: &str) -> Result<ChartBase, String> {
     Ok(ChartBase {
+        id: None,
         notes: None,
         query: Some(ChartQuery::Hoisted(QueryId::try_from(query.to_string())?)),
         link: None,

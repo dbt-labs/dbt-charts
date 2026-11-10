@@ -27,10 +27,8 @@ def bundle_context(tmp_path: Path) -> DbtChartsAIContext:
     return DbtChartsAIContext(project_session=ProjectSession.open(tmp_path))
 
 
-def test_tool_is_advertised_with_a_required_source_and_optional_name_and_search() -> (
-    None
-):
-    assert DESCRIBE_SEMANTICS in ALL_TOOLS
+def test_tool_takes_a_required_source_and_optional_name_and_search() -> None:
+    assert DESCRIBE_SEMANTICS not in ALL_TOOLS
     schema = DESCRIBE_SEMANTICS["input_schema"]
     assert list(schema["properties"]) == ["source", "name", "search"]
     assert schema["required"] == ["source"]

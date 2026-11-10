@@ -1,0 +1,5 @@
+kind: Fixes
+body: Boards render about twice as fast again in `dct render`, `dct serve` and the MCP tools, which no longer report the data-dependent WARN-RESTATED-INFERRED and WARN-RESTATED-FORMAT warnings.
+time: 2026-11-06T22:58:39.625920419Z
+custom:
+    DbtChartsIssue: "88"

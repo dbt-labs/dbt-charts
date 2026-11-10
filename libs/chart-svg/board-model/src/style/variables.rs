@@ -8,7 +8,7 @@ use crate::primitives::BorderStyle;
 use crate::string_enum;
 use crate::style::font::FontStyle;
 use crate::style::page::InputStyle;
-use model_core::{Cx, FromNode, Leaf, Merge, Node, ReadScalar, Scalar, TypeExpr};
+use model_core::{Cx, FromNode, Leaf, Merge, Node, ReadScalar, Scalar, Spell, TypeExpr};
 use model_derive::Model;
 
 string_enum!(
@@ -56,6 +56,12 @@ impl ReadScalar for Presets {
             return None;
         }
         Some(Self(items))
+    }
+}
+
+impl Spell for Presets {
+    fn spell(&self) -> serde_json::Value {
+        self.0.spell()
     }
 }
 

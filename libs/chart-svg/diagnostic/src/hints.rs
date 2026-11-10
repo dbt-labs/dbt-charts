@@ -12,11 +12,12 @@ use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 
 /// The codes whose generator is ported.
-pub const PORTED: [&str; 4] = [
+pub const PORTED: [&str; 5] = [
     "ERR-DBT-REF-UNKNOWN-NODE",
     "ERR-DBT-MODEL-COLUMN-MISSING",
     "ERR-DBT-SOURCE-UNKNOWN-TABLE",
     "ERR-QUERY-FORMAT-UNKNOWN",
+    "ERR-UNKNOWN-QUERY",
 ];
 
 /// Format names that were renamed: a successor in the pool beats a fuzzy match.
@@ -184,6 +185,7 @@ pub fn generate(code: &str, params: &BTreeMap<&'static str, Value>) -> Option<St
     let available = pool(params)?;
     match code {
         "ERR-DBT-REF-UNKNOWN-NODE" => close_match(text(params, "ref_name")?, &available),
+        "ERR-UNKNOWN-QUERY" => close_match(text(params, "query_name")?, &available),
         "ERR-DBT-MODEL-COLUMN-MISSING" => close_match(text(params, "column_name")?, &available),
         "ERR-DBT-SOURCE-UNKNOWN-TABLE" => {
             let name = format!(

@@ -224,6 +224,8 @@ pub(crate) struct TemporalXAxis {
     title_key: Option<crate::contract::LabelKey>,
     /// An authored `labels.expr`: every tick speaks what it evaluates to at the tick's instant.
     expr: Option<::layout::labels_expr::Expr>,
+    /// `flush_threshold`'s verdict: `None` centers every label.
+    flush: Option<f64>,
     /// A point scale flushes its edge labels like a time scale's.
     flush_points: bool,
     /// Production compiles a `tickCount` interval onto this discrete scale, which Vega rejects: the chart paints no marks.
@@ -351,7 +353,8 @@ impl TemporalXAxis {
         } else {
             (overlap.is_some_and(|o| o.skip), overlap.is_some_and(|o| o.tilt))
         };
-        let flushed = labels_cfg.flush.as_ref() != Some(&serde_json::Value::Bool(false));
+        let flush = crate::families::bar::axes::flush_threshold(labels_cfg.flush.as_ref())?;
+        let flushed = flush.is_some();
         let ticks_cfg = &ax_x.ticks;
         let mut axis = Self {
             scale: Scale::Utc { lo: 0.0, hi: 0.0, pad: 0.0 },
@@ -386,6 +389,7 @@ impl TemporalXAxis {
             title_text,
             title_key,
             expr: None,
+            flush,
             flush_points: false,
             ticks_interval_on_discrete: false,
             listed: labels_cfg.values.as_ref().map(|values| {
@@ -525,7 +529,7 @@ impl TemporalXAxis {
                         Some(format) => format.text(y, m, d),
                         None => crate::families::temporal::multi_format_at(d3rs::calendar::days_from_civil(y, m, d) as f64)?,
                     };
-                    let (tilted_align, baseline) = bare_label_anchor(labels_cfg.angle.unwrap_or(0.0), 0.5, 100.0, axis.edge);
+                    let (tilted_align, baseline) = bare_label_anchor(labels_cfg.angle.unwrap_or(0.0), 0.5, 100.0, axis.edge, flush);
                     let text = axis.cased(&text)?;
                     let width = fonts.measure(&text, &axis.family, axis.font_size)?;
                     labels.push(AxisLabel { at: At::Index(i), text, row2: None, width, tilted_align, baseline, edge: false });
@@ -778,7 +782,7 @@ impl TemporalXAxis {
     }
 
     fn plain_label(&self, text: String, row2: Option<String>, day: f64, frac: f64, pw: f64, fonts: &FontBook) -> Result<(f64, AxisLabel), String> {
-        let (tilted_align, baseline) = bare_label_anchor(self.angle, frac, pw, self.edge);
+        let (tilted_align, baseline) = bare_label_anchor(self.angle, frac, pw, self.edge, self.flush);
         let text = self.cased(&text)?;
         let row2 = row2.map(|row| self.cased(&row)).transpose()?;
         let mut width = fonts.measure_shaped(&text, &self.family, self.font_size)?;
@@ -1199,9 +1203,9 @@ impl TemporalXAxis {
         match self.align.as_deref() {
             Some(authored) => authored,
             None if self.angle != 0.0 => l.tilted_align,
-            None if self.flush_points => crate::families::line::flush_align(frac * pw, pw),
+            None if self.flush_points => crate::families::line::flush_align(frac * pw, pw, self.flush),
             None if matches!(self.scale, Scale::Point { .. } | Scale::Band { .. }) => "center",
-            None => match flush_anchor_px(frac * pw, pw) {
+            None => match flush_anchor_px(frac * pw, pw, self.flush) {
                 "start" => "left",
                 "end" => "right",
                 _ => "center",
@@ -1216,7 +1220,7 @@ impl TemporalXAxis {
         let (align, baseline, flush) = if self.angle == 0.0 {
             match self.align.as_deref() {
                 Some(authored) => (Some(anchor(authored)?), None, None),
-                None if self.flush_points || matches!(self.scale, Scale::Utc { .. }) => (None, None, Some(1.0)),
+                None if self.flush_points || matches!(self.scale, Scale::Utc { .. }) => (None, None, self.flush),
                 None => (None, None, None),
             }
         } else {
@@ -1400,7 +1404,7 @@ impl TemporalXAxis {
             let (anchor, flush) = match (&self.align, &self.scale) {
                 (Some(_), _) | (None, Scale::Point { .. } | Scale::Band { .. }) => (self.anchor(l, *frac, plot_w), 0.0),
                 _ => {
-                    let anchor = flush_anchor_px(*frac * plot_w, plot_w);
+                    let anchor = flush_anchor_px(*frac * plot_w, plot_w, self.flush);
                     (anchor, crate::families::line::edge_nudge(anchor, edge_half))
                 }
             };

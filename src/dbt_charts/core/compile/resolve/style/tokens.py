@@ -707,18 +707,32 @@ def _unknown_palette(
     )
 
 
+def _unusable_palette(authored: str, field: str, reason: Exception) -> Exception:
+    """Build the ERR-PALETTE-UNUSABLE error carrying the resolver's own message."""
+    from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.diagnostics.codes_compile import ERR_PALETTE_UNUSABLE
+
+    return CompilationError.from_code(
+        ERR_PALETTE_UNUSABLE, authored=authored, field_path=field, reason=str(reason)
+    )
+
+
 def _stops(value: str, ref: str, field: str, palettes: Mapping[str, str]) -> list[str]:
     """Resolve ``ref`` to stops, reporting any resolver failure as a diagnostic."""
-    from dbt_charts.core.compile.resolve.style.palette import palette as resolve_palette
+    from dbt_charts.core.compile.resolve.style.palette import (
+        UnknownPaletteError,
+        palette as resolve_palette,
+    )
 
     try:
         return resolve_palette(ref)
-    except ValueError as e:
-        # Every resolver failure subclasses ValueError — unknown name, a tone
-        # (color-token only), an over-request, a surface it cannot carve. Any
-        # of them escaping here becomes ERR-INTERNAL, which AGENTS.md classes
-        # as a defect tier.
+    except UnknownPaletteError as e:
         raise _unknown_palette(ref, value, field, palettes) from e
+    except ValueError as e:
+        # Every other resolver failure subclasses ValueError — an over-request,
+        # a tone, a surface it cannot carve. Letting one escape becomes
+        # ERR-INTERNAL, which AGENTS.md classes as a defect tier.
+        raise _unusable_palette(value, field, e) from e
 
 
 def _check_resolvable(
@@ -746,7 +760,7 @@ def _resolve_palette_leaf(
     try:
         ref = resolve_palette_ref(value, palettes)
     except ValueError as e:  # malformed :N/_r shorthand
-        raise _unknown_palette(value, value, field, palettes) from e
+        raise _unusable_palette(value, field, e) from e
     # A gradient keeps its *name*: `bake_scale_target_stops` bakes it later,
     # and a Vega scheme is forwarded to Vega-Lite by name and has no stops at
     # all. Expanding either here would change what render receives — but the

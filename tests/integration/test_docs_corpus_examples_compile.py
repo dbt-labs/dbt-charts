@@ -220,7 +220,11 @@ def _scaffold_to_board(fence_body: str) -> dict[str, Any] | None:
             for chart_def in charts.values():
                 if isinstance(chart_def, dict):
                     q_ref = chart_def.get("query")
-                    if isinstance(q_ref, str) and q_ref not in existing:
+                    if (
+                        isinstance(q_ref, str)
+                        and q_ref.isidentifier()
+                        and q_ref not in existing
+                    ):
                         missing.add(q_ref)
             if missing:
                 board.setdefault("queries", {})

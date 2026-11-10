@@ -414,6 +414,19 @@ class _Invalid(ValueError):
     """An annotation that does not fit its chart; the message is the reason."""
 
 
+def _reject_template(
+    anchor: object,  # type-state: object_annotation — an authored scalar
+) -> None:
+    """Anchors are literals; a Jinja one would otherwise read as a malformed value."""
+    if isinstance(anchor, str) and ("{{" in anchor or "{%" in anchor):
+        raise _Invalid(
+            f"{anchor!r} is a template, but annotation values are literals and "
+            "do not render Jinja. To mark the peak or low of the plotted data use "
+            "`type: note` with `y: max()` or `y: min()`; the other computed "
+            "anchors are avg(), median(), percentile(), now() and current()."
+        )
+
+
 class _NoFit(_Invalid):
     """A scope whose rows cannot carry a trend: that scope draws nothing."""
 
@@ -1072,6 +1085,7 @@ class _AnchorResolver:
         )
 
     def category(self, axis: Axis, anchor: AnchorScalar) -> str:
+        _reject_template(anchor)
         if not isinstance(anchor, str) or anchor not in self.categories[axis]:
             raise _Invalid(
                 f"{anchor!r} is not a category of the {axis} column; categories: "
@@ -1118,6 +1132,7 @@ class _AnchorResolver:
         axis: Axis,
         anchor: object,  # type-state: object_annotation — an authored scalar
     ) -> ResolvedScalar:
+        _reject_template(anchor)
         if axis == "y":
             if isinstance(anchor, bool) or not isinstance(anchor, int | float):
                 raise _Invalid(f"y {anchor!r} is not a number")

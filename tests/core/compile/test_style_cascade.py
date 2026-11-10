@@ -64,9 +64,7 @@ from ..conftest import baked_format
 # itself an author-facing pick; `diagnostics-*` themes are render-diagnostic
 # fixtures. Everything else gets the unresolved-token property check.
 _RESOLVABLE_BUILT_IN_THEMES = [
-    name
-    for name in list_built_in_themes()
-    if name != "_base" and not name.startswith("diagnostics-")
+    name for name in list_built_in_themes() if not name.startswith("diagnostics-")
 ]
 
 

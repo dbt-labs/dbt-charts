@@ -576,6 +576,34 @@ impl XEdge {
     }
 }
 
+/// What stands past a plot's top and bottom edges in the value axis's gutter. A y tick label whose
+/// tick sits on an edge moves off what stands there: it rises above a bottom gridline when the
+/// x axis hangs below, and hangs below a top gridline when a strip or an x axis stands above. The
+/// verdict depends on the chart's structure alone, never on whether the labels would collide.
+/// An above-gridline label already sits clear of its rule, so `base` other than `middle` wins.
+#[derive(Clone, Copy, Debug)]
+pub struct YEdges {
+    pub below: bool,
+    pub above: bool,
+    /// The axis's [`AxisStyle::value_label_baseline`].
+    pub base: &'static str,
+}
+
+impl YEdges {
+    /// The baseline of the y tick label at row `y` of a plot `plot_h` tall.
+    pub fn baseline(self, y: f64, plot_h: f64) -> &'static str {
+        if self.base != "middle" {
+            self.base
+        } else if self.below && (y - plot_h).abs() <= 0.5 {
+            "bottom"
+        } else if self.above && y.abs() <= 0.5 {
+            "top"
+        } else {
+            self.base
+        }
+    }
+}
+
 /// JS `+text`: what d3 formats for a category tick that reads as a number. A category
 /// that does not is NaN, which `gate_label_format` has already refused for a number spec.
 pub fn js_number(text: &str) -> f64 {
@@ -2542,15 +2570,10 @@ pub struct AxisLabels {
     /// Authored label cadence override (e.g. "yearmonth" on daily data).
     #[serde(default)]
     pub time_unit: Option<String>,
-    /// Authored override of Vega's default edge-label flushing on a
-    /// temporal x-axis (`type_inference.temporal_edge_labels_flushed`:
-    /// `axis.labels.flush is not False`). Typed as the documented union
-    /// (`bool | float | None`, theme/axis.py:418) — Vega's `labelFlush`
-    /// also accepts a pixel threshold (`styling.md:770`), so this must not
-    /// narrow to `bool` or a numeric `flush: 4` panics deserialization.
-    /// `None` means "not authored" — the caller's own default (flushed for
-    /// a continuous temporal axis) applies; only a literal `false` turns
-    /// flushing off.
+    /// Whether the end labels of a continuous axis are pulled inward (`true`, or a pixel threshold
+    /// as a number), or centered on their ticks (`false`, and an unset `auto`). Typed as the
+    /// documented union (`bool | float | None`) so a numeric `flush: 4` deserializes; every family
+    /// reads it through `families::bar::axes::flush_threshold`.
     #[serde(default)]
     pub flush: Option<Value>,
     /// The clock a sub-day axis reads (`24` or `12`; `None` reads the 12-hour one).
@@ -5984,5 +6007,18 @@ mod wide_title_tests {
         assert_eq!(wide_measures_title(&measures, &FieldLabels::new()).unwrap(), "Revenue, Fix linked");
         let labels = FieldLabels::from([("fix-linked".to_string(), "fix-linked".to_string())]);
         assert_eq!(wide_measures_title(&measures, &labels).unwrap(), "Revenue, fix-linked");
+    }
+}
+
+#[cfg(test)]
+mod y_edges_tests {
+    use super::YEdges;
+
+    #[test]
+    fn corners_move_only_centered_labels() {
+        let centered = YEdges { below: true, above: true, base: "middle" };
+        assert_eq!((centered.baseline(100.0, 100.0), centered.baseline(0.0, 100.0), centered.baseline(50.0, 100.0)), ("bottom", "top", "middle"));
+        let above_gridline = YEdges { base: "bottom", ..centered };
+        assert_eq!((above_gridline.baseline(100.0, 100.0), above_gridline.baseline(0.0, 100.0)), ("bottom", "bottom"));
     }
 }

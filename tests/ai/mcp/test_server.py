@@ -561,6 +561,28 @@ class TestMCPWireSurface:
 
         assert _tool_names(mcp_server) == {t["name"] for t in ALL_TOOLS}
 
+    def test_describe_semantics_listed_only_when_a_source_declares_metricflow(
+        self, mcp_server, tmp_path: Path
+    ) -> None:
+        assert "describe_semantics" not in _tool_names(mcp_server)
+        shutil.copytree(
+            DBT_CHARTS_DIR / "tests" / "fixtures" / "metricflow-billing",
+            tmp_path / "mf",
+        )
+        server = create_server(
+            DbtChartsAIContext(project_session=ProjectSession.open(tmp_path / "mf"))
+        )
+        assert "describe_semantics" in _tool_names(server)
+
+    def test_broken_project_config_still_lists_tools(self, tmp_path: Path) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("sources:\n  db: [oops\n")
+        server = create_server(
+            DbtChartsAIContext(project_session=ProjectSession.open(tmp_path))
+        )
+        from dbt_charts.ai.tool_schemas import ALL_TOOLS
+
+        assert _tool_names(server) == {t["name"] for t in ALL_TOOLS}
+
     @pytest.mark.parametrize(
         "removed_tool",
         # ask_sql: would leak an OPENAI_API_KEY requirement into MCP; the host

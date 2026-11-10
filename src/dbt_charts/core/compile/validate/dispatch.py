@@ -248,6 +248,7 @@ def _validate_chart_query_references(
                     ERR_UNKNOWN_QUERY,
                     chart_name=chart_name,
                     query_name=query_ref,
+                    available=sorted(query_names),
                 )
             )
 
@@ -319,6 +320,7 @@ def _validate_layout_references(
                     ERR_UNKNOWN_QUERY,
                     chart_name=location,
                     query_name=query_ref,
+                    available=sorted(query_names),
                 )
                 # The offending value is the inline chart's `query:`, not the
                 # whole item — same precision as the named-chart site, which

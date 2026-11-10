@@ -227,7 +227,17 @@ NESTED_STYLING_KEYS = frozenset(
 )
 # Handled by dedicated lines in `_describe`.
 _OWN_LINES = frozenset(
-    {"source", "xAxis", "yAxis", "color", "value", "filters", "description", "columns"}
+    {
+        "source",
+        "xAxis",
+        "yAxis",
+        "color",
+        "value",
+        "filters",
+        "description",
+        "columns",
+        "tooltip",
+    }
 )
 
 
@@ -314,6 +324,9 @@ def _describe(
     if el.get("color"):
         column = col(el["color"]["column"]) if el["color"].get("column") else ""
         lines.append(with_rest(f"color: {column}", el["color"], {"column"}))
+    if el.get("tooltip"):
+        names = "; ".join(col(c["id"]) for c in el["tooltip"]["columns"])
+        lines.append(with_rest(f"tooltip: {names}", el["tooltip"], {"columns"}))
     # Sigma writes `stacking` only when it is not the default, so a bar or area
     # chart without the key stacks its series; say so, or it reads as grouped.
     if el["kind"] in ("bar-chart", "area-chart") and "stacking" not in el:

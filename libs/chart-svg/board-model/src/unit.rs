@@ -14,6 +14,12 @@ macro_rules! unit {
             }
         }
 
+        impl model_core::Spell for $name {
+            fn spell(&self) -> model_core::serde_json::Value {
+                model_core::Spell::spell(&self.0)
+            }
+        }
+
         impl TryFrom<f64> for $name {
             type Error = String;
             fn try_from(v: f64) -> Result<Self, String> {
@@ -52,6 +58,12 @@ pub struct Fraction(f64);
 impl Fraction {
     pub fn get(self) -> f64 {
         self.0
+    }
+}
+
+impl model_core::Spell for Fraction {
+    fn spell(&self) -> model_core::serde_json::Value {
+        model_core::Spell::spell(&self.0)
     }
 }
 
@@ -104,6 +116,12 @@ macro_rules! float_or_int {
         impl $name {
             pub fn get(self) -> f64 {
                 self.0
+            }
+        }
+
+        impl model_core::Spell for $name {
+            fn spell(&self) -> model_core::serde_json::Value {
+                model_core::Spell::spell(&self.0)
             }
         }
 

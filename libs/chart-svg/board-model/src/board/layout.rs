@@ -12,7 +12,9 @@ use crate::facet::{DisplayText, Markdown};
 use crate::ids::{ChartId, ItemId};
 use crate::string_enum;
 use crate::style::style::Style;
-use model_core::{build_payload, Build, Cx, FromNode, Leaf, Merge, Node, TypeExpr, Unset, Walk};
+use model_core::{
+    build_payload, Build, Cx, FromNode, Leaf, Merge, Node, Spell, TypeExpr, Unset, Walk,
+};
 use model_derive::Model;
 use yaml::{Kind, Value};
 
@@ -75,10 +77,20 @@ pub enum LayoutItem {
 pub enum LayoutItemAuthored {
     Chart(ChartId),
     Board(<NestedBoard as Leaf>::Whole),
-    /// A chart written in place: a mapping with a `type`, or `{name: {type: ..}}` (Python keeps
-    /// the name for nothing: the hoisted id is the item's position). Not buildable until
-    /// normalize hoists it.
+    /// A chart written in place: a mapping with a `type`, or `{name: {type: ..}}` with any name
+    /// (Python keeps the name for nothing: the hoisted id is the item's position). Not buildable
+    /// until normalize hoists it.
     InlineChart(Box<<Chart as Leaf>::Whole>),
+}
+
+impl Spell for LayoutItemAuthored {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Self::Chart(id) => id.spell(),
+            Self::Board(b) => b.spell(),
+            Self::InlineChart(c) => c.spell(),
+        }
+    }
 }
 
 impl Leaf for LayoutItem {
@@ -134,14 +146,12 @@ impl FromNode for LayoutItem {
             Kind::Map(m) if m.contains_key("type") => <Chart as FromNode>::whole(node, cx)
                 .map(|c| LayoutItemAuthored::InlineChart(Box::new(c))),
             Kind::Map(m) => match m.iter().next() {
-                // A lone key that is no board key names a chart. Python takes the chart arm whenever the board arm
-                // fails, so `{title: {type: ..}}` is a chart there and a refused board here.
-                Some((name, entry))
+                // A lone key over a typed mapping names a chart, whatever the key: Python takes the
+                // chart arm whenever the board arm fails, so `{title: {type: ..}}` is a chart there.
+                Some((_, entry))
                     if m.len() == 1
-                        && matches!(entry.value.kind, Kind::Map(_))
-                        && !<NestedBoard as FromNode>::keys()
-                            .iter()
-                            .any(|k| k == name.as_str()) =>
+                        && matches!(&entry.value.kind, Kind::Map(v)
+                            if matches!(v.get("type").map(|t| &t.value.kind), Some(Kind::Scalar(Value::Str(_))))) =>
                 {
                     <Chart as FromNode>::whole(&entry.value, cx)
                         .map(|c| LayoutItemAuthored::InlineChart(Box::new(c)))

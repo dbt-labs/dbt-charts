@@ -132,6 +132,12 @@ macro_rules! string_enum {
             }
         }
 
+        impl ::model_core::Spell for $name {
+            fn spell(&self) -> ::model_core::serde_json::Value {
+                self.as_str().into()
+            }
+        }
+
         impl TryFrom<&str> for $name {
             type Error = String;
             fn try_from(v: &str) -> Result<Self, Self::Error> {

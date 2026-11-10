@@ -15,14 +15,12 @@ use scene::{Attrs, Node, Role};
 
 use super::BarResolved;
 
-/// Vega's `labelFlush` (B8): `labelFlush: true` — VL's default for a
-/// continuous x axis, and what production emits here (`axis.labelFlush` is
-/// unset in the compiled spec) — compiles to
+/// Vega's `labelFlush`: `labelFlush: true` compiles to
 /// `flush(range("x"), scale("x", datum.value), 1, "left", "right", "center")`
 /// (vega-functions `flush`): a **1px proximity test in RANGE-space pixels**,
 /// the nearer end winning a tie (`threshold` from `flush_threshold`; `None`
-/// when `labels.flush: false` centers every label) — never exact equality on
-/// the tick's domain value. `pos` is the tick's own range-space position (`0` at the plot's
+/// centers every label) — never exact equality on the tick's domain value.
+/// `pos` is the tick's own range-space position (`0` at the plot's
 /// left edge, `span_px` at its right); the caller passes the SAME
 /// coordinate space both call sites use, with no crispness delta folded in
 /// (Vega's own `flush` never sees one). A headroom-inflated `domain_max`
@@ -42,17 +40,18 @@ pub(crate) fn flush_edge(pos: f64, span_px: f64, threshold: Option<f64>) -> Opti
     }
 }
 
-/// `axis.labels.flush` as Vega-Lite's `labelFlush` reads it: unset or `true`
-/// is the 1px threshold, `false` turns flushing off (every label centered),
-/// a number is the threshold in range pixels. Anything else refuses.
+/// `axis.labels.flush`, the one resolver every family reads: unset (the theme's
+/// `auto`) and `false` center every label, `true` is Vega-Lite's `labelFlush`
+/// 1px threshold, a number is the threshold in range pixels. Anything else
+/// refuses.
 pub(crate) fn flush_threshold(flush: Option<&serde_json::Value>) -> Result<Option<f64>, String> {
     match flush {
-        None | Some(serde_json::Value::Bool(true)) => Ok(Some(1.0)),
-        Some(serde_json::Value::Bool(false)) => Ok(None),
+        None | Some(serde_json::Value::Bool(false)) => Ok(None),
+        Some(serde_json::Value::Bool(true)) => Ok(Some(1.0)),
         Some(v) => v
             .as_f64()
             .map(Some)
-            .ok_or_else(|| format!("bar: axis_y.labels.flush={v} is neither a bool nor a number")),
+            .ok_or_else(|| format!("axis labels.flush={v} is neither a bool nor a number")),
     }
 }
 
@@ -89,8 +88,8 @@ pub(crate) fn format_tick_labels(
         .collect()
 }
 
-/// A horizontal bar's value axis (labels under the plot, flush-aligned at the
-/// range ends, plus the title), resolved once by `render_horizontal_panel`. The
+/// A horizontal bar's value axis (labels under the plot, anchored per
+/// `flush_threshold`, plus the title), resolved once by `render_horizontal_panel`. The
 /// panel paints it under its own plot; a facet composite paints the same value
 /// at the shared `column_footer`.
 #[derive(Clone)]
@@ -363,6 +362,8 @@ pub(crate) struct ContinuousXAxis {
     pub(super) x_label_pad: f64,
     pub(super) x_family: String,
     pub(super) x_font_size: f64,
+    /// `flush_threshold`'s verdict: `None` centers every label.
+    pub(super) x_flush: Option<f64>,
     pub(super) x_title_text: String,
     pub(super) caption: AxisCaption,
     pub(super) title_key: Option<crate::contract::LabelKey>,
@@ -392,13 +393,7 @@ impl ContinuousXAxis {
         let x_label_weight = ax_x.labels.font.weight_str();
         for (&tv, lbl) in x_ticks.iter().zip(x_labels.iter()) {
             let pos = x_pos(tv) + 0.5;
-            let anchor = if pos - 0.5 <= plot_left + 1.0 {
-                "start"
-            } else if pos - 0.5 >= plot_left + plot_w - 1.0 {
-                "end"
-            } else {
-                "middle"
-            };
+            let anchor = crate::families::line::flush_anchor_px(pos - 0.5 - plot_left, plot_w, self.x_flush);
             items.push(crate::text::label(Role::Axis, (pos, x_label_y), Attrs::new().set("text-anchor", anchor).vega("font-family", x_family).num("font-size", x_font_size).quick_some("font-style", ax_x.labels.font.style.as_deref()).set("font-weight", x_label_weight.as_str()).set("fill", x_label_color), lbl.as_str()));
         }
         items.extend(crate::common::axis_title_flat(

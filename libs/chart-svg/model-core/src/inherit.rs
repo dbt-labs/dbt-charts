@@ -1043,6 +1043,7 @@ pub fn emit(
     convert: &[(&str, &str)],
     no_source: &[&str],
     colors: Option<&str>,
+    fonts: Option<&str>,
 ) -> Result<String, InheritError> {
     let mut plan = Plan::default();
     let mut logical = vec![root.name.to_string()];
@@ -1320,8 +1321,11 @@ pub fn emit(
                 format!("            entry.{f}.fill_from(&parent.{f});\n")
             })
             .collect();
+        let ramp = fonts.map_or(String::new(), |hook| {
+            format!("    {hook}::registry(&style.fonts, &extended, &mut refused);\n")
+        });
         format!(
-            "    let names: Vec<String> = style.fonts.keys().cloned().collect();\n    for _ in 0..=names.len() {{\n        for name in &names {{\n            let Some(::model_core::Tri::Value(from)) = style.fonts.get(name).map(|e| e.extends.clone()) else {{ continue }};\n            let Some(parent) = style.fonts.get(&from).cloned() else {{\n                let known = names.join(\", \");\n                refused.push(::model_core::Refused {{ at: \"fonts\", why: format!(\"Unknown font '{{from}}' at style.fonts.{{name}}. Known fonts: {{known}}.\") }});\n                if let Some(entry) = style.fonts.get_mut(name) {{ entry.extends = ::model_core::Tri::Unset; }}\n                continue;\n            }};\n            if matches!(parent.extends, ::model_core::Tri::Value(_)) {{ continue }}\n            if let Some(entry) = style.fonts.get_mut(name) {{\n{fills}                entry.extends = ::model_core::Tri::Unset;\n            }}\n        }}\n    }}\n    if style.fonts.values().any(|e| matches!(e.extends, ::model_core::Tri::Value(_))) {{\n        refused.push(::model_core::Refused {{ at: \"fonts\", why: \"Fonts extend in a cycle at style.fonts.\".to_string() }});\n    }}\n"
+            "    let names: Vec<String> = style.fonts.keys().cloned().collect();\n    let extended: Vec<(String, String)> = style.fonts.iter().filter_map(|(n, e)| match &e.extends {{ ::model_core::Tri::Value(from) => Some((n.clone(), from.clone())), _ => None }}).collect();\n    for _ in 0..=names.len() {{\n        for name in &names {{\n            let Some(::model_core::Tri::Value(from)) = style.fonts.get(name).map(|e| e.extends.clone()) else {{ continue }};\n            let Some(parent) = style.fonts.get(&from).cloned() else {{\n                let known = names.join(\", \");\n                refused.push(::model_core::Refused {{ at: \"fonts\", why: format!(\"Unknown font '{{from}}' at style.fonts.{{name}}. Known fonts: {{known}}.\") }});\n                if let Some(entry) = style.fonts.get_mut(name) {{ entry.extends = ::model_core::Tri::Unset; }}\n                continue;\n            }};\n            if matches!(parent.extends, ::model_core::Tri::Value(_)) {{ continue }}\n            if let Some(entry) = style.fonts.get_mut(name) {{\n{fills}                entry.extends = ::model_core::Tri::Unset;\n            }}\n        }}\n    }}\n    if style.fonts.values().any(|e| matches!(e.extends, ::model_core::Tri::Value(_))) {{\n        refused.push(::model_core::Refused {{ at: \"fonts\", why: \"Fonts extend in a cycle at style.fonts.\".to_string() }});\n    }}\n{ramp}"
         )
     };
     let opaque: Vec<String> = plan.opaque_fonts.iter().map(|p| format!("{p:?}")).collect();

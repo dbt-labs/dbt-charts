@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use board_model::board::{items, Board, BoardBody, LayoutItem};
 use board_model::ids::{BoardId, ChartId, ItemId};
 use board_model::style::board::{ChartTitleStyle, PaddingStyle};
+use board_model::style::table::CellAlign;
 use board_model::style::legend::{LegendStyle, SideLegendStyle};
 use color::Rgba;
 use diagnostic::Diagnostic;
@@ -250,6 +251,9 @@ pub enum Body {
     /// bar, line, area, scatter, histogram, heatmap.
     Plot(Box<Plot>),
     Kpi(Kpi),
+    Table(Table),
+    Pie(Pie),
+    SparkBar(SparkBar),
     Callout(Callout),
     /// A family that draws marks, bound over no rows: its title and frame around a muted
     /// "No data" in the plot box. It has no scales, series or legend, so a family never
@@ -258,15 +262,115 @@ pub enum Body {
     Failed(Failure),
 }
 
-/// A KPI card's data: the headline in the two faces it draws in, and its label.
+/// A KPI card's data: the headline in the faces it draws in, its label and its support row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Kpi {
-    /// The number, its sign included.
+    /// The glyph drawn before the headline, in the glyph face; empty for none.
+    pub glyph: String,
+    /// The sign and currency symbol ahead of the number, set in the affix face; empty for none.
+    pub prefix: String,
+    /// The number, its sign included when there is no prefix for it to move to.
     pub number: String,
-    /// The magnitude word set beside the number in the affix face; empty for an exact number.
+    /// The magnitude word or percent sign set beside the number in the affix face; empty for an
+    /// exact number.
     pub suffix: String,
     /// The label text; an empty label is `None`.
     pub label: Option<String>,
+    pub support: Option<KpiSupport>,
+}
+
+/// A KPI's support row: a glyph, the support value as one string, and an explainer, each with the
+/// ink it paints in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KpiSupport {
+    pub glyph: String,
+    pub value: String,
+    pub explainer: String,
+    pub value_fill: String,
+    pub glyph_fill: String,
+    /// The explainer's ink, the board's secondary text color.
+    pub explainer_fill: String,
+}
+
+/// A spark_bar: the rows it draws (those within `max_bars`), each with its label and magnitude, the
+/// scale they share and how many more rows were cut.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SparkBar {
+    pub rows: Vec<SparkBarRow>,
+    /// The largest finite magnitude, or 1 when every magnitude is zero.
+    pub max_value: f64,
+    /// A negative magnitude anywhere puts every bar on a shared midline.
+    pub signed: bool,
+    pub more: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SparkBarRow {
+    pub label: String,
+    pub value: f64,
+    /// The count text; `None` when the count column is hidden.
+    pub count: Option<String>,
+}
+
+/// A pie or donut: a wedge per row, in row order, over the canvas its label ink was judged on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pie {
+    /// The chart's opaque canvas: the ground the wedge stroke knocks out to and the label ink is
+    /// judged on.
+    pub canvas: String,
+    /// The chart's own background, which its card paints (`ResolvedPieChart.background`).
+    pub background: String,
+    /// Hole to disk ratio of the wheel.
+    pub hole: f64,
+    pub slices: Vec<PieSlice>,
+    /// The sum of the slice values.
+    pub total: f64,
+    /// The donut's center total, when drawn.
+    pub center: Option<PieCenter>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PieSlice {
+    pub value: f64,
+    pub fill: String,
+    /// The slice's tooltip description: its wedge's and its label's `aria-label`.
+    pub aria: String,
+    /// The text and ink of its label; none for a slice too small to label.
+    pub label: Option<PieLabel>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PieLabel {
+    pub lines: Vec<String>,
+    pub ink: String,
+}
+
+/// The donut's center total: the formatted sum and its caption.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PieCenter {
+    pub value: String,
+    pub caption: String,
+}
+
+/// A table of text columns: what each column heads with and the text of each of its cells.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Table {
+    /// In paint order; at least one, each with a cell per row and at least one row.
+    pub columns: Vec<TableColumn>,
+}
+
+impl Table {
+    pub fn rows(&self) -> usize {
+        self.columns[0].cells.len()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableColumn {
+    pub header: String,
+    pub cells: Vec<String>,
+    /// `style.columns.<name>.align`; a column that authors none starts its text.
+    pub align: CellAlign,
 }
 
 /// A callout card's text, as authored markdown.
@@ -884,9 +988,25 @@ pub struct TimeDomain {
     /// The detected grain, or the authored one. `None` is production's continuous temporal
     /// axis: no grain detected (fewer than two distinct dates, or no calendar cadence).
     pub unit: Option<TimeUnit>,
+    /// Why the x-type law dropped `unit`'s grain, when it did: production then draws its own ticks
+    /// (`keeps_dropped_grain_ladder` picks the curated ladder or d3's). `unit` still names the
+    /// grain; `Some` implies `unit` is `Some`: an axis with no grain has none to drop.
+    pub grain_drop: Option<GrainDrop>,
     /// After the calendar gap fill (`axis_x.fill`).
     pub buckets: Vec<Instant>,
     pub fiscal_start: Option<Month>,
+}
+
+/// Why a time axis's calendar grain is dropped from its labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GrainDrop {
+    /// The x-type law drops the grain: banding at it would synthesize more empty buckets than
+    /// the ordinal scaffold budget allows (`ordinal_scaffold_within_budget`). Production labels
+    /// such an axis by its curated ladder when `fill_grain` stays a calendar grain, else by d3's ticks.
+    ScaffoldBudget,
+    /// The author set `axis_x.time_unit: none`: the law's `fill_grain` is `Grain::None`, so
+    /// production draws d3's ticks, not the curated ladder.
+    AuthoredNone,
 }
 
 /// A calendar month, 1 through 12.

@@ -13,18 +13,18 @@ use board_model::primitives::Curve;
 use board_model::style::axis::FillMode;
 use board_model::style::marks::LabelVisible;
 use board_model::style::style::Style;
-use diagnostic::{diag, refuse, Diagnostic};
-use model_core::{Engine, Patch};
+use diagnostic::{codes, diag, py_str_repr, refuse, Diagnostic};
+use model_core::Engine;
 
-use crate::channel_type::{classify, ChannelType};
+use crate::channel_type::{classify, y_is_numeric, ChannelType};
 use crate::decode::decode;
-use crate::derived::DerivedChart;
+use crate::derived::{DerivedChart, Placed};
 use crate::families::cartesian::{self, axis_format, hex, measure_axis, plain_text, unsupported, value, zero_rule};
 use crate::formats::locale::active_number_locale;
 use crate::formats::{column_format, AuthoredFormat, Formats, Kind, Tiers};
 use crate::model::{
-    AuthoredLegend, AxisStyles, Baselines, Body, BoundChart, Datum, Key, Mark, MarkLayer, MarkStyle, Naming, Orient, Paint,
-    Panels, Plot, PlotParts, Pos, RowRef, Scale, ScaleKind, Series, SeriesKey, Tooltip, TooltipEntry,
+    AuthoredLegend, AxisStyles, Baselines, Body, BoundChart, Datum, Failure, GrainDrop, Key, Mark, MarkLayer, MarkStyle, Naming, Orient,
+    Paint, Panels, Plot, PlotParts, Pos, RowRef, Scale, ScaleKind, Series, SeriesKey, Tooltip, TooltipEntry,
 };
 use crate::plot::domain;
 use crate::plot::time::{time_domain, TimeInput, TimeUnitSetting};
@@ -49,6 +49,8 @@ pub struct Lines {
     /// One per row, in x order. A row with a null y is `defined: false`.
     pub datums: Vec<Datum>,
     pub baselines: Baselines,
+    /// The frame, fill and legend the placement derives, after the chart's data has passed its refusals.
+    pub derived: DerivedChart,
 }
 
 fn internal(invalid: crate::model::Invalid) -> Diagnostic {
@@ -112,9 +114,8 @@ pub fn lines(
     chart: &LineChart,
     board: &Board,
     body: &BoardBody,
-    own: &Patch<Style>,
     run: &RunResult,
-    derived: &DerivedChart,
+    placed: &Placed<'_>,
 ) -> Result<Option<Lines>, Diagnostic> {
     let style: &Style = body
         .style
@@ -134,7 +135,7 @@ pub fn lines(
         Some(Columns::One(y)) => y.as_str(),
         _ => return Err(diag::err_internal("normalize requires a line's `y:`")),
     };
-    let tiers = StyleTiers { own: Tier::from(&*own.charts.line), family: Tier::from(&*style.charts.line), charts: &style.charts };
+    let tiers = StyleTiers { own: Tier::from(&*placed.own.charts.line), family: Tier::from(&*style.charts.line), charts: &style.charts };
     let x_ladder = AxisLadder::new(AxisName::X, ChannelType::Temporal, &tiers, None, false)?;
     let y_ladder = AxisLadder::new(AxisName::Y, ChannelType::Quantitative, &tiers, None, false)?;
     if let Some(leaf) = x_ladder.unwalked_leaf().or_else(|| y_ladder.unwalked_leaf()) {
@@ -152,10 +153,15 @@ pub fn lines(
     if dataset.rows.is_empty() {
         return Ok(None);
     }
-    if !dataset.schema.get(y_field).map_err(Diagnostic::refused)?.is_number() {
-        return Err(unsupported(format!("line: y column {y_field:?} is not numeric")));
+    let x_type = classify(&dataset.schema, &dataset.rows, Some(x_field), true)?;
+    if !y_is_numeric(&dataset.schema, &dataset.rows, y_field)? {
+        let error = diag::err_line_y_not_numeric(placed.public_id, y_field);
+        return Err(match x_type {
+            ChannelType::Quantitative => error.with_hint(format!("Column {} looks numeric — did you mean to swap x and y?", py_str_repr(x_field))),
+            _ => error,
+        });
     }
-    match classify(&dataset.schema, &dataset.rows, Some(x_field), true)? {
+    match x_type {
         ChannelType::Temporal => {}
         ChannelType::Nominal => return Err(unsupported(refuse!("a line on a nominal x is not supported"))),
         ChannelType::Quantitative => return Err(unsupported(refuse!("a line on a quantitative x is not supported"))),
@@ -174,8 +180,9 @@ pub fn lines(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
+    let authored_none = x_ladder.time_unit_none();
     let law_axis = XAxis {
-        time_unit: None,
+        time_unit: authored_none.then_some("none"),
         authored_type: None,
         raw_type: None,
         fill: Some("null"),
@@ -194,11 +201,11 @@ pub fn lines(
     };
     let mut seen = HashSet::new();
     let distinct: Vec<String> = texts.iter().filter(|text| seen.insert(**text)).map(|text| text.to_string()).collect();
-    let input = TimeInput { chart_id: id.as_str(), family: "line", x_field, time_unit, fill_gaps: false, fiscal_start: None };
+    // The grain is still read into the domain (`unit`); the reason says why production labels the
+    // axis without it.
+    let grain_drop = (law.grain == Grain::None).then_some(if authored_none { GrainDrop::AuthoredNone } else { GrainDrop::ScaffoldBudget });
+    let input = TimeInput { chart_id: id.as_str(), family: "line", x_field, time_unit, grain_drop, fill_gaps: false, fiscal_start: None };
     let domain = time_domain(&distinct, &input)?.ok_or_else(|| diag::err_internal("a line with rows has an x to span"))?;
-    if law.grain == Grain::None && domain.unit.is_some() {
-        return Err(unsupported(refuse!("a line time axis whose grain the x-type law drops is not supported")));
-    }
     let instants = texts
         .iter()
         .map(|text| domain.axis.get(text).ok_or_else(|| diag::err_internal(format!("the time axis read every x, but not {text:?}"))))
@@ -252,7 +259,8 @@ pub fn lines(
         .collect::<Result<Vec<_>, Diagnostic>>()?;
 
     let baselines = Baselines { zero: zero_rule(&y_ladder, y_zero, &drawn)?, unity: false, x_threshold: false };
-    let stroke = derived.single_series_fill;
+    let derived = placed.derive()?;
+    let stroke = placed.single_series_fill()?;
     let ink = color::label_ink(&hex(stroke), &hex(derived.frame.canvas)).map_err(diag::err_internal)?;
     let series = Series {
         key: SeriesKey::Measure(y_field.to_string()),
@@ -266,6 +274,7 @@ pub fn lines(
         series,
         datums,
         baselines,
+        derived,
     }))
 }
 
@@ -276,17 +285,24 @@ pub fn bind(
     chart: &LineChart,
     board: &Board,
     body: &BoardBody,
-    own: &Patch<Style>,
     run: &RunResult,
-    derived: &DerivedChart,
+    placed: &Placed<'_>,
 ) -> Result<BoundChart, Diagnostic> {
     refuse_unported(chart)?;
     let title = plain_text(chart.cartesian.shared.title.as_ref())?;
     let subtitle = plain_text(chart.cartesian.shared.subtitle.as_ref())?;
-    let frame = Some(derived.frame.clone());
-    let Some(lines) = lines(id, chart, board, body, own, run, derived)? else {
+    let lines = match lines(id, chart, board, body, run, placed) {
+        Err(error) if error.code == codes::ERR_LINE_Y_NOT_NUMERIC.id => {
+            let body = Body::Failed(Failure { chart: id.clone(), diagnostic: error });
+            return Ok(BoundChart { title: None, subtitle: None, frame: None, body });
+        }
+        other => other?,
+    };
+    let Some(lines) = lines else {
+        let frame = Some(placed.derive()?.frame);
         return Ok(BoundChart { title, subtitle, frame, body: Body::Empty });
     };
+    let frame = Some(lines.derived.frame.clone());
     let plot = Plot::new(PlotParts {
         orient: Orient::Vertical,
         x: lines.x,
@@ -298,7 +314,7 @@ pub fn bind(
             rail: None,
             entries: Vec::new(),
             asks_top_strip: false,
-            authored: AuthoredLegend::Side(derived.legend.clone()),
+            authored: AuthoredLegend::Side(lines.derived.legend.clone()),
         },
         legends: Vec::new(),
         support: None,

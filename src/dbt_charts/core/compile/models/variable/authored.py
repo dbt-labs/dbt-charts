@@ -15,6 +15,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    StringConstraints,
     field_validator,
 )
 
@@ -238,7 +239,7 @@ class Variable(BaseModel):
         ),
     )
     query: Annotated[
-        str | AuthoredQuery | None,
+        Annotated[str, StringConstraints(pattern=r"^[^@]")] | AuthoredQuery | None,
         BeforeValidator(_normalize_var_query),
         Field(
             default=None,

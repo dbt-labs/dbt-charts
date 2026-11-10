@@ -7,7 +7,7 @@
 
 use crate::unit::Px;
 use model_core::{
-    build_leaf, Build, Cx, FromNode, Leaf, Merge, Node, ReadScalar, Scalar, TypeExpr, Unset,
+    build_leaf, Build, Cx, FromNode, Leaf, Merge, Node, ReadScalar, Scalar, Spell, TypeExpr, Unset,
 };
 use model_derive::Model;
 use yaml::{Kind, Value};
@@ -94,6 +94,14 @@ impl ReadScalar for Length {
             .ok()
     }
 }
+impl Spell for Length {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Self::Px(px) => px.spell(),
+            Self::Percent(p) => format!("{p}%").into(),
+        }
+    }
+}
 scalar_leaf!(
     Length,
     TypeExpr::Either(
@@ -142,6 +150,11 @@ impl ReadScalar for Width {
         made.map_err(|e| cx.invalid(node.span, e)).ok()
     }
 }
+impl Spell for Width {
+    fn spell(&self) -> serde_json::Value {
+        self.0.spell()
+    }
+}
 scalar_leaf!(
     Width,
     TypeExpr::Either(
@@ -165,6 +178,11 @@ impl ReadScalar for Extends {
                 None
             }
         }
+    }
+}
+impl Spell for Extends {
+    fn spell(&self) -> serde_json::Value {
+        self.0.spell()
     }
 }
 scalar_leaf!(
@@ -200,6 +218,16 @@ pub enum VisibleAuthored {
     Flag(bool),
     Expression(String),
     Probe(<SingleRowBoolProbe as Leaf>::Whole),
+}
+
+impl Spell for VisibleAuthored {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Self::Flag(b) => b.spell(),
+            Self::Expression(e) => e.spell(),
+            Self::Probe(p) => p.spell(),
+        }
+    }
 }
 
 impl Leaf for Visible {

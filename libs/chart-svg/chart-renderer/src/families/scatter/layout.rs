@@ -500,7 +500,7 @@ pub(super) fn fit(
     // centered) only applies to that scale; a nominal x's point-scale bands
     // always center their label under the band, at every position including
     // the two edge bands.
-    let x_label_flush = !x_nominal;
+    let x_label_flush = if x_nominal { None } else { crate::families::bar::axes::flush_threshold(ax_x.labels.flush.as_ref())? };
     if let Some(plain) = plain_x {
         x_bandwidth = plain.bandwidth();
     }
@@ -779,7 +779,7 @@ pub(super) fn fit(
     let x_limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
     // The x label's `labelFlush` anchor at a position on a plot `pw` wide.
     let x_flush_align =
-        |pos: f64, pw: f64| if x_label_flush { crate::families::line::flush_align(pos, pw) } else { "center" };
+        |pos: f64, pw: f64| crate::families::line::flush_align(pos, pw, x_label_flush);
     let y_font_size = ax_y.labels.font.size_or(11.0);
     let y_family = ax_y.labels.font.family_or("sans-serif");
     let y_limit = ax_y.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
@@ -910,9 +910,16 @@ pub(super) fn fit(
     // label `labelOverlap: greedy` hides is drawn at opacity 0 and adds no
     // ink, so the edge depends on the plot size.
     // The ink of rung `i`'s label on a plot `pw` wide and `ph` tall.
+    let x_labels_drawn = panel.is_none() && ax_x.labels.visible.unwrap_or(true);
+    let y_corners = crate::common::YEdges {
+        below: x_labels_drawn && x_edge == crate::common::XEdge::Bottom,
+        above: x_labels_drawn && x_edge == crate::common::XEdge::Top,
+        base: y_baseline,
+    };
     let y_label_ink = |pw: f64, ph: f64, i: usize| {
         let anchor_x = if y_left { -y_text_off } else { pw + y_text_off };
-        vega_fit::text_ink_rows(anchor_x, y_px(ph, y_ticks[i], y_round), y_label_ws[i].min(y_limit), y_font_size, y_text_align, y_baseline, crate::text::line_count(&y_labels[i]))
+        let y = y_px(ph, y_ticks[i], y_round);
+        vega_fit::text_ink_rows(anchor_x, y, y_label_ws[i].min(y_limit), y_font_size, y_text_align, y_corners.baseline(y, ph), crate::text::line_count(&y_labels[i]))
     };
     // Vega's `labelOverlap` thins a measure axis (parity, greedy on a log one); a point scale's
     // categories all draw.
@@ -2209,7 +2216,7 @@ pub(super) fn fit(
         if y_above {
             crate::common::above_label_y(&y_threshold_rules, crate::common::tick_round(y_pos(frac)), ax_y.grid.width.unwrap_or(1.0), y_font_size)
         } else {
-            y_pos(frac) + 0.5 + measure::baseline_shift(y_baseline, y_font_size)
+            y_pos(frac) + 0.5 + measure::baseline_shift(y_corners.baseline(y_pos(frac), plot_h), y_font_size)
         }
     };
     // The value axis: drawn by the panel that owns it (a facet's last
@@ -2613,6 +2620,7 @@ pub(super) fn fit(
                 angle: x_cat_angle,
                 align: x_cat_align,
                 baseline: x_cat_baseline,
+                continuous: !x_nominal,
                 flush: x_label_flush,
                 point_label_crisp: 0.5,
                 title: &x_title_text,

@@ -11,7 +11,7 @@
 use crate::facet::DisplayText;
 use crate::primitives::FormatSpec;
 use crate::string_enum;
-use model_core::{Cx, Entry, FromNode, Kind, Leaf, Node, ReadScalar};
+use model_core::{Cx, Entry, FromNode, Kind, Leaf, Node, ReadScalar, Spell};
 use model_derive::Model;
 use std::collections::HashSet;
 
@@ -98,6 +98,24 @@ impl ReadScalar for SupportTableEntry {
         <SupportTableSource as FromNode>::whole(node, cx).map(Self::Source)
     }
 }
+impl Spell for SupportTableEntry {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Self::Source(s) => {
+                let spelled = s.spell();
+                match spelled.get("source") {
+                    Some(source) if spelled.as_object().is_some_and(|m| m.len() == 1) => {
+                        source.clone()
+                    }
+                    _ => spelled,
+                }
+            }
+            Self::Aggregate(a) => a.spell(),
+            Self::PerSeries(p) => p.spell(),
+        }
+    }
+}
+
 union_leaf!(
     SupportTableEntry,
     ::model_core::TypeExpr::Either(
@@ -155,6 +173,12 @@ impl ReadScalar for SupportTableSpec {
         <SupportTable as FromNode>::whole(node, cx).map(Self)
     }
 }
+impl Spell for SupportTableSpec {
+    fn spell(&self) -> serde_json::Value {
+        self.entries().iter().map(Spell::spell).collect()
+    }
+}
+
 union_leaf!(
     SupportTableSpec,
     ::model_core::TypeExpr::Either(

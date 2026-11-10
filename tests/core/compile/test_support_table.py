@@ -314,9 +314,7 @@ def test_top_bottom_position_rejected_on_vertical_category_axis():
         resolve_support_table_position("bottom", True, "right", "chart_id")
 
 
-# _base is the abstract root — it has no font.family/color and is never used
-# directly at render time (see test_fontstyle_floor_guarantee.py's same filter).
-_RENDERABLE_THEMES = [t for t in list_built_in_themes() if t != "_base"]
+_RENDERABLE_THEMES = list_built_in_themes()
 
 
 @pytest.mark.parametrize("theme_name", _RENDERABLE_THEMES)

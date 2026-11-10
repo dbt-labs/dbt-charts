@@ -908,6 +908,21 @@ def test_a_bad_timestamp_anchor_names_the_timestamp_format() -> None:
         _line([{"type": "rule", "x": "2024-06-01T25:00:00"}])
 
 
+@pytest.mark.parametrize("axis", ["x", "y"])
+def test_a_jinja_anchor_says_values_are_literal_and_names_the_computed_anchors(
+    axis: str,
+) -> None:
+    with pytest.raises(CompilationError) as caught:
+        _line(
+            [{"type": "note", "x": "2024-06-01", "y": 1, axis: "{{ queries.q.peak }}"}]
+        )
+    message = str(caught.value)
+    assert "annotation values are literals" in message
+    assert "type: note" in message
+    assert "y: max()" in message
+    assert "is not a" not in message
+
+
 def test_x_value_format_reads_the_x_axis_format() -> None:
     [rule] = _scatter(
         [{"type": "rule", "x": "avg()", "text": "x {{ value | format }}"}],

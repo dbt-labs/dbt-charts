@@ -67,6 +67,12 @@ macro_rules! facet {
             }
         }
 
+        impl model_core::Spell for $name {
+            fn spell(&self) -> model_core::serde_json::Value {
+                model_core::Spell::spell(&self.0)
+            }
+        }
+
         impl AsRef<str> for $name {
             fn as_ref(&self) -> &str {
                 &self.0
@@ -179,6 +185,12 @@ macro_rules! open_names {
             type Error = String;
             fn try_from(v: String) -> Result<Self, String> {
                 Self::try_from(v.as_str())
+            }
+        }
+
+        impl model_core::Spell for $name {
+            fn spell(&self) -> model_core::serde_json::Value {
+                model_core::Spell::spell(&self.0)
             }
         }
 
@@ -296,6 +308,15 @@ impl TryFrom<f64> for FontWeightValue {
     }
 }
 
+impl model_core::Spell for FontWeightValue {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Name(n) => Value::from(n.as_str()),
+            Self::Number(n) => Value::from(*n),
+        }
+    }
+}
+
 impl model_core::ReadScalar for FontWeightValue {
     fn read(node: &model_core::Node, cx: &mut model_core::Cx) -> Option<Self> {
         if let Ok(Some(n)) = cx.attempt(|cx| f64::read(node, cx)) {
@@ -397,6 +418,12 @@ impl TryFrom<f64> for FontWeight {
             return Ok(Self(FontWeightValue::Number(v)));
         }
         Err(FONT_WEIGHT_MESSAGE.to_string())
+    }
+}
+
+impl model_core::Spell for FontWeight {
+    fn spell(&self) -> Value {
+        model_core::Spell::spell(&self.0)
     }
 }
 

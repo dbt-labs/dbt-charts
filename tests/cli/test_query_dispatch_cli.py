@@ -204,6 +204,27 @@ class TestRawSqlExecute:
         data = json.loads(result.output)
         assert data["data"][0]["r"] == "EU"
 
+    def test_successful_query_prints_validator_warnings_to_stderr(
+        self, project_dir: Path
+    ) -> None:
+        sql = (
+            "SELECT * FROM (SELECT 1 AS a UNION ALL SELECT 2) x, "
+            "(SELECT 3 AS b UNION ALL SELECT 4) y"
+        )
+        result = runner.invoke(
+            app, ["query", "db", sql, "--project-dir", str(project_dir)]
+        )
+        assert result.exit_code == 0, result.output
+        assert "[WARN-MISSING-JOIN-PREDICATE]" in result.stderr
+        assert "WARN-MISSING-JOIN-PREDICATE" not in result.stdout
+
+    def test_clean_query_prints_no_warning(self, project_dir: Path) -> None:
+        result = runner.invoke(
+            app, ["query", "db", "SELECT 42 AS n", "--project-dir", str(project_dir)]
+        )
+        assert result.exit_code == 0, result.output
+        assert "[WARN-" not in result.stderr
+
 
 # ---------------------------------------------------------------------------
 # Raw-SQL --validate (formerly dct validate-query)

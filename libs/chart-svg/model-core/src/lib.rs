@@ -38,6 +38,7 @@ mod build;
 pub mod cascade;
 mod from_node;
 pub mod inherit;
+mod law;
 mod leaf;
 mod parse;
 pub mod schema;
@@ -51,21 +52,24 @@ pub use build::{
 };
 pub use cascade::{CascadeError, Csr, Resolved, Tables};
 pub use from_node::{
-    map_node, parse, parse_patch, read_accept, read_enum, read_keys, read_map, read_null,
-    read_list, read_nullable, read_nullable_patch, read_or_empty, read_patch_tri, read_tag, scalar_node,
-    shorthand, FromMap, FromNode, InferTag, ReadScalar, Shorthand,
+    map_node, parse, parse_patch, read_accept, read_enum, read_keys, read_list, read_map,
+    read_null, read_nullable, read_nullable_patch, read_or_empty, read_patch_tri, read_tag,
+    scalar_node, shorthand, FromMap, FromNode, InferTag, ReadScalar, Shorthand,
 };
 pub use inherit::{
-    fill_literal, FillDefault, FillFrom, FillTry, InheritError, Refused, TokenBlock, TokenListSlot, TokenSlot,
+    fill_literal, FillDefault, FillFrom, FillTry, InheritError, Refused, TokenBlock, TokenListSlot,
+    TokenSlot,
 };
+pub use law::{first_violation, satisfied, Keyed, State, Unanswerable};
 pub use leaf::{
-    merge_map_deep, merge_nullable, merge_patch_slot, tri_to_authored, tri_to_patch, Empty, Fold,
-    Leaf, Lift, SetLeaves, Slot, ToAuthored, ToPatch,
+    merge_map_deep, merge_nullable, merge_patch_slot, spell_leaves, tri_to_authored, tri_to_patch,
+    Empty, Fold, Leaf, LeafValues, Lift, SetLeaves, Slot, Spell, ToAuthored, ToPatch,
 };
 pub use parse::{
     nearest, render_path, Cx, Hint, MapRead, Parse, ParseError, Retired, Retirement, Seg,
     SourceMap, Walk,
 };
+pub use serde_json;
 pub use table::{
     Attrs, Bounds, Condition, Constraint, ConstraintKind, Field, InEngine, Keywords, Merge,
     ModelInfo, ModelKind, Scalar, TypeExpr, Value,

@@ -27,7 +27,7 @@ pub struct ScatterChart {
     #[model(absent = "points share one shape")]
     pub shape: Option<Channel>,
     /// Appearance overrides for this chart alone.
-    #[model(nullable)]
+    #[model(fill = fill_style, nullable)]
     pub style: ScatterChartStyle,
     /// Extra marks on one shared x, each with its own type.
     #[model(fill = fill_empty, nullable)]

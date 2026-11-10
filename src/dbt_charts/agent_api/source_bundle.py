@@ -7,8 +7,10 @@ Layout (``<root>/``)::
     source.json       tool, url, fetched_at, raw_sha256, outline_version, plus
                       tool extras
     <raw>             the tool's raw definition, byte for byte
-    queries/          compiled SQL (``*.sql``) and query definitions
-    kpi/              ``*.csv`` of single-value tiles (may be empty)
+    queries/          compiled SQL (``*.sql``) and query definitions (Omni's, and
+                      its KPI values, at the dashboard's filter defaults)
+    kpi/              ``*.csv`` of single-value tiles: the header and the one row the tile
+                      displays, headline column first (may be empty)
     png/              ``*.png`` renders of the source board
 """
 

@@ -1288,7 +1288,7 @@ pub(super) fn render_horizontal_panel(
                     axes_x2 = axes_x2.max(ghost.x2);
                     b.union(&ghost);
                 }
-                // Bottom value axis labels (flush-aligned at the range ends);
+                // Bottom value axis labels (anchored per `flush_threshold`);
                 // Vega's parity overlap hides every other one under the
                 // theme's min_gap, and only the visible labels' ink counts.
                 let rows = val_label_rows.borrow();

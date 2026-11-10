@@ -28,16 +28,21 @@ Template context:
   with ``.rows``, ``.one``, ``.columns``. Rows are QueryRow: cells by column
   name (``row.name`` / ``row['name']``), raising on an unknown column.
 
-Template globals:
 - ``plan_variables(rows)`` — takes a list of column-query rows (each with ``name``
   and ``actual_type`` keys) and returns a list of ``{"name", "input"}`` dicts for
   the default-selected variable set (boolean/string/temporal; not numeric or complex).
   Wraps ``plan_entity_variables`` so templates avoid hand-coding the type-filter logic.
+  A variable is named by its column's board name (``result_column_name``), the
+  name the page's result columns and automatic links carry; a column that name
+  does not reach unquoted (``filter()`` writes it bare) is skipped. Bound
+  per-render, like ``sql_identifier``.
 - ``plan_key_variables(rows)`` — like ``plan_variables`` but for row *identity*:
   identifier-named columns whose type round-trips exactly through a URL equality
   param (integers, exact decimals, strings). The detail view and the
   index→detail link use this so a numeric ``id`` primary key actually selects one
   row, where the browse-filter set would have dropped it.
+
+Template globals:
 - ``sql_identifier(name)`` — rejects ``name`` if it contains a quote,
   backslash, bracket, or control character (untrusted URL path params reach
   this — see core/AGENTS.md "Two validation boundaries"), then returns it safely quoted
@@ -70,12 +75,17 @@ from jinja2 import (
 from dbt_charts.core.compile.sql_guard import sqlglot_dialect
 from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
-from dbt_charts.core.dialects.identifier import sql_identifier
+from dbt_charts.core.dialects.identifier import (
+    catalog_name,
+    result_column_name,
+    sql_identifier,
+)
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
     from dbt_charts.core.compile.template.query_result import QueryResult, QueryRow
     from dbt_charts.core.registered_views.router import RouteMatch
+    from dbt_charts.core.registered_views.variable_planner import PlannerColumn
 
 
 class TemplateLoadError(Exception):
@@ -108,8 +118,22 @@ _TEMPLATE_ENV = BoardTemplateEnvironment(
 )
 
 
+def _planner_columns(rows: list[QueryRow], dialect: str | None) -> list[PlannerColumn]:
+    """*rows* as planner columns named by board name, without the columns that
+    name does not reach unquoted."""
+    from dbt_charts.core.registered_views.variable_planner import PlannerColumn
+
+    columns = []
+    for r in rows:
+        name = result_column_name(r["name"], dialect)
+        if catalog_name(name, False, dialect) == r["name"]:
+            columns.append(PlannerColumn(name=name, actual_type=r["actual_type"]))
+    return columns
+
+
 def _plan_variables(
     rows: list[QueryRow],
+    dialect: str | None,
 ) -> list[dict[str, str]]:
     """Convert column-query rows into a list of variable dicts for template iteration.
 
@@ -122,19 +146,17 @@ def _plan_variables(
     Args:
         rows: Rows from a ``type: schema`` registry query (each row has ``name``
             and ``actual_type`` keys).
+        dialect: The sqlglot dialect of the table's source.
 
     Returns:
         List of ``{"name": col_name, "input": input_type}`` for selected columns.
         Empty list when no columns pass the selection or when ``rows`` is empty.
     """
     from dbt_charts.core.registered_views.variable_planner import (
-        PlannerColumn,
         plan_entity_variables,
     )
 
-    all_cols = [
-        PlannerColumn(name=r["name"], actual_type=r["actual_type"]) for r in rows
-    ]
+    all_cols = _planner_columns(rows, dialect)
     # Auto-browse path: skip columns whose names aren't valid variable ids.
     # Non-identifier names (spaces, dashes, leading digits) are common in real
     # warehouses; raising here would 500 the entity table page.
@@ -143,11 +165,9 @@ def _plan_variables(
     return [{"name": name, "input": var.input} for name, var in variables.items()]
 
 
-_TEMPLATE_ENV.globals["plan_variables"] = _plan_variables
-
-
 def _plan_key_variables(
     rows: list[QueryRow],
+    dialect: str | None,
 ) -> list[dict[str, str]]:
     """Like ``plan_variables`` but selects row-identity *key* columns, not filters.
 
@@ -163,13 +183,10 @@ def _plan_key_variables(
     to two arbitrary rows.
     """
     from dbt_charts.core.registered_views.variable_planner import (
-        PlannerColumn,
         plan_entity_variables,
     )
 
-    all_cols = [
-        PlannerColumn(name=r["name"], actual_type=r["actual_type"]) for r in rows
-    ]
+    all_cols = _planner_columns(rows, dialect)
     # Pre-filter to valid-id + keyable here, so plan_entity_variables' own
     # InvalidColumnNameError branch can't fire from this caller.
     key_names = {
@@ -177,9 +194,6 @@ def _plan_key_variables(
     }
     variables = plan_entity_variables(all_cols, include=key_names)
     return [{"name": name, "input": var.input} for name, var in variables.items()]
-
-
-_TEMPLATE_ENV.globals["plan_key_variables"] = _plan_key_variables
 
 
 def _pivot_column_profiles(
@@ -302,10 +316,10 @@ def render_template(
         path_params: Route path params, e.g. ``{"source": "snowflake"}``.
         query_results: Pre-executed query results keyed by name.
         resolve_dialect: Zero-arg callable returning the matched source's
-            dialect for ``sql_identifier()`` quoting, or ``None`` for ANSI
-            double-quoting. Called at most once, lazily, the first time the
-            template invokes ``sql_identifier()`` — a template that never
-            calls it never triggers source resolution (``render_pipeline.py``
+            dialect for ``sql_identifier()`` quoting and the planners' names,
+            or ``None`` for ANSI double-quoting. Called at most once, lazily,
+            the first time the template invokes one of them — a template that
+            never calls one never triggers source resolution (``render_pipeline.py``
             builds a resolver that only touches the exec env on
             first call, so index-level routes with no identifier quoting to
             do stay free). Defaults to a resolver that always returns
@@ -336,11 +350,19 @@ def render_template(
         except ValueError as exc:
             raise ExpansionError(str(exc)) from exc
 
+    def _plan_variables_bound(rows: list[QueryRow]) -> list[dict[str, str]]:
+        return _plan_variables(rows, sqlglot_dialect(resolve_once()))
+
+    def _plan_key_variables_bound(rows: list[QueryRow]) -> list[dict[str, str]]:
+        return _plan_key_variables(rows, sqlglot_dialect(resolve_once()))
+
     try:
         return template.render(
             path=path_params,
             queries=query_results,
             sql_identifier=_sql_identifier_bound,
+            plan_variables=_plan_variables_bound,
+            plan_key_variables=_plan_key_variables_bound,
         )
     except (UndefinedError, ChartDataError) as exc:
         raise ExpansionError(f"Template rendering failed: {exc}") from exc

@@ -417,6 +417,36 @@ rows:
     ]
 
 
+def test_unknown_variable_hint_suggests_the_queries_namespace_not_an_echo() -> None:
+    """`queriesectors` is `queries.sectors` with the dot dropped; the hint says so."""
+    from dbt_charts.core.compile import compile
+
+    result = compile(
+        """
+title: Test
+source: test
+queries:
+  sectors:
+    sql: select 1 as day
+  mix:
+    sql: select * from {{ queriesectors.sectors }}
+charts:
+  c:
+    query: mix
+    type: bar
+    x: day
+    y: day
+rows:
+  - c
+"""
+    )
+    (error,) = result.errors
+    assert error.code == "ERR-UNKNOWN-VARIABLE"
+    assert error.hint is not None
+    assert "Did you mean 'queries.sectors'?" in error.hint
+    assert "references unknown variable" not in error.hint
+
+
 def test_layer_query_variables_are_chart_dependencies() -> None:
     from dbt_charts.core.compile import compile
     from dbt_charts.core.compile.normalize.chart_focus import focus_on_chart

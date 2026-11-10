@@ -15,7 +15,7 @@
 use board_model::primitives::{AffixRepeat, FormatConfig, FormatSpec, Notation, SignPlacement};
 use board_model::rule::Auto;
 use board_model::style::axis::{
-    AxisXStyle, AxisYStyle, BandAxisStyle, BaseAxisStyle, BaseScaleStyle, QuantitativeAxisStyle,
+    AxisXStyle, AxisYStyle, BandAxisStyle, BaseAxisStyle, BaseScaleStyle, QuantitativeAxisStyle, TimeUnit,
 };
 use diagnostic::Diagnostic;
 use model_core::{Engine, Leaf, Patch, Tri};
@@ -187,13 +187,21 @@ impl<'a> AxisRung<'a> {
         }
     }
 
+    fn time_unit(&self) -> Tri<&Engine<TimeUnit, Auto>> {
+        match self {
+            AxisRung::X(p) => p.time_unit.as_ref(),
+            _ => Tri::Unset,
+        }
+    }
+
     /// An x leaf that decides a time or ordinal x ahead of the data (production's x-type law
-    /// reads `type` and `time_unit`), or labels one.
+    /// reads `type` and `time_unit`), or labels one. A `time_unit` of `none` is read
+    /// ([`AxisLadder::time_unit_none`]), so it is not unwalked.
     fn x_type_leaf(&self) -> Option<&'static str> {
         let AxisRung::X(p) = self else { return None };
         [
             ("type", !matches!(p.r#type, Tri::Unset)),
-            ("time_unit", !matches!(p.time_unit, Tri::Unset)),
+            ("time_unit", !matches!(&p.time_unit, Tri::Unset | Tri::Value(Engine::Value(TimeUnit::None)))),
             ("ticks.time_unit", !matches!(p.ticks.time_unit, Tri::Unset)),
             ("labels.time_unit", !matches!(p.labels.time_unit, Tri::Unset)),
             ("labels.values", !matches!(p.labels.values, Tri::Unset)),
@@ -403,6 +411,12 @@ impl<'a> AxisLadder<'a> {
                 Tri::Unset => Tri::Unset,
             }))
             .copied()
+    }
+
+    /// Whether the walked `time_unit` is `none`: production's continuous temporal axis, authored.
+    pub fn time_unit_none(&self) -> bool {
+        let walked = self.rungs.walk(|layer| layer.read(AxisRung::time_unit));
+        matches!(walked, Some(Engine::Value(TimeUnit::None)))
     }
 
     /// `ticks.count`, as walked: `auto` stays the rule.

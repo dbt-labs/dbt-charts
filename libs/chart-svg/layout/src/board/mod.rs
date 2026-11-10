@@ -3,6 +3,7 @@
 pub mod assemble;
 pub mod band;
 pub mod bands;
+pub mod chrome;
 pub mod height;
 pub mod prose;
 pub mod tree;

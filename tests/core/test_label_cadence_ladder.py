@@ -9,6 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dbt_charts.core.constants.axis import TEMPORAL_LABEL_GAP_PX
+
 
 def _monthly_dates(n: int, start: tuple[int, int] = (2022, 1)) -> list[str]:
     year, month = start
@@ -224,7 +226,7 @@ class TestPairClearsEdgeFlush:
         # assertions below discriminate cleanly.
         buggy_extent = w_jan / 2 + w_feb / 2
         real_extent = w_jan + w_feb / 2
-        band = (buggy_extent + real_extent) / 2 / 4
+        band = ((buggy_extent + real_extent) / 2 + TEMPORAL_LABEL_GAP_PX) / 4
         assert not _pair_clears(
             0,
             4,
@@ -278,7 +280,7 @@ class TestPairClearsEdgeFlush:
         w_may = measurer.measure("May", size)
         buggy_extent = w_apr / 2 + w_may / 2
         real_extent = w_apr / 2 + w_may
-        band = (buggy_extent + real_extent) / 2
+        band = (buggy_extent + real_extent) / 2 + TEMPORAL_LABEL_GAP_PX
         assert _pair_clears(
             1,
             2,
@@ -330,7 +332,9 @@ class TestPairClearsEdgeFlush:
         y_2016 = measurer.measure("2016", size)
         half = max((w_q4 + w_q1) / 2, (y_2015 + y_2016) / 2)
         full = max(w_q4 + w_q1 / 2, y_2015 + y_2016 / 2)
-        band = (half + full) / 2 / 3  # three bands separate the two openers
+        band = (
+            (half + full) / 2 + TEMPORAL_LABEL_GAP_PX
+        ) / 3  # three bands separate the two openers
 
         assert _pair_clears(
             2,
@@ -362,6 +366,41 @@ class TestPairClearsEdgeFlush:
             fiscal_year_start_month=1,
             authored_format=None,
         )
+
+
+class TestPairClearsLabelGap:
+    """Neighbors that merely don't overlap still fail: they must sit at least
+    ``TEMPORAL_LABEL_GAP_PX`` apart, or they read as one run of text."""
+
+    def test_neighbors_closer_than_the_gap_do_not_clear(self) -> None:
+        import datetime
+
+        from dbt_charts.core.font_measure import get_font_measurer
+        from dbt_charts.core.render.chart.time_unit_detect import _pair_clears
+
+        measurer = get_font_measurer(None)
+        dates = [datetime.date(2025, m, 1) for m in (1, 2, 3, 4)]
+        size = 11.0
+        touching = measurer.measure("Feb", size) / 2 + measurer.measure("Mar", size) / 2
+
+        def clears(band: float) -> bool:
+            return _pair_clears(
+                1,
+                2,
+                dates,
+                "yearmonth",
+                "yearmonth",
+                measurer,
+                size,
+                band,
+                edge_labels_flushed=False,
+                is_anchor=False,
+                fiscal_year_start_month=1,
+                authored_format=None,
+            )
+
+        assert not clears(touching + TEMPORAL_LABEL_GAP_PX / 2)
+        assert clears(touching + TEMPORAL_LABEL_GAP_PX)
 
 
 class TestPairClearsCarriesYearRow:
@@ -408,7 +447,7 @@ class TestPairClearsCarriesYearRow:
         w_apr = measurer.measure("Apr", size)
         buggy_extent = w_2025 + w_apr / 2  # old bug: maxed in the year row
         real_extent = w_mar + w_apr / 2  # correct: row 1 only
-        band = (buggy_extent + real_extent) / 2
+        band = (buggy_extent + real_extent) / 2 + TEMPORAL_LABEL_GAP_PX
         assert _pair_clears(
             0,
             1,
@@ -446,7 +485,7 @@ class TestPairClearsCarriesYearRow:
         # ("Jan" + "Jan") but not the wider year row ("2025" + "2026").
         row1_extent = w_jan + w_jan
         year_extent = w_2025 + w_2026
-        band = (row1_extent + year_extent) / 2
+        band = (row1_extent + year_extent) / 2 + TEMPORAL_LABEL_GAP_PX
         assert not _pair_clears(
             0,
             1,
@@ -470,7 +509,7 @@ class TestPairClearsCarriesYearRow:
             "yearmonth",
             measurer,
             size,
-            year_extent,
+            year_extent + TEMPORAL_LABEL_GAP_PX,
             edge_labels_flushed=True,
             is_anchor=True,
             fiscal_year_start_month=1,
@@ -512,7 +551,7 @@ class TestPairClearsCarriesYearRow:
         row1_extent = w_q4 + w_q1 / 2
         year_extent = w_2023 + w_2024 / 2
         # Wide enough for row 1, too narrow for the year row.
-        band = (row1_extent + year_extent) / 2
+        band = (row1_extent + year_extent) / 2 + TEMPORAL_LABEL_GAP_PX
         assert not _pair_clears(
             0,
             1,

@@ -222,6 +222,10 @@ pub fn err_color_token(scope: impl Into<Value>, reason: impl Into<Value>) -> Dia
     Diagnostic::new(&codes::ERR_COLOR_TOKEN, [("scope", scope.into()), ("reason", reason.into())])
 }
 
+pub fn err_column_not_found(column: impl Into<Value>, schema: impl Into<Value>, table: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_COLUMN_NOT_FOUND, [("column", column.into()), ("schema", schema.into()), ("table", table.into())])
+}
+
 pub fn err_concat_overshoot_nonpositive(new_w: impl Into<Value>, orig_w: impl Into<Value>, overshoot: impl Into<Value>, target_width: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_CONCAT_OVERSHOOT_NONPOSITIVE, [("new_w", new_w.into()), ("orig_w", orig_w.into()), ("overshoot", overshoot.into()), ("target_width", target_width.into())])
 }
@@ -634,8 +638,8 @@ pub fn err_layer_y_kind_mismatch(field_path: impl Into<Value>, y_field: impl Int
     Diagnostic::new(&codes::ERR_LAYER_Y_KIND_MISMATCH, [("field_path", field_path.into()), ("y_field", y_field.into()), ("y_kind", y_kind.into()), ("axis_where", axis_where.into()), ("axis_kind", axis_kind.into())])
 }
 
-pub fn err_layered_no_palette() -> Diagnostic {
-    Diagnostic::new(&codes::ERR_LAYERED_NO_PALETTE, [])
+pub fn err_layered_no_palette(chart_id: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_LAYERED_NO_PALETTE, [("chart_id", chart_id.into())])
 }
 
 pub fn err_layers_ambiguous_y_domain(chart_id: impl Into<Value>, domain: impl Into<Value>) -> Diagnostic {
@@ -818,6 +822,10 @@ pub fn err_mutating_sql(rejected_node_kind: impl Into<Value>, fragment_preview: 
     Diagnostic::new(&codes::ERR_MUTATING_SQL, [("rejected_node_kind", rejected_node_kind.into()), ("fragment_preview", fragment_preview.into())])
 }
 
+pub fn err_name_invalid(kind: impl Into<Value>, name: impl Into<Value>, path: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_NAME_INVALID, [("kind", kind.into()), ("name", name.into()), ("path", path.into())])
+}
+
 pub fn err_no_board_files(path: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_NO_BOARD_FILES, [("path", path.into())])
 }
@@ -836,6 +844,10 @@ pub fn err_palette_rebind_unsatisfied(field_path: impl Into<Value>, bound: impl 
 
 pub fn err_palette_unknown(name: impl Into<Value>, authored: impl Into<Value>, field_path: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_PALETTE_UNKNOWN, [("name", name.into()), ("authored", authored.into()), ("field_path", field_path.into())])
+}
+
+pub fn err_palette_unusable(authored: impl Into<Value>, field_path: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_PALETTE_UNUSABLE, [("authored", authored.into()), ("field_path", field_path.into()), ("reason", reason.into())])
 }
 
 pub fn err_path_outside_project(path: impl Into<Value>) -> Diagnostic {
@@ -932,6 +944,10 @@ pub fn err_scale_domain_requires_continuous_x(chart_id: impl Into<Value>, vl_typ
 
 pub fn err_scatter_multi_y_not_numeric(chart_id: impl Into<Value>, y_field: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_SCATTER_MULTI_Y_NOT_NUMERIC, [("chart_id", chart_id.into()), ("y_field", y_field.into())])
+}
+
+pub fn err_schema_not_found(schema: impl Into<Value>, source: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_SCHEMA_NOT_FOUND, [("schema", schema.into()), ("source", source.into())])
 }
 
 pub fn err_sort_field_not_found(field: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
@@ -1052,6 +1068,10 @@ pub fn err_table_freeze_invalid(chart_id: impl Into<Value>, reason: impl Into<Va
 
 pub fn err_table_link_filter_unknown(filter_name: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_TABLE_LINK_FILTER_UNKNOWN, [("filter_name", filter_name.into())])
+}
+
+pub fn err_table_not_found(schema: impl Into<Value>, table: impl Into<Value>, source: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_TABLE_NOT_FOUND, [("schema", schema.into()), ("table", table.into()), ("source", source.into())])
 }
 
 pub fn err_table_pivot_dimensions_ambiguous() -> Diagnostic {
@@ -1202,8 +1222,8 @@ pub fn err_unknown_chart(chart: impl Into<Value>, available: impl Into<Value>) -
     Diagnostic::new(&codes::ERR_UNKNOWN_CHART, [("chart", chart.into()), ("available", available.into())])
 }
 
-pub fn err_unknown_query(chart_name: impl Into<Value>, query_name: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::ERR_UNKNOWN_QUERY, [("chart_name", chart_name.into()), ("query_name", query_name.into())])
+pub fn err_unknown_query(chart_name: impl Into<Value>, query_name: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_UNKNOWN_QUERY, [("chart_name", chart_name.into()), ("query_name", query_name.into()), ("available", available.into())])
 }
 
 pub fn err_unknown_theme(theme: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
@@ -1236,10 +1256,6 @@ pub fn err_url_value_not_absolute(r#where: impl Into<Value>, value: impl Into<Va
 
 pub fn err_validation_field(field_path: impl Into<Value>, pydantic_msg: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_VALIDATION_FIELD, [("field_path", field_path.into()), ("pydantic_msg", pydantic_msg.into())])
-}
-
-pub fn err_variable_name_invalid(name: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::ERR_VARIABLE_NAME_INVALID, [("name", name.into())])
 }
 
 pub fn err_variable_options_failed(variable: impl Into<Value>, query_name: impl Into<Value>, cause: impl Into<Value>) -> Diagnostic {
@@ -1346,8 +1362,8 @@ pub fn warn_callout_text_truncated(chart_id: impl Into<Value>, authored_field: i
     Diagnostic::new(&codes::WARN_CALLOUT_TEXT_TRUNCATED, [("chart_id", chart_id.into()), ("authored_field", authored_field.into()), ("authored_text", authored_text.into())])
 }
 
-pub fn warn_category_color_pin_unseen(field: impl Into<Value>, values: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::WARN_CATEGORY_COLOR_PIN_UNSEEN, [("field", field.into()), ("values", values.into())])
+pub fn warn_category_color_pin_unseen(field: impl Into<Value>, values: impl Into<Value>, drawn: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_CATEGORY_COLOR_PIN_UNSEEN, [("field", field.into()), ("values", values.into()), ("drawn", drawn.into())])
 }
 
 pub fn warn_chart_title_truncated(chart_id: impl Into<Value>, authored_field: impl Into<Value>, authored_text: impl Into<Value>) -> Diagnostic {

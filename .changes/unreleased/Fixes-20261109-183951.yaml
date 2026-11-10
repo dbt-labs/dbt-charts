@@ -1,0 +1,3 @@
+kind: Fixes
+body: A root query named like an imported query's internal key now fails with a coded duplicate-query error that names both, instead of a raw KeyError.
+time: 2026-11-09T18:39:51.326189204Z

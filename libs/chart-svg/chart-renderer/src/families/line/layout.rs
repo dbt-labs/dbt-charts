@@ -236,6 +236,13 @@ pub(super) fn fit(
     let canvas = r.canvas.as_str();
     let ax_y = &r.style.axis_y;
     let x_edge = r.style.axis_x.x_edge();
+    // A facet panel's value axis is painted by its composer, which knows nothing of these corners.
+    let x_labels_drawn = facet.is_none() && r.style.axis_x.labels.visible.unwrap_or(true);
+    let y_corners = |strip_above: bool| crate::common::YEdges {
+        below: x_labels_drawn && x_edge == crate::common::XEdge::Bottom,
+        above: strip_above || (x_labels_drawn && x_edge == crate::common::XEdge::Top),
+        base: ax_y.value_label_baseline(),
+    };
     let is_log = ax_y.is_log_scale();
     // A pinned layer forces the BASE to the free side regardless of its own
     // baked position (`_resolved_layer_y_orients`, `_overlay.py`).
@@ -2469,7 +2476,8 @@ pub(super) fn fit(
     // The Vega arms' L1-L5 x labels. They depend on the slot width, never on
     // the fitted plot, so one resolution serves every fit candidate; the rail
     // arm's slot is the rail-reduced one (`_endpoint_rail.py:148-170`).
-    let edge_labels_flushed = !x_ordinal_calendar && ax_x.labels.flush.as_ref() != Some(&serde_json::Value::Bool(false));
+    let x_flush = if x_ordinal_calendar { None } else { crate::families::bar::axes::flush_threshold(ax_x.labels.flush.as_ref())? };
+    let edge_labels_flushed = x_flush.is_some();
     let x_slot_w = if shape == Shape::RailConcat {
         svg_w - (rail_pane_w + el.label_offset)
     } else if let Some(f) = facet {
@@ -2801,7 +2809,7 @@ pub(super) fn fit(
         if x_ordinal_calendar {
             return "middle";
         }
-        flush_anchor_px(label_frac_at(idx, raw) * (pw - 2.0 * x_scale_pad), pw - 2.0 * x_scale_pad)
+        flush_anchor_px(label_frac_at(idx, raw) * (pw - 2.0 * x_scale_pad), pw - 2.0 * x_scale_pad, x_flush)
     };
     // A flat temporal label's `text-anchor` (L8 then L9): as authored, else flushed to the range end its own
     // position sits at.
@@ -2887,7 +2895,7 @@ pub(super) fn fit(
     let strip_column = |i: usize, bucket_x: f64, pw: f64, angle: f64| -> support_table_strip::Column {
         let Some(labels) = &strip_labels else { return support_table_strip::Column::centered(bucket_x) };
         let Some(idx) = labels[i] else {
-            let anchor = if angle == 0.0 && x_label_align.is_none() && edge_labels_flushed { flush_anchor_px(bucket_x - x_scale_pad, pw - 2.0 * x_scale_pad) } else { "middle" };
+            let anchor = if angle == 0.0 && x_label_align.is_none() && edge_labels_flushed { flush_anchor_px(bucket_x - x_scale_pad, pw - 2.0 * x_scale_pad, x_flush) } else { "middle" };
             return support_table_strip::Column { x: bucket_x, align: support_table_strip::Align::of_text_anchor(anchor) };
         };
         let anchor = if angle != 0.0 { "middle" } else { flat_label_anchor(idx, label_raw_openers, pw) };
@@ -3297,6 +3305,7 @@ pub(super) fn fit(
                 .ink()
                 .map(|t| vega_fit::TitleInk { offset: theme_offset + correction, ..t.clone() })
         });
+        let fit_y_edges = y_corners(composed.as_ref().is_some_and(|(_, _, strip_style)| strip_style.position != "bottom"));
         // See `facet_compose::PanelGeometry.top_axis_overhang`'s own doc
         // comment (same law, same probe evidence as bar's own `top_overhang`
         // — mirrors `render_vertical_continuous_x_panel`/`render_vertical_
@@ -3379,7 +3388,7 @@ pub(super) fn fit(
                         .zip(y_label_ws.iter())
                         .zip(label_lines.iter())
                         .map(|((&y, &lw), &lines)| {
-                            vega_fit::text_ink_rows(label_anchor_x, y, lw.min(y_limit), y_font_sz, label_align, y_label_baseline, lines)
+                            vega_fit::text_ink_rows(label_anchor_x, y, lw.min(y_limit), y_font_sz, label_align, fit_y_edges.baseline(y, ph), lines)
                         })
                         .collect();
                     let visible = visible_y_labels(tick_values, &label_ink);
@@ -3641,7 +3650,7 @@ pub(super) fn fit(
                             let (angle, parity) = bare_layout();
                             let widths = bare_label_widths(&ticks, fonts, x_family, x_font_size, x_limit)?;
                             let (ink_all, visible) =
-                                bare_label_ink(&ticks, &widths, angle, parity, x_separation, x_font_size, &frac_pos, pw, row_y, x_edge);
+                                bare_label_ink(&ticks, &widths, angle, parity, x_separation, x_font_size, &frac_pos, pw, row_y, x_edge, x_flush);
                             fit_x_angle = angle;
                             fit_x_reach = if angle != 0.0 {
                                 ink_all.iter().zip(&visible).filter(|(_, &keep)| keep).fold(0.0_f64, |a, (ink, _)| a.max(reach_of(ink)))
@@ -3885,7 +3894,9 @@ pub(super) fn fit(
                         } else {
                             rows.clone()
                         };
-                        if !y_on_right {
+                        if y_on_right {
+                            support_table_strip::clear_right_stubs(&mut rows, pw);
+                        } else {
                             let reach = support_table_strip::composed_left_overhang(&rows);
                             support_table_strip::clear_left_stubs(&mut rows, reach);
                         }
@@ -4079,7 +4090,9 @@ pub(super) fn fit(
             if detected_data_tu.is_some() || bare_temporal {
                 support_table_strip::skip_strip(&r.id, &mut rows, strip_labeled.as_deref(), strip_style.row.padding.horizontal, y_on_right.then_some(m.plot_w + ay_stub_pad));
             }
-            if !y_on_right {
+            if y_on_right {
+                support_table_strip::clear_right_stubs(&mut rows, m.plot_w);
+            } else {
                 let reach = support_table_strip::composed_left_overhang(&rows);
                 support_table_strip::clear_left_stubs(&mut rows, reach);
             }
@@ -4390,7 +4403,7 @@ pub(super) fn fit(
             let inner_w = (pw - 2.0 * x_scale_pad).max(0.0);
             let widths = bare_label_widths(&ticks, fonts, x_family, x_font_size, x_limit)?;
             let (tilt_ink, visible) = bare_label_ink(
-                &ticks, &widths, angle, parity, x_separation, x_font_size, |frac| x_scale_pad + inner_w * frac, pw, 0.0, x_edge,
+                &ticks, &widths, angle, parity, x_separation, x_font_size, |frac| x_scale_pad + inner_w * frac, pw, 0.0, x_edge, x_flush,
             );
             Ok((ticks, visible, tilt_ink, angle))
         };
@@ -6576,12 +6589,14 @@ pub(super) fn fit(
             (plot_w + 0.5 + y_tick_eff + y_label_pad, "start")
         };
         let ghost_texts = ghost_ladder(&tick_values)?.map(|(labels, _)| labels);
-        let y_shift = measure::baseline_shift(y_label_baseline, y_font_sz) + 0.5;
+        let paint_y_edges = y_corners(composed_rows.is_some() && r.effective_support_table_style.as_ref().is_some_and(|style| style.position != "bottom"));
         let face = |anchor| LabelFace { anchor, family: y_fam, size: y_font_sz, weight: &ywt, style: ax_y.labels.font.style.as_deref(), fill: ycol };
         for (i, &tv) in tick_values.iter().enumerate() {
             if y_visible.as_ref().is_some_and(|v| !v[i]) {
                 continue;
             }
+            let baseline = paint_y_edges.baseline(y_at(tv), plot_h);
+            let y_shift = measure::baseline_shift(baseline, y_font_sz) + 0.5;
             let (gy, ink_y) = if y_above {
                 let gy = crate::common::above_label_y(&y_threshold_rules, crate::common::tick_round(y_at(tv)), ax_y.grid.width.unwrap_or(1.0), y_font_sz);
                 (gy, gy - y_shift)
@@ -6589,7 +6604,7 @@ pub(super) fn fit(
                 (y_at(tv) + y_shift, y_at(tv))
             };
             let label = if left_primary { ghost_texts.as_ref().map_or(&formatted_ticks[i], |texts| &texts[i]) } else { &formatted_ticks[i] };
-            let ink = vega_fit::text_ink_rows(lx, ink_y, y_label_ws[i].min(y_limit), y_font_sz, y_label_align, y_label_baseline, crate::text::line_count(&formatted_ticks[i]));
+            let ink = vega_fit::text_ink_rows(lx, ink_y, y_label_ws[i].min(y_limit), y_font_sz, y_label_align, baseline, crate::text::line_count(&formatted_ticks[i]));
             value_axis.push(flat_label(Role::Axis, (lx, gy), &face(y_anchor), false, &ax_y.labels.clip(label, fonts)?).with_text_bounds(ink.into()));
             if mirror_active {
                 let ghost_label = ghost_texts.as_ref().map_or(label, |texts| &texts[i]);
@@ -6889,6 +6904,7 @@ pub(super) fn fit(
         floor_rule,
         label_rows,
         edge: x_edge,
+        flush: x_flush,
         x_title_text: x_title_paint.clone(),
         caption: x_axis_caption(&x_title_paint, ax_x, &law, x_domain_for_temporal, plot_w, timed.aware())?,
         title_key: facet.is_none().then_some(crate::contract::LabelKey::X),
@@ -6947,9 +6963,9 @@ pub(super) fn fit(
                 let (align, baseline) = nominal_label_anchor(*angle, x_edge, x_label_align);
                 Some((band_shift, None, anchors(align, baseline)?, vega_fit::normalize_angle(*angle)))
             }
-            LineXAxisBody::Bare { angle, .. } if *angle == 0.0 => Some((0.0, Some(1.0), (None, None), 0.0)),
+            LineXAxisBody::Bare { angle, .. } if *angle == 0.0 => Some((0.0, x_flush, (None, None), 0.0)),
             LineXAxisBody::FlatTemporal { .. } => match x_label_align {
-                None => Some((band_shift, Some(1.0), (None, None), 0.0)),
+                None => Some((band_shift, x_flush, (None, None), 0.0)),
                 Some(align) => Some((band_shift, None, (Some(::layout::labels_expr::view::anchor(align)?), None), 0.0)),
             },
             LineXAxisBody::Tilted { angle, align, .. } => {

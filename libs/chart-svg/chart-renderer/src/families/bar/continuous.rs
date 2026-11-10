@@ -370,6 +370,7 @@ pub(super) fn render_vertical_continuous_x_panel(
     let x_font_size = ax_x.labels.font.size_or(11.0);
     let x_family = ax_x.labels.font.family_or("sans-serif");
     let x_label_pad = ax_x.labels.padding.unwrap_or(6.0);
+    let x_flush = super::axes::flush_threshold(ax_x.labels.flush.as_ref())?;
     let x_axis_offset = ax_x.ticks.offset.unwrap_or(0.0);
     let x_ticks_visible = ax_x.ticks.visible.unwrap_or(true);
     let x_tick_len = ax_x.ticks.length.unwrap_or(6.0);
@@ -743,13 +744,7 @@ pub(super) fn render_vertical_continuous_x_panel(
                         let lbl = ax_x.format_only_label(x_fmt.expect("gated above"), tv).map_err(|e| format!("bar x label format: {e}"))?;
                         let pos = (tv - x_lo) / x_span * pw;
                         let w = fonts.measure(&lbl, x_family, x_font_size)?;
-                        let align = if pos <= 1.0 {
-                            "left"
-                        } else if pos >= pw - 1.0 {
-                            "right"
-                        } else {
-                            "center"
-                        };
+                        let align = crate::families::line::flush_align(pos, pw, x_flush);
                         let ink = vega_fit::text_ink(pos, row_y, w.min(x_limit), x_font_size, align, x_edge.baseline());
                         x_axis_y2 = x_axis_y2.max(ink.y2);
                         x_axis_y1 = x_axis_y1.min(ink.y1);
@@ -1031,6 +1026,7 @@ pub(super) fn render_vertical_continuous_x_panel(
         x_label_pad,
         x_family: x_family.to_string(),
         x_font_size,
+        x_flush,
         x_title_text: x_title_paint.clone(),
         caption: value_axis_caption(&x_title_paint, &ax_x.title, ax_x, (x_lo, x_hi), false)?,
         title_key: (!suppress_x_axis).then_some(crate::contract::LabelKey::X),

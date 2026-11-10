@@ -28,6 +28,12 @@ impl ReadScalar for Cell {
         Some(Self(node.to_json()))
     }
 }
+impl ::model_core::Spell for Cell {
+    fn spell(&self) -> ::serde_json::Value {
+        self.0.clone()
+    }
+}
+
 union_leaf!(
     Cell,
     ::model_core::TypeExpr::Scalar(::model_core::Scalar::Json)
@@ -50,6 +56,12 @@ impl ReadScalar for Cells {
         Some(Self(cells))
     }
 }
+impl ::model_core::Spell for Cells {
+    fn spell(&self) -> ::serde_json::Value {
+        ::model_core::Spell::spell(&self.0)
+    }
+}
+
 union_leaf!(
     Cells,
     ::model_core::TypeExpr::Keyed(
@@ -85,6 +97,12 @@ impl ReadScalar for Between {
         Some(Self(pair))
     }
 }
+impl ::model_core::Spell for Between {
+    fn spell(&self) -> ::serde_json::Value {
+        ::model_core::Spell::spell(&self.0)
+    }
+}
+
 union_leaf!(
     Between,
     ::model_core::TypeExpr::Keyed(
@@ -109,6 +127,12 @@ impl ReadScalar for CatchAll {
         None
     }
 }
+impl ::model_core::Spell for CatchAll {
+    fn spell(&self) -> ::serde_json::Value {
+        true.into()
+    }
+}
+
 union_leaf!(CatchAll, ::model_core::TypeExpr::Const(true));
 
 /// The predicate fields of a rule; exactly one is set.

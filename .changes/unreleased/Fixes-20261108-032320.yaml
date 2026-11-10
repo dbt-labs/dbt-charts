@@ -1,0 +1,3 @@
+kind: Fixes
+body: A category_colors pin no longer warns when a board variable's filter may be what hides the pinned value.
+time: 2026-11-08T03:23:20.710512-08:00

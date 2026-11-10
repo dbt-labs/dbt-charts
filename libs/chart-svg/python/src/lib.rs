@@ -1,8 +1,11 @@
 //! PyO3 bindings exposing the chart renderer's `render_chart` to Python as
-//! `dbt_charts._engine`. Build/distribution notes:
-//! `libs/chart-svg/docs/laws-compile.md`'s Wheel section.
+//! `dbt_charts._engine`, shipped inside the `dbt-charts` wheel: maturin builds
+//! it from `dbt-charts/pyproject.toml` on any `uv sync`, one `cp311-abi3` wheel
+//! per platform. Its own Cargo workspace, so `cargo build` in `libs/chart-svg`
+//! needs no Python toolchain.
 
 mod board;
+mod compile;
 
 use diagnostic::Diagnostic;
 use chart_renderer::families::table::width::{measure_natural_width, MeasurePayload};
@@ -314,6 +317,7 @@ fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(message_forms, m)?)?;
     m.add_function(wrap_pyfunction!(apply_case, m)?)?;
     board::register(m)?;
+    compile::register(m)?;
     m.add("RenderDiagnosticError", m.py().get_type::<RenderDiagnosticError>())?;
     Ok(())
 }

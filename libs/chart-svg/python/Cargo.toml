@@ -2,7 +2,7 @@
 # [workspace]: pyo3's build script probes for a Python interpreter (even
 # under abi3) to resolve ABI config, so joining the main workspace would make
 # `cargo build --workspace`/`cargo test --workspace` in libs/chart-svg (run
-# by every d3rs/chart-renderer/mdsvg/compile contributor, Python-agnostic
+# by every d3rs/chart-renderer/mdsvg contributor, Python-agnostic
 # work) require a working Python toolchain and pull in pyo3's proc-macro
 # build cost.
 [workspace]
@@ -23,6 +23,9 @@ diagnostic = { path = "../diagnostic" }
 display-text = { path = "../display-text" }
 measure = { path = "../measure" }
 migrate = { path = "../migrate" }
+normalize = { path = "../normalize" }
+board-model = { path = "../board-model" }
+project = { path = "../project" }
 yaml = { path = "../yaml" }
 indexmap = "2"
 serde = "1"

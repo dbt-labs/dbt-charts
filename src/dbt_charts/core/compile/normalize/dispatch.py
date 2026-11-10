@@ -118,7 +118,7 @@ from dbt_charts.core.compile.normalize.variables import (
     infer_variable_input,
     promote_column_option_queries,
     promote_inline_option_queries,
-    validate_authored_variable_name,
+    validate_authored_name,
     validate_choice_type,
     validate_presets_scope,
     validate_variable_references,
@@ -877,6 +877,19 @@ def normalize_board(
     # ════════════════════════════════════════════════════════════════════
     # STEP 1: Setup — default source, registries, board ID
     # ════════════════════════════════════════════════════════════════════
+    for kind, section, names in (
+        ("Variable", "variables", board.variables),
+        ("Query", "queries", board.queries),
+        ("Chart", "charts", board.charts),
+    ):
+        if names:
+            for name in names:
+                validate_authored_name(
+                    kind,
+                    name,
+                    prefixed(path_prefix, f"{section}.{name}") or f"{section}.{name}",
+                )
+
     default_source = board.get_default_source() or parent_context.get("default_source")
     # Board-global named source configs — threaded (like base_dir) so inline
     # chart queries resolve their source exactly like up-top
@@ -908,7 +921,9 @@ def normalize_board(
     # its own query chain into cross_board_queries (compile/AGENTS.md § cross-
     # board chart imports), which then seeds the query registry — mirroring
     # compile_authored_board's STEP 3b → STEP 4 order.
-    cross_board_queries: dict[str, AnyQuery] = {}
+    from dbt_charts.core.compile.compiler import ImportedQueries
+
+    cross_board_queries = ImportedQueries()
     if chart_registry is None:
         from dbt_charts.core.compile.compiler import build_chart_registry
 
@@ -949,7 +964,6 @@ def normalize_board(
     local_variables: dict[str, Variable] = {}
     if board.variables:
         for var_name, var_def in board.variables.items():
-            validate_authored_variable_name(var_name)
             if isinstance(var_def, Variable):
                 local_variables[var_name] = var_def
             else:
@@ -1320,7 +1334,10 @@ def normalize_board(
                 else []
             )
             raise VariableReferenceErrors(
-                [ve.to_diagnostic(registry_keys) for ve in var_errs]
+                [
+                    ve.to_diagnostic(registry_keys, sorted(compiled_board.queries))
+                    for ve in var_errs
+                ]
             )
 
     return compiled_board

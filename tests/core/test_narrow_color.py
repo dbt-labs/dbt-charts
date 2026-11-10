@@ -402,6 +402,13 @@ class TestColorErrorRemediationsRender:
 
         self._render(STATIC_COLOR_FIX, {}, tmp_path)
 
+    def test_the_static_color_literal_fix_renders(self, tmp_path) -> None:
+        from dbt_charts.core.compile.models.chart.authored._base import (
+            STATIC_COLOR_LITERAL_FIX,
+        )
+
+        self._render(STATIC_COLOR_LITERAL_FIX.format(value="#ff0000"), {}, tmp_path)
+
     def test_the_gradient_color_fix_renders_with_the_field_binding_kept(
         self, tmp_path
     ) -> None:
@@ -476,6 +483,19 @@ class TestColorErrorRemediationsParse:
         [
             pytest.param("#ff0000", id="literal-hex-string"),
             pytest.param({"value": "#ff0000"}, id="value-dict"),
+        ],
+    )
+    def test_the_remediation_keeps_the_authored_literal(
+        self, bad_color: object
+    ) -> None:
+        with pytest.raises(ValidationError) as excinfo:
+            _chart_patch_adapter.validate_python({**_BAR_BASE, "color": bad_color})
+
+        assert "static: '#ff0000'" in self._hint_yaml(excinfo.value)
+
+    @pytest.mark.parametrize(
+        "bad_color",
+        [
             pytest.param({"scale": {"palette": ["#eee", "#333"]}}, id="scale-dict"),
             pytest.param(
                 {"column": "status", "when": [{"eq": "danger"}]}, id="when-dict"

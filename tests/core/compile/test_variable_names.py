@@ -1,6 +1,6 @@
-"""ERR-VARIABLE-NAME-INVALID: an authored `variables:` key must be a valid
-Jinja identifier — a name with a space, hyphen, or leading digit fails
-compile() with a clear message.
+"""ERR-NAME-INVALID: an authored chart, query or variable name must be an
+identifier (`str.isidentifier()`) — a name with a space, hyphen, dot, leading
+digit or leading `@` fails compile() naming the kind, the name and its path.
 
 Only authored keys are checked, before compile generates its own hidden
 tabs/details variables (`_tab_<id>`, `_details_<id>`, derived from a
@@ -40,7 +40,8 @@ rows:
 def test_non_identifier_rejected(name: str) -> None:
     result = compile_board(_board_with_variable(name))
     assert not result.success, f"{name!r} must fail compile"
-    assert result.errors[0].code == "ERR-VARIABLE-NAME-INVALID"
+    assert result.errors[0].code == "ERR-NAME-INVALID"
+    assert f"Variable {name!r} at variables.{name}" in result.errors[0].message
 
 
 def test_unicode_identifier_accepted() -> None:
@@ -109,4 +110,60 @@ charts:
   c1: {query: q, type: kpi, value: n}
 """
     result = compile_board(board)
+    assert result.success, f"Compile failed: {result.errors}"
+
+
+_BAD_NAMES = ["a b", "a-b", "1a", "a.b", "@a"]
+
+_BOARD = """
+title: T
+queries:
+  {q}:
+    source: db
+    sql: "SELECT 1 AS n"
+charts:
+  {c}:
+    query: {q}
+    type: bar
+    x: n
+    y: n
+"""
+
+
+@pytest.mark.parametrize("name", _BAD_NAMES)
+def test_non_identifier_chart_name_rejected(name: str) -> None:
+    result = compile_board(_BOARD.format(q="q", c=f"'{name}'"))
+    assert not result.success
+    assert result.errors[0].code == "ERR-NAME-INVALID"
+    assert f"Chart {name!r} at charts.{name}" in result.errors[0].message
+
+
+@pytest.mark.parametrize("name", _BAD_NAMES)
+def test_non_identifier_query_name_rejected(name: str) -> None:
+    result = compile_board(_BOARD.format(q=f"'{name}'", c="c"))
+    assert not result.success
+    assert result.errors[0].code == "ERR-NAME-INVALID"
+    assert f"Query {name!r} at queries.{name}" in result.errors[0].message
+
+
+@pytest.mark.parametrize("name", _BAD_NAMES)
+def test_non_identifier_inline_layout_chart_name_rejected(name: str) -> None:
+    board = f"""
+title: T
+queries:
+  q: {{type: values, rows: [{{n: 1}}]}}
+rows:
+  - '{name}':
+      type: kpi
+      query: q
+      value: n
+"""
+    result = compile_board(board)
+    assert not result.success
+    assert result.errors[0].code == "ERR-NAME-INVALID"
+    assert f"Chart {name!r} at rows.0" in result.errors[0].message
+
+
+def test_unicode_chart_and_query_names_accepted() -> None:
+    result = compile_board(_BOARD.format(q="région", c="équipe"))
     assert result.success, f"Compile failed: {result.errors}"

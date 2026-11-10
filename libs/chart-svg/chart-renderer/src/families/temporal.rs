@@ -30,7 +30,7 @@
 //! with its own single row of text, at every grain; the ladder measures that
 //! text instead.
 
-use crate::constants::axis::{EDGE_LABEL_MIN_GAP_RATIO, LABEL_GAP_SPACES, LABEL_GAP_SPACES_NUMERIC, SPARSE_CEILING_PX};
+use crate::constants::axis::{EDGE_LABEL_MIN_GAP_RATIO, LABEL_GAP_SPACES, LABEL_GAP_SPACES_NUMERIC, SPARSE_CEILING_PX, TEMPORAL_LABEL_GAP_PX};
 use ::bind::table_dates::{strftime, Moment};
 use ::bind::time_axis::Dates;
 use ::bind::temporal::{clock_hour, floor_day, floor_to_bucket_start, next_bucket, TimePart, TimeUnit};
@@ -588,8 +588,8 @@ fn year_row_width(
 }
 
 /// True when labeled buckets at `labeled[a]`/`labeled[b]` (domain indices
-/// `i < j`) do not overlap. Port of `_pair_clears`: clearance is `(j - i) *
-/// band`; each side reserves half its label width, except a genuinely
+/// `i < j`) sit at least [`TEMPORAL_LABEL_GAP_PX`] apart. Port of `_pair_clears`:
+/// clearance is `(j - i) * band`; each side reserves half its label width, except a genuinely
 /// flushed domain edge, which reserves its full width (`text-anchor:
 /// start`/`end` doubles its reach from the edge instead of centering). Row 1
 /// and the stacked year row are two independent clearances, not one
@@ -622,7 +622,7 @@ fn pair_clears(
     let wj = cadence_token_width(dates, j, format_tu, false, fiscal_start, authored, measure)?;
     let left_extent = if left_flush { wi } else { wi / 2.0 };
     let right_extent = if right_flush { wj } else { wj / 2.0 };
-    if left_extent + right_extent > clearance {
+    if left_extent + right_extent + TEMPORAL_LABEL_GAP_PX > clearance {
         return Ok(false);
     }
 
@@ -631,7 +631,7 @@ fn pair_clears(
     if let (Some(year_row_i), Some(year_row_j)) = (year_row_i, year_row_j) {
         let left_year_extent = if left_flush { year_row_i } else { year_row_i / 2.0 };
         let right_year_extent = if right_flush { year_row_j } else { year_row_j / 2.0 };
-        if left_year_extent + right_year_extent > clearance {
+        if left_year_extent + right_year_extent + TEMPORAL_LABEL_GAP_PX > clearance {
             return Ok(false);
         }
     }
@@ -731,7 +731,7 @@ fn resolve_visibility(
 /// and daily also tries a Monday-only rung (`:576-598`); otherwise it is one
 /// gapped width per label. Neither is a coarsening *step*: they're read
 /// as-is, only promoting to `yearmonth` when the domain spans ≥2 months.
-/// [`resolve_visibility`]'s `_pair_clears` carries no gap.
+/// [`resolve_visibility`]'s `pair_clears` carries [`TEMPORAL_LABEL_GAP_PX`] instead.
 ///
 /// `bucket_aligned` mirrors production's `bucket_aligned_temporal` flag
 /// (`curve == "step"`, `_cartesian.py:503`): bar's discrete/ordinal x-scale
@@ -837,18 +837,11 @@ pub fn resolve_label_visibility(
 /// One shared entry point for line/bar/area: measured widths + plot width →
 /// the formatted x-axis label sequence.
 ///
-/// `edge_labels_flushed` mirrors production's `temporal_edge_labels_flushed`
-/// (`type_inference.py`): `true` for a genuinely temporal (continuous
-/// utc-scale) x-axis — line/area, unless authored `axis_x.labels.flush:
-/// false` — `false` for bar's discrete/ordinal x-scale. Vega flushes a
-/// flushed axis's literal first tick to the plot's left edge, so that tick
-/// reserves its *full* measured width in the fit test rather than half —
-/// measured against `playground/xaxis-cadence-ladder`'s `nov_line` (16
-/// monthly points, 484px plot): production's `Nov`→`Dec` pair only fails to
-/// clear (triggering the month→quarter coarsening hop) because `Nov` is
-/// flushed and reserves its full ~21px, not half; passing `false` here for a
-/// continuous axis lets that pair "fit" and renders every month instead of
-/// the quarterly openers production shows.
+/// `edge_labels_flushed` is `flush_threshold`'s verdict on the axis: `true` only
+/// when the author opted into inset end labels (`axis_x.labels.flush: true` or a
+/// threshold). A flushed axis's literal first tick sits against the plot's left
+/// edge, so that tick reserves its *full* measured width in the fit test rather
+/// than half; a centered axis reserves half.
 /// Returns the label sequence plus the visibility grain the ladder settled
 /// on — `visibility_tu != data_tu` is production's "labels grew sparser than
 /// buckets" fact (`visibility_thinned` / `label_tick_cadence` in
@@ -3736,6 +3729,23 @@ mod tests {
         assert_eq!(labels[11].row2, "");
     }
 
+    /// Month labels 21px wide on a 25px band leave 4px between neighbors:
+    /// they don't overlap, but they read as one run of text, so the axis
+    /// coarsens to quarters. At 29px the 8px gap fits and every month stays.
+    #[test]
+    fn neighbors_closer_than_the_label_gap_coarsen_the_axis() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let domain: Vec<String> = (1u8..=12).map(|m| format!("2024-{m:02}-01")).collect();
+        let count = |band: f64| {
+            resolve_temporal_labels(&on_axis(&domain), TimeUnit::YearMonth, None, 12.0 * band, false, true, false, 1, true, None, &mut char_measure)
+                .unwrap()
+                .0
+                .len()
+        };
+        assert_eq!(count(25.0), 4);
+        assert_eq!(count(29.0), 12);
+    }
+
     /// 12 monthly points where every label's OWN row ("Jan".."Dec", all 3
     /// chars) clears pairwise at this band — but the anchor tick (Jan) also
     /// stacks a "2024" year row, 1 char wider than any row 1. Folding that
@@ -3753,7 +3763,7 @@ mod tests {
             &on_axis(&domain),
             TimeUnit::YearMonth,
             None,
-            12.0 * 22.0, // band = 22px: row1-only clears (21 <= 22), folded doesn't (24.5 > 22)
+            12.0 * 30.0, // band = 30px: row1-only clears (21 + 8 <= 30), folded doesn't (24.5 + 8 > 30)
             false,
             true,
             false,
@@ -4539,7 +4549,7 @@ mod tests {
             TimeUnit::YearQuarter,
             TimeUnit::YearQuarter,
             true,
-            176.0, // usable_width / 16 dates = 11px band — clears the
+            208.0, // usable_width / 16 dates = 13px band — clears the
             // flushed first year label's FULL (not halved) width against
             // its neighbor 4 indices away (`_pair_clears`'s flush rule).
             true,
@@ -4556,7 +4566,7 @@ mod tests {
         .unwrap();
         assert_eq!(layout.format_tu, TimeUnit::Year);
         assert_eq!(layout.visibility_tu, TimeUnit::Year);
-        assert!(!layout.parity, "4 Januaries at 44px spacing clear under the 90px sparse ceiling");
+        assert!(!layout.parity, "4 Januaries at 52px spacing clear under the 90px sparse ceiling");
         assert_eq!(layout.angle, 0.0);
     }
 
@@ -5605,7 +5615,7 @@ mod tests {
 
     /// An authored format skips the native day/week candidates
     /// (`authored_format is None` gates both branches), so daily data enters
-    /// the ladder at the day grain: 45 days at 20px bands never promote to
+    /// the ladder at the day grain: 45 days at 24px bands never promote to
     /// month openers by structure, only by failing to clear.
     #[test]
     fn an_authored_format_on_daily_data_enters_the_ladder_at_the_day_grain() {
@@ -5614,7 +5624,7 @@ mod tests {
             &on_axis(&domain),
             TimeUnit::YearMonthDate,
             None,
-            900.0,
+            1080.0,
             false,
             true,
             false,
@@ -5624,7 +5634,7 @@ mod tests {
             &mut char_measure,
         )
         .unwrap();
-        // "31" is 14px: clears a 20px band, so every day paints.
+        // "31" is 14px: with the 8px gap it clears a 24px band, so every day paints.
         assert_eq!(vis, TimeUnit::YearMonthDate);
         assert_eq!(labels.len(), 45);
         assert!(labels.iter().all(|l| l.row2.is_empty()));

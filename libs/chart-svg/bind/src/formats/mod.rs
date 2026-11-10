@@ -615,11 +615,11 @@ pub fn declared_column_format(
 mod tests {
     use super::*;
 
-    /// The engine names `compile` validates against; a name added there must be known here.
+    /// The engine names production defines (`gen_format_names.py`); a name added there must be known here.
     #[test]
-    fn the_name_tables_match_the_compile_stages() {
+    fn the_name_tables_match_production() {
         let names: serde_json::Value =
-            serde_json::from_str(include_str!("../../../compile/src/charts/data/format_names.json")).expect("names");
+            serde_json::from_str(include_str!("format_names.json")).expect("names");
         let list = |key: &str| -> Vec<String> {
             names[key].as_array().expect(key).iter().map(|n| n.as_str().expect("name").to_string()).collect()
         };

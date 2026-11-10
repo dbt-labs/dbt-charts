@@ -1085,8 +1085,10 @@ struct PlainXPaint<'a> {
     angle: f64,
     align: &'a str,
     baseline: &'a str,
-    /// A continuous scale flushes its end labels; a point scale centers every one.
-    flush: bool,
+    /// A continuous scale sits on the crisp half pixel; a point scale's labels sit at `point_label_crisp`.
+    continuous: bool,
+    /// `flush_threshold`'s verdict for the end labels of a continuous scale; `None` centers every label.
+    flush: Option<f64>,
     /// Where a point scale's labels sit against the axis group's crisp half
     /// pixel: a single chart paints them past it, a facet's footer on the band
     /// center (`scale(d) - 0.5` under it).
@@ -1115,12 +1117,12 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
     let x_limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
     let (plot_left, plot_w, plot_bottom) = (p.plot_left, p.plot_w, p.plot_bottom);
     let x_pos = |frac: f64| frac * plot_w;
-    let label_crisp = if p.flush { 0.5 } else { p.point_label_crisp };
+    let label_crisp = if p.continuous { 0.5 } else { p.point_label_crisp };
     // Only a lone chart's axis: a facet's shared footer is laid out by the composer.
     if ::layout::labels_expr::view::active() && p.title_key.is_some() {
         use ::layout::labels_expr::view::{anchor, register_axis, AxisSpec, Orient};
         let (align, baseline, flush) = if p.angle == 0.0 {
-            (None, None, p.flush.then_some(1.0))
+            (None, None, p.flush)
         } else {
             (Some(anchor(p.align)?), Some(anchor(p.baseline)?), None)
         };
@@ -1170,7 +1172,7 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
         }
     } else {
         let x_label_y = plot_bottom + x_axis_drop + sign * (x_tick_eff + x_label_pad) + measure::baseline_shift(edge.baseline(), x_font_size);
-        let x_flush_align = |pos: f64, pw: f64| if p.flush { crate::families::line::flush_align(pos, pw) } else { "center" };
+        let x_flush_align = |pos: f64, pw: f64| crate::families::line::flush_align(pos, pw, p.flush);
         let x_label_visible = ax_x.is_quantitative.then(|| {
             let widths: Result<Vec<f64>, String> =
                 p.labels.iter().map(|lbl| fonts.measure(lbl, x_family, x_font_size)).collect();
@@ -1194,7 +1196,7 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
                 continue;
             }
             let pos = plot_left + x_pos(frac) + label_crisp;
-            let anchor = if p.flush { crate::families::line::flush_anchor_px(pos - plot_left - label_crisp, plot_w) } else { "middle" };
+            let anchor = crate::families::line::flush_anchor_px(pos - plot_left - label_crisp, plot_w, p.flush);
             items.push(crate::text::label(
                 Role::Axis,
                 (pos, x_label_y),
@@ -1586,7 +1588,8 @@ impl PlainXAxis {
                 angle: self.angle,
                 align: self.align,
                 baseline: self.baseline,
-                flush: !matches!(self.scale, PlainXScale::Point { .. }),
+                continuous: !matches!(self.scale, PlainXScale::Point { .. }),
+                flush: if matches!(self.scale, PlainXScale::Point { .. }) { None } else { crate::families::bar::axes::flush_threshold(ax_x.labels.flush.as_ref())? },
                 point_label_crisp: 0.0,
                 title: &self.title,
                 caption: &caption,
@@ -2625,7 +2628,7 @@ mod tests {
             "ticks": {"color": "#D0D3D9", "visible": false, "count": 6.0, "length": 6.0, "offset": 1.0},
             "labels": {
                 "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"},
-                "padding": 6.0, "min_gap": null, "format": ".3~s", "visible": true
+                "padding": 6.0, "min_gap": null, "format": ".3~s", "visible": true, "flush": true
             },
             "title": {
                 "font": {"family": TEST_FONT, "size": 11.0, "weight": "600", "color": "#8A8C8F"},
@@ -2691,6 +2694,24 @@ mod tests {
             "fonts_dir": null,
             "padding": {"left": 16.0, "right": 16.0, "top": 16.0, "bottom": 16.0}
         })
+    }
+
+    /// A y label whose tick is on the plot's bottom edge, with the x axis below, rises above its
+    /// gridline instead of straddling it: it sits higher than an interior label's spacing would put it.
+    #[test]
+    fn a_y_label_on_the_bottom_edge_sits_above_its_gridline() {
+        let mut json = make_scatter_payload(false);
+        json["resolved"]["style"]["axis_y"]["domain_min"] = serde_json::json!(150.0);
+        json["resolved"]["style"]["axis_y"]["domain_max"] = serde_json::json!(250.0);
+        let svg = render_json(json);
+        let label_y = |text: &str| -> f64 {
+            let end = svg.find(&format!(">{text}</text>")).unwrap_or_else(|| panic!("{text}: {svg}"));
+            let head = &svg[svg[..end].rfind("<text").unwrap()..end];
+            head.split("y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
+        };
+        let (y150, y200, y250) = (label_y("150"), label_y("200"), label_y("250"));
+        let centered = y200 + (y200 - y250);
+        assert!(y150 < centered - 3.0, "the bottom label rises off its tick (centered would be {centered}): {y150}");
     }
 
     fn render_json(json: serde_json::Value) -> String {

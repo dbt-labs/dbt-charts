@@ -138,6 +138,14 @@ def _finalize(wheel: Path, *, editable: bool) -> str:
     return target.name
 
 
+def _is_rust_test_path(name: str) -> bool:
+    """Rust test fixtures: no build reads them, and per-item fixture names can
+    exceed the tar writer's 100-byte limit. maturin's `exclude` cannot reach
+    crates outside this directory, so the sdist is filtered here."""
+    parts = name.split("/")
+    return "chart-svg" in parts and "tests" in parts
+
+
 def build_sdist(
     sdist_directory: str, config_settings: dict[str, str] | None = None
 ) -> str:
@@ -154,6 +162,8 @@ def build_sdist(
     staged = built.with_name(f"{new_prefix}.tar.gz.tmp")
     with tarfile.open(built) as tin, tarfile.open(staged, "w:gz") as tout:
         for member in tin:
+            if _is_rust_test_path(member.name):
+                continue
             data = tin.extractfile(member) if member.isfile() else None
             member.name = member.name.replace(old_prefix, new_prefix, 1)
             if member.name == f"{new_prefix}/PKG-INFO" and data:

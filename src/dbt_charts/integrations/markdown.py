@@ -30,6 +30,11 @@ Options:
   project at all.
 - ``embed_fonts``: carry the fonts in the page, each face once (default). Turn
   it off only for a site that serves the font files at ``/static/fonts/``.
+- ``include_runtime``: carry the hover script, which gives the charts tooltips
+  and hover emphasis, once in each page that draws a chart (default). The
+  script is idempotent and serves every chart on the page, so a page that
+  already loads it is unharmed. Turn it off for a site that serves the script
+  itself, once and cached: ``dct runtime-js --out charts.js``.
 
 A fence that fails raises ``ChartFenceError``, so a broken chart fails the build.
 """
@@ -51,7 +56,7 @@ from markdown import Markdown
 from markdown.extensions import Extension
 from markdown.preprocessors import Preprocessor
 
-from dbt_charts.agent_api import ProjectSession
+from dbt_charts.agent_api import ProjectSession, hover_runtime_source
 from dbt_charts.agent_api.cache import project_cache_ctx
 from dbt_charts.agent_api.markdown import render_chart_fences, splice_lines
 from dbt_charts.cli.filesystem_project import FilesystemProject
@@ -568,11 +573,13 @@ class _ChartFencePreprocessor(Preprocessor):
         md: Markdown,
         project_dir: str,
         embed_fonts: bool,
+        include_runtime: bool,
         variables: dict[str, str],
     ) -> None:
         super().__init__(md)
         self.project_dir = project_dir
         self.embed_fonts = embed_fonts
+        self.include_runtime = include_runtime
         self.variables = variables
 
     def run(self, lines: list[str]) -> list[str]:
@@ -634,6 +641,8 @@ class _ChartFencePreprocessor(Preprocessor):
             css = font_css + css
         if css:
             fragments[0] = f"<style>\n{css}</style>\n{fragments[0]}"
+        if self.include_runtime:
+            fragments[0] = f"<script>{hover_runtime_source()}</script>\n{fragments[0]}"
         stashed = [
             (
                 first,
@@ -660,6 +669,11 @@ class DbtChartsExtension(Extension):
                 "Carry the fonts in the page. Off only for a site that serves "
                 "them at /static/fonts/",
             ],
+            "include_runtime": [
+                True,
+                "Carry the hover script in each page that draws a chart. Off "
+                "for a site that serves it itself (dct runtime-js)",
+            ],
             "variables": [{}, "Values for the page's variables, by name"],
         }
         super().__init__(**kwargs)
@@ -672,6 +686,7 @@ class DbtChartsExtension(Extension):
                 md,
                 self.getConfig("project_dir"),
                 self.getConfig("embed_fonts"),
+                self.getConfig("include_runtime"),
                 self.getConfig("variables"),
             ),
             "dbt_charts",

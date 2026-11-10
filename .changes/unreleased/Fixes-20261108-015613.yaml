@@ -1,0 +1,3 @@
+kind: Fixes
+body: Validation errors name the path as written in your YAML, without the chart-type tag, and the literal-color fix keeps your color.
+time: 2026-11-08T01:56:13.103383-08:00

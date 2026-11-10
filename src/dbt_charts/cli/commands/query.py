@@ -115,6 +115,8 @@ def _print_sql_result(result: ExecuteQueryResult) -> None:
         _print_errors(result)
         raise typer.Exit(1)
     _print_csv(result, SQL_QUERY_HINT)
+    for d in result.diagnostics:
+        _print_diagnostic(d)
 
 
 def _print_validate_result(

@@ -1,8 +1,4 @@
-"""`is_d3_number_spec` answers the same as the Rust port on the same literal table.
-
-The Rust twin is `is_d3_number_spec_matches_the_shared_parity_table` in
-`libs/chart-svg/resolve/src/format.rs`; keep the two tables identical.
-"""
+"""`is_d3_number_spec` on a literal table of accepted and rejected specs."""
 
 import pytest
 
@@ -35,5 +31,5 @@ _TABLE: list[tuple[str, bool]] = [
 
 
 @pytest.mark.parametrize(("spec", "expected"), _TABLE)
-def test_is_d3_number_spec_matches_rust_parity_table(spec: str, expected: bool) -> None:
+def test_is_d3_number_spec(spec: str, expected: bool) -> None:
     assert is_d3_number_spec(spec) is expected

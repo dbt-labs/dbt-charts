@@ -135,3 +135,34 @@ pub struct NamedFont {
     #[model(absent = "no ramp")]
     pub sizes: Option<Vec<f64>>,
 }
+
+/// The registry pass `cascade::expand` calls after folding each `extends` chain.
+pub mod hook {
+    use super::NamedFontPatch;
+    use indexmap::IndexMap;
+    use model_core::{Refused, Tri};
+
+    /// Python's `_RAMP_LEVELS`: these two entries take a `sizes` ramp, never a `size`.
+    const RAMPS: [(&str, &str); 2] = [("heading", "H1-H6"), ("section", "H2-H6")];
+
+    /// `extended` is each entry that named a parent, with that parent's name.
+    pub fn registry(
+        fonts: &IndexMap<String, NamedFontPatch>,
+        extended: &[(String, String)],
+        refused: &mut Vec<Refused>,
+    ) {
+        for (name, from) in extended {
+            let Some((_, ramp)) = RAMPS.iter().find(|(n, _)| n == name) else {
+                continue;
+            };
+            if let Some(Tri::Value(size)) = fonts.get(name).map(|e| &e.size) {
+                refused.push(Refused {
+                    at: "fonts",
+                    why: format!(
+                        "The '{name}' font takes sizes ({ramp}), not size, but inherits size {size:?} from '{from}'."
+                    ),
+                });
+            }
+        }
+    }
+}

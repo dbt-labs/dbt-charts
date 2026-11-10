@@ -123,7 +123,7 @@ def run_init(
         # Update these strings when either registry changes.
         typer.echo(
             "  MCP tools: describe_board, execute_sql, find_queries, "
-            "describe_semantics, get_diagnostic_code, get_skill, "
+            "get_diagnostic_code, get_skill, "
             "list_diagnostic_codes, list_skills, "
             "render_board, search_files"
         )

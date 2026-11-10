@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'Chart, query and variable names must be identifiers: letters, digits and underscores, not starting with a digit.'
+time: 2026-11-09T23:48:31.21936323Z

@@ -10,6 +10,9 @@ LABEL_GAP_SPACES_NUMERIC: Final[int] = 2
 # to reject as too sparse): both are 19.9% of usable width, opposite correct
 # answers.
 SPARSE_CEILING_PX: Final[float] = 90.0
+# Clear space the time-axis cadence ladder requires between neighboring labels:
+# closer than this, labels that don't overlap still read as one run of text.
+TEMPORAL_LABEL_GAP_PX: Final[float] = 8.0
 # An ordinal bar chart becomes an indistinguishable comb of gridlines well
 # before decades of buckets pile up. 60 buckets (5 years of monthly ticks) is
 # the point where individual bars stop being resolvable at typical chart

@@ -84,6 +84,21 @@ def test_unknown_color_token_is_not_a_traceback(token: str, reason: str) -> None
     assert reason in err.message
 
 
+def test_unbound_role_token_names_the_roles_and_the_valid_forms() -> None:
+    err = _only_error(
+        """\
+        style:
+          charts:
+            background: datum.label
+        rows:
+          - title: hi
+        """
+    )
+    assert err.code == "ERR-COLOR-TOKEN"
+    assert "Roles with a palette: category, chrome," in err.message
+    assert "`<role>.<alias>` or `<role>[N]`" in err.message
+
+
 def test_marks_line_width_hint_does_not_mention_chart_root() -> None:
     err = _only_error(
         """\

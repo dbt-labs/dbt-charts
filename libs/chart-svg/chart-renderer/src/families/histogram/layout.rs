@@ -255,6 +255,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     let corner_r = r.style.mark.border.radius;
     let band_width = r.style.mark.band_width;
 
+    let x_flush = crate::families::bar::axes::flush_threshold(ax_x.labels.flush.as_ref())?;
     let mut fit_err: Option<String> = None;
     let m = frame.fit(&title, |pw, ph, b| {
         if fit_err.is_some() {
@@ -310,7 +311,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
             let pass_x_scale = Continuous::linear([bin_start, bin_stop], [0.0, pw]);
             for ((&tv, &lw), lbl) in x_ticks_domain.iter().zip(x_label_ws.iter()).zip(x_tick_labels) {
                 let pos = pass_x_scale.scale(tv);
-                let align = crate::families::line::flush_align(pos, pw);
+                let align = crate::families::line::flush_align(pos, pw, x_flush);
                 b.union(&vega_fit::text_ink_rows(pos, row_y, lw.min(x_limit), x_font_size, align, x_edge.baseline(), crate::text::line_count(lbl)));
             }
             // The x axis's own vertical extent, plot rect included.
@@ -373,7 +374,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         use ::layout::labels_expr::view::{register_axis, register_linear, AxisSpec, Orient, Span};
         register_linear("x", bin_start, bin_stop, Span::Width);
         register_linear("y", 0.0, y_domain_max, Span::Height);
-        let x_spec = AxisSpec { orient: Orient::Bottom, offset: x_tick_eff + x_label_pad, shift: 0.0, align: None, baseline: None, angle: 0.0, flush: Some(1.0), style: ax_x.labels.item_style()? };
+        let x_spec = AxisSpec { orient: Orient::Bottom, offset: x_tick_eff + x_label_pad, shift: 0.0, align: None, baseline: None, angle: 0.0, flush: x_flush, style: ax_x.labels.item_style()? };
         if ax_x.labels.upright() {
             register_axis("x", x_spec);
         }
@@ -522,7 +523,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         // edges still flush-anchor (VL's default labelFlush on a
         // continuous scale).
         let face = LabelFace {
-            anchor: crate::families::line::flush_anchor_px(pos, plot_w),
+            anchor: crate::families::line::flush_anchor_px(pos, plot_w, x_flush),
             family: x_family,
             size: x_font_size,
             weight: &x_label_weight,

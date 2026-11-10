@@ -1206,7 +1206,7 @@ WARN_TABLE_PAGE_SQUEEZED = REGISTRY.register(
         domain="render",
         title="Layout slot forced a smaller table page than the table asked for",
         message_template="Table {chart_id!r}: the layout slot fits {drawn_rows} of the {page_rows} rows a page holds ({total_rows} rows total); the rest moved onto later pages.",
-        fix_template="Give the tile more height (layout height:, a taller row, or fewer siblings sharing the row), or set `style.pagination.page_rows: {drawn_rows}` to page at what the slot fits. page_rows is a ceiling: raising it does not make the slot taller.",
+        fix_template="Give the tile more height (layout height:, a taller row, or fewer siblings sharing the row), or set `page_rows: {drawn_rows}` under `style.pagination` of `charts.{chart_id}` to page at what the slot fits. page_rows is a ceiling: raising it does not make the slot taller.",
         doc="Fires when a pinned layout slot (explicit height, grid row, equalized siblings) fits fewer rows than the table's page_rows, so the paginator draws fewer rows per page and the export photographs as a faithful table showing a fraction of its rows. An auto-sized tile is measured by the renderer and always fits its page; page_rows: null never warns. Paginating because the data is longer than the page is not this warning.",
         docs_topic="charts",
     )
@@ -1292,7 +1292,7 @@ WARN_PALETTE_UNSUPPORTED = REGISTRY.register(
         domain="render",
         title="Palette name is a known anti-pattern",
         message_template="Chart {chart_id!r}: palette {requested!r} is a known anti-pattern; resolved to {resolved} instead.",
-        fix_template="Author a supported palette name; see the anti-patterns table in docs/guides/palette-resolver.md#anti-patterns.",
+        fix_template="Author a supported palette name; the substitute named in the message is what renders.",
         doc="Fires when a chart authors a palette name on the known anti-pattern list (e.g. 'RdYlGn', 'parula'); these are CVD-hostile or superseded by a dbt-charts-native palette. palette() resolves the substitute silently at compile time; this detector is the only place the nudge surfaces.",
         summary="Fires when a chart authors a palette name on the known anti-pattern list; these are CVD-hostile or superseded by a dbt-charts-native palette.",
         docs_topic="charts",
@@ -1572,10 +1572,10 @@ WARN_CATEGORY_COLOR_PIN_UNSEEN = REGISTRY.register(
         code="WARN-CATEGORY-COLOR-PIN-UNSEEN",
         domain="render",
         title="A category_colors pin names a value this render never draws",
-        message_template="`style.charts.category_colors.{field}` pins {values}, which this render does not draw; the pin was skipped.",
-        fix_template="Check the value's spelling against the data. A pinned value can also be missing because a variable filter or a narrowed layout excluded it, not necessarily a typo.",
-        doc="Fires when a value pinned under `style.charts.category_colors.<field>` names something none of the charts on this render actually draw for that field. The pin is skipped rather than seated — seating it would claim a palette slot for a category nothing draws and push every real value along one — but a misspelled pin would otherwise do nothing with no signal at all. The value can be genuinely absent for reasons other than a typo: a variable filter, a narrowed `dct render --chart` layout, or a sibling chart whose query failed.",
-        summary="Fired when a category_colors pin names a value none of the charts on this render actually draw.",
+        message_template="`style.charts.category_colors.{field}` pins {values}, which this render does not draw; the pin was skipped. This render draws {drawn} for `{field}`.",
+        fix_template="Write the pin exactly as one of the drawn values is spelled, or remove the pin if no chart draws that value. A narrowed `--chart` layout can also leave a pinned value undrawn.",
+        doc="Fires when a value pinned under `style.charts.category_colors.<field>` names something none of the charts on this render actually draw for that field, and the absence is definite: either a chart drawing the field has a query that reads no board variable (so no variable filter can have hidden the value), or the pin is a near miss of a drawn value (a likely typo, named in the message). The pin is skipped rather than seated - seating it would claim a palette slot for a category nothing draws and push every real value along one. A pin absent only from charts whose queries read a board variable stays silent: another selection of the variable may draw it, which is what pins are for. A narrowed `dct render --chart` layout can still make a pin unseen on a variable-free chart.",
+        summary="Fired when a category_colors pin names a value none of the charts on this render draw, and no board variable could be hiding it.",
         docs_topic="charts",
     )
 )
@@ -1936,9 +1936,10 @@ ERR_ENGINE_REFUSED = REGISTRY.register(
     ErrorCode(
         code="ERR-ENGINE-REFUSED",
         domain="render",
-        title="the render engine cannot draw this chart yet",
-        message_template="The render engine cannot draw this chart yet: {message}",
-        doc="Fired when the Rust render engine meets a chart shape it does not model yet. It names an engine gap, not a mistake in the board.",
+        title="the render engine cannot draw this chart",
+        message_template="The render engine cannot draw this chart, and retrying the same YAML fails the same way: {message}",
+        fix_template="Change or remove the setting the message names, or use a chart type or option the engine draws.",
+        doc="Fired when the Rust render engine refuses a chart, either a shape it does not model yet or a value its own validation rejects. The same YAML always refuses the same way.",
         docs_topic="charts",
     )
 )
@@ -2041,7 +2042,8 @@ ERR_LAYERED_NO_PALETTE = REGISTRY.register(
         code="ERR-LAYERED-NO-PALETTE",
         domain="render",
         title="Layered chart has no color palette",
-        message_template="layered chart has no color palette",
+        message_template="Chart {chart_id!r}: layered chart has no color palette",
+        fix_template="Set a non-empty color palette with `style.palette` on the chart, the board, or the theme.",
         doc="Fired when layers need palette colors and the resolved palette is empty.",
         docs_topic="charts",
     )

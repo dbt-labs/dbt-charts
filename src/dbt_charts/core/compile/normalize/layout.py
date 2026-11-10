@@ -40,6 +40,7 @@ from dbt_charts.core.compile.normalize.charts import (
     generate_inline_chart_id,
     normalize_chart,
 )
+from dbt_charts.core.compile.normalize.variables import validate_authored_name
 from dbt_charts.core.compile.template.listings import check_listing_calls
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_BOARD_IMPORT_CYCLE,
@@ -498,7 +499,10 @@ def _resolve_single_item(
             raise CompilationError(
                 f"Named chart dict must have exactly one key, got: {list(item.keys())}"
             )
-        _chart_name, chart_def = next(iter(item.items()))
+        chart_name, chart_def = next(iter(item.items()))
+        validate_authored_name(
+            "Chart", chart_name, _layout_source_path(path_prefix, item_id) or item_id
+        )
         chart_dict = chart_def.model_dump(exclude_unset=True, exclude={"visible"})
         if used_chart_ids is None:
             used_chart_ids = set(charts.keys())
@@ -794,12 +798,13 @@ def _resolve_board_file_import(
         raise ValueError(f"chart_registry is required to import {resolved_path!r}")
     from dbt_charts.core.compile.compiler import (
         _CROSS_BOARD_QUERY_PREFIX,
+        ImportedQueries,
         build_chart_registry,
         build_query_registry,
     )
     from dbt_charts.core.compile.template.jinja import detect_query_dependencies
 
-    cross_board_queries: dict[str, AnyQuery] = {}
+    cross_board_queries = ImportedQueries()
     own_charts = build_chart_registry(
         nested_board,
         cross_board_queries,
@@ -818,13 +823,16 @@ def _resolve_board_file_import(
         board_cache=board_cache,
     )
     for code, own, outer in (
-        (ERR_DUPLICATE_CHART_NAME, own_charts.keys(), chart_registry.keys()),
-        (ERR_DUPLICATE_QUERY_NAME, own_queries.keys(), query_registry.keys()),
+        (ERR_DUPLICATE_CHART_NAME, own_charts, chart_registry),
+        (ERR_DUPLICATE_QUERY_NAME, own_queries, query_registry),
     ):
-        # A key under the reserved prefix names one query in one source file,
-        # pulled in by both boards' cross-board chart imports: the same query.
+        # Both boards' cross-board chart imports can pull in the same source
+        # file's query under one reserved-prefix key: equal queries are the same
+        # query. Unequal ones are two files whose keys sanitize alike.
         for name in sorted(
-            n for n in own & outer if not n.startswith(_CROSS_BOARD_QUERY_PREFIX)
+            n
+            for n in own.keys() & outer.keys()
+            if not (n.startswith(_CROSS_BOARD_QUERY_PREFIX) and own[n] == outer[n])
         ):
             raise CompilationError.from_code(
                 code,

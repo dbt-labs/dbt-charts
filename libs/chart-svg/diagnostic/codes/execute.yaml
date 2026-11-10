@@ -323,6 +323,10 @@
   level: error
   title: The dbt profile for this source could not be read
   template: '{detail}'
+  fix: 'A missing profiles.yml: create it, or set or unset DBT_PROFILES_DIR so it points
+    where the file lives. An unknown profile: check `profile:` in dbt_project.yml, and DBT_PROFILE
+    if set. An unknown or invalid target: check DBT_TARGET or --target and the fields that
+    target''s warehouse type requires.'
   doc: 'Fired when a dbt_profile source, such as the one a dbt project gets automatically,
     cannot resolve its warehouse connection from its dbt profile. A missing profiles.yml:
     create it, or set or unset DBT_PROFILES_DIR so it points where the file lives. An unknown
@@ -386,6 +390,9 @@
   level: error
   title: Could not open the warehouse
   template: 'Could not open the warehouse: {reason}'
+  fix: Check the source's credentials, host, and network reachability in `dbt_charts.yml`
+    or `profiles.yml`; for a database file, check that it exists and no other process
+    holds its lock.
   doc: 'Fired when opening the connection fails, before any SQL is sent: a database file that
     is missing, unreadable, or lock-held by another process (DuckDB, SQLite), or bad credentials,
     an unreachable host, or a missing database/role on a network warehouse (Postgres, Snowflake,
@@ -492,6 +499,7 @@
   level: error
   title: A result column has no declarable type
   template: 'Column {column!r}: {reason}'
+  fix: Cast the column in the query, or make every value in an inline literal the same kind.
   doc: 'Fired when a result column''s type cannot be declared: the source reports a type dbt
     Charts has no mapping for, or an inline literal (a values query) mixes kinds in one column
     or holds nothing to read a type from. Types come from the source''s own declaration, never
@@ -502,6 +510,8 @@
   level: error
   title: This connection cannot report column types
   template: '{reason}'
+  fix: Switch the source to a supported dbt adapter or protocol; casting a column does not
+    help.
   doc: 'Fired when the warehouse connection a query runs on has no reader for column types:
     no reader exists for this dbt adapter, or the connection protocol (ClickHouse''s native
     client) does not report them. This is a connection setup problem, not a column to cast;
@@ -511,6 +521,8 @@
   level: error
   title: The warehouse reported a warning about this result
   template: 'The warehouse reported a warning about this result: {warnings}'
+  fix: Change the query so the warning no longer applies, for example by selecting fewer
+    rows.
   doc: Fired when the warehouse answered a query and attached a warning, such as an export
     limit that truncated the rows. A result the warehouse itself flagged as incomplete is
     a wrong answer that looks right, so dbt Charts raises rather than rendering it. Change
@@ -897,4 +909,29 @@
     and the compiler rejects it: an attribute or calculation the bundle does not declare,
     a table outside the bundle joined beside a dataset, or SQL MetricFlow cannot plan. The
     query never reaches the warehouse. Check the names against the bundle''s fragments.'
+  docs_topic: queries
+- code: ERR-SCHEMA-NOT-FOUND
+  level: error
+  title: Schema not found in the source
+  template: Schema {schema!r} not found in source {source!r}. Check the spelling against the
+    source's catalog.
+  doc: Fired when a schema query names a schema the source's catalog does not list. The
+    lookup matches the catalog's spelling exactly, so a name in the wrong case misses.
+  docs_topic: queries
+- code: ERR-TABLE-NOT-FOUND
+  level: error
+  title: Table not found in the source
+  template: Table {schema}.{table} not found in source {source!r}. Check the spelling against
+    the source's catalog.
+  doc: Fired when a schema query names a table the source's catalog does not list under
+    that schema. The lookup matches the catalog's spelling exactly, so a name in the wrong
+    case misses.
+  docs_topic: queries
+- code: ERR-COLUMN-NOT-FOUND
+  level: error
+  title: Column not found in the table
+  template: Column {column!r} not found in {schema}.{table}. Check the spelling against the
+    table's catalog columns.
+  doc: Fired when a schema query names a column the table's catalog entry does not list.
+    The lookup matches the catalog's spelling exactly, so a name in the wrong case misses.
   docs_topic: queries

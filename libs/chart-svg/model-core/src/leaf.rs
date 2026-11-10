@@ -1,5 +1,6 @@
 use crate::{Engine, Merge, Scalar, Tri, TypeExpr};
 use indexmap::IndexMap;
+use serde_json::Value;
 
 /// A slot nothing was written to: unset, or a patch whose every slot is. A merge skips an empty
 /// upper slot, so merging a small patch costs its own size, not the tree's.
@@ -44,6 +45,113 @@ impl<V> SetLeaves for IndexMap<String, V> {
         for k in self.keys() {
             f(&crate::join(at, k));
         }
+    }
+}
+
+/// A leaf value as the author wrote it, the JSON Python's `json.dumps` of the authored YAML shows:
+/// an enum is its key, a facet its string, a list its items.
+pub trait Spell {
+    fn spell(&self) -> Value;
+}
+
+macro_rules! spell_scalar {
+    ($($t:ty),*) => {$(
+        impl Spell for $t {
+            fn spell(&self) -> Value {
+                Value::from(*self)
+            }
+        }
+    )*};
+}
+spell_scalar!(bool, i32, i64, u32, u64, usize, f64);
+
+impl Spell for f32 {
+    fn spell(&self) -> Value {
+        Value::from(f64::from(*self))
+    }
+}
+
+impl Spell for String {
+    fn spell(&self) -> Value {
+        Value::from(self.as_str())
+    }
+}
+
+impl<T: Spell> Spell for Vec<T> {
+    fn spell(&self) -> Value {
+        self.iter().map(Spell::spell).collect()
+    }
+}
+
+impl<T: Spell, const N: usize> Spell for [T; N] {
+    fn spell(&self) -> Value {
+        self.iter().map(Spell::spell).collect()
+    }
+}
+
+impl<T: Spell> Spell for Box<T> {
+    fn spell(&self) -> Value {
+        (**self).spell()
+    }
+}
+
+/// A patch as the nested object of its set leaves.
+pub fn spell_leaves(patch: &impl LeafValues) -> Value {
+    let mut all: Vec<(String, Value)> = Vec::new();
+    patch.leaf_values("", &mut |p, v| all.push((p.to_string(), v.spell())));
+    let mut root = serde_json::Map::new();
+    for (path, v) in &all {
+        // A model reports its own path beside its leaves: the deeper leaves speak for it.
+        let below = format!("{path}.");
+        if all.iter().any(|(q, _)| q.starts_with(&below)) {
+            continue;
+        }
+        insert(&mut root, path, v.clone());
+    }
+    Value::Object(root)
+}
+
+fn insert(at: &mut serde_json::Map<String, Value>, path: &str, v: Value) {
+    match path.split_once('.') {
+        None => {
+            at.insert(path.to_string(), v);
+        }
+        Some((head, rest)) => {
+            let below = at
+                .entry(head)
+                .or_insert_with(|| Value::Object(Default::default()));
+            if let Value::Object(map) = below {
+                insert(map, rest, v);
+            }
+        }
+    }
+}
+
+/// The set leaves of a patch with their values, by authored path: [`SetLeaves`] for a caller that
+/// compares them. A model's own path is not reported, only its leaves'.
+pub trait LeafValues {
+    fn leaf_values(&self, at: &str, f: &mut dyn FnMut(&str, &dyn Spell));
+}
+
+impl<T: Spell> LeafValues for Option<T> {
+    fn leaf_values(&self, at: &str, f: &mut dyn FnMut(&str, &dyn Spell)) {
+        if let Some(v) = self {
+            f(at, v);
+        }
+    }
+}
+
+impl<V: LeafValues> LeafValues for IndexMap<String, V> {
+    fn leaf_values(&self, at: &str, f: &mut dyn FnMut(&str, &dyn Spell)) {
+        for (k, v) in self {
+            v.leaf_values(&crate::join(at, k), f);
+        }
+    }
+}
+
+impl<S: LeafValues> LeafValues for Box<S> {
+    fn leaf_values(&self, at: &str, f: &mut dyn FnMut(&str, &dyn Spell)) {
+        (**self).leaf_values(at, f);
     }
 }
 
@@ -100,6 +208,8 @@ pub trait Lift {
     fn put(v: Self::Value) -> Self;
     /// The leaves a set value holds: itself for a leaf, its set leaves for a model.
     fn leaves(v: &Self::Value, at: &str, f: &mut dyn FnMut(&str));
+    /// [`Lift::leaves`] with the values of a model's leaves; a leaf's own value is the caller's.
+    fn values(_: &Self::Value, _: &str, _: &mut dyn FnMut(&str, &dyn Spell)) {}
 }
 
 impl<T> Lift for Option<T> {
@@ -298,6 +408,9 @@ impl<L: Lift> Lift for Box<L> {
     }
     fn leaves(v: &Self::Value, at: &str, f: &mut dyn FnMut(&str)) {
         L::leaves(v, at, f);
+    }
+    fn values(v: &Self::Value, at: &str, f: &mut dyn FnMut(&str, &dyn Spell)) {
+        L::values(v, at, f);
     }
 }
 

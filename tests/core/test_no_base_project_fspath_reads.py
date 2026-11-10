@@ -63,7 +63,7 @@ ALLOWED: dict[tuple[str, int], str] = {
         "isinstance(project, FilesystemProject)-guarded board index path; a host "
         "with no project folder keeps no index"
     ),
-    ("core/compile/config.py", 654): (
+    ("core/compile/config.py", 655): (
         "resolve_cache_boot(project: FilesystemProject) — already FS-typed"
     ),
     ("core/execute/env.py", 157): (
@@ -88,17 +88,17 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("core/serve/server.py", 233): (
         "_all_board_roots_mtime(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1061): (
+    ("core/serve/server.py", 1060): (
         "create_server: core_project inferred FilesystemProject from the parameter"
     ),
-    ("core/serve/server.py", 1102): (
+    ("core/serve/server.py", 1101): (
         "create_server: core_project inferred FilesystemProject from the parameter; "
         "the live-reload watch is opened over the project root"
     ),
-    ("core/serve/server.py", 1136): (
+    ("core/serve/server.py", 1135): (
         "_reload_on_change: project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1250): (
+    ("core/serve/server.py", 1249): (
         "profile_table: inspect_project explicitly typed FilesystemProject"
     ),
     (
@@ -130,16 +130,16 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("agent_api/project_session.py", 317): (
         'ProjectSession.charts_dir: cast("FilesystemProject", self.project)-narrowed'
     ),
-    ("agent_api/serve.py", 86): (
+    ("agent_api/serve.py", 78): (
         "prepare_serve(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1184): (
+    ("core/serve/server.py", 1183): (
         "health: create_server's FilesystemProject parameter, closed over"
     ),
-    ("agent_api/serve.py", 477): (
+    ("agent_api/serve.py", 469): (
         "start_detached(project: FilesystemProject) — already FS-typed"
     ),
-    ("agent_api/serve.py", 167): (
+    ("agent_api/serve.py", 159): (
         "prepare_serve(project: FilesystemProject), already FS-typed "
         "(dbt_root, dialect inference reads the linked dbt project directory)"
     ),

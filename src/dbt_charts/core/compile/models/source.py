@@ -329,6 +329,16 @@ def declared_metricflow(
     return _METRICFLOW.validate_python(source.get("metricflow"))
 
 
+def declares_metricflow(
+    sources: Mapping[
+        str, Mapping[str, Any]  # type-state: explicit_any — raw source entries
+    ],
+) -> bool:
+    """Whether any source names a MetricFlow bundle. `dct mcp serve` lists
+    `describe_semantics` only then."""
+    return any(declared_metricflow(source) is not None for source in sources.values())
+
+
 class SemanticSourceConfig(BaseModel):
     """A MetricFlow semantic bundle, for the source families that run SQL on a warehouse.
 

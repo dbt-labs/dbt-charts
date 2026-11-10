@@ -14,11 +14,10 @@ use color::Rgba;
 use column_types::Dataset;
 use diagnostic::{diag, refuse, Diagnostic};
 use model_core::Engine;
-use serde_json::json;
 
 use crate::category_colors::{series_colors, CategoryColorScale};
 use crate::channel_type::{classify, ChannelType};
-use crate::formats::locale::d3_format;
+use crate::formats::locale::{active_number_locale, d3_format};
 use crate::formats::{resolve_format_parts, Formats, ResolvedFormat};
 use crate::model::{Key, Legend, LegendEntry, Paint, Series, SeriesKey, ValueAxis, ValueDomain, Zero};
 use crate::rows::color_domain_of;
@@ -111,9 +110,7 @@ pub fn dataset<'a>(
     if fields.iter().any(|field| formats.contains_key(*field)) {
         return Err(unsupported(refuse!("a cartesian chart whose query declares an axis column format is not supported")));
     }
-    run.datasets
-        .get(query)
-        .ok_or_else(|| diag::err_engine_needs_data(query.to_string()).with_sink_param("chart_id", json!(id.as_str())))
+    run.dataset(query, id)
 }
 
 /// A fixed ladder's rung text (a column of labels when `column_forming`), as production labels a
@@ -137,10 +134,18 @@ pub fn rung_text(format: &ResolvedFormat, column_forming: bool, ticks: &[f64]) -
         start_anchored: false,
         tabular: false,
     };
+    // A ladder with no step (one rung, as a flat extent bakes) is not labeled at one: production
+    // paints its rung as any tick (`paint_tick`).
+    if ticks.windows(2).all(|pair| pair[0] == pair[1]) {
+        let locale = active_number_locale();
+        return ticks.iter().map(|tick| format.paint_tick(&locale, *tick)).collect();
+    }
     let choice = d3rs::numeral_scale::decide_tick_label(&inputs, ticks, ticks).map_err(diag::err_internal)?;
-    let Some(choice) = choice.filter(|choice| choice.anchor_at_start.is_none()) else {
-        return Err(unsupported(refuse!("a cartesian ladder that is not labeled at its step is not supported")));
-    };
+    // The house `number` format (the only one a cartesian axis admits) has no symbol, so a ladder
+    // with a step is labeled at it and never anchored at its start.
+    let choice = choice
+        .filter(|choice| choice.anchor_at_start.is_none())
+        .ok_or_else(|| diag::err_internal("a stepped ladder in the house format takes its step label"))?;
     let texts = ticks
         .iter()
         .map(|tick| Ok(format!("{}{}", choice.prefix, d3_format(&choice.digit_spec, *tick).map_err(diag::err_internal)?)))

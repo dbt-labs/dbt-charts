@@ -318,7 +318,6 @@ def render_command(
             scale=2.0,
             ignore_codes=ignore_codes,
             max_workers=max_workers,
-            restated_check=True,
             # `dct render` writes files. Nothing serves them, so an HTML export
             # carries its fonts inline rather than naming /static/fonts/.
             standalone=True,
@@ -417,7 +416,6 @@ def render_command_from_yaml(
             scale=2.0,
             ignore_codes=ignore_codes,
             max_workers=max_workers,
-            restated_check=True,
             standalone=True,
         )
 

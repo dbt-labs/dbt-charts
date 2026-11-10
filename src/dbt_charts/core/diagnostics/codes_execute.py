@@ -337,6 +337,7 @@ ERR_DBT_PROFILE_UNRESOLVED = REGISTRY.register(
         domain="execute",
         title="The dbt profile for this source could not be read",
         message_template="{detail}",
+        fix_template="A missing profiles.yml: create it, or set or unset DBT_PROFILES_DIR so it points where the file lives. An unknown profile: check `profile:` in dbt_project.yml, and DBT_PROFILE if set. An unknown or invalid target: check DBT_TARGET or --target and the fields that target's warehouse type requires.",
         doc="Fired when a dbt_profile source, such as the one a dbt project gets automatically, cannot resolve its warehouse connection from its dbt profile. A missing profiles.yml: create it, or set or unset DBT_PROFILES_DIR so it points where the file lives. An unknown profile name: check `profile:` in dbt_project.yml, and DBT_PROFILE if it is set. An unknown or invalid target: check the target name (DBT_TARGET or --target) and the fields that target's warehouse type requires. A `profiles_dir:` on a source needs a linked dbt project to be relative to.",
         docs_topic="queries",
     )
@@ -403,6 +404,7 @@ ERR_WAREHOUSE_CONNECTION = REGISTRY.register(
         domain="execute",
         title="Could not open the warehouse",
         message_template="Could not open the warehouse: {reason}",
+        fix_template="Check the source's credentials, host, and network reachability in `dbt_charts.yml` or `profiles.yml`; for a database file, check that it exists and no other process holds its lock.",
         doc="Fired when opening the connection fails, before any SQL is sent: a database file that is missing, unreadable, or lock-held by another process (DuckDB, SQLite), or bad credentials, an unreachable host, or a missing database/role on a network warehouse (Postgres, Snowflake, BigQuery, Databricks, …). Distinct from ERR-WAREHOUSE-RUNTIME because nothing ever read the SQL: the query may be perfectly good, so callers that judge queries (`dct validate --warehouse`) must not report it as a query defect. `{reason}` names the classified cause; the driver's own text (which may carry hostnames, PIDs, or usernames) is not shown here but is available in `dct`'s diagnostics output and server logs. Check the source's credentials, host, and network reachability in `dbt_charts.yml` or `profiles.yml`.",
         docs_topic="queries",
     )
@@ -503,6 +505,7 @@ ERR_RESULT_COLUMN_TYPE = REGISTRY.register(
         domain="execute",
         title="A result column has no declarable type",
         message_template="Column {column!r}: {reason}",
+        fix_template="Cast the column in the query, or make every value in an inline literal the same kind.",
         doc="Fired when a result column's type cannot be declared: the source reports a type dbt Charts has no mapping for, or an inline literal (a values query) mixes kinds in one column or holds nothing to read a type from. Types come from the source's own declaration, never from guessing at cell values, so the column has to be cast in the query or made uniform in the literal.",
         docs_topic="queries",
     )
@@ -514,6 +517,7 @@ ERR_RESULT_NO_TYPE_READER = REGISTRY.register(
         domain="execute",
         title="This connection cannot report column types",
         message_template="{reason}",
+        fix_template="Switch the source to a supported dbt adapter or protocol; casting a column does not help.",
         doc="Fired when the warehouse connection a query runs on has no reader for column types: no reader exists for this dbt adapter, or the connection protocol (ClickHouse's native client) does not report them. This is a connection setup problem, not a column to cast; switch the source to a supported adapter or protocol.",
         docs_topic="queries",
     )
@@ -525,6 +529,7 @@ ERR_WAREHOUSE_RESULT_WARNING = REGISTRY.register(
         domain="execute",
         title="The warehouse reported a warning about this result",
         message_template="The warehouse reported a warning about this result: {warnings}",
+        fix_template="Change the query so the warning no longer applies, for example by selecting fewer rows.",
         doc="Fired when the warehouse answered a query and attached a warning, such as an export limit that truncated the rows. A result the warehouse itself flagged as incomplete is a wrong answer that looks right, so dbt Charts raises rather than rendering it. Change the query so the warning no longer applies, for example by selecting fewer rows.",
         docs_topic="queries",
     )
@@ -939,6 +944,39 @@ ERR_METRICFLOW_COMPILE_FAILED = REGISTRY.register(
         title="MetricFlow could not compile this query",
         message_template="MetricFlow could not compile this query: {reason}",
         doc="Fired when a query reads a dataset or constellation of the source's MetricFlow bundle and the compiler rejects it: an attribute or calculation the bundle does not declare, a table outside the bundle joined beside a dataset, or SQL MetricFlow cannot plan. The query never reaches the warehouse. Check the names against the bundle's fragments.",
+        docs_topic="queries",
+    )
+)
+
+ERR_SCHEMA_NOT_FOUND = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SCHEMA-NOT-FOUND",
+        domain="execute",
+        title="Schema not found in the source",
+        message_template="Schema {schema!r} not found in source {source!r}. Check the spelling against the source's catalog.",
+        doc="Fired when a schema query names a schema the source's catalog does not list. The lookup matches the catalog's spelling exactly, so a name in the wrong case misses.",
+        docs_topic="queries",
+    )
+)
+
+ERR_TABLE_NOT_FOUND = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-NOT-FOUND",
+        domain="execute",
+        title="Table not found in the source",
+        message_template="Table {schema}.{table} not found in source {source!r}. Check the spelling against the source's catalog.",
+        doc="Fired when a schema query names a table the source's catalog does not list under that schema. The lookup matches the catalog's spelling exactly, so a name in the wrong case misses.",
+        docs_topic="queries",
+    )
+)
+
+ERR_COLUMN_NOT_FOUND = REGISTRY.register(
+    ErrorCode(
+        code="ERR-COLUMN-NOT-FOUND",
+        domain="execute",
+        title="Column not found in the table",
+        message_template="Column {column!r} not found in {schema}.{table}. Check the spelling against the table's catalog columns.",
+        doc="Fired when a schema query names a column the table's catalog entry does not list. The lookup matches the catalog's spelling exactly, so a name in the wrong case misses.",
         docs_topic="queries",
     )
 )

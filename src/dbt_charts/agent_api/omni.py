@@ -10,6 +10,8 @@ dashboard filter defaults (those are listed in the outline).
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import re
 import time
@@ -19,7 +21,7 @@ import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from dbt_charts.agent_api.source_bundle import (
     BundleError,
@@ -394,6 +396,9 @@ def import_omni(
             is) and ``queries/<id>.post.sql`` (the DuckDB step), named by a
             ``post-step`` line in the outline; a marker shape that is not that
             two-step form fails naming the tile.
+            Each tile's SQL and KPI values are computed at the dashboard's filter
+            defaults (``dashboard filter applied`` lines in the outline), as the
+            dashboard shows them, not at the filters saved on the query.
             Tiles in a top-level container outside any page are listed under a
             ``Dashboard`` section.
     """
@@ -501,10 +506,13 @@ def _fill_bundle(
             if tile_id in fetched:
                 continue
             fetched.add(tile_id)
-            query = saved[tile_id]
+            query, overrides = _at_dashboard_filters(
+                saved[tile_id], collection, metadata["tileFilterMap"].get(tile_id, {})
+            )
             presentation = presentations[query["id"]]
             chart = presentation["visConfig"]["chartType"]
             tiles.append(f"- **{chart}** `{tile_id}` {query['name']!r} — {where}")
+            tiles += [f"    - dashboard filter applied: {o}" for o in overrides]
             bundle.write(f"queries/{tile_id}.json", json.dumps(query, indent=2))
             try:
                 sql, timezone = omni.plan(query["query"])
@@ -531,15 +539,17 @@ def _fill_bundle(
                 try:
                     values = omni.request(
                         "POST",
-                        f"/v1/documents/{dashboard_id}/queries/{tile_id}/run",
-                        {"resultType": "csv"},
+                        "/v1/query/run",
+                        {"query": query["query"], "resultType": "csv"},
                     )
                 except _HttpFailure as exc:
                     tiles.append(
                         f"    - values: none, Omni could not run it: {exc.status}"
                     )
                     continue
-                bundle.write(kpi_file, values)
+                bundle.write(
+                    kpi_file, _displayed_row(values, query, presentation, tile_id)
+                )
                 tiles.append(f"    - values: {kpi_file}")
     if left_out and not represented:
         raise BundleError(
@@ -549,6 +559,7 @@ def _fill_bundle(
     tiles += [
         f"- **hidden** `{key}` {saved[key]['name']!r} — not on the dashboard, not fetched"
         for key in metadata["hiddenTiles"]
+        if key not in fetched
     ]
 
     filters = [
@@ -600,6 +611,101 @@ def _fill_bundle(
             "kpi_values": "display_formatted",
         },
     )
+
+
+DASHBOARD_FILTER_KEYS = (
+    "kind",
+    "type",
+    "values",
+    "is_negative",
+    "appliedLabels",
+    "ui_type",
+    "isFiscal",
+    "left_side",
+    "right_side",
+    "offset_interval_string",
+    "is_inclusive",
+)
+
+
+def _at_dashboard_filters(
+    saved: dict[str, Any],
+    collection: dict[str, Any],
+    listens: dict[str, str | Literal[False]],
+) -> tuple[dict[str, Any], list[str]]:
+    """The saved query with the dashboard's filter defaults applied, and a line per
+    filter that moved.
+
+    The dashboard shows a tile at its filters' defaults, not at the filters saved
+    on the query. A dashboard filter with no default (no values, no time range)
+    leaves the tile's own filter alone.
+    """
+    filters = dict(saved["query"]["filters"])
+    moved = []
+    for filter_id in collection["filterOrder"]:
+        field = listens.get(filter_id)
+        spec = collection["filterConfig"][filter_id]
+        if not field or not (
+            spec.get("values") or spec.get("left_side") or spec.get("right_side")
+        ):
+            continue
+        key = field if field in filters else re.sub(r"\[[^\]]*\]$", "", field)
+        applied = {k: spec[k] for k in DASHBOARD_FILTER_KEYS if k in spec}
+        if filters.get(key) != applied:
+            moved.append(f"{spec['label']} = {_describe(applied)}")
+        filters[key] = applied
+    return {**saved, "query": {**saved["query"], "filters": filters}}, moved
+
+
+def _displayed_row(
+    values: bytes, query: dict[str, Any], presentation: dict[str, Any], tile_id: str
+) -> bytes:
+    """A KPI csv cut to its header and the one row the tile displays, headline first.
+
+    The headline is the field of the first ``number`` entry of the tile's
+    ``markdownConfig`` and ``field.row`` names the row shown: ``_first``,
+    ``_second``, ``_last`` or ``_totals.N`` (the last row Omni appends when the
+    query asks for column totals). A tile with no ``number`` entry shows its first
+    row. A pivoted query's csv has two header rows and no column per field, so it
+    is kept as Omni returned it, as is a headline that is not a query field (a
+    manual field).
+    """
+    spec = query["query"]
+    if spec["pivots"]:
+        return values
+    entries = presentation["visConfig"].get("spec", {}).get("markdownConfig", [])
+    shown = next((e["config"]["field"] for e in entries if e["type"] == "number"), None)
+    header, *data = csv.reader(io.StringIO(values.decode()))
+    total = None
+    if "::total::" in (spec.get("column_totals") or {}) and data:
+        total = data.pop()
+    row_spec = "_first" if shown is None else shown["row"]
+    if row_spec == "_first":
+        picked = data[:1]
+    elif row_spec == "_second":
+        picked = data[1:2]
+    elif row_spec == "_last":
+        picked = data[-1:]
+    elif re.fullmatch(r"_totals\.\d+", row_spec):
+        if data and total is None:
+            raise BundleError(
+                f"KPI {query['name']!r} (tile {tile_id}): row {row_spec!r} but the "
+                "query has no column totals"
+            )
+        picked = [] if total is None else [total]
+    else:
+        raise BundleError(
+            f"KPI {query['name']!r} (tile {tile_id}): unknown row spec {row_spec!r}"
+        )
+    columns = list(range(len(header)))
+    if shown is not None and shown["field"]["name"] in spec["fields"]:
+        lead = spec["fields"].index(shown["field"]["name"])
+        columns = [lead, *columns[:lead], *columns[lead + 1 :]]
+    out = io.StringIO()
+    csv.writer(out, lineterminator="\n").writerows(
+        [row[i] for i in columns] for row in [header, *picked]
+    )
+    return out.getvalue().encode()
 
 
 def _tile_lines(

@@ -3,3 +3,6 @@
 pub mod callout;
 pub mod failed;
 pub mod kpi;
+pub mod pie;
+pub mod spark_bar;
+pub mod table;

@@ -9,13 +9,14 @@
 
 use bind::temporal::TimeUnit;
 use d3rs::calendar::{civil_from_days, days_from_civil, MS_PER_DAY};
-use diagnostic::{diag, Diagnostic};
-use measure::baseline_shift;
-use measure::shaped::Font;
+use diagnostic::{diag, refuse, Diagnostic};
 use scene::{Bounds, Transform};
 
-use super::{gutter_of, parity_visible, Align, Baseline, Grained, PlacedLabel, Placement};
+use super::{gutter_of, Grained, PlacedLabel, Placement};
 use crate::geom::Size;
+use crate::plot::label::{
+    parity_advance, parity_visible, tilted_anchor, vega_space, Align, Baseline,
+};
 use crate::plot::time_axis::TimeAxis;
 use crate::plot::time_cadence::{
     decision_width, label_rows, labeled, opens_label, tick_opens_label, Date, Rows,
@@ -77,6 +78,7 @@ impl TimeAxis<'_> {
             data,
             fiscal_start,
             span,
+            filled,
             cadence,
         } = grained;
         let (lo, hi) = self.extent;
@@ -95,6 +97,13 @@ impl TimeAxis<'_> {
         {
             let ticks = interval_instants(native_tick_interval(*data), lo, hi, None)
                 .map_err(Diagnostic::refused)?;
+            // The rail arm paints no tick no row sits on, so it keeps the rows' axis only where the two
+            // agree (`line/layout.rs:2594`, compared as whole days).
+            if self.labels.rail && ticks.iter().map(|t| t.floor()).ne(filled.iter().map(|d| d.floor())) {
+                return Err(Diagnostic::refused(refuse!(
+                    "a bucketed temporal x axis with a bucket no row fills is not supported on the endpoint-rail arm, whose x ink is closed form over the rows: Vega ticks the empty bucket"
+                )));
+            }
             let monday = i64::from(*data == TimeUnit::YearWeek);
             let slots = ticks
                 .iter()
@@ -139,6 +148,7 @@ impl TimeAxis<'_> {
             fiscal_start,
             span,
             cadence,
+            ..
         } = grained;
         let monday = i64::from(*data == TimeUnit::YearWeek && cadence.format == TimeUnit::YearWeek);
         // `anchor_formats`: the data grain's own `utcFormat` pattern, a week comparing as `%Y-%U`.
@@ -193,20 +203,6 @@ impl TimeAxis<'_> {
             .run(text, &self.labels.font)
             .map_err(diag::err_internal)?
             .advance)
-    }
-
-    /// The width Vega's parity pass judges a label's text by: production sums the raw advances of
-    /// the face's upright default instance in the family as authored (`FontBook::measure`,
-    /// `line/layout.rs:3510`), whatever the painted weight and style.
-    fn parity_advance(&self, text: &str) -> Result<f64, Diagnostic> {
-        let upright = Font {
-            weight: 400.0,
-            italic: false,
-            ..self.labels.font
-        };
-        self.book
-            .raw_advance(text, &upright)
-            .map_err(diag::err_internal)
     }
 
     /// An end-point label's row as production's clearance reads it (`measure_weighted`).
@@ -359,7 +355,7 @@ impl TimeAxis<'_> {
                 Ok::<_, Diagnostic>(measure(&row1)?.max(context).min(limit))
             };
             let ink_width = widest(&|t| self.advance(t))?;
-            let verdict_width = widest(&|t| self.parity_advance(t))?;
+            let verdict_width = widest(&|t| parity_advance(self.book, t, &self.labels.font))?;
             let frac = if hi <= lo {
                 0.5
             } else {
@@ -398,27 +394,17 @@ impl TimeAxis<'_> {
             };
             let (x1, x2) = across(ink_width);
             let (v1, v2) = across(verdict_width);
-            let rise = baseline_shift(
-                match baseline {
-                    Baseline::Top => "top",
-                    Baseline::Middle => "middle",
-                    Baseline::Bottom => "bottom",
-                },
-                font.size,
-            ) - (0.8 * font.size).round();
             // Production's box sits in the plot's frame, the row `offset` below its bottom edge, and
             // turns about that anchor with `vega_fit::Bounds::rotate`'s arithmetic; a gap that
             // ties the separation is decided by its rounding.
             let row = plot.height + offset;
-            vega.push(vega_turn(
-                Bounds {
-                    x1: v1,
-                    y1: row + rise,
-                    x2: v2,
-                    y2: row + rise + font.size + (rows - 1) as f64 * (font.size + 2.0),
-                },
-                angle,
+            vega.push(vega_space(
+                (v1, v2),
                 (x, row),
+                baseline,
+                font.size,
+                rows,
+                angle,
             ));
             let top = offset
                 - line
@@ -442,6 +428,7 @@ impl TimeAxis<'_> {
                     x2,
                     y2: top + rows as f64 * line,
                 }),
+                space: vega_space((x1, x2), (x, offset), baseline, font.size, rows, angle),
             });
         }
         if cadence.parity {
@@ -451,37 +438,4 @@ impl TimeAxis<'_> {
         }
         Ok(placed)
     }
-}
-
-/// Vega-Lite's `labelAlign` and `labelBaseline` for a label of a bottom axis turned `angle`
-/// degrees (`vl_x_label_anchor`, `vega_fit.rs:122`).
-fn tilted_anchor(angle: f64) -> (Align, Baseline) {
-    let angle = angle.rem_euclid(360.0);
-    let align = if angle % 180.0 == 0.0 {
-        Align::Center
-    } else if 0.0 < angle && angle < 180.0 {
-        Align::Left
-    } else {
-        Align::Right
-    };
-    let baseline = if (45.0 < angle && angle < 135.0) || (225.0 < angle && angle < 315.0) {
-        Baseline::Middle
-    } else if angle <= 45.0 || 315.0 <= angle {
-        Baseline::Top
-    } else {
-        Baseline::Bottom
-    };
-    (align, baseline)
-}
-
-/// `vega_fit::Bounds::rotate` (`vega_fit.rs:80`): `b` turned `degrees` about `(x, y)`, flat when 0.
-fn vega_turn(b: Bounds, degrees: f64, (x, y): (f64, f64)) -> Bounds {
-    if degrees == 0.0 {
-        return b;
-    }
-    let (sin, cos) = degrees.to_radians().sin_cos();
-    let (dx, dy) = (x - x * cos + y * sin, y - x * sin - y * cos);
-    let corners = [(b.x1, b.y1), (b.x1, b.y2), (b.x2, b.y1), (b.x2, b.y2)];
-    Bounds::of_points(corners.map(|(px, py)| (cos * px - sin * py + dx, sin * px + cos * py + dy)))
-        .expect("four corners")
 }

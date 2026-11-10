@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import markdown
 import pytest
 
+from dbt_charts.agent_api import hover_runtime_source
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import (
     BoardRenderResult,
@@ -122,6 +123,26 @@ class TestExtension:
         assert html.count("<style>\n@font-face") == 1
         assert "/static/fonts/" not in html
 
+    def test_the_hover_runtime_ships_once_per_page(self, tmp_path):
+        page = _BAR.format(title="One") + "\n" + _BAR.format(title="Two")
+        html = _md(page, tmp_path)
+
+        assert html.count(hover_runtime_source()) == 1
+        assert html.count("<script>") == 1
+        assert html.index("<script>") < html.index("<svg")
+
+    def test_a_chart_page_can_leave_the_hover_runtime_to_the_site(self, tmp_path):
+        html = _md(_BAR.format(title="One"), tmp_path, include_runtime=False)
+        assert "<svg" in html
+        assert "<script" not in html
+
+    def test_a_page_with_only_an_example_ships_the_hover_runtime(self, tmp_path):
+        html = _md(f"```charts-example\n{_EXAMPLE_BOARD}```\n", tmp_path)
+        assert html.count(hover_runtime_source()) == 1
+
+    def test_a_page_with_no_charts_ships_no_runtime(self, tmp_path):
+        assert "<script" not in _md("# Hi\n\nJust prose.\n", tmp_path)
+
     def test_hosted_fonts_when_embedding_is_off(self, tmp_path):
         html = _md(_BAR.format(title="One"), tmp_path, embed_fonts=False)
         assert "/static/fonts/" in html
@@ -171,8 +192,9 @@ class TestExtension:
 
         assert tab.index(
             '<div class="dbt-charts-example dbt-charts-example--render-only"'
-        ) < (tab.index("<svg"))
+        ) < (tab.index('<div class="dbt-charts-example-board"><svg'))
         assert "<p><style>" not in html
+        assert "<p><script>" not in html
 
     def test_an_example_shows_its_yaml_beside_the_board(self, tmp_path):
         html = _md(f"```charts-example\n{_EXAMPLE_BOARD}```\n", tmp_path)

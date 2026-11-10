@@ -136,7 +136,11 @@ ChartOrRef = Annotated[
 # LAYOUT SUB-SHAPES
 # ============================================================================
 
-ChartName = Annotated[str, Field(description="Chart name reference.")]
+# `^[^@]`: an authored name is an identifier, so it never starts with `@`, the mark of a
+# generated position id. Compile refuses the names an author defines in full.
+ChartName = Annotated[
+    str, StringConstraints(pattern=r"^[^@]"), Field(description="Chart name reference.")
+]
 
 # Both spellings: a pre-rename board still authors `description:` here, and
 # the retired form predates the rename either way, so a `notes:` sibling must

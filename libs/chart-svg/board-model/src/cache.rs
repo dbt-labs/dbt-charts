@@ -8,7 +8,8 @@
 //! layer a scalar or a block reads to, with the `enabled` fact the desugaring sets.
 
 use model_core::{
-    build_leaf, Cx, FromNode, Keywords, Kind, Leaf, Merge, Node, ReadScalar, Scalar, Tri, TypeExpr,
+    build_leaf, Cx, FromNode, Keywords, Kind, Leaf, Merge, Node, ReadScalar, Scalar, Spell, Tri,
+    TypeExpr,
 };
 use model_derive::Model;
 use regex::Regex;
@@ -119,6 +120,15 @@ impl ReadScalar for CacheTtl {
     }
 }
 
+impl Spell for CacheTtl {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Self::Forever => "forever".into(),
+            Self::Duration(d) => d.as_str().into(),
+        }
+    }
+}
+
 impl FromNode for CacheTtl {
     fn authored(node: &Node, cx: &mut Cx) -> Self::Authored {
         Self::read(node, cx)
@@ -168,7 +178,13 @@ pub struct CacheLayer {
 
 impl ReadScalar for CacheLayer {
     fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
-        let layer = |enabled, ttl| Some(Self { enabled, ttl, prefetch: None });
+        let layer = |enabled, ttl| {
+            Some(Self {
+                enabled,
+                ttl,
+                prefetch: None,
+            })
+        };
         match &node.kind {
             Kind::Scalar(Value::Bool(b)) => layer(Some(*b), None),
             Kind::Scalar(Value::Str(_)) => {
@@ -201,8 +217,31 @@ impl ReadScalar for CacheLayer {
                 })
             }
             _ => {
-                cx.mismatch(node, "a duration, `forever`, a boolean or a `{ttl, prefetch}` block");
+                cx.mismatch(
+                    node,
+                    "a duration, `forever`, a boolean or a `{ttl, prefetch}` block",
+                );
                 None
+            }
+        }
+    }
+}
+
+impl Spell for CacheLayer {
+    fn spell(&self) -> serde_json::Value {
+        match (self.enabled, &self.ttl, self.prefetch) {
+            (Some(false), ..) => false.into(),
+            (Some(true), None, None) => true.into(),
+            (Some(true), Some(ttl), None) => ttl.spell(),
+            (_, ttl, prefetch) => {
+                let mut block = serde_json::Map::new();
+                if let Some(ttl) = ttl {
+                    block.insert("ttl".into(), ttl.spell());
+                }
+                if let Some(prefetch) = prefetch {
+                    block.insert("prefetch".into(), prefetch.into());
+                }
+                block.into()
             }
         }
     }

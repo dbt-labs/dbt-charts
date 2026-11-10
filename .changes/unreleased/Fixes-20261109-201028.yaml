@@ -1,0 +1,3 @@
+kind: Fixes
+body: The duplicate query name error now also describes a clash with a query read from another file.
+time: 2026-11-09T20:10:28.184848235Z

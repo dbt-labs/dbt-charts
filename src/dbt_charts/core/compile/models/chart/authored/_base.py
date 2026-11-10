@@ -108,6 +108,8 @@ def _reject_numeric_link(
 # which dead-ended the author in a second, unrelated error. Validating a hint
 # does not establish that following it works.
 STATIC_COLOR_FIX = "  style:\n    color:\n      static: category[1]"
+# The author already chose a color; keep it. `{value}` is the rejected literal.
+STATIC_COLOR_LITERAL_FIX = "  style:\n    color:\n      static: '{value}'"
 GRADIENT_COLOR_FIX = (
     "  style:\n    color:\n      gradient:\n        palette: dbt-seq-blue"
 )
@@ -117,7 +119,7 @@ ChartColorColumn = Annotated[
     StringConstraints(pattern=CHANNEL_COLUMN),
     ErrorHint(
         "chart.color is a data channel (bare field name only); a literal color "
-        "like '{value}' belongs in style:\n" + STATIC_COLOR_FIX
+        "like '{value}' belongs in style:\n" + STATIC_COLOR_LITERAL_FIX
     ),
 ]
 
@@ -163,7 +165,8 @@ def _reject_color_dict(v: Any) -> Any:
         if "value" in v:
             raise ValueError(
                 "color: {value: ...} no longer accepted at chart root. "
-                "Move literal colors to style:\n" + STATIC_COLOR_FIX
+                "Move literal colors to style:\n"
+                + STATIC_COLOR_LITERAL_FIX.format(value=v["value"])
             )
         if "scale" in v:
             raise ValueError(

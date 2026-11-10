@@ -1,0 +1,3 @@
+kind: Fixes
+body: A callout's warnings_ignore refuses an unregistered warning code, as every other chart does.
+time: 2026-11-09T14:31:02.426637651Z

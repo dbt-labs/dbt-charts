@@ -175,7 +175,10 @@ queries:
 **Options to copy deliberately**, each checked against the raw definition, not
 only the PNG: orientation; stacking; which column splits series; sort; date
 grain and window; KPI comparison, target and tone; table columns and page size;
-totals. Everything visual beyond that starts from the dbt Charts default.
+totals; the hover card (a source tile's tooltip columns become the chart's
+`tooltip:` list on bar, line, area, scatter and pie, in the source's order, with
+the source's format when it differs from the column's). Everything visual
+beyond that starts from the dbt Charts default.
 
 ### 3. Iterate until it looks right
 
@@ -223,8 +226,11 @@ Each rule is one a reviewed migration showed being broken.
 - Wire each control to exactly the tiles it reaches (`listens`, `targets`, and
   the children of a targeted parent); a tile no control reaches stays unfiltered.
 - Scope a page-only control to its tab (nested-board `variables:`); a
-  board-wide variable shows on every tab. Only a control whose targets span
-  every page goes in the board's top-level `variables:`.
+  board-wide variable shows on every tab. A control that sits in the page above
+  a group of tiles becomes the `variables:` of an inline board holding those
+  tiles (the `rows`/`cols` entry with its own `variables`, `queries` and
+  `charts`), so it appears where the source puts it. Only a control the source
+  places at the top of every page goes in the board's top-level `variables:`.
 - Name variables for what they set; options from the data, `static:` only for
   true enums; multiselects get `default: []`. Labels are the source's.
 - The default window is the source's (30 days stays 30 days, not 28 or a

@@ -11,13 +11,13 @@ use board_model::chart::{Columns, ScatterChart};
 use board_model::ids::ChartId;
 use board_model::style::font::SymbolShape;
 use board_model::style::marks::LabelVisible;
-use model_core::{Engine, Patch};
+use model_core::Engine;
 use board_model::style::style::Style;
 use diagnostic::{diag, refuse, Diagnostic};
 
 use crate::channel_type::{classify, ChannelType};
 use crate::decode::decode;
-use crate::derived::DerivedChart;
+use crate::derived::Placed;
 use crate::families::cartesian::{self, axis_format, count, hex, plain_text, threshold_rules, unsupported, value};
 use crate::formats::locale::{active_number_locale, NumberLocale};
 use crate::formats::{column_format, AuthoredFormat, Formats, Kind, ResolvedFormat, Tiers};
@@ -125,6 +125,9 @@ fn value_axis(
         mark: domain::Mark::Points,
     };
     let mut domain = cartesian::linear_domain(&axis, values, &format, column_forming, context)?;
+    if domain.extent.lo() == domain.extent.hi() {
+        return Err(unsupported(refuse!("a scatter axis over a single value is not supported")));
+    }
     if baked == Baked::X {
         let target = count(ladder)?.unwrap_or(Count::Auto).target();
         // Production fits an x to its data only clear of zero; a fit across zero stays niced.
@@ -160,14 +163,12 @@ pub fn bind(
     chart: &ScatterChart,
     board: &Board,
     body: &BoardBody,
-    own: &Patch<Style>,
     run: &RunResult,
-    derived: &DerivedChart,
+    placed: &Placed<'_>,
 ) -> Result<BoundChart, Diagnostic> {
     refuse_unported(chart)?;
     let title = plain_text(chart.cartesian.shared.title.as_ref())?;
     let subtitle = plain_text(chart.cartesian.shared.subtitle.as_ref())?;
-    let frame = Some(derived.frame.clone());
     let style: &Style = body
         .style
         .as_deref()
@@ -186,7 +187,7 @@ pub fn bind(
         Some(Columns::One(y)) => y.as_str(),
         _ => return Err(diag::err_internal("normalize requires a scatter's `y:`")),
     };
-    let tiers = StyleTiers { own: Tier::from(&*own.charts.scatter), family: Tier::from(&*style.charts.scatter), charts: &style.charts };
+    let tiers = StyleTiers { own: Tier::from(&*placed.own.charts.scatter), family: Tier::from(&*style.charts.scatter), charts: &style.charts };
     let x_ladder = AxisLadder::new(AxisName::X, ChannelType::Quantitative, &tiers, None, false)?;
     let y_ladder = AxisLadder::new(AxisName::Y, ChannelType::Quantitative, &tiers, None, false)?;
     if let Some(leaf) = x_ladder.unwalked_leaf().or_else(|| y_ladder.unwalked_leaf()) {
@@ -196,6 +197,7 @@ pub fn bind(
     let y_format = axis_format(&y_ladder, formats)?;
     let dataset = cartesian::dataset(id, &chart.cartesian, board, run, &[x_field, y_field])?;
     if dataset.rows.is_empty() {
+        let frame = Some(placed.derive()?.frame);
         return Ok(BoundChart { title, subtitle, frame, body: Body::Empty });
     }
     for field in [x_field, y_field] {
@@ -256,7 +258,9 @@ pub fn bind(
         unity: false,
         x_threshold: threshold_rules(&x_ladder)? && cartesian::spans_zero(&x_values),
     };
-    let fill = derived.single_series_fill;
+    let derived = placed.derive()?;
+    let frame = Some(derived.frame.clone());
+    let fill = placed.single_series_fill()?;
     let ink = color::label_ink(&hex(fill), &hex(derived.frame.canvas)).map_err(diag::err_internal)?;
     let series = Series {
         key: SeriesKey::Measure(y_field.to_string()),

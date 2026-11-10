@@ -27,7 +27,8 @@ mod stand_in;
 mod table_metrics_tests;
 mod word_floor;
 
-pub use column_demand::SAMPLE_ROWS;
+pub use column_demand::{column_demand_of, SAMPLE_ROWS};
+pub use word_floor::widest_word_with;
 pub use stand_in::stand_in_family;
 
 use std::collections::HashMap;

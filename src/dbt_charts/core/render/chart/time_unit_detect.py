@@ -30,7 +30,7 @@ import statistics
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from dbt_charts.core.constants.axis import MAX_ORDINAL_BUCKETS
+from dbt_charts.core.constants.axis import MAX_ORDINAL_BUCKETS, TEMPORAL_LABEL_GAP_PX
 from dbt_charts.core.font_measure import FontMeasurer
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.text.format_d3 import board_word, in_board_zone, portable_strftime
@@ -369,7 +369,7 @@ def _pair_clears(
     fiscal_year_start_month: int,
     authored_format: str | None,
 ) -> bool:
-    """True when labeled buckets *i* and *j* (i < j) do not overlap.
+    """True when labeled buckets *i* and *j* (i < j) sit ``TEMPORAL_LABEL_GAP_PX`` apart.
 
     Vega flushes a temporal axis's literal first rendered tick (``dates[0]``)
     to the plot's left edge whenever the axis is flush-enabled — this is
@@ -455,7 +455,7 @@ def _pair_clears(
     )
     left_extent = wi if left_flush else wi / 2
     right_extent = wj if right_flush else wj / 2
-    if left_extent + right_extent > clearance:
+    if left_extent + right_extent + TEMPORAL_LABEL_GAP_PX > clearance:
         return False
 
     if i_carries_year_row and j_carries_year_row:
@@ -463,7 +463,7 @@ def _pair_clears(
         yj = _year_row_width(dates[j], measurer, size)
         left_year_extent = yi if left_flush else yi / 2
         right_year_extent = yj if right_flush else yj / 2
-        if left_year_extent + right_year_extent > clearance:
+        if left_year_extent + right_year_extent + TEMPORAL_LABEL_GAP_PX > clearance:
             return False
 
     return True

@@ -109,6 +109,12 @@ macro_rules! string_newtype {
             }
         }
 
+        impl model_core::Spell for $name {
+            fn spell(&self) -> Value {
+                Value::from(self.0.as_str())
+            }
+        }
+
         model_leaf!($name, $keywords);
     };
 }

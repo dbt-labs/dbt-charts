@@ -2,7 +2,7 @@
 
 The ceiling is applied once in the normalizer (compile/normalize/dispatch.py) when the
 Board model is built, so sizing and rendering both see the capped value.
-Precedence: DCT_HTML_POLICY_CEILING env var > markdown.html_policy_ceiling in
+Precedence: DCT_HTML_POLICY_CEILING env var > top-level html_policy_ceiling in
 project config > board's own html_policy (board can never raise above the ceiling).
 
 Covers:

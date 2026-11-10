@@ -19,7 +19,8 @@ use crate::style::annotations::{
 use diagnostic::diag;
 use diagnostic::Diagnostic;
 use model_core::{
-    Authored, Cx, Entry, FromNode, Kind, Leaf, Node, Patch, ReadScalar, ScalarValue as Value, Tri,
+    Authored, Cx, Entry, FromNode, Kind, Leaf, Node, Patch, ReadScalar, ScalarValue as Value,
+    Spell, Tri,
 };
 use model_derive::Model;
 use regex::Regex;
@@ -317,6 +318,17 @@ impl ReadScalar for AnchorScalar {
         }
     }
 }
+impl Spell for AnchorScalar {
+    fn spell(&self) -> ::serde_json::Value {
+        match self {
+            Self::Number(n) => n.spell(),
+            Self::Date(s) | Self::Text(s) => s.spell(),
+            Self::Aggregate(a) => a.spell(),
+            Self::Clock(c) => c.spell(),
+        }
+    }
+}
+
 union_leaf!(
     AnchorScalar,
     ::model_core::TypeExpr::Either(
@@ -359,6 +371,15 @@ impl ReadScalar for Anchor {
         AnchorScalar::read(node, cx).map(Self::Scalar)
     }
 }
+impl Spell for Anchor {
+    fn spell(&self) -> ::serde_json::Value {
+        match self {
+            Self::Scalar(s) => s.spell(),
+            Self::Range(r) => r.spell(),
+        }
+    }
+}
+
 union_leaf!(
     Anchor,
     ::model_core::TypeExpr::Either(
@@ -383,6 +404,12 @@ impl ReadScalar for NoteAnchor {
         AnchorScalar::read(node, cx).map(Self)
     }
 }
+impl Spell for NoteAnchor {
+    fn spell(&self) -> ::serde_json::Value {
+        self.0.spell()
+    }
+}
+
 union_leaf!(NoteAnchor, <AnchorScalar as Leaf>::EXPR);
 
 /// The fitted function of a trend, `linear()` or `{kind: polynomial, order: 2}`.
@@ -395,6 +422,12 @@ impl ReadScalar for Fit {
         read_called::<FitFunction>(node, cx, called).map(Self)
     }
 }
+impl Spell for Fit {
+    fn spell(&self) -> ::serde_json::Value {
+        self.0.spell()
+    }
+}
+
 union_leaf!(
     Fit,
     ::model_core::TypeExpr::Either(
@@ -413,6 +446,12 @@ impl ReadScalar for Interval {
         read_called::<IntervalFunction>(node, cx, called).map(Self)
     }
 }
+impl Spell for Interval {
+    fn spell(&self) -> ::serde_json::Value {
+        self.0.spell()
+    }
+}
+
 union_leaf!(
     Interval,
     ::model_core::TypeExpr::Either(
@@ -482,6 +521,16 @@ impl ReadScalar for SeriesSelection {
         }
     }
 }
+impl Spell for SeriesSelection {
+    fn spell(&self) -> ::serde_json::Value {
+        match self {
+            Self::Each => "each".into(),
+            Self::Total => "total".into(),
+            Self::Names(n) => n.spell(),
+        }
+    }
+}
+
 union_leaf!(
     SeriesSelection,
     ::model_core::TypeExpr::Either(

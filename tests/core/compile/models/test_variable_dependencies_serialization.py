@@ -2,7 +2,7 @@
 a sorted, deterministic list — pydantic-core's JSON dump of a Python
 `frozenset` iterates in `PYTHONHASHSEED`-dependent order, so without a
 serializer two otherwise-identical processes can emit different orderings
-for the same set (`docs/laws-compile.md`'s rung 3 section, `libs/chart-svg`).
+for the same set.
 
 Covers every model that carries this field: `SqlQuery` (`models/query/
 normalized.py`), `Variable` (`models/variable/authored.py`), the normalized

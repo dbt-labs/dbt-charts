@@ -362,7 +362,7 @@ fn not_modeled(input: &str) -> Diagnostic {
 }
 
 /// Python's `str(value)` of a variable's value.
-fn text_of(atom: &Atom) -> String {
+pub fn text_of(atom: &Atom) -> String {
     match atom {
         Atom::Text(text) | Atom::Date(text) => text.clone(),
         Atom::Int(n) => n.to_string(),

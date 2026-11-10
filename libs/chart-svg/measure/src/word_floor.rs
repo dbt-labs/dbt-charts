@@ -14,18 +14,23 @@ fn sets_floor(token: &str) -> bool {
         && token.chars().count() <= MAX_TOKEN_CHARS
 }
 
-impl Measure<'_> {
-    /// The widest whitespace token of `text` that [`sets_floor`] admits, and
-    /// its width; `("", 0.0)` when none qualifies.
-    pub fn widest_word<'t>(&self, text: &'t str, family: &str, size: f64) -> Result<(f64, &'t str), String> {
-        let mut widest = (0.0_f64, "");
-        for token in text.split_whitespace().filter(|t| sets_floor(t)) {
-            let width = self.fonts.measure(token, family, size)?;
-            if width > widest.0 {
-                widest = (width, token);
-            }
+/// The widest whitespace token of `text` that [`sets_floor`] admits, and its width under `width`;
+/// `(0.0, "")` when none qualifies. The measurer is the caller's: a table measures raw advances.
+pub fn widest_word_with<'t>(text: &'t str, mut width: impl FnMut(&str) -> Result<f64, String>) -> Result<(f64, &'t str), String> {
+    let mut widest = (0.0_f64, "");
+    for token in text.split_whitespace().filter(|t| sets_floor(t)) {
+        let token_width = width(token)?;
+        if token_width > widest.0 {
+            widest = (token_width, token);
         }
-        Ok(widest)
+    }
+    Ok(widest)
+}
+
+impl Measure<'_> {
+    /// [`widest_word_with`] under the book's measure.
+    pub fn widest_word<'t>(&self, text: &'t str, family: &str, size: f64) -> Result<(f64, &'t str), String> {
+        widest_word_with(text, |token| self.fonts.measure(token, family, size))
     }
 
     /// The width of [`Self::widest_word`].

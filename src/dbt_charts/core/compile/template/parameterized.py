@@ -64,6 +64,7 @@ from dbt_charts.core.compile.template._helpers import (
     _LenientUndefined,
     _QueryNamespace,
     template_error_location,
+    undefined_variable_advice,
 )
 from dbt_charts.core.compile.template.daterange import (
     current_board_clock,
@@ -547,9 +548,9 @@ def render_parameterized(
     if "queries" in variables:
         context["queries"] = variables["queries"]
 
+    undefined_cls = StrictUndefined if strict else _LenientUndefined
+    env = BoardTemplateEnvironment(undefined=undefined_cls)
     try:
-        undefined_cls = StrictUndefined if strict else _LenientUndefined
-        env = BoardTemplateEnvironment(undefined=undefined_cls)
         jinja_template = env.from_string(template)
         rendered_sql = render_with_budget(jinja_template, context)
 
@@ -572,8 +573,10 @@ def render_parameterized(
             emitted_bytes=e.emitted_bytes, ceiling=e.ceiling
         ) from e
     except UndefinedError as e:
+        advice = undefined_variable_advice(env, template, context)
         raise JinjaError(
-            f"Undefined variable: {e}{template_error_location(template, e)}", template
+            f"Undefined variable: {e}{template_error_location(template, e)}.{advice}",
+            template,
         ) from e
     except TemplateSyntaxError as e:
         raise JinjaError(
@@ -585,13 +588,12 @@ def render_parameterized(
         # UndefinedError rather than a subclass. Uncoded it reaches the executor
         # and stamps ERR-INTERNAL, which this repo treats as a bug rather than
         # an author-facing error.
-        raise JinjaError(f"Template error: {e}", template) from e
+        raise JinjaError(f"{e}{template_error_location(template, e)}", template) from e
     except ValueError as e:
         # Re-raise validation errors (operator, column name) with context
         raise JinjaError(f"Validation error: {e}", template) from e
     except (KeyError, TypeError) as e:
-        # Key lookup failures, type errors
-        raise JinjaError(f"Template error: {e}", template) from e
+        raise JinjaError(str(e), template) from e
 
 
 def _check_placeholders_present(

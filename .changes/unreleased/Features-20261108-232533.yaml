@@ -1,0 +1,3 @@
+kind: Features
+body: 'Charts drawn from Markdown fences now show tooltips and hover emphasis: the extension adds the hover script to each page, and `dct runtime-js` writes it for other static sites.'
+time: 2026-11-08T23:25:33.797276-08:00

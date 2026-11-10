@@ -1517,6 +1517,14 @@ pub fn clear_left_stubs(rows: &mut [ComposedRow], reach: f64) {
     rows.iter_mut().for_each(|row| row.stub_dx -= reach);
 }
 
+/// Moves row labels on the right of the plot out from under the last column: cells end at
+/// `x + dx`, so a column centered on the plot's end reaches into the gutter where the labels begin.
+/// Every label moves together, so the stubs stay one column.
+pub fn clear_right_stubs(rows: &mut [ComposedRow], plot_w: f64) {
+    let reach = composed_right_overhang(rows, plot_w);
+    rows.iter_mut().for_each(|row| row.stub_dx += reach);
+}
+
 /// `rows` reduced to the `kept` buckets. A row's first carrying kept cell takes
 /// its declaring form: the unit sits on the first number the row shows, even
 /// when the stride passed the bucket the row first carried it on, and it hangs

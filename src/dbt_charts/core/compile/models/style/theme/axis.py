@@ -491,7 +491,7 @@ class AxisLabelStyle(BaseModel):
     )
     flush: Annotated[bool | float | None, AutoUnset()] = Field(
         default=None,
-        description="Align first/last label flush with the scale range; 'auto' uses Vega-Lite's default.",
+        description="Pull the first and last labels inward to stay inside the scale range (true, or a pixel threshold); false centers every label on its tick. 'auto' leaves the choice to the renderer.",
     )
     offset: Annotated[float | None, AutoUnset()] = Field(
         default=None,

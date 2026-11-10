@@ -297,6 +297,15 @@ def suggest_close_theme(
     return _suggest_close_match(theme, available)
 
 
+def suggest_close_query(
+    query_name: str,
+    available: Sequence[str] = (),
+    **_kwargs: object,  # type-state: object_annotation — hint_generator is called with every field of the code; the rest are heterogeneous and unread
+) -> str | None:
+    """Return a 'Did you mean X?' hint for a chart's `query:` that names no declared query."""
+    return _suggest_close_match(query_name, available)
+
+
 def suggest_close_chart(
     chart: str,
     available: Sequence[str] = (),
@@ -406,3 +415,13 @@ def suggest_close_source_table(
 ) -> str | None:
     """Return a 'Did you mean X?' hint for an unknown dbt source() reference."""
     return _suggest_close_match(f"{source_name}.{table_name}", available)
+
+
+MAX_LISTED_VALUES = 10
+
+
+def backticked_list(values: Sequence[str], limit: int = MAX_LISTED_VALUES) -> str:
+    """``values`` as backticked, comma-joined text, capped at ``limit`` with a count."""
+    shown = ", ".join(f"`{value}`" for value in values[:limit])
+    rest = len(values) - limit
+    return f"{shown} and {rest} more" if rest > 0 else shown

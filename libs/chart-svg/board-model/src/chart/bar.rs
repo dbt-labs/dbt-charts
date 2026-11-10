@@ -35,7 +35,7 @@ pub struct BarChart {
     #[model(absent = "bars start at zero")]
     pub y_start: Option<NonBlankColumn>,
     /// Appearance overrides for this chart alone.
-    #[model(nullable)]
+    #[model(fill = fill_style, nullable)]
     pub style: BarChartStyle,
     /// Extra marks on one shared x, each with its own type. Not supported when type: histogram: a histogram bins x and aggregates to a count, so there is no shared y measure for an overlay to plot against.
     #[model(fill = fill_empty, nullable)]

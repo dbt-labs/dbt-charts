@@ -1373,7 +1373,7 @@ def exposures(
     )
 
 
-@app.command("semantics", rich_help_panel="Dashboards")
+@app.command("semantics", hidden=True)
 def semantics(
     source: Annotated[
         str,
@@ -2056,6 +2056,32 @@ def examples(
         limit=limit,
         as_json=as_json,
     )
+
+
+@app.command("runtime-js", rich_help_panel="Reference")
+def runtime_js(
+    out: Annotated[
+        Path | None,
+        typer.Option("--out", help="Write the script to this file (default: print)"),
+    ] = None,
+) -> None:
+    """Print the chart hover script, for a static site to serve itself.
+
+    Tooltips and hover emphasis need inline SVG plus this one script, loaded
+    once per page with a plain <script> tag; it serves every chart on the
+    page. A Python-Markdown site gets it from the extension instead.
+
+    \b
+      dct runtime-js --out site/static/charts.js
+    """
+    from dbt_charts.agent_api import hover_runtime_source
+
+    source = hover_runtime_source()
+    if out is None:
+        typer.echo(source, nl=False)
+        return
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(source, encoding="utf-8")
 
 
 @app.command("skills", rich_help_panel="Reference")

@@ -215,11 +215,11 @@ def test_list_built_in_themes_enumerates_via_iterdir_not_glob(
     monkeypatch.setattr(
         config_mod, "_built_in_unified_theme_dir", no_glob_traversable(tmp_path)
     )
-    config_mod.list_built_in_themes.cache_clear()
+    config_mod.list_built_in_theme_fragments.cache_clear()
     try:
         names = config_mod.list_built_in_themes()
     finally:
-        config_mod.list_built_in_themes.cache_clear()
+        config_mod.list_built_in_theme_fragments.cache_clear()
 
     assert names == ["alpha", "mid", "zeta"]
 

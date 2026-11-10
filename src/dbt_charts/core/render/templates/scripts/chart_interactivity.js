@@ -1,18 +1,32 @@
 (function () {
-    /*{# Theme facts, read off the board root at mount (data-dbt-font-family, #}*/
+    /*{# One script serves every board on a page, however many times a host #}*/
+    /*{# loads it: a second load finds the first and leaves it be. #}*/
+    if (window.dbtChartHover) return;
+
+    /*{# Theme facts, read off each board root (data-dbt-font-family, #}*/
     /*{# data-dbt-tooltip-style, data-dbt-hover-emphasis): one static script #}*/
     /*{# for every board, shipped by the host — never templated into a board. #}*/
     /*{# The root carrying them is what makes an svg a board; the host's own #}*/
-    /*{# icons are svgs too and stay untouched. Page-level, not per root: a #}*/
-    /*{# page showing differently themed boards would need them keyed by root. #}*/
-    let DCT_FONT_FAMILY;
-    let DCT_TOOLTIP_STYLE;
-    let DCT_HOVER_EMPHASIS;
+    /*{# icons are svgs too and stay untouched. Boards on one page may be #}*/
+    /*{# themed differently, so each is parsed once and keyed by its root; #}*/
+    /*{# `active` is the board whose event is running, set on entry by #}*/
+    /*{# useBoard (handlers are synchronous, so it never goes stale). #}*/
+    const boardConfigs = new WeakMap();
+    let active = null;
 
-    function readBoardConfig(root) {
-        DCT_FONT_FAMILY = root.dataset.dbtFontFamily;
-        DCT_TOOLTIP_STYLE = JSON.parse(root.dataset.dbtTooltipStyle);
-        DCT_HOVER_EMPHASIS = JSON.parse(root.dataset.dbtHoverEmphasis);
+    function useBoard(root) {
+        let config = boardConfigs.get(root);
+        if (!config) {
+            config = {
+                fontFamily: root.dataset.dbtFontFamily,
+                tooltipStyle: JSON.parse(root.dataset.dbtTooltipStyle),
+                hoverEmphasis: JSON.parse(root.dataset.dbtHoverEmphasis),
+            };
+            boardConfigs.set(root, config);
+        }
+        if (config === active) return;
+        active = config;
+        if (window.__dbtChartsChartHoverState) styleTooltip(window.__dbtChartsChartHoverState.tooltip);
     }
 
     /*{# Role markers baked by emitters/_tooltip.py's ROLE_HEADER / ROLE_HEADER_SWATCHED / #}*/
@@ -416,7 +430,7 @@
     /*{# (the theme's tooltip.max_rows). One series past the cap is shown #}*/
     /*{# itself -- a "+1" row hides it for no gain. #}*/
     function buildRowPlan(matches, hoveredMark) {
-        const visibleCount = DCT_TOOLTIP_STYLE.maxRows;
+        const visibleCount = active.tooltipStyle.maxRows;
         if (matches.length <= visibleCount + 1) {
             return { shown: matches, remainder: [] };
         }
@@ -489,22 +503,32 @@
         return escapeHtml(value);
     }
 
-    function ensureState() {
-        if (window.__dbtChartsChartHoverState) {
-            return window.__dbtChartsChartHoverState;
-        }
-
-        const ts = DCT_TOOLTIP_STYLE;
-        const tooltip = document.createElement('div');
-        tooltip.className = 'dbt-tooltip';
-        tooltip.setAttribute('role', 'tooltip');
-        tooltip.style.position = 'fixed';
-        tooltip.style.display = 'none';
+    /*{# The one tooltip box serves every board on the page, so the active #}*/
+    /*{# board's theme is restyled onto it whenever the pointer changes boards. #}*/
+    function styleTooltip(tooltip) {
+        const ts = active.tooltipStyle;
         tooltip.style.background = ts.background;
         tooltip.style.padding = ts.padding.top + 'px ' + ts.padding.right + 'px ' + ts.padding.bottom + 'px ' + ts.padding.left + 'px';
         tooltip.style.borderRadius = ts.border.radius + 'px';
         tooltip.style.fontSize = ts.font.size + 'px';
         tooltip.style.lineHeight = String(ts.lineHeight);
+        tooltip.style.maxWidth = ts.maxWidth + 'px';
+        tooltip.style.boxShadow = ts.shadow.visible ? '0 10px 25px rgba(15, 23, 42, 0.25)' : 'none';
+        tooltip.style.border = ts.border.width + 'px solid ' + ts.border.color;
+        tooltip.style.fontFamily = active.fontFamily;
+    }
+
+    function ensureState() {
+        if (window.__dbtChartsChartHoverState) {
+            return window.__dbtChartsChartHoverState;
+        }
+
+        const tooltip = document.createElement('div');
+        tooltip.className = 'dbt-tooltip';
+        tooltip.setAttribute('role', 'tooltip');
+        tooltip.style.position = 'fixed';
+        tooltip.style.display = 'none';
+        styleTooltip(tooltip);
         tooltip.style.pointerEvents = 'none';
         tooltip.style.zIndex = '10000';
         /*{# Size to content, capped at maxWidth. A fixed-position box is #}*/
@@ -514,11 +538,7 @@
         /*{# column and the hovered-row highlight with it. max-content pins the #}*/
         /*{# width to the content in every host, so the highlight stays tight. #}*/
         tooltip.style.width = 'max-content';
-        tooltip.style.maxWidth = ts.maxWidth + 'px';
-        tooltip.style.boxShadow = ts.shadow.visible ? '0 10px 25px rgba(15, 23, 42, 0.25)' : 'none';
         tooltip.style.backdropFilter = 'blur(4px)';
-        tooltip.style.border = ts.border.width + 'px solid ' + ts.border.color;
-        tooltip.style.fontFamily = DCT_FONT_FAMILY;
         if (document.body) {
             document.body.appendChild(tooltip);
         }
@@ -808,7 +828,7 @@
         const mark = rgbOf(paint);
         const ground = rgbOf(background);
         const groundLuminance = luminanceOf(ground);
-        const target = DCT_HOVER_EMPHASIS.recedeContrast;
+        const target = active.hoverEmphasis.recedeContrast;
         const contrastAt = function (share) {
             const lum = luminanceOf(mark.map(function (v, i) { return share * v + (1 - share) * ground[i]; }));
             return (Math.max(lum, groundLuminance) + 0.05) / (Math.min(lum, groundLuminance) + 0.05);
@@ -946,7 +966,7 @@
     }
 
     function planHoverEmphasis(state, mark, keptLabels, next) {
-        if (!DCT_HOVER_EMPHASIS.visible) return;
+        if (!active.hoverEmphasis.visible) return;
         const chartEl = mark.closest('.dbt-chart');
         if (!chartEl || isMagnitudeColored(chartEl)) return;
         const background = chartBackground(mark);
@@ -1048,7 +1068,7 @@
 
     function seriesHandleAt(target, x, y) {
         const chartEl = target.closest('.dbt-chart');
-        if (!chartEl || !DCT_HOVER_EMPHASIS.visible || isMagnitudeColored(chartEl) || !chartBackground(chartEl)) return null;
+        if (!chartEl || !active.hoverEmphasis.visible || isMagnitudeColored(chartEl) || !chartBackground(chartEl)) return null;
         const direct = target.closest('text[data-dbt-series]');
         const entry = direct && !direct.closest('.role-legend') ? null : legendEntryAt(chartEl, x, y);
         const key = entry ? entry.key : direct && direct.getAttribute('data-dbt-series');
@@ -1426,7 +1446,7 @@
 
         /*{# The drop line is anchored on the HOVERED datum's x -- every match #}*/
         /*{# shares it -- not on whichever series happens to sort first. Its #}*/
-        /*{# color is a fixed theme neutral (DCT_HOVER_EMPHASIS.dropLineColor), #}*/
+        /*{# color is a fixed theme neutral (active.hoverEmphasis.dropLineColor), #}*/
         /*{# never the hovered series' own paint (below, the one shared ink of a #}*/
         /*{# single-color pattern chart, which is every series' paint): the line reads as "here is #}*/
         /*{# the x", the dots beside it already say which series is which. #}*/
@@ -1437,7 +1457,7 @@
         const inks = new Set(Array.from(chartEl.querySelectorAll('[data-dbt-ink]'), function (el) { return el.getAttribute('data-dbt-ink'); }));
         const dropLineColor = inks.size === 1 && points.every(function (point) { return point.hasAttribute('data-dbt-ink'); })
             ? inks.values().next().value
-            : DCT_HOVER_EMPHASIS.dropLineColor;
+            : active.hoverEmphasis.dropLineColor;
 
         /*{# Vega's grid group carries the same transform as the real x-axis #}*/
         /*{# but is aria-hidden, so the axis is identified by its label. A #}*/
@@ -1477,7 +1497,7 @@
             overlay.appendChild(svgNode('line', {
                 x1: anchor.x, y1: top, x2: anchor.x, y2: baselineY,
                 stroke: dropLineColor,
-                'stroke-width': DCT_HOVER_EMPHASIS.dropLineWidth,
+                'stroke-width': active.hoverEmphasis.dropLineWidth,
             }));
         }
 
@@ -1538,7 +1558,7 @@
     /*{# a pure bar, pie or heatmap chart has no point marks in it, so the #}*/
     /*{# filter below empties and nothing is drawn, with no family test here. #}*/
     function applyHoverMarkers(state, mark, matches) {
-        if (!DCT_HOVER_EMPHASIS.visible) return;
+        if (!active.hoverEmphasis.visible) return;
         const chartEl = mark.closest('.dbt-chart');
         if (!chartEl) return;
 
@@ -1631,7 +1651,7 @@
     function seriesSwatch(color, asLine) {
         const pattern = patternPaint(color);
         if (pattern) return patternSwatch(pattern);
-        const sw = DCT_TOOLTIP_STYLE.swatch;
+        const sw = active.tooltipStyle.swatch;
         const height = asLine ? 2 : sw.size;
         return '<span style="display:inline-block;width:' + sw.size + 'px;height:' + height +
             'px;border-radius:' + (asLine ? 1 : sw.radius) + 'px;' +
@@ -2010,7 +2030,7 @@
             return;
         }
 
-        const ts = DCT_TOOLTIP_STYLE;
+        const ts = active.tooltipStyle;
         state.activeMark = mark;
         const matches = svg ? collectMatchingMarks(svg, mark, entries) : [{ mark: mark, entries: entries }];
         const useXUnified = matches.length > 1 && matches.length <= ts.groupLimit;
@@ -2055,10 +2075,16 @@
         }
 
         svg.dataset.dbtHoverInitialized = 'true';
-        readBoardConfig(svg);
+        useBoard(svg);
         const state = ensureState();
+        const on = function (type, handler) {
+            svg.addEventListener(type, function (event) {
+                useBoard(svg);
+                handler(event);
+            });
+        };
 
-        svg.addEventListener('mousemove', function (event) {
+        on('mousemove', function (event) {
             const target = event.target;
             /*{# The toolbar's buttons own their own popovers; the snap below #}*/
             /*{# would otherwise hand the cursor to a mark within radius. #}*/
@@ -2134,18 +2160,18 @@
             }
         });
 
-        svg.addEventListener('mouseleave', function () {
+        on('mouseleave', function () {
             hideTooltip(state);
         });
 
-        svg.addEventListener('mousemove', function (event) {
+        on('mousemove', function (event) {
             const chartEl = event.target && event.target.closest && event.target.closest('.dbt-chart');
             if (!chartEl || !window.dbtControls || !chartEl.querySelector(HIDING_ITEM)) return;
             if (hidingItemAt(event.target, event.clientX, event.clientY)) chartEl.style.cursor = 'pointer';
             else chartEl.style.removeProperty('cursor');
         });
 
-        svg.addEventListener('click', function (event) {
+        on('click', function (event) {
             if (event.defaultPrevented || event.button !== 0 || !window.dbtControls) return;
             const hit = hidingItemAt(event.target, event.clientX, event.clientY);
             if (!hit) return;
@@ -2153,7 +2179,7 @@
             clickHidingItem(state, hit.item);
         });
 
-        svg.addEventListener('keydown', function (event) {
+        on('keydown', function (event) {
             if (event.repeat || (event.key !== 'Enter' && event.key !== ' ') || !window.dbtControls) return;
             const item = event.target && event.target.closest && event.target.closest(HIDING_ITEM);
             if (!item || !svg.contains(item)) return;
@@ -2237,7 +2263,8 @@
     function mountToolbars(svg) {
         const slots = CHART_TOOLBAR_SLOTS.filter(function (id) { return chartButtons[id]; });
         if (!slots.length || !svg.matches('[data-dbt-tooltip-style]')) return;
-        const ts = DCT_TOOLTIP_STYLE;
+        useBoard(svg);
+        const ts = active.tooltipStyle;
         const size = ts.font.size * TOOLBAR_BUTTON_FONT_RATIO;
         const iconSize = ts.font.size * TOOLBAR_ICON_FONT_RATIO;
         svg.querySelectorAll('.dbt-chart').forEach(function (chart) {
@@ -2268,7 +2295,7 @@
     /*{# the board out of the document (the table runtime's off-page rows) #}*/
     /*{# adds a step that puts it back into the copy. #}*/
     const pictureSteps = [];
-    window.dbtChartHover = {
+    const runtime = window.dbtChartHover = {
         registerChartButton: registerChartButton,
         picture: function (svg) {
             /*{# No hover state means no preview to clear; building one would #}*/
@@ -2300,4 +2327,25 @@
     } else {
         window.dbtChartHover.mount();
     }
+
+    /*{# A page that inserts boards after load (a poll that swaps HTML in, a #}*/
+    /*{# client-side router) needs no call to mount(): added boards are found #}*/
+    /*{# here. Only a board root is worth a scan -- the tooltip and toolbars #}*/
+    /*{# this runtime inserts carry svgs of their own. A runtime replaced on #}*/
+    /*{# window stops watching. #}*/
+    const page = window;
+    const watcher = new MutationObserver(function (records) {
+        if (page.dbtChartHover !== runtime) {
+            watcher.disconnect();
+            return;
+        }
+        records.forEach(function (record) {
+            record.addedNodes.forEach(function (node) {
+                if (node.nodeType === 1 && (node.matches('[data-dbt-tooltip-style]') || node.querySelector('[data-dbt-tooltip-style]'))) {
+                    runtime.mount(node);
+                }
+            });
+        });
+    });
+    watcher.observe(document.documentElement, { childList: true, subtree: true });
 })();

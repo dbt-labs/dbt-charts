@@ -5,9 +5,11 @@
 //!
 //! Over daily data production first tries the native labels: the day numbers, then the Mondays'
 //! (`submonth_candidate_fits`), and when neither clears and the data holds fewer than two month
-//! starts, the Mondays alone, tilted rather than thinned. Over weekly data, with fewer than two
-//! month openers, it judges the native day labels as a flat, parity or tilted row
-//! (`generic_layout`). Every other case walks the bucketed ladder from the label grain.
+//! starts, the Mondays alone, tilted rather than thinned. Weekly data over bucket-aligned marks (a
+//! bar's, `Crowding::bucket_aligned`) takes the same rungs, its own weeks standing for the Mondays;
+//! over a line's weekly data, with fewer than two month openers, production judges the native day
+//! labels as a flat, parity or tilted row (`generic_layout`). Every other case walks the bucketed
+//! ladder from the label grain.
 
 use bind::temporal::TimeUnit;
 use d3rs::calendar::weekday;
@@ -78,6 +80,10 @@ pub struct Crowding<'a> {
     /// An edge label anchors on the plot edge, reserving its full width from it.
     pub flush: bool,
     pub font_size: f64,
+    /// Production's `bucket_aligned_temporal`: the marks span buckets, as a bar's do
+    /// (`bar/time_x.rs:468`; a line or area never sets it, `temporal.rs:1442`). A weekly axis then
+    /// tries its native week labels as a daily one does (`resolve_vega_label_layout`, `temporal.rs:1486`).
+    pub bucket_aligned: bool,
 }
 
 type Measure<'a> = &'a mut dyn FnMut(&str) -> Result<f64, Diagnostic>;
@@ -108,7 +114,8 @@ pub fn resolve(
         return Ok(ladder.plain(format));
     }
     match data {
-        TimeUnit::YearMonthDate if label_auto => ladder.daily(measure),
+        TimeUnit::YearMonthDate if label_auto => ladder.submonth(measure),
+        TimeUnit::YearWeek if label_auto && crowding.bucket_aligned => ladder.submonth(measure),
         TimeUnit::YearWeek if label_auto => ladder.weekly(format, measure),
         _ => ladder.resolve(format, measure),
     }
@@ -165,11 +172,32 @@ impl Ladder<'_> {
         }
     }
 
-    /// Daily data, labels unset (`resolve_vega_label_layout`'s first native branch): the day
-    /// numbers, then the Mondays', when each clears; else the month ladder when two month starts
-    /// are there to promote to; else the Mondays alone, tilted rather than thinned.
-    fn daily(&self, measure: Measure) -> Result<Cadence, Diagnostic> {
-        for candidate in [TimeUnit::YearMonthDate, TimeUnit::YearWeek] {
+    /// The rungs a daily or bucket-aligned weekly axis tries before the bucketed ladder: the day
+    /// numbers (daily data only), then the weeks'.
+    fn native_candidates(&self) -> &'static [TimeUnit] {
+        if self.data == TimeUnit::YearMonthDate {
+            &[TimeUnit::YearMonthDate, TimeUnit::YearWeek]
+        } else {
+            &[TimeUnit::YearWeek]
+        }
+    }
+
+    /// The dates a `candidate` rung labels (`submonth_candidate_indices`): the Mondays of daily data
+    /// for the week rung, every bucket otherwise (a weekly axis labels each week).
+    fn candidate_indices(&self, candidate: TimeUnit) -> Vec<usize> {
+        if self.data == TimeUnit::YearMonthDate && candidate == TimeUnit::YearWeek {
+            self.mondays()
+        } else {
+            (0..self.dates.len()).collect()
+        }
+    }
+
+    /// Daily data, or weekly data over bucket-aligned marks, labels unset (`resolve_vega_label_layout`'s
+    /// first native branch): the day numbers (daily only), then the weeks' (the Mondays' over daily
+    /// data), when each clears; else the month ladder when two month starts are there to promote to;
+    /// else the weeks alone, tilted rather than thinned.
+    fn submonth(&self, measure: Measure) -> Result<Cadence, Diagnostic> {
+        for &candidate in self.native_candidates() {
             if self.candidate_fits(candidate, measure)? {
                 return Ok(self.plain(candidate));
             }
@@ -177,7 +205,7 @@ impl Ladder<'_> {
         if self.openers(TimeUnit::YearMonth, 1).len() >= 2 {
             return self.resolve(TimeUnit::YearMonth, measure);
         }
-        let mondays = self.mondays();
+        let mondays = self.candidate_indices(TimeUnit::YearWeek);
         if mondays.is_empty() {
             return Err(Diagnostic::refused(
                 "a continuous daily axis spanning no Monday has no weekly rung",
@@ -215,11 +243,7 @@ impl Ladder<'_> {
     /// the day-number row and the context row (month, year) are each their own clearance, a pair
     /// needing half its widths plus a gap on each side against the calendar distance between them.
     fn candidate_fits(&self, candidate: TimeUnit, measure: Measure) -> Result<bool, Diagnostic> {
-        let indices: Vec<usize> = if candidate == TimeUnit::YearWeek {
-            self.mondays()
-        } else {
-            (0..self.dates.len()).collect()
-        };
+        let indices = self.candidate_indices(candidate);
         if indices.is_empty() {
             return Ok(false);
         }

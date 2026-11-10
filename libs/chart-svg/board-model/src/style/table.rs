@@ -31,7 +31,9 @@ use crate::style::chart_base::TitledChartStyleBase;
 use crate::style::font::{FontSlant, FontStyle, LetterCase, TextDecoration};
 use crate::unit::{Fraction, Px};
 use indexmap::IndexMap;
-use model_core::{Cx, Engine, FromNode, Leaf, Merge, Node, Patch, ReadScalar, Scalar, TypeExpr};
+use model_core::{
+    Cx, Engine, FromNode, Leaf, Merge, Node, Patch, ReadScalar, Scalar, Spell, TypeExpr,
+};
 use model_derive::Model;
 use serde_json::Value;
 
@@ -106,6 +108,15 @@ impl model_core::TokenBlock for SparkSpec {
     }
 }
 
+impl Spell for SparkSpec {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Type(t) => t.spell(),
+            Self::Block(b) => b.spell(),
+        }
+    }
+}
+
 impl ReadScalar for SparkSpec {
     fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
         if matches!(node.kind, model_core::Kind::Map(_)) {
@@ -171,6 +182,15 @@ impl ReadScalar for PixelWidth {
                 cx.mismatch(node, "an integer or a CSS width string");
                 None
             }
+        }
+    }
+}
+
+impl Spell for PixelWidth {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Pixels(n) => n.spell(),
+            Self::Css(s) => s.spell(),
         }
     }
 }

@@ -595,7 +595,6 @@ def create_client(
         raise ValueError(f"Unsupported provider: {provider}")
     if not model and not os.getenv("OPENAI_API_KEY"):
         raise RuntimeError(
-            "No LLM API key found. Set OPENAI_API_KEY in the environment, "
-            "or pass --model to select a model explicitly."
+            "No LLM API key found. Set OPENAI_API_KEY in the environment."
         )
     return OpenAIAdapter(OpenAIGateway(), model=model, effort=effort)

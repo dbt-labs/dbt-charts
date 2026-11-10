@@ -14,7 +14,9 @@ use crate::rule::Auto;
 use crate::string_enum;
 use crate::style::font::{FontSlant, FontStyle, LetterCase, SymbolShape, TextDecoration};
 use crate::unit::Fraction;
-use model_core::{Cx, Engine, FromNode, Leaf, Merge, Node, Patch, ReadScalar, Scalar, TypeExpr};
+use model_core::{
+    Cx, Engine, FromNode, Leaf, Merge, Node, Patch, ReadScalar, Scalar, Spell, TypeExpr,
+};
 use model_derive::Model;
 
 string_enum!(
@@ -108,6 +110,17 @@ impl ReadScalar for LabelVisible {
                 cx.invalid(node.span, e);
                 None
             }
+        }
+    }
+}
+
+impl Spell for LabelVisible {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Self::Off => false.into(),
+            Self::All => true.into(),
+            Self::Anchors(a) if a.as_slice() == [LabelAnchor::Last] => "last".into(),
+            Self::Anchors(a) => a.spell(),
         }
     }
 }
@@ -429,7 +442,10 @@ pub struct BarMarkStyle {
 #[model(constraint(range(disconnected_width, gt = 0, le = 1)))]
 pub struct LineMarkStyle {
     /// Line stroke style.
-    #[model(fill_at(to = "color", value = "auto"), fill_at(to = "width", value = "auto"))]
+    #[model(
+        fill_at(to = "color", value = "auto"),
+        fill_at(to = "width", value = "auto")
+    )]
     pub stroke: StrokeStyle,
     /// Line interpolation curve, one of a fixed set.
     #[model(fill = "linear")]
@@ -543,7 +559,11 @@ pub struct RectMarkStyle {
     #[model(fill = "auto")]
     pub opacity: Engine<Fraction, Auto>,
     /// Mark stroke style.
-    #[model(absent = "no stroke", fill_at(to = "color", value = "auto"), fill_at(to = "width", value = "auto"))]
+    #[model(
+        absent = "no stroke",
+        fill_at(to = "color", value = "auto"),
+        fill_at(to = "width", value = "auto")
+    )]
     pub stroke: Option<StrokeStyle>,
 }
 
@@ -554,7 +574,12 @@ pub struct CircleMarkStyle {
     #[model(fill = 1.0)]
     pub opacity: Engine<Fraction, Auto>,
     /// Mark stroke style.
-    #[model(local, absent = "no stroke", fill_at(to = "color", value = "auto"), fill_at(to = "width", value = "auto"))]
+    #[model(
+        local,
+        absent = "no stroke",
+        fill_at(to = "color", value = "auto"),
+        fill_at(to = "width", value = "auto")
+    )]
     pub stroke: Option<StrokeStyle>,
 }
 

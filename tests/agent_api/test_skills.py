@@ -850,3 +850,8 @@ def test_unknown_skill_points_each_surface_at_its_own_listing() -> None:
     assert "dct" not in str(tool.value)
     with pytest.raises(SkillNotFound, match="`dct skills`"):
         get_skill("no-such-skill", surface="cli")
+
+
+def test_semantic_query_skill_is_served_but_never_listed() -> None:
+    assert "semantic-query" not in {s.name for s in list_skills().skills}
+    assert get_skill("semantic-query").name == "semantic-query"

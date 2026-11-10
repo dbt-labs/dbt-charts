@@ -485,7 +485,7 @@ _EXTENDS_STRIP: set[str] = {"id", "aliases", "schema_version", "extends"}
 
 @cache
 def get_theme_names() -> frozenset[str]:
-    """Cached frozenset of built-in theme stems.
+    """Cached frozenset of the authorable built-in theme names.
 
     Public because the extends vocabulary is shared: normalization reads it to
     pick the effective theme, validation to reject a name nothing resolves.
@@ -713,7 +713,10 @@ def _resolve_entry(
         # Theme-build lane: built-in themes are immutable package data with a
         # names-only extends chain — read via importlib.resources (no Project
         # seam). board_dir is never consulted for a theme, so reuse ctx.
-        from dbt_charts.core.compile.config import _built_in_unified_theme_dir
+        from dbt_charts.core.compile.config import (
+            _built_in_unified_theme_dir,
+            list_built_in_theme_fragments,
+        )
 
         theme_relpath = f"{entry}.yaml"
         if theme_relpath in seen:
@@ -724,8 +727,15 @@ def _resolve_entry(
         fragment = _fragment_from_yaml(
             theme_file.read_text(encoding="utf-8"), theme_relpath, None
         )
+        # A theme's own chain runs through private fragments (`_base`) that a
+        # board may not name, so it resolves against every shipped stem.
+        theme_ctx = _ExtendCtx(
+            board_dir=ctx.board_dir,
+            boards_root=ctx.boards_root,
+            theme_names=frozenset(list_built_in_theme_fragments()),
+        )
         extends_patch = _merge_extends_inner(
-            fragment, ctx, seen | {theme_relpath}, theme_sink
+            fragment, theme_ctx, seen | {theme_relpath}, theme_sink
         )
         return merge_patches(extends_patch, _fragment_own_patch(fragment))
 
@@ -807,10 +817,15 @@ def resolve_built_in_theme(name: str) -> BaseModel:
 
 @cache
 def _folded_built_in_theme(name: str) -> BaseModel:
+    from dbt_charts.core.compile.config import list_built_in_theme_fragments
     from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
 
     node = BOARD_PATCH_ADAPTER.validate_python({"extends": name})
-    ctx = _ExtendCtx(board_dir=None, boards_root=None, theme_names=get_theme_names())
+    ctx = _ExtendCtx(
+        board_dir=None,
+        boards_root=None,
+        theme_names=frozenset(list_built_in_theme_fragments()),
+    )
     return _merge_extends_inner(node, ctx, frozenset(), theme_sink=None)
 
 

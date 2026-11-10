@@ -51,7 +51,7 @@ fn align(style: &Style) -> MdAlign {
     }
 }
 
-fn heading_ramp<'a>(style: &'a Style, name: &str) -> Result<&'a [f64], Diagnostic> {
+pub(crate) fn heading_ramp<'a>(style: &'a Style, name: &str) -> Result<&'a [f64], Diagnostic> {
     style
         .fonts
         .get(name)

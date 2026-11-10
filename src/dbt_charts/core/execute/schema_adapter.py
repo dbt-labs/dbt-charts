@@ -20,8 +20,16 @@ from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.column_types import ColumnKind, ColumnType, column_type_error
 from dbt_charts.core.compile.models.query.normalized import SchemaQuery
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_COLUMN_NOT_FOUND,
+    ERR_SCHEMA_NOT_FOUND,
+    ERR_TABLE_NOT_FOUND,
+)
+from dbt_charts.core.diagnostics.execution import QueryError
+from dbt_charts.core.diagnostics.registry import ErrorCode
+from dbt_charts.core.dialects.identifier import catalog_name, result_column_name
 from dbt_charts.core.execute.plan_sources import list_sql_sources
-from dbt_charts.core.execute.query_result import QueryResult, plain_error
+from dbt_charts.core.execute.query_result import QueryResult
 
 if TYPE_CHECKING:
     from dbt_charts.core.execute.env import ExecEnv
@@ -170,6 +178,10 @@ def _walk(
     return node
 
 
+def _not_found(code: ErrorCode, **fields: str) -> QueryResult:
+    return QueryResult(data=[], error=QueryError.from_code(code, **fields))
+
+
 def schema_rows(env: ExecEnv, query: SchemaQuery) -> QueryResult:
     """Answer a schema query from the LayeredSchemaResolver, in process.
 
@@ -206,7 +218,7 @@ def schema_rows(env: ExecEnv, query: SchemaQuery) -> QueryResult:
             resolver.list_tables(source, schema), "sources", source, "schemas"
         )
         if schema not in source_schemas:
-            return plain_error(f"Schema {schema!r} not found in source {source!r}")
+            return _not_found(ERR_SCHEMA_NOT_FOUND, schema=schema, source=source)
         rows = [{**m, "name": n} for n, m in source_schemas[schema]["tables"].items()]
         return schema_query_result(query.project(query.apply_limit(rows)), query)
 
@@ -220,7 +232,9 @@ def schema_rows(env: ExecEnv, query: SchemaQuery) -> QueryResult:
             "tables",
         )
         if table not in all_tables:
-            return plain_error(f"Table {schema}.{table} not found in source {source!r}")
+            return _not_found(
+                ERR_TABLE_NOT_FOUND, schema=schema, table=table, source=source
+            )
         columns = _walk(all_tables, table, "columns")
         rows = [{**m, "name": n} for n, m in columns.items()]
         return schema_query_result(query.project(query.apply_limit(rows)), query)
@@ -248,8 +262,12 @@ def schema_rows(env: ExecEnv, query: SchemaQuery) -> QueryResult:
             "tables",
         )
         if not table_found:
-            return plain_error(f"Table {schema}.{table} not found in source {source!r}")
-        return plain_error(f"Column {column!r} not found in {schema}.{table}")
+            return _not_found(
+                ERR_TABLE_NOT_FOUND, schema=schema, table=table, source=source
+            )
+        return _not_found(
+            ERR_COLUMN_NOT_FOUND, column=column, schema=schema, table=table
+        )
     return schema_query_result(
         query.project([{**col_map[column], "name": column}]), query
     )
@@ -258,6 +276,7 @@ def schema_rows(env: ExecEnv, query: SchemaQuery) -> QueryResult:
 def fetch_fk_edges(
     env: ExecEnv,
     table: str,
+    dialect: str | None,
 ) -> list[dict[str, str]]:
     """Return FK edges for ``table`` from dbt manifest + super-schema heuristics.
 
@@ -266,7 +285,10 @@ def fetch_fk_edges(
     (confidence >= 0.80 — the bimodal high-confidence naming case).
 
     All edges are returned in the canonical ``from_table/from_column/to_table/
-    to_column`` format that ``resolve_fk_column_links`` expects.
+    to_column`` format that ``resolve_fk_column_links`` expects: tables in the
+    catalog's spelling, columns as board names. Manifest names are dbt model and
+    column names, which dbt creates unquoted; the super-schema cache already
+    holds the catalog's spelling.
 
     Only outbound edges (where the FK column lives on ``table``) are returned.
     Inbound edges (another table referencing ``table``) are skipped — they are
@@ -283,16 +305,30 @@ def fetch_fk_edges(
 
     Args:
         env: The exec env (provides project).
-        table: Table name to fetch FK edges for.
+        table: Table name to fetch FK edges for, in the catalog's spelling.
+        dialect: The sqlglot dialect of the table's source.
     """
 
     from dbt_charts.core.inspect.cache_factory import build_resolver  # noqa: PLC0415
 
     resolver = build_resolver(env)
 
+    def relation(name: str) -> str:
+        return catalog_name(name, False, dialect)
+
+    def column(name: str) -> str:
+        return result_column_name(relation(name), dialect)
+
     # Declared FK edges from dbt manifest (confidence=1.0, always included).
     edges: list[dict[str, str]] = [
-        e for e in resolver._all_manifest_relationships() if e["from_table"] == table
+        {
+            "from_table": relation(e["from_table"]),
+            "from_column": column(e["from_column"]),
+            "to_table": relation(e["to_table"]),
+            "to_column": column(e["to_column"]),
+        }
+        for e in resolver._all_manifest_relationships()
+        if relation(e["from_table"]) == table
     ]
 
     # Heuristic recommended edges from the super-schema cache.
@@ -317,7 +353,7 @@ def fetch_fk_edges(
                             continue
                         if rel.get("left_table") != table:
                             continue  # inbound edge — skip
-                        from_col = rel["left_column"]
+                        from_col = result_column_name(rel["left_column"], dialect)
                         if from_col in declared_cols:
                             continue  # declared edge already covers this column
                         edges.append(
@@ -325,7 +361,9 @@ def fetch_fk_edges(
                                 "from_table": table,
                                 "from_column": from_col,
                                 "to_table": rel["right_table"],
-                                "to_column": rel["right_column"],
+                                "to_column": result_column_name(
+                                    rel["right_column"], dialect
+                                ),
                             }
                         )
 

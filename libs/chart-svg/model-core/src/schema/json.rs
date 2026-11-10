@@ -176,6 +176,7 @@ fn scalar(s: Scalar) -> J {
         Scalar::Float => json!({"type": "number"}),
         Scalar::Str => json!({"type": "string"}),
         Scalar::Json => json!({}),
+        Scalar::Object => json!({"type": "object"}),
     }
 }
 

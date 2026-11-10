@@ -548,18 +548,14 @@ class TestExpanderTemplateEnvContext:
     same enumeration discipline as the board-SQL paths above.
     """
 
-    def test_environment_adds_exactly_the_four_view_helper_globals(self) -> None:
+    def test_environment_adds_exactly_the_two_view_helper_globals(self) -> None:
         from dbt_charts.core.registered_views.expander import (
             _column_header_styles,
             _pivot_column_profiles,
-            _plan_key_variables,
-            _plan_variables,
         )
 
         added = _new_or_overridden(_TEMPLATE_ENV.globals, _BASELINE_ENV.globals)
         assert added == {
-            "plan_variables": _plan_variables,
-            "plan_key_variables": _plan_key_variables,
             "pivot_column_profiles": _pivot_column_profiles,
             "column_header_styles": _column_header_styles,
         }
@@ -570,7 +566,7 @@ class TestExpanderTemplateEnvContext:
     def test_environment_adds_or_overrides_no_test(self) -> None:
         assert _new_or_overridden(_TEMPLATE_ENV.tests, _BASELINE_ENV.tests) == {}
 
-    def test_render_context_is_exactly_path_queries_and_sql_identifier(
+    def test_render_context_is_exactly_path_queries_and_the_dialect_helpers(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         captured = _capture_render_calls(monkeypatch)
@@ -578,7 +574,13 @@ class TestExpanderTemplateEnvContext:
             "[[ path.source ]]", path_params={"source": "sf"}, query_results={}
         )
         [call] = captured
-        assert call.context_keys == {"path", "queries", "sql_identifier"}
+        assert call.context_keys == {
+            "path",
+            "queries",
+            "sql_identifier",
+            "plan_variables",
+            "plan_key_variables",
+        }
 
 
 class TestSurvivorsValidateAndReturnStrings:
@@ -638,12 +640,15 @@ class TestSurvivorsValidateAndReturnStrings:
             _plan_variables,
         )
 
-        variables = _plan_variables(_rows({"name": "region", "actual_type": "string"}))
+        variables = _plan_variables(
+            _rows({"name": "region", "actual_type": "string"}), "duckdb"
+        )
         assert variables == [{"name": "region", "input": "text"}]
         assert all(isinstance(v, dict) for v in variables)
 
         key_variables = _plan_key_variables(
-            _rows({"name": "id", "actual_type": "integer"})
+            _rows({"name": "id", "actual_type": "integer"}),
+            "duckdb",
         )
         assert key_variables == [{"name": "id", "input": "text"}]
 

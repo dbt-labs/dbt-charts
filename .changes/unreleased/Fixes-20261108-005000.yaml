@@ -1,0 +1,5 @@
+kind: Fixes
+body: Validation errors and warnings now name what the board accepts at that spot (a layout item's accepted forms, the drawn values behind an unseen category color pin, the defined Jinja variables), and `dct query` prints query warnings on success.
+time: 2026-11-08T00:50:00.000000-08:00
+custom:
+    DbtChartsIssue: ""

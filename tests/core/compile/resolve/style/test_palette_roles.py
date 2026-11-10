@@ -35,11 +35,7 @@ def _reset():
 
 
 def _real_themes() -> list[str]:
-    return sorted(
-        n
-        for n in list_built_in_themes()
-        if n != "_base" and not n.startswith("diagnostics-")
-    )
+    return sorted(n for n in list_built_in_themes() if not n.startswith("diagnostics-"))
 
 
 @pytest.mark.parametrize("theme_name", _real_themes())
@@ -702,5 +698,6 @@ def test_unresolvable_role_ref_names_the_palette_and_the_authored_role():
     with pytest.raises(CompilationError) as exc:
         expand_palette_refs(theme.model_copy(update={"charts": charts}))
     message = str(exc.value)
-    assert "'editorial-10:99'" in message
+    assert "'editorial-10'" in message
     assert "'category:99'" in message
+    assert "cannot return 99" in message

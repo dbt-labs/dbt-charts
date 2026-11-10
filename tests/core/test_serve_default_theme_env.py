@@ -17,6 +17,7 @@ from dbt_charts.core.compile.config import (
     get_default_theme_name,
     list_built_in_themes,
 )
+from dbt_charts.core.diagnostics.base import DbtChartsError
 
 
 class TestGetDefaultThemeName:
@@ -52,8 +53,10 @@ class TestServeStartupThemeValidation:
     ) -> None:
         """An invalid DCT_DEFAULT_THEME is not in list_built_in_themes()."""
         monkeypatch.setenv("DCT_DEFAULT_THEME", "nonexistent-theme-xyz")
-        assert get_default_theme_name() == "nonexistent-theme-xyz"
         assert "nonexistent-theme-xyz" not in list_built_in_themes()
+
+    def test_private_base_fragment_is_not_in_built_in_list(self) -> None:
+        assert not [t for t in list_built_in_themes() if t.startswith("_")]
 
     def test_valid_dct_default_theme_passes_validation(
         self, monkeypatch: pytest.MonkeyPatch
@@ -85,3 +88,44 @@ class TestDbtChartsYmlThemeRemoved:
                 load_config(local_project(tmp_path))
         finally:
             reset_config()
+
+
+@pytest.mark.parametrize("bad", ["_base", "nonesuch"])
+class TestInvalidDefaultThemeRefusedEverywhere:
+    """The default theme is validated where it is resolved, so every surface refuses."""
+
+    def test_resolver_raises(self, monkeypatch: pytest.MonkeyPatch, bad: str) -> None:
+        monkeypatch.setenv("DCT_DEFAULT_THEME", bad)
+        with pytest.raises(DbtChartsError) as exc:
+            get_default_theme_name()
+        assert exc.value.to_diagnostic().code == "ERR-INVALID-DEFAULT-THEME"
+        assert "clarity" in str(exc.value)
+        assert "_base" not in str(exc.value).split("Available built-in themes:")[1]
+
+    def test_normalize_raises(self, monkeypatch: pytest.MonkeyPatch, bad: str) -> None:
+        from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+        from dbt_charts.core.compile.normalize.dispatch import normalize_board
+
+        monkeypatch.setenv("DCT_DEFAULT_THEME", bad)
+        with pytest.raises(DbtChartsError) as exc:
+            normalize_board(AuthoredBoard(title="t", rows=[]))
+        assert exc.value.to_diagnostic().code == "ERR-INVALID-DEFAULT-THEME"
+
+    def test_validate_reports_it(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        bad: str,
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate
+
+        (tmp_path / "board.yml").write_text(
+            "queries:\n  q:\n    sql: SELECT 1 AS x\n    source: analytics\n"
+            "charts:\n  c:\n    query: q\n    type: bar\n    x: x\n    y: x\n"
+            "rows:\n  - c\n"
+        )
+        monkeypatch.setenv("DCT_DEFAULT_THEME", bad)
+        result = validate(tmp_path / "board.yml", project=local_project(tmp_path))
+        assert not result.success
+        assert result.errors[0].code == "ERR-INVALID-DEFAULT-THEME"

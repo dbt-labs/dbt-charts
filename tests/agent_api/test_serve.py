@@ -122,6 +122,23 @@ class TestPrepareServe:
         assert isinstance(result, Diagnostic)
         assert result.code == "ERR-INVALID-DEFAULT-THEME"
 
+    def test_private_base_default_theme_env_returns_diagnostic(
+        self, project: FilesystemProject, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DCT_DEFAULT_THEME", "_base")
+        result = prepare_serve(
+            project,
+            port=None,
+            host="localhost",
+            dialect="duckdb",
+            target=None,
+            max_workers=None,
+            no_cache=False,
+            cache_path=None,
+        )
+        assert isinstance(result, Diagnostic)
+        assert result.code == "ERR-INVALID-DEFAULT-THEME"
+
     def test_valid_default_theme_env_proceeds(
         self, project: FilesystemProject, monkeypatch: pytest.MonkeyPatch
     ) -> None:

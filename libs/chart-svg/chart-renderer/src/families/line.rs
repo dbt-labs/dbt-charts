@@ -155,6 +155,7 @@ use crate::families::layers::{
     OverlayScatterLayer, YSides,
 };
 use crate::families::heatmap::{flat_label, rotated_label, svg_text_anchor, LabelFace};
+use crate::families::bar::axes::flush_edge;
 use crate::families::support_table_strip;
 use crate::families::legend::{
     legend_title_text, LegendConfig,
@@ -883,6 +884,8 @@ pub(crate) struct LineXAxis {
     floor_rule: Option<String>,
     label_rows: usize,
     edge: crate::common::XEdge,
+    /// `flush_threshold`'s verdict: `None` centers every label.
+    flush: Option<f64>,
     x_title_text: String,
     caption: AxisCaption,
     title_key: Option<crate::contract::LabelKey>,
@@ -999,7 +1002,7 @@ impl LineXAxis {
                             continue;
                         }
                         if *angle != 0.0 {
-                            let (align, baseline) = bare_label_anchor(*angle, t.frac, plot_w, self.edge);
+                            let (align, baseline) = bare_label_anchor(*angle, t.frac, plot_w, self.edge, self.flush);
                             items.push(rotated_label(
                                 (plot_left + x + self.ad, anchor_y, *angle, measure::baseline_shift(baseline, xsz)),
                                 &face(svg_text_anchor(align)),
@@ -1010,7 +1013,7 @@ impl LineXAxis {
                         }
                         let row2_text = t.row2.as_deref().filter(|row| !row.is_empty());
                         let (row1_y, row2_y) = rows_at(label_y, xsz + 2.0);
-                        let anchor = flush_anchor_px(t.frac * plot_w, plot_w);
+                        let anchor = flush_anchor_px(t.frac * plot_w, plot_w, self.flush);
                         // A flushed label reaches the outer edge of the snapped rule under it, not of the raw tick.
                         let gx = plot_left + label_x(x, self.ad, anchor, edge_half);
                         items.push(flat_label(Role::Axis, (gx, row1_y), &face(anchor), false, &clip(&t.text)?));
@@ -1036,7 +1039,7 @@ impl LineXAxis {
                 LineXAxisBody::FlatTemporal { labels, xs, anchors } => {
                     for ((tl, &x), &anchor) in labels.iter().zip(xs).zip(anchors) {
                         let (row1_y, row2_y) = rows_at(label_y, xsz + 2.0);
-                        let flushed = flush_anchor_px(x - self.x_inset, plot_w - 2.0 * self.x_inset) == anchor && anchor != "middle";
+                        let flushed = flush_anchor_px(x - self.x_inset, plot_w - 2.0 * self.x_inset, self.flush) == anchor && anchor != "middle";
                         // A flushed label reaches the outer edge of the snapped rule under it, not of the raw tick.
                         let gx = plot_left
                             + match (flushed, self.use_band_positions) {
@@ -1592,21 +1595,16 @@ fn y_font_size(ax_y: &AxisStyle) -> f64 {
     ax_y.labels.font.size_or(11.0)
 }
 
-/// L9/A2: Vega's `labelFlush` keys on the label's own scale POSITION landing
-/// exactly at a range end, never on its domain index — which is the only
-/// test available for the bare temporal axis, whose ticks are dates rather
+/// A label's edge anchor under `flush_threshold`'s verdict: a label within the threshold of a range end
+/// flushes to it (the nearer end winning a tie, so a collapsed plot ends every label); `None` centers every
+/// label. `span` is the range width and `pos` the tick's own position in it — the label's scale POSITION, never
+/// its domain index, which is the only test available for the bare temporal axis, whose ticks are dates rather
 /// than domain members.
-/// Vega's `labelFlush` (`flush(range, pos, 1, ...)`), the one law for a label's edge anchor: a label within 1px
-/// of a range end flushes to it, the nearer end winning a tie, so a collapsed plot ends every label. `span` is
-/// the range width and `pos` the tick's own position in it.
-pub(crate) fn flush_anchor_px(pos: f64, span: f64) -> &'static str {
-    let (near_start, near_end) = (pos.abs(), (span - pos).abs());
-    if near_start < near_end && near_start <= 1.0 {
-        "start"
-    } else if near_end <= 1.0 {
-        "end"
-    } else {
-        "middle"
+pub(crate) fn flush_anchor_px(pos: f64, span: f64, threshold: Option<f64>) -> &'static str {
+    match flush_edge(pos, span, threshold) {
+        Some(true) => "start",
+        Some(false) => "end",
+        None => "middle",
     }
 }
 
@@ -1668,13 +1666,14 @@ fn bare_label_ink(
     plot_w: f64,
     row_y: f64,
     edge: crate::common::XEdge,
+    flush: Option<f64>,
 ) -> (Vec<vega_fit::Bounds>, Vec<bool>) {
     let ink: Vec<vega_fit::Bounds> = ticks
         .iter()
         .zip(widths)
         .map(|(t, &w)| {
             let x = x_at(t.frac);
-            let (align, baseline) = bare_label_anchor(angle, t.frac, plot_w, edge);
+            let (align, baseline) = bare_label_anchor(angle, t.frac, plot_w, edge, flush);
             let mut flat = vega_fit::text_ink(x, row_y, w, font_size, align, baseline);
             flat.y2 += (t.rows() - 1) as f64 * (font_size + 2.0);
             if angle != 0.0 { flat.rotate(angle, x, row_y) } else { flat }
@@ -1696,9 +1695,9 @@ fn bare_label_ink(
 
 /// A bare tick label's align and baseline: Vega-Lite's rotated-axis anchor
 /// under a tilt, else the flat axis's edge flush.
-pub(crate) fn bare_label_anchor(angle: f64, frac: f64, plot_w: f64, edge: crate::common::XEdge) -> (&'static str, &'static str) {
+pub(crate) fn bare_label_anchor(angle: f64, frac: f64, plot_w: f64, edge: crate::common::XEdge, flush: Option<f64>) -> (&'static str, &'static str) {
     if angle == 0.0 {
-        (flush_align(frac * plot_w, plot_w), edge.baseline())
+        (flush_align(frac * plot_w, plot_w, flush), edge.baseline())
     } else {
         vega_fit::vl_x_label_anchor(vega_fit::normalize_angle(angle), edge == crate::common::XEdge::Bottom)
     }
@@ -1710,8 +1709,8 @@ fn nominal_label_anchor(angle: f64, edge: crate::common::XEdge, authored: Option
     (authored.unwrap_or(align), baseline)
 }
 
-pub(crate) fn flush_align(pos: f64, span: f64) -> &'static str {
-    match flush_anchor_px(pos, span) {
+pub(crate) fn flush_align(pos: f64, span: f64, threshold: Option<f64>) -> &'static str {
+    match flush_anchor_px(pos, span, threshold) {
         "start" => "left",
         "end" => "right",
         _ => "center",
@@ -1803,11 +1802,11 @@ mod tests {
     /// tie, a collapsed range flushes right.
     #[test]
     fn a_label_within_a_pixel_of_a_range_end_flushes_to_it() {
-        assert_eq!(crate::families::line::flush_anchor_px(0.0, 400.0), "start");
-        assert_eq!(crate::families::line::flush_anchor_px(0.35, 400.0), "start");
-        assert_eq!(crate::families::line::flush_anchor_px(1.5, 400.0), "middle");
-        assert_eq!(crate::families::line::flush_anchor_px(399.4, 400.0), "end");
-        assert_eq!(crate::families::line::flush_anchor_px(0.0, 0.0), "end");
+        assert_eq!(crate::families::line::flush_anchor_px(0.0, 400.0, Some(1.0)), "start");
+        assert_eq!(crate::families::line::flush_anchor_px(0.35, 400.0, Some(1.0)), "start");
+        assert_eq!(crate::families::line::flush_anchor_px(1.5, 400.0, Some(1.0)), "middle");
+        assert_eq!(crate::families::line::flush_anchor_px(399.4, 400.0, Some(1.0)), "end");
+        assert_eq!(crate::families::line::flush_anchor_px(0.0, 0.0, Some(1.0)), "end");
     }
 
     /// A percent strip over twenty categories has no narrower form and no room: it
@@ -1967,7 +1966,7 @@ mod tests {
             "ticks": {"color": "#EDEFF2", "visible": true, "count": null, "length": 6.0},
             "labels": {
                 "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"},
-                "padding": 6.0, "min_gap": null, "format": null, "visible": true
+                "padding": 6.0, "min_gap": null, "format": null, "visible": true, "flush": true
             },
             "title": {
                 "font": {"family": TEST_FONT, "size": 11.0, "weight": "600", "color": "#8A8C8F"},
@@ -7079,8 +7078,8 @@ mod tests {
     /// left it green). `make_monthly_ladder_payload`'s 24-month domain
     /// sits AT the flat/bucketed-ladder boundary instead: its own
     /// y-gutter (a right axis formatting 999,999,999-scale values,
-    /// `,.0f`) narrows the fitted plot from 960px to ~837px, straddling
-    /// the 30.95px right-edge threshold on either side of the mutation.
+    /// `,.0f`) narrows the fitted plot from 1200px to ~1077px, straddling
+    /// the flat-ladder threshold on either side of the mutation.
     /// The rail-concat arm (`:1231`, `cadence_w = payload.width -
     /// (rail_pane_w + spacing)`) has no equivalent mutation: it is a
     /// single deterministic subtraction, with no iteratively-fitted `pw`
@@ -7088,14 +7087,13 @@ mod tests {
     #[test]
     fn bucketed_ladder_band_is_the_slot_width_not_the_fitted_plot() {
         let _locale = ::bind::time_locale::en_us_scope();
-        let p = make_monthly_ladder_payload(960.0);
+        let p = make_monthly_ladder_payload(1200.0);
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
-        // Flat (correct, band from payload.width=960 → 32px, both edges
-        // clear): every month keeps its own label, so Feb is drawn. The
-        // `payload.width`→`pw` mutation narrows the band to ~27.9px, the
-        // right edge (Nov/Dec) no longer clears, and the ladder steps to
-        // quarterly (Jan/Apr/Jul/Oct only) — Feb disappears.
-        assert!(svg.contains(">Feb</text>"), "band must come from payload.width (32px), not pw (~27.9px): {svg}");
+        // Flat (correct, band from payload.width=1200 → 40px): every month
+        // keeps its own label, so Feb is drawn. The `payload.width`→`pw`
+        // mutation narrows the band to ~35.9px, the months no longer clear
+        // their gap, and the ladder steps to quarterly — Feb disappears.
+        assert!(svg.contains(">Feb</text>"), "band must come from payload.width (40px), not pw (~35.9px): {svg}");
     }
 
     fn attr(tag: &str, name: &str) -> f64 {
@@ -7807,10 +7805,11 @@ mod tests {
         //     round(0.8*11) - 3) = 70.
         assert_eq!(plot_y, 70.0, "title.offset corrects to a font-size-only term: {svg}");
         // S1: the plot rect IS the payload view (600x400) and the canvas
-        // ceils around the ink — the stub column is the rightmost of it.
+        // ceils around the ink — the stub column is the rightmost of it, and it starts
+        // past the last cell, which centers on the plot's end.
         assert_eq!(
             canvas_w,
-            plot_x + 600.0 + (6.0 + stub_w).ceil() + 16.0,
+            plot_x + 600.0 + (6.0 + dx + stub_w).ceil() + 16.0,
             "canvas = ceil(padding + ink union) around a 600-wide plot: {svg}"
         );
         assert!(
@@ -7820,7 +7819,7 @@ mod tests {
 
         // S2/S4: row 0 at -13 painted at the middle-baseline shift (+3),
         // cells centered on the point x itself, stub past the
-        // plot's right edge by axis_y.labels.padding.
+        // plot's right edge by axis_y.labels.padding and the last cell's overhang.
         // The strip paints last, so read the LAST match — "100" is also a y
         // tick label here.
         let attr = |tag: &str, name: &str| -> String {
@@ -7829,7 +7828,7 @@ mod tests {
             svg[start..idx].split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap().to_string()
         };
         assert_eq!(attr("Signups", "y"), print::geometry(plot_y - 10.0));
-        assert_eq!(attr("Signups", "x"), print::geometry(plot_x + 600.0 + 6.0));
+        assert_eq!(attr("Signups", "x"), print::geometry(plot_x + 600.0 + 6.0 + dx), "past the last cell");
         assert_eq!(attr("Signups", "text-anchor"), "start");
         assert_eq!(attr("100", "text-anchor"), "end");
         assert_eq!(attr("100", "x"), print::geometry(plot_x + dx), "centered on a line's point");
@@ -9948,41 +9947,141 @@ mod tests {
         );
     }
 
-    /// Regression for the `edge_labels_flushed` parity fix (`line.rs`'s
-    /// `ax_x.labels.flush != Some(false)`): at this exact 500px width and
-    /// 16-month Nov-start domain, "Nov" flushed to the plot's left edge
-    /// reserves its full row-1 width rather than half, so `Nov`→`Dec`
-    /// fails to clear and the ladder promotes visibility to
-    /// quarter openers — matching production. An authored `flush: false`
-    /// halves that reservation, the pair fits, and every month renders
-    /// instead. Deletion counterfactual: hardcoding `edge_labels_flushed =
-    /// false` in `render_inner` (the pre-fix behavior) makes the default
-    /// (unauthored `flush`) case render monthly too, and this test fails.
-    /// (Width lowered from the original 630px after `temporal.rs`'s
-    /// year-row fold fix: folding "Nov"'s stacked "2024" row into its
-    /// reserved width — the bug — used to make 630px already tight enough
-    /// to coarsen; row-1-only reservation needs a narrower plot to
-    /// reproduce the same boundary.)
+    /// The x tick row's labels with the `text-anchor` each paints.
+    fn x_label_anchors(svg: &str) -> Vec<(String, String)> {
+        let row_y = x_tick_bottom(svg);
+        svg.split("<text")
+            .skip(1)
+            .filter(|t| t.contains("fill=\"#626366\""))
+            .filter_map(|t| {
+                let head = t.split_once('>')?.0;
+                let attr = |k: &str| -> Option<String> {
+                    let i = head.find(&format!("{k}=\""))? + k.len() + 2;
+                    Some(head[i..].split('"').next()?.to_string())
+                };
+                (attr("y")?.parse::<f64>().ok()? > row_y).then(|| {
+                    let text = t.split_once('>')?.1.split('<').next()?.to_string();
+                    Some((text, attr("text-anchor")?))
+                })?
+            })
+            .collect()
+    }
+
+    /// An unset or `auto` flush centers every label, so the end labels cost only
+    /// half their width and the cadence ladder keeps every month; `true` keeps
+    /// Vega's inset, whose full-width end reservation coarsens the same axis.
     #[test]
-    fn authored_flush_false_widens_the_temporal_coarsening_boundary() {
+    fn unset_flush_centers_end_labels_and_keeps_every_month() {
         let _locale = ::bind::time_locale::en_us_scope();
         let fonts = test_fonts();
         let non_quarter = ["Feb", "Mar", "May", "Jun", "Aug", "Sep", "Nov", "Dec"];
+        let has_every_month = |svg: &str| non_quarter.iter().any(|m| svg.contains(&format!(">{m}<")));
 
-        let default_svg = render(&nov_16_months_payload(500.0, serde_json::Value::Null), &fonts)
-            .expect("renders");
-        assert!(
-            !non_quarter.iter().any(|m| default_svg.contains(&format!(">{m}<"))),
-            "default (flushed) axis coarsens to quarter openers at this width:\n{default_svg}"
+        let unset = render(&nov_16_months_payload(600.0, serde_json::Value::Null), &fonts).expect("renders");
+        assert!(has_every_month(&unset), "unset flush centers the end labels:\n{unset}");
+        assert_eq!(
+            render(&nov_16_months_payload(600.0, serde_json::json!(false)), &fonts).expect("renders"),
+            unset,
+            "an unset flush and flush:false are the same axis"
         );
 
-        let unflushed_svg =
-            render(&nov_16_months_payload(500.0, serde_json::json!(false)), &fonts)
-                .expect("renders");
-        assert!(
-            non_quarter.iter().any(|m| unflushed_svg.contains(&format!(">{m}<"))),
-            "flush:false halves the edge reservation, so every month fits:\n{unflushed_svg}"
-        );
+        let inset = render(&nov_16_months_payload(600.0, serde_json::json!(true)), &fonts).expect("renders");
+        assert!(!has_every_month(&inset), "flush:true keeps the inset, which coarsens to quarters:\n{inset}");
+        let wide = render(&nov_16_months_payload(900.0, serde_json::json!(true)), &fonts).expect("renders");
+        let anchors = x_label_anchors(&wide);
+        assert_eq!(anchors.first().map(|a| a.1.as_str()), Some("start"), "{anchors:?}");
+        assert_eq!(anchors.last().map(|a| a.1.as_str()), Some("end"), "{anchors:?}");
+    }
+
+    /// The `(x, y, text-anchor, text)` of every `<text>` run in `svg`.
+    fn text_runs(svg: &str) -> Vec<(f64, f64, String, String)> {
+        svg.split("<text")
+            .skip(1)
+            .filter_map(|t| {
+                let (head, rest) = t.split_once('>')?;
+                let attr = |k: &str| -> Option<String> {
+                    let i = head.find(&format!(" {k}=\""))? + k.len() + 3;
+                    Some(head[i..].split('"').next()?.to_string())
+                };
+                Some((attr("x")?.parse().ok()?, attr("y")?.parse().ok()?, attr("text-anchor")?, rest.split('<').next()?.to_string()))
+            })
+            .collect()
+    }
+
+    /// Six months on a domain whose ticks land on both plot edges (850 at the bottom, 1,000 at the top).
+    fn edge_ticked_months_svg(strip: bool, edit: impl Fn(&mut serde_json::Value)) -> String {
+        let rows: Vec<serde_json::Value> = [930.0, 855.0, 984.0, 912.0, 940.0, 900.0]
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| serde_json::json!({"week": format!("2024-{:02}-01", i + 1), "signups": v}))
+            .collect();
+        let mut p = make_line_payload(false, false);
+        p["rows"] = serde_json::json!(rows);
+        let axis_y = &mut p["resolved"]["style"]["axis_y"];
+        axis_y["domain_min"] = serde_json::json!(850.0);
+        axis_y["domain_max"] = serde_json::json!(1000.0);
+        axis_y["tick_values"] = serde_json::json!([850.0, 900.0, 950.0, 1000.0]);
+        p["resolved"]["style"]["axis_x"]["labels"]["flush"] = serde_json::Value::Null;
+        if strip {
+            p["resolved"]["support_table"] = serde_json::json!({"entries": [{"source": "signups", "format": ",d", "label": "Signups"}]});
+            p["resolved"]["effective_support_table_style"] = support_table_style_json();
+        }
+        edit(&mut p);
+        render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders")
+    }
+
+    fn run_named<'a>(runs: &'a [(f64, f64, String, String)], text: &str) -> &'a (f64, f64, String, String) {
+        runs.iter().find(|r| r.3 == text).unwrap_or_else(|| panic!("no {text:?} in {runs:?}"))
+    }
+
+    /// A y label whose tick sits on the plot's bottom edge, with the x axis below, rises above its
+    /// gridline instead of straddling it; with nothing above the plot, the top label stays centered.
+    #[test]
+    fn a_y_label_on_the_bottom_edge_sits_above_its_gridline() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let runs = text_runs(&edge_ticked_months_svg(false, |_| {}));
+        let (_, bottom, ..) = run_named(&runs, "850");
+        // The ticks are evenly spaced, so the bottom gridline (the plot's height) is one more step below 900's.
+        let (y900, y950) = (run_named(&runs, "900").1, run_named(&runs, "950").1);
+        let plot_h = y900 + (y900 - y950) - 3.5;
+        assert!(*bottom < plot_h, "the label's baseline sits above the bottom gridline at {plot_h}: {bottom}");
+        assert_eq!(run_named(&runs, "1,000").1, 3.5, "an unstripped top label stays centered on its tick");
+    }
+
+    /// A y label on the plot's top edge hangs below its gridline when a strip stands directly above
+    /// the plot, clear of the strip's rows.
+    #[test]
+    fn a_y_label_on_the_top_edge_hangs_below_its_gridline_under_a_strip() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let runs = text_runs(&edge_ticked_months_svg(true, |_| {}));
+        let (_, top, ..) = run_named(&runs, "1,000");
+        assert!(*top - 9.0 >= 0.0, "the label's ink top is on or below the plot's top edge: {top}");
+    }
+
+    /// The strip's row labels start past the last column's cell, which a centered end label leaves
+    /// hanging past the plot into the value axis's gutter.
+    #[test]
+    fn strip_stubs_start_past_the_last_cell() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let runs = text_runs(&edge_ticked_months_svg(true, |p| p["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("right")));
+        let (stub_x, stub_y, anchor, _) = run_named(&runs, "Signups");
+        assert_eq!(anchor, "start");
+        let last_cell = runs.iter().filter(|r| r.1 == *stub_y && r.3 != "Signups").map(|r| r.0).fold(f64::MIN, f64::max);
+        assert!(last_cell < *stub_x, "the last cell ends at {last_cell}, the stubs start at {stub_x}");
+    }
+
+    /// Paint and measurement read one anchor: an axis measured as centered
+    /// paints every label `middle`, end labels included.
+    #[test]
+    fn flush_false_paints_the_end_labels_centered() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let fonts = test_fonts();
+        for flush in [serde_json::Value::Null, serde_json::json!(false)] {
+            let svg = render(&nov_16_months_payload(500.0, flush.clone()), &fonts).expect("renders");
+            let anchors = x_label_anchors(&svg);
+            assert!(anchors.len() > 2, "{anchors:?}");
+            assert!(anchors.iter().all(|a| a.1 == "middle"), "flush={flush}: {anchors:?}");
+        }
     }
 
     /// Regression for `common.rs`'s `AxisLabels.flush`: production types it
@@ -14340,7 +14439,7 @@ mod tests {
         use crate::families::temporal::BareTick;
         let tick = |frac| BareTick { day: 0.0, frac, text: String::new(), row2: None, mark: crate::families::temporal::BareMark::Both };
         let ticks = [tick(0.1), tick(0.2)];
-        let (ink, visible) = bare_label_ink(&ticks, &[90.0, 90.0], 45.0, true, 0.0, 11.0, |f| 100.0 * f, 100.0, 0.0, crate::common::XEdge::Bottom);
+        let (ink, visible) = bare_label_ink(&ticks, &[90.0, 90.0], 45.0, true, 0.0, 11.0, |f| 100.0 * f, 100.0, 0.0, crate::common::XEdge::Bottom, Some(1.0));
         let reach = 90.0 * std::f64::consts::FRAC_1_SQRT_2;
         assert!((ink[0].x2 - (10.0 + reach)).abs() < 1e-9, "{:?}", ink[0]);
         assert_eq!(visible.len(), 2);

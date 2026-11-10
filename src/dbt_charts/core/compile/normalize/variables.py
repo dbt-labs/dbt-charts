@@ -19,7 +19,7 @@ from dbt_charts.core.compile.template.jinja import (
     extract_sql_variable_dependencies,
     extract_variable_dependencies,
 )
-from dbt_charts.core.diagnostics.codes_compile import ERR_VARIABLE_NAME_INVALID
+from dbt_charts.core.diagnostics.codes_compile import ERR_NAME_INVALID
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.normalize.layout import AuthoringPathPrefix
@@ -63,7 +63,9 @@ class UnknownVariableError:
     owner_name: str
     var_name: str
 
-    def to_diagnostic(self, registry_keys: list[str]) -> Diagnostic:
+    def to_diagnostic(
+        self, registry_keys: list[str], query_names: list[str]
+    ) -> Diagnostic:
         """Promote to a Diagnostic with a Did-you-mean suggestion.
 
         No range: an undefined variable reference is never resolved to a YAML
@@ -72,18 +74,18 @@ class UnknownVariableError:
 
         Args:
             registry_keys: Sorted variable names for fuzzy suggestion.
+            query_names: Query names; a reference is also matched against
+                ``queries.<name>``, the usual intent of a mistyped dotted name.
         """
         from dbt_charts.core.compile.parse.yaml_error_formatter import (
             suggest_similar_value,
         )
 
-        suggestion = suggest_similar_value(self.var_name, registry_keys)
-        hint_parts = [
-            f"💡 {self.surface} {self.owner_name!r} references unknown variable"
-            f" {self.var_name!r}."
-        ]
-        if suggestion:
-            hint_parts.append(f"Did you mean {suggestion!r}?")
+        suggestion = suggest_similar_value(
+            self.var_name,
+            [*registry_keys, *(f"queries.{name}" for name in query_names)],
+        )
+        hint_parts = [f"Did you mean {suggestion!r}?"] if suggestion else []
         hint_parts.append(f"See: {yaml_reference_url()}")
         fields: dict[str, str] = {
             "surface": self.surface,
@@ -410,19 +412,23 @@ def promote_column_option_queries(
         var.column = None
 
 
-def validate_authored_variable_name(name: str) -> None:
-    """Raise unless `name` is a legal Jinja identifier.
-
-    Callers must apply this only to authored `variables:` keys, before
-    `generate_layout_variables` merges in its own hidden tabs/details
-    variables (`_tab_<id>`, `_details_<id>`) — those derive from a
-    free-form chart/tab `id:` and are never referenced as bare Jinja names.
+def validate_authored_name(kind: str, name: str, path: str) -> None:
+    """Raise unless `name` is an identifier: the one rule for every name an
+    author gives a chart, a query or a variable.
 
     isidentifier(), not an ASCII regex: Jinja accepts Unicode identifiers
-    ("région" is a legal variable name).
+    ("région" is a legal name), and a name that is an identifier can never
+    start with `@`, the mark of a generated position id.
+
+    Callers apply this only to authored keys — before `generate_layout_variables`
+    merges in its own hidden tabs/details variables (`_tab_<id>`,
+    `_details_<id>`), which derive from a free-form `id:` and are never
+    referenced as bare names.
     """
     if not name.isidentifier():
-        raise CompilationError.from_code(ERR_VARIABLE_NAME_INVALID, name=name)
+        raise CompilationError.from_code(
+            ERR_NAME_INVALID, kind=kind, name=name, path=path
+        )
 
 
 def build_variable_registry(board: Board) -> dict[str, Variable]:

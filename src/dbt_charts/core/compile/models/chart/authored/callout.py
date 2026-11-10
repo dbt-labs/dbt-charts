@@ -6,6 +6,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from dbt_charts.core.compile.models.chart.authored._base import IgnoredChartCode
 from dbt_charts.core.compile.models.markers import DisplayText
 from dbt_charts.core.compile.models.style.authored import CalloutChartStylePatch
 
@@ -34,10 +35,10 @@ class CalloutChart(BaseModel):
         ),
     ] = None
     warnings_ignore: Annotated[
-        list[str] | None,
+        list[IgnoredChartCode] | None,
         Field(
             default=None,
-            description="Codes of render warnings to suppress for this chart.",
+            description="Codes of render warnings to suppress for this chart. Query-domain codes such as WARN-REAGGREGATION go in `queries.<name>.ignore` instead.",
         ),
     ] = None
 

@@ -18,7 +18,7 @@ use crate::style::font::FontSlant;
 use crate::style::legend::{LegendAlign, LegendEdge};
 use crate::unit::{Fraction, Px};
 use diagnostic::py_repr;
-use model_core::Engine;
+use model_core::{Engine, Spell};
 use model_derive::Model;
 use serde_json::Value;
 
@@ -73,6 +73,15 @@ impl model_core::ReadScalar for AnnotationFontWeight {
             Self::try_from(String::read(node, cx)?.as_str())
         };
         read.map_err(|e| cx.invalid(node.span, e)).ok()
+    }
+}
+
+impl Spell for AnnotationFontWeight {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Name(n) => n.spell(),
+            Self::Number(n) => n.spell(),
+        }
     }
 }
 
@@ -156,6 +165,12 @@ impl TryFrom<String> for Dasharray {
     type Error = String;
     fn try_from(v: String) -> Result<Self, String> {
         Self::try_from(v.as_str())
+    }
+}
+
+impl Spell for Dasharray {
+    fn spell(&self) -> Value {
+        self.0.spell()
     }
 }
 

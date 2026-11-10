@@ -24,7 +24,8 @@ class TestCteAliasMapUnit:
         from dbt_charts.core.render.chart.sql_grain import parse_sql, resolve_cte_spine
 
         tree = parse_sql(
-            "WITH Resolved AS (SELECT * FROM main.tickets) SELECT * FROM resolved"
+            "WITH Resolved AS (SELECT * FROM main.tickets) SELECT * FROM resolved",
+            "duckdb",
         )
         assert tree is not None
         assert resolve_cte_spine(tree) == ("main", "tickets")
@@ -46,7 +47,8 @@ class TestCteAliasMapUnit:
 
         alias_map, _ = build_col_output_alias_map(
             "WITH c AS (SELECT id AS a, subject FROM main.t)"
-            " SELECT a AS z, subject FROM c"
+            " SELECT a AS z, subject FROM c",
+            "duckdb",
         )
         assert alias_map.get("id") == "z"
         assert "a" not in alias_map, (
@@ -65,7 +67,8 @@ class TestCteAliasMapUnit:
 
         _, identity_safe = build_col_output_alias_map(
             "WITH c AS (SELECT ticket_number AS id, subject FROM main.tickets)"
-            " SELECT * FROM c"
+            " SELECT * FROM c",
+            "duckdb",
         )
         assert identity_safe is False
 
@@ -76,7 +79,8 @@ class TestCteAliasMapUnit:
         from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
 
         alias_map, identity_safe = build_col_output_alias_map(
-            "WITH c AS (SELECT * FROM main.tickets) SELECT * FROM c"
+            "WITH c AS (SELECT * FROM main.tickets) SELECT * FROM c",
+            "duckdb",
         )
         assert alias_map == {}
         assert identity_safe is True
@@ -90,14 +94,16 @@ class TestCteAliasMapUnit:
         from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
 
         alias_map, identity_safe = build_col_output_alias_map(
-            "WITH c AS (SELECT *, ticket_number AS id FROM main.tickets) SELECT * FROM c"
+            "WITH c AS (SELECT *, ticket_number AS id FROM main.tickets) SELECT * FROM c",
+            "duckdb",
         )
         assert identity_safe is False
         assert alias_map.get("ticket_number") == "id"
 
         alias_map2, identity_safe2 = build_col_output_alias_map(
             "WITH c AS (SELECT *, ticket_number AS id FROM main.tickets)"
-            " SELECT id, subject FROM c"
+            " SELECT id, subject FROM c",
+            "duckdb",
         )
         assert identity_safe2 is False
         # "id" must not appear mapped to itself — it's proven to be
@@ -119,7 +125,8 @@ class TestCteAliasMapUnit:
         from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
 
         alias_map, identity_safe = build_col_output_alias_map(
-            "SELECT t.* FROM main.tickets t"
+            "SELECT t.* FROM main.tickets t",
+            "duckdb",
         )
         assert alias_map == {}
         assert identity_safe is True
@@ -144,10 +151,10 @@ class TestCteAliasMapUnit:
             "WITH t(ticket_number, id) AS (SELECT id, ticket_number FROM main.tickets)"
             " SELECT * FROM t"
         )
-        tree = parse_sql(sql)
+        tree = parse_sql(sql, "duckdb")
         assert tree is not None
         assert not resolve_cte_spine(tree)
-        assert build_col_output_alias_map(sql) == ({}, False)
+        assert build_col_output_alias_map(sql, "duckdb") == ({}, False)
 
     def test_duplicate_output_column_name_excluded_from_map(self) -> None:
         """Regression test: `SELECT id, ticket_number AS id FROM main.tickets`
@@ -160,7 +167,8 @@ class TestCteAliasMapUnit:
         from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
 
         alias_map, identity_safe = build_col_output_alias_map(
-            "SELECT id, ticket_number AS id FROM main.tickets"
+            "SELECT id, ticket_number AS id FROM main.tickets",
+            "duckdb",
         )
         assert "id" not in alias_map
         assert identity_safe is False
@@ -177,7 +185,8 @@ class TestCteAliasMapUnit:
 
         alias_map, identity_safe = build_col_output_alias_map(
             "SELECT o.id, c.id, c.name FROM main.orders o"
-            " JOIN main.customers c ON o.cust_id = c.id"
+            " JOIN main.customers c ON o.cust_id = c.id",
+            "duckdb",
         )
         assert "id" not in alias_map
         assert identity_safe is False
@@ -196,7 +205,8 @@ class TestCteAliasMapUnit:
 
         alias_map, identity_safe = build_col_output_alias_map(
             "WITH c AS (SELECT id, subject, extra FROM main.t)"
-            " SELECT id, subject FROM c"
+            " SELECT id, subject FROM c",
+            "duckdb",
         )
         assert "extra" not in alias_map, (
             "extra is not selected by the outer SELECT and must not be "
@@ -223,7 +233,8 @@ class TestPlainQueryColOutputAliasMap:
         from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
 
         alias_map, identity_safe = build_col_output_alias_map(
-            "SELECT id, UPPER(subject) AS id FROM main.tickets"
+            "SELECT id, UPPER(subject) AS id FROM main.tickets",
+            "duckdb",
         )
         assert "id" not in alias_map
         assert identity_safe is False
@@ -243,7 +254,8 @@ class TestPlainQueryColOutputAliasMap:
         from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
 
         alias_map, identity_safe = build_col_output_alias_map(
-            "SELECT id, ticket_number AS ID FROM main.tickets"
+            "SELECT id, ticket_number AS ID FROM main.tickets",
+            "duckdb",
         )
         assert "id" not in alias_map
         assert identity_safe is False
@@ -266,7 +278,8 @@ class TestPlainQueryColOutputAliasMap:
         from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
 
         alias_map, identity_safe = build_col_output_alias_map(
-            "SELECT *, UPPER(subject) AS shout FROM main.tickets"
+            "SELECT *, UPPER(subject) AS shout FROM main.tickets",
+            "duckdb",
         )
         assert "id" not in alias_map
         assert identity_safe is False
@@ -291,7 +304,8 @@ class TestPlainQueryColOutputAliasMap:
         from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
 
         alias_map, identity_safe = build_col_output_alias_map(
-            "SELECT t.*, t.id AS subject FROM main.tickets t"
+            "SELECT t.*, t.id AS subject FROM main.tickets t",
+            "duckdb",
         )
         assert alias_map == {"id": "subject"}
         assert identity_safe is False
@@ -310,7 +324,8 @@ class TestJoinColOutputAliasMap:
 
         alias_map, identity_safe = build_col_output_alias_map(
             "SELECT o.id, o.amount, c.name FROM main.orders o"
-            " JOIN main.customers c ON o.cust_id = c.id"
+            " JOIN main.customers c ON o.cust_id = c.id",
+            "duckdb",
         )
         assert alias_map == {"id": "id", "amount": "amount"}
         assert identity_safe is False
@@ -322,7 +337,8 @@ class TestJoinColOutputAliasMap:
 
         alias_map, identity_safe = build_col_output_alias_map(
             "SELECT c.id, c.name, o.amount FROM main.orders o"
-            " JOIN main.customers c ON o.cust_id = c.id"
+            " JOIN main.customers c ON o.cust_id = c.id",
+            "duckdb",
         )
         assert "id" not in alias_map
         assert alias_map == {"amount": "amount"}
@@ -333,7 +349,8 @@ class TestJoinColOutputAliasMap:
 
         alias_map, identity_safe = build_col_output_alias_map(
             "SELECT o.id AS order_id, c.name FROM main.orders o"
-            " JOIN main.customers c ON o.cust_id = c.id"
+            " JOIN main.customers c ON o.cust_id = c.id",
+            "duckdb",
         )
         assert alias_map == {"id": "order_id"}
         assert identity_safe is False
@@ -344,7 +361,8 @@ class TestJoinColOutputAliasMap:
         from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
 
         alias_map, identity_safe = build_col_output_alias_map(
-            "SELECT * FROM main.orders o JOIN main.customers c ON o.cust_id = c.id"
+            "SELECT * FROM main.orders o JOIN main.customers c ON o.cust_id = c.id",
+            "duckdb",
         )
         assert alias_map == {}
         assert identity_safe is False
@@ -361,7 +379,8 @@ class TestJoinColOutputAliasMap:
         alias_map, identity_safe = build_col_output_alias_map(
             "WITH thresholds AS (SELECT 100 AS min_amount)"
             " SELECT c.id, c.name, o.amount FROM main.orders o"
-            " JOIN main.customers c ON o.cust_id = c.id"
+            " JOIN main.customers c ON o.cust_id = c.id",
+            "duckdb",
         )
         assert alias_map == {}
         assert identity_safe is False
@@ -374,7 +393,7 @@ class TestScopeTracedColOutputAliasMap:
     def _map(sql: str) -> tuple[dict[str, str], bool]:
         from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
 
-        return build_col_output_alias_map(sql)
+        return build_col_output_alias_map(sql, "duckdb")
 
     def test_qualified_star_of_the_joined_side_is_not_identity(self) -> None:
         """`c.*` carries customers' columns, not the spine's."""
@@ -457,7 +476,8 @@ class TestSelfNamedQualifier:
 
         assert build_col_output_alias_map(
             "WITH payload AS (SELECT payload.id FROM main.events e)"
-            " SELECT id FROM payload"
+            " SELECT id FROM payload",
+            "duckdb",
         ) == ({}, False)
 
 
@@ -468,7 +488,10 @@ def test_recursion_overflow_traces_nothing(monkeypatch: pytest.MonkeyPatch) -> N
         raise RecursionError
 
     monkeypatch.setattr(sql_grain, "_outputs", overflow)
-    assert sql_grain.build_col_output_alias_map("SELECT id FROM main.t") == ({}, False)
+    assert sql_grain.build_col_output_alias_map("SELECT id FROM main.t", "duckdb") == (
+        {},
+        False,
+    )
 
 
 class TestColumnNameCaseAcrossLayers:
@@ -478,15 +501,18 @@ class TestColumnNameCaseAcrossLayers:
         from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
 
         assert build_col_output_alias_map(
-            "WITH c AS (SELECT id FROM main.t) SELECT ID FROM c"
+            "WITH c AS (SELECT id FROM main.t) SELECT ID FROM c",
+            "duckdb",
         ) == ({"id": "ID"}, False)
         assert build_col_output_alias_map(
-            "WITH c AS (SELECT id AS Tid FROM main.t) SELECT tid FROM c"
+            "WITH c AS (SELECT id AS Tid FROM main.t) SELECT tid FROM c",
+            "duckdb",
         ) == ({"id": "tid"}, False)
 
     def test_columns_differing_by_more_than_case_do_not_match(self) -> None:
         from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
 
         assert build_col_output_alias_map(
-            "WITH c AS (SELECT id AS tid FROM main.t) SELECT t_id FROM c"
+            "WITH c AS (SELECT id AS tid FROM main.t) SELECT t_id FROM c",
+            "duckdb",
         ) == ({}, False)

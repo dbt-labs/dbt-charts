@@ -53,6 +53,8 @@ use measure::shaped::{Font, FontBook};
 use scene::Bounds;
 
 use crate::geom::{Insets, Size};
+use crate::plot::label::{flush_align, parity_visible, vega_space};
+use crate::plot::label::{Align, Baseline};
 use crate::plot::time_cadence::{self, Cadence, Crowding};
 use crate::time_ladder::{
     interval_instants, ladder_zone, no_cadence, zone_instants, AuthoredTickCadence,
@@ -75,12 +77,13 @@ use clock::{Bare, ClockPlan, Mark};
 /// anchor, so such a board must not reach this axis. The authored `ticks.count` and label formats
 /// layout cannot read are stated (`tick_count`, `date_format`) and refused by name.
 ///
-/// An axis over times of day is the line and area axis: production's scatter builds the same plan but never
-/// names the data's end points or draws day labels (`scatter_axis.rs:675, 908-934`), so a scatter caller
-/// must not reach it. It also assumes the caller refused what layout cannot see and production reads
+/// An axis over times of day also assumes the caller refused what layout cannot see and production reads
 /// there: `labels.values`, `labels.expr` and `scale.continuous.domain`, each of which makes production
 /// keep Vega's own labels or extent. A continuous axis never tilts, so an authored `labels.angle` is
 /// the caller's to refuse there as it is on every continuous axis.
+///
+/// Three laws are the caller's to state where families disagree: `crowding.bucket_aligned` and
+/// `spans_buckets` (a bar's), `clock.points` (a scatter has none) and `rail` (the endpoint-rail arm).
 #[derive(Debug, Clone, Copy)]
 pub struct TimeLabels<'a> {
     pub font: Font<'a>,
@@ -108,36 +111,24 @@ pub struct TimeLabels<'a> {
     /// `labels.format` or a redefined `date_<grain>` is authored: production prints every label through
     /// that format (`AuthoredTimeFormat`) and turns the interval labels off, which is not modeled.
     pub date_format: bool,
-    /// Production labels this axis by the curated ladder on ticks rather than as this axis: its
-    /// x-type law dropped the grain for the scaffold budget (bind's `TimeDomain` still carries it),
-    /// or the author set `axis_x.time_unit: none`. Layout cannot see either; the caller states it.
-    /// An axis over times of day that keeps a clock plan is none of this (production's `clock` term of
-    /// `keeps_dropped_grain_ladder`), whatever is stated.
-    pub ladder_bare: bool,
     /// What an axis over times of day reads; unread without one.
     pub clock: Clock<'a>,
-}
-
-/// Where a label's anchor sits along its text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Align {
-    Left,
-    Center,
-    Right,
-}
-
-/// Which edge of its text sits on a label's anchor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Baseline {
-    Top,
-    Middle,
-    Bottom,
+    /// The marks span their buckets, as a bar's do: a grained scale reaches the end of the data's last
+    /// bucket (`bar/time_x.rs:382`, `kept.push(end_of(ladder.last()))`), where a line or area's stops at its
+    /// last instant. The cadence still reads the data's own buckets. An axis over no grain keeps the
+    /// instants (`spanning` is `None`, `:339`).
+    pub spans_buckets: bool,
+    /// The chart's endpoint rail merges the scales and draws its x ink in closed form over the rows
+    /// (`line/layout.rs:2588`): a native cadence ticks only buckets a row fills, so an empty bucket
+    /// inside the span, which Vega would tick, is refused by name (`:2594`).
+    pub rail: bool,
 }
 
 /// A label as placed: its text (the year row of a stacked label under a newline), the instant in
 /// days it stands on, its anchor in plot coordinates (the axis line at `y = 0`), the degrees it is
-/// turned clockwise about that anchor, whether the parity rule keeps it, and its ink (turned with
-/// it). Hidden labels still draw their tick.
+/// turned clockwise about that anchor, whether the parity rule keeps it, its ink (turned with
+/// it), and the room production reserves for it ([`vega_space`]), which the gutter reads. Hidden
+/// labels still draw their tick.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlacedLabel {
     pub text: String,
@@ -149,6 +140,7 @@ pub struct PlacedLabel {
     pub angle: f64,
     pub visible: bool,
     pub ink: Bounds,
+    pub space: Bounds,
 }
 
 /// The ticks drawn (instants in days) and the labels on them. Over one instant (one bucket) the
@@ -167,6 +159,8 @@ struct Grained {
     data: TimeUnit,
     fiscal_start: u8,
     span: Vec<(i32, u8, u8)>,
+    /// The distinct days of the buckets a row fills, ascending.
+    filled: Vec<f64>,
     cadence: Cadence,
 }
 
@@ -232,19 +226,32 @@ impl<'a> TimeAxis<'a> {
             .iter()
             .all(|b| b.absolute && b.iso.len() > 10);
         let clock = ClockPlan::of(domain, &labels.clock, cadence, aware)?;
-        if labels.ladder_bare && clock.is_none() {
+        // Production draws a dropped-grain axis's ticks itself: the curated ladder for a
+        // scaffold-budget drop it keeps (`keeps_dropped_grain_ladder`), d3's ticks for an authored
+        // `time_unit: none` or any other axis that names its own. Layout draws neither, unless the
+        // axis keeps a clock plan.
+        if domain.grain_drop.is_some() && clock.is_none() {
             return Err(Diagnostic::refused(refuse!(
-                "a time axis labeled by the curated ladder on ticks (a grain dropped for the scaffold budget, or axis_x.time_unit: none) is not supported"
+                "a time axis whose calendar grain was dropped (for the scaffold budget, or axis_x.time_unit: none) is not supported: production draws its own ticks there"
             )));
         }
-        let days = domain.buckets.iter().map(|b| b.pos);
-        let extent = (
-            days.clone().fold(f64::INFINITY, f64::min),
-            days.fold(f64::NEG_INFINITY, f64::max),
-        );
         if domain.buckets.is_empty() {
             return Err(diag::err_internal("a time axis over no x values"));
         }
+        let days = domain.buckets.iter().map(|b| b.pos);
+        let (first, last) = (
+            days.clone().fold(f64::INFINITY, f64::min),
+            days.fold(f64::NEG_INFINITY, f64::max),
+        );
+        let fiscal_start = domain.fiscal_start.map_or(1, bind::model::Month::get);
+        let extent = match domain.unit.filter(|_| labels.spans_buckets) {
+            Some(unit) => {
+                let (y, m, d) = civil_from_days(last as i64);
+                let (y, m, d) = next_bucket(floor_to_bucket_start((y, m, d), unit, fiscal_start), unit);
+                (first, days_from_civil(y, m, d) as f64)
+            }
+            None => (first, last),
+        };
         let run = book.run("0", &labels.font).map_err(diag::err_internal)?;
         let grained = domain
             .unit
@@ -303,10 +310,14 @@ impl<'a> TimeAxis<'a> {
             labels.quarters,
             &mut measure,
         )?;
+        let mut filled: Vec<f64> = domain.buckets.iter().map(|b| b.pos).collect();
+        filled.sort_unstable_by(f64::total_cmp);
+        filled.dedup();
         Ok(Grained {
             data,
             fiscal_start,
             span,
+            filled,
             cadence,
         })
     }
@@ -359,10 +370,11 @@ impl<'a> TimeAxis<'a> {
     }
 
     /// A grained label's anchor: Vega's flush read on the inset range (`flat_label_anchor`), its
-    /// span left unclamped as production leaves it.
+    /// span left unclamped as production leaves it. Production draws the anchor whatever
+    /// `labels.flush` says; the setting reaches only the cadence ladder's edge reservation.
     fn range_align(&self, frac: f64, width: f64) -> Align {
         let span = width - 2.0 * self.labels.inset;
-        Self::align(frac * span, span)
+        flush_align(frac * span, span)
     }
 
     /// The ticks and labels on a plot `plot` across.
@@ -448,11 +460,20 @@ impl<'a> TimeAxis<'a> {
                         .advance,
                 );
             }
-            let align = Self::align(tick.frac * plot.width, plot.width);
+            let align = flush_align(tick.frac * plot.width, plot.width);
             let x = self.x_at(tick.frac, plot.width);
             // Flat labels share one top, so a second row never changes a gap between boxes.
             vega.push(boxed(x, parity.min(limit), align, font.size));
-            inks.push(boxed(x, ink.min(limit), align, height * rows.len() as f64));
+            let ink = boxed(x, ink.min(limit), align, height * rows.len() as f64);
+            let space = vega_space(
+                (ink.x1, ink.x2),
+                (x, offset),
+                Baseline::Top,
+                font.size,
+                rows.len(),
+                0.0,
+            );
+            inks.push((ink, space));
             aligns.push((tick, x, align));
             cut.push(text.join("\n"));
         }
@@ -462,21 +483,25 @@ impl<'a> TimeAxis<'a> {
             .zip(cut)
             .zip(inks)
             .zip(shown)
-            .map(|((((tick, x, align), text), ink), visible)| PlacedLabel {
-                text,
-                day: tick.day,
-                x,
-                y: offset,
-                align,
-                baseline: Baseline::Top,
-                angle: 0.0,
-                visible,
-                ink,
-            })
+            .map(
+                |((((tick, x, align), text), (ink, space)), visible)| PlacedLabel {
+                    text,
+                    day: tick.day,
+                    x,
+                    y: offset,
+                    align,
+                    baseline: Baseline::Top,
+                    angle: 0.0,
+                    visible,
+                    ink,
+                    space,
+                },
+            )
             .collect();
         let mut gutter = gutter_of(&labels, plot.width);
         if self.clock.as_ref().is_some_and(ClockPlan::stacked) {
-            gutter.bottom = gutter.bottom.max(offset + 2.0 * height);
+            let rows = vega_space((0.0, 0.0), (0.0, offset), Baseline::Top, font.size, 2, 0.0);
+            gutter.bottom = gutter.bottom.max(rows.y2);
         }
         Ok(Placement {
             ticks: bare
@@ -620,6 +645,14 @@ impl<'a> TimeAxis<'a> {
                     x2: x1 + width,
                     y2: offset + rows * line,
                 },
+                space: vega_space(
+                    (x1, x1 + width),
+                    (x, offset),
+                    Baseline::Top,
+                    font.size,
+                    rows as usize,
+                    0.0,
+                ),
             });
         }
         let gutter = gutter_of(&labels, plot.width);
@@ -629,51 +662,6 @@ impl<'a> TimeAxis<'a> {
             gutter,
         }))
     }
-
-    /// Vega's `labelFlush` with its default `labelFlushOffset` of 0: a label within a pixel of a
-    /// range end anchors on it, the nearer end winning a tie. Production draws the anchor whatever
-    /// `labels.flush` says; the setting reaches only the cadence ladder's edge reservation.
-    fn align(x: f64, span: f64) -> Align {
-        let (near_start, near_end) = (x.abs(), (span - x).abs());
-        if near_start < near_end && near_start <= 1.0 {
-            Align::Left
-        } else if near_end <= 1.0 {
-            Align::Right
-        } else {
-            Align::Center
-        }
-    }
-}
-
-/// Vega's `labelOverlap: parity` over label boxes in axis order: while three or more labels remain
-/// and any neighboring pair sits closer than `separation` (the larger of the pair's x and y gaps),
-/// every odd-indexed survivor goes; once fewer than three remain with the axis's last label gone,
-/// that last label shows in place of the last survivor.
-fn parity_visible(ink: &[Bounds], separation: f64) -> Vec<bool> {
-    let close = |a: &Bounds, b: &Bounds| {
-        separation
-            > (b.x1 - a.x2)
-                .max(a.x1 - b.x2)
-                .max(b.y1 - a.y2)
-                .max(a.y1 - b.y2)
-    };
-    let crowded = |kept: &[usize]| kept.windows(2).any(|w| close(&ink[w[0]], &ink[w[1]]));
-    let mut kept: Vec<usize> = (0..ink.len()).collect();
-    if kept.len() < 3 || !crowded(&kept) {
-        return vec![true; ink.len()];
-    }
-    while kept.len() >= 3 && crowded(&kept) {
-        kept = kept.into_iter().step_by(2).collect();
-    }
-    let mut visible: Vec<bool> = (0..ink.len()).map(|i| kept.contains(&i)).collect();
-    let last = ink.len() - 1;
-    if kept.len() < 3 && !visible[last] {
-        if kept.len() > 1 {
-            visible[kept[kept.len() - 1]] = false;
-        }
-        visible[last] = true;
-    }
-    visible
 }
 
 /// How far the shown labels' ink reaches past the plot: below it and beyond each side.
@@ -683,9 +671,9 @@ fn gutter_of(labels: &[PlacedLabel], width: f64) -> Insets {
         .filter(|l| l.visible)
         .fold(Insets::ZERO, |g, l| Insets {
             top: 0.0,
-            right: g.right.max(l.ink.x2 - width),
-            bottom: g.bottom.max(l.ink.y2),
-            left: g.left.max(-l.ink.x1),
+            right: g.right.max(l.space.x2 - width),
+            bottom: g.bottom.max(l.space.y2),
+            left: g.left.max(-l.space.x1),
         })
 }
 

@@ -693,8 +693,8 @@ fn every_builtin_stays_within_three_budgets_for_every_argument_shape() {
     let names: Vec<&str> = TABLE.iter().map(|(name, _)| *name).filter(|name| *name != "if").collect();
     let mut offenders: Vec<String> = Vec::new();
     let mut worst = (0isize, String::new());
-    for name in names {
-        let outcome = std::thread::Builder::new()
+    let outcomes = par_map(&names, |&name| {
+        std::thread::Builder::new()
             .stack_size(CASE_STACK * 4)
             .spawn(move || {
                 BUDGET.with(|b| b.set(CASE_MEMORY));
@@ -739,7 +739,9 @@ fn every_builtin_stays_within_three_budgets_for_every_argument_shape() {
                 found
             })
             .expect("a thread starts")
-            .join();
+            .join()
+    });
+    for (name, outcome) in names.iter().zip(outcomes) {
         match outcome {
             Err(_) => offenders.push(format!("panicked in {name}")),
             Ok(found) => {
@@ -799,3 +801,7 @@ fn a_time_scale_over_aware_instants_ticks_the_board_zones_midnights() {
     assert!(utc.iter().all(|&h| h == 0.0), "{utc:?}");
     assert!(hours(Kind::Time).iter().all(|&h| h == 0.0), "a naive axis reads its wall clock as UTC");
 }
+
+#[path = "../../../test_support/par_map.rs"]
+mod par_map;
+use par_map::par_map;

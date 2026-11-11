@@ -2,6 +2,15 @@
 //! by a single model stays `f64` with a `constraint`. Bounds and messages are
 //! pydantic's, so NaN fails every bound and infinity passes the open ones.
 
+/// A CSS pixel length as Python's `[0-9]+(?:\.[0-9]+)?(?:px)?` matches it: digits, an optional
+/// fraction and an optional `px`; no sign, no space, no other unit.
+pub(crate) fn pixel_length(text: &str) -> Option<f64> {
+    let digits = text.strip_suffix("px").unwrap_or(text);
+    let (whole, frac) = digits.split_once('.').unwrap_or((digits, "0"));
+    let ok = |d: &str| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit());
+    (ok(whole) && ok(frac)).then(|| digits.parse().ok()).flatten()
+}
+
 macro_rules! unit {
     ($(#[$m:meta])* $name:ident, $bounds:expr, $ok:expr, $msg:literal) => {
         $(#[$m])*

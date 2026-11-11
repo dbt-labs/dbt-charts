@@ -525,3 +525,57 @@ where
         },
     }
 }
+
+/// A patch with its explicit nulls dropped to unset: an overlay that must not clear what a lower
+/// tier set (a merge lets an upper null replace the lower value, as an explicit set-to-absent).
+/// Generated from the field table for every struct model.
+pub trait DropNulls {
+    fn drop_nulls(&mut self);
+}
+
+impl DropNulls for () {
+    fn drop_nulls(&mut self) {}
+}
+
+impl<T> DropNulls for Option<T> {
+    fn drop_nulls(&mut self) {}
+}
+
+impl<P: DropNulls> DropNulls for Box<P> {
+    fn drop_nulls(&mut self) {
+        (**self).drop_nulls();
+    }
+}
+
+impl<P: DropNulls> DropNulls for IndexMap<String, P> {
+    fn drop_nulls(&mut self) {
+        self.values_mut().for_each(DropNulls::drop_nulls);
+    }
+}
+
+impl<X: DropNulls> DropNulls for crate::Tri<X> {
+    fn drop_nulls(&mut self) {
+        match self {
+            crate::Tri::Null => *self = crate::Tri::Unset,
+            crate::Tri::Value(x) => x.drop_nulls(),
+            crate::Tri::Unset => {}
+        }
+    }
+}
+
+/// [`DropNulls`] for a nullable field's slot, whose value is the inside of a twin.
+pub fn tri_drop_nulls<P>(slot: &mut crate::Tri<P::Value>)
+where
+    P: Lift + DropNulls,
+{
+    match std::mem::replace(slot, crate::Tri::Unset) {
+        crate::Tri::Unset | crate::Tri::Null => {}
+        crate::Tri::Value(v) => {
+            let mut twin = P::put(v);
+            twin.drop_nulls();
+            if let Some(v) = twin.lift() {
+                *slot = crate::Tri::Value(v);
+            }
+        }
+    }
+}

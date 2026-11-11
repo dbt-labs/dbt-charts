@@ -1,5 +1,6 @@
 //! The project seam: the engine reads no disk and no env, a host supplies files synchronously
-//! (decision D-11). An async host prefetches the closure [`refs`] names into a [`MemoryFiles`].
+//! (decision D-11): `ProjectFiles { read, list }` is synchronous. An async host prefetches the
+//! closure [`refs`] (`refs(text)`) names into a [`MemoryFiles`].
 
 use board_model::board::theme::is_built_in;
 use project::ProjectPath;

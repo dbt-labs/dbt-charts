@@ -53,6 +53,21 @@ pub fn days_in_month(year: i32, month: u32) -> u32 {
     }
 }
 
+/// `"YYYY-MM-DD"` as written: four, two and two ASCII digits and a day the month has.
+pub fn parse_ymd(s: &str) -> Option<(i32, u8, u8)> {
+    let b = s.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+        return None;
+    }
+    let digits = |r: std::ops::Range<usize>| -> Option<i32> {
+        let part = b.get(r)?;
+        part.iter().all(u8::is_ascii_digit).then(|| part.iter().fold(0, |n, c| n * 10 + i32::from(c - b'0')))
+    };
+    let (y, m, d) = (digits(0..4)?, digits(5..7)?, digits(8..10)?);
+    let (m, d) = (u8::try_from(m).ok()?, u8::try_from(d).ok()?);
+    ((1..=12).contains(&m) && d >= 1 && u32::from(d) <= days_in_month(y, u32::from(m))).then_some((y, m, d))
+}
+
 /// A valid instant broken into calendar fields.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Dt {

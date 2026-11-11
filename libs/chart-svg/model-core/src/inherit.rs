@@ -14,6 +14,14 @@
 //! - an absent nested model (`Option<Inner>` with `absent`, D-23): an unset
 //!   container mirrors its source as a whole, then leaf by leaf.
 //!
+//! The dbt Charts concepts in the emitted code are the named font and the color
+//! pass. A model with `extends` beside `family` is a font slot and a map of
+//! `NamedFont` is the registry, expanded by the emitted `expand`. A leaf whose
+//! type is the `color` facet (or a map of them, such as a category's
+//! value-to-color assignments), and a `CategoricalColorStyle`'s palettes, are
+//! resolved by the emitted `resolve_colors` through a hook module the caller
+//! names.
+//!
 //! Paths are authored keys from the root model's name (`Style.charts.font`);
 //! `#[flatten]` fields add no segment.
 

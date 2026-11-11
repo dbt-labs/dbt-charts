@@ -135,6 +135,38 @@ def test_board_may_not_name_a_role():
     assert result.errors[0].code == "ERR-PALETTE-UNKNOWN"
 
 
+def test_board_categorical_palette_refused_by_its_model_has_a_registered_code():
+    """An over-request on a board's categorical palette is a palette error, not ERR-INTERNAL."""
+    result = compile_board(_board("vivid-10:14"))
+    assert not result.success
+    assert result.errors[0].code == "ERR-PALETTE-STYLE-INVALID"
+    assert result.errors[0].message == (
+        "The categorical palette in `style.charts.color.categorical` cannot be "
+        "used as written: palette 'vivid-10' has 10 stops; cannot return 14. "
+        "Pick a different palette or reduce steps."
+    )
+
+
+@pytest.mark.parametrize(
+    ("palette", "reason"),
+    [
+        ("nosuch:3", "unknown palette 'nosuch'"),
+        ("vivd-10:5", "unknown palette 'vivd-10'. Did you mean 'vivid-10'?"),
+        (
+            "jet",
+            "palette 'jet' is a known perceptual anti-pattern and is not shipped. "
+            "See https://docs.dbtcharts.com/guides/palette-resolver/#anti-patterns",
+        ),
+    ],
+)
+def test_board_categorical_palette_no_role_could_be_is_a_palette_error(palette, reason):
+    """A name that cannot be a theme role keeps the resolver's own message."""
+    result = compile_board(_board(palette))
+    assert not result.success
+    assert result.errors[0].code == "ERR-PALETTE-STYLE-INVALID"
+    assert result.errors[0].message.endswith(f"as written: {reason}")
+
+
 def test_currentcolor_inside_a_palette_list_compiles_and_inks_as_itself():
     """`currentColor` is bare-identifier-shaped -- matching the same shape
     as a candidate role name or a typo -- but it's a reserved CSS keyword,

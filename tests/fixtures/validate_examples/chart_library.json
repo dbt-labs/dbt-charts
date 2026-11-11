@@ -1,0 +1,248 @@
+[
+  {
+    "success": true,
+    "path": "charts/area/area.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/area/range-band.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/area/stacked-100-area.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/area/stacked-area.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/area/streamgraph.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/bar-and-line.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/bar.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/bullet.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/candlestick.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/column.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/diverging-bar.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/dumbbell.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/floating-bar.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/gantt.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/grouped-column.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/histogram.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/lollipop.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/ranged-dot.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/stacked-100-column.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/stacked-column.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/bar/waterfall.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/grid/calendar-heatmap.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/grid/heatmap.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/line/bump.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/line/line.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/line/multi-line.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/line/slope.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/line/small-multiples.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/line/step-line.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/point/bubble.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/point/dot-plot.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/point/scatter.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/radial/donut.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/radial/pie.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/table/bar-table.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/table/heat-table.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/table/kpi.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/table/pivot-table.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/table/spark-bar.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/table/sparkline-table.yml",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "success": true,
+    "path": "charts/table/table.yml",
+    "errors": [],
+    "warnings": []
+  }
+]

@@ -24,6 +24,7 @@
   "case.extra_small_words": "",
   "case.small_words": "",
   "case.title_style": "first_word",
+  "chart.no_data": "Нет данных",
   "controls.all": "Все",
   "controls.all_dates": "Все даты",
   "controls.any_date": "Любая дата",

@@ -3,7 +3,8 @@
 //! Python keeps an authored union (`type`) and a normalized one (`query_type`); the
 //! spine has one tagged enum, `type: sql | values | schema`. The tag is inferred from
 //! the keys when absent (`rows`, `values` or `columns` make a values query, else SQL);
-//! a schema query is never inferred.
+//! a schema query is never inferred. The field tables are checked against
+//! `tests/fixtures/{query,variable,constants}.json` from `tests/test_board_model_query_fixtures.py`.
 //!
 //! - [`QueryBase`] is `_BaseQueryFields`, shared by every variant through `#[flatten]`.
 //! - A query's `source` is a reference by name ([`SourceName`]); the warehouse source
@@ -71,13 +72,23 @@ facet!(
     literal_text
 );
 
-/// A literal value of inline data: any JSON value.
+/// A literal value of inline data: any JSON value. A value holding a YAML date or timestamp also
+/// keeps its node, since JSON spells those as strings and Python tells them from text.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Cell(pub Value);
+pub struct Cell(pub Value, pub Option<Node>);
+
+fn holds_timestamp(node: &Node) -> bool {
+    match &node.kind {
+        yaml::Kind::Scalar(yaml::Value::Timestamp(_)) => true,
+        yaml::Kind::Scalar(_) => false,
+        yaml::Kind::Seq(items) => items.iter().any(holds_timestamp),
+        yaml::Kind::Map(map) => map.values().any(|e| holds_timestamp(&e.value)),
+    }
+}
 
 impl ReadScalar for Cell {
     fn read(node: &Node, _: &mut Cx) -> Option<Self> {
-        Some(Self(node.to_json()))
+        Some(Self(node.to_json(), holds_timestamp(node).then(|| node.clone())))
     }
 }
 
@@ -200,7 +211,7 @@ pub struct QueryBase {
 pub struct SqlQuery {
     #[flatten]
     pub base: QueryBase,
-    /// The SQL to run, as Jinja2. `{{ queries.base }}` inlines another query of the same source as a subquery already aliased to its name (add no `AS`); a bare `FROM base` fails. Variables go in through `filter()`, `filter_date_range()` or `{{ name }}`.
+    /// The SQL to run, as Jinja2. `{{ queries.base }}` inlines another query of the same source as a subquery already aliased to its name (add no `AS`), so base reruns inside every query that reads it; a bare `FROM base` fails. `{{ queries.base.cache }}` runs base once and composes over its cached rows in DuckDB SQL: use it when several charts read one expensive base. Variables go in through `filter()`, `filter_date_range()` or `{{ name }}`.
     pub sql: String,
     /// Non-nestable SQL preamble executed before the main query (e.g., CREATE TEMP FUNCTION).
     #[model(absent = "no preamble")]
@@ -216,11 +227,14 @@ pub struct Row(pub IndexMap<String, Cell>);
 
 impl ReadScalar for Row {
     fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
-        let Value::Object(cells) = node.to_json() else {
+        let yaml::Kind::Map(cells) = &node.kind else {
             cx.invalid(node.span, "an inline row is a mapping of column to value");
             return None;
         };
-        Some(Self(cells.into_iter().map(|(k, v)| (k, Cell(v))).collect()))
+        let cell = |n: &Node| Cell(n.to_json(), holds_timestamp(n).then(|| n.clone()));
+        Some(Self(
+            cells.iter().map(|(k, e)| (k.clone(), cell(&e.value))).collect(),
+        ))
     }
 }
 

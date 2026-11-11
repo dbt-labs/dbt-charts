@@ -13,7 +13,7 @@ import pytest
 
 from dbt_charts.core.compile import compile
 from dbt_charts.core.diagnostics import (
-    ERR_BINDER_UNKNOWN_COLUMN,
+    ERR_BINDER_GROUP_BY,
     ERR_INTERNAL,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -107,14 +107,14 @@ class TestCachedFailureKeepsItsCode:
     """A failure replayed from the persistent cache carries the code it was raised with.
 
     Regression for: the cached replay surfaced as ERR-INTERNAL, so a second
-    `dct render` of a board with a bad column reported a bug instead of
-    ERR-BINDER-UNKNOWN-COLUMN.
+    `dct render` of a board with a bad GROUP BY reported a bug instead of
+    ERR-BINDER-GROUP-BY. (Unknown-column failures are no longer cached at all.)
     """
 
     def test_replayed_failure_has_the_original_code(self, routes: Mock):
         cache = TrivialDuckDBCache(failure_ttl_seconds=900)
         try:
-            error = QueryError.from_code(ERR_BINDER_UNKNOWN_COLUMN, detail="no col")
+            error = QueryError.from_code(ERR_BINDER_GROUP_BY, detail="no col")
             fresh = _make_executor(
                 routes, result_cache=cache, adapter_result=_failed_result(error)
             )
@@ -126,7 +126,7 @@ class TestCachedFailureKeepsItsCode:
                 replay.execute_query("good_query")
 
             routes.assert_called_once()  # the fresh run's call; the replay made none
-            assert second.value.code is ERR_BINDER_UNKNOWN_COLUMN
+            assert second.value.code is ERR_BINDER_GROUP_BY
             assert str(second.value) == str(first.value)
             assert second.value.fields["query_name"] == "good_query"
         finally:
@@ -181,7 +181,7 @@ class TestCachedFailureKeepsItsCode:
         write) cannot be replayed faithfully, so the query runs again."""
         cache = TrivialDuckDBCache(failure_ttl_seconds=900)
         try:
-            error = QueryError.from_code(ERR_BINDER_UNKNOWN_COLUMN, detail="x")
+            error = QueryError.from_code(ERR_BINDER_GROUP_BY, detail="x")
             fresh = _make_executor(
                 routes, result_cache=cache, adapter_result=_failed_result(error)
             )

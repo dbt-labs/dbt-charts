@@ -1,0 +1,3 @@
+kind: Fixes
+body: The migrate skill rebuilds every total the source shows instead of reading Sigma's total joins as something to drop.
+time: 2026-11-10T15:55:52.198423-08:00

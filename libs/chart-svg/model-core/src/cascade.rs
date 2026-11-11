@@ -4,6 +4,19 @@
 //! filled) and the total value. [`Resolved::apply`] resolves a patch over it by running only the
 //! links whose source changed and rebuilding only the values a changed leaf sits in; the result is
 //! the one a full recompute gives. The tables come from `inherit::emit`; nothing here knows a model.
+//!
+//! `Resolved::base` first resolves every color token and categorical palette name in the folded
+//! patch (`Tables.resolve_colors`: a color leaf is a facet named `color`, `theme.background`
+//! stays for the board's canvas; a gradient's or scale's palette keeps its name, with a role
+//! replaced, and its colors resolve; a board's `palettes:`/`roles:` rebind the theme's tokens, as
+//! `_theme_base` loads the theme under them) and then expands the named fonts over the folded
+//! patch (`Tables.expand`: the `style.fonts` registry folds its own `extends` chain, then each
+//! slot that names a font, a sparse `Patch` slot included, takes the fields the entry sets under
+//! its own and drops the name; an unknown name is a `Refused`), keeping the unexpanded layers as
+//! `Resolved.raw`. `apply` starts again from `raw` when an upper layer touches `fonts`, an
+//! `extends`, or a sparse slot that holds a font (`Tables.opaque_fonts`). Both finish the
+//! inherited patch with the generated `fill` (each `fill` literal, once the inherit has run,
+//! where its container is set and the leaf is not; `Tables.fill`).
 
 use crate::{Build, Empty, Leaf, Lift, Refused, SetLeaves, Slot, Tri, Unset};
 use std::fmt;

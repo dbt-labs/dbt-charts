@@ -1,10 +1,24 @@
 """Type stub for the PyO3 extension `dbt_charts._engine` (crate at libs/chart-svg/python)."""
 
-from typing import Any, Protocol, TypedDict
+from typing import Any, NotRequired, Protocol, TypedDict
 
 class RenderDiagnostic(TypedDict):
     code: str
     params: dict[str, Any]
+
+class CompileDiagnostic(TypedDict):
+    """A compile finding or refusal: where it sits (`path`, `range` as
+    `{file, start_line, end_line, columns?}`, `related` as `[{path?, range?, message}]`) in
+    Python's wire shape; `message` and `fix` are rendered from `code` and `params`, and a
+    `source_needle` rides in `params`."""
+
+    code: str
+    params: dict[str, Any]
+    level: str
+    related: list[dict[str, Any]]
+    path: NotRequired[str]
+    range: NotRequired[dict[str, Any]]
+    hint: NotRequired[str]
 
 class RenderDiagnosticError(ValueError):
     code: str
@@ -19,13 +33,26 @@ class ProjectFiles(Protocol):
     def exists(self, path: str, /) -> bool: ...
 
 class CompileError(ValueError):
-    diagnostics: list[RenderDiagnostic]
+    """A refusal: its `diagnostics` are coded and located as a compile finding is."""
+
+    diagnostics: list[CompileDiagnostic]
+    # The non-fatal findings gathered before the refusal, such as a migration notice.
+    warnings: list[CompileDiagnostic]
 
 class CompiledBoard:
     """A board compiled in Rust. Opaque: no board model crosses to Python."""
 
-    def diagnostics(self) -> list[RenderDiagnostic]: ...
+    def diagnostics(self) -> list[CompileDiagnostic]: ...
     def index_json(self) -> str: ...
+    def host_facts_json(self) -> str: ...
+
+class SqlAnalyzer(Protocol):
+    """The host's SQL analysis: one call per compile, one outcome per request, in request order.
+    It resolves each request's `source` to a dialect itself, so it holds the source registry."""
+
+    def analyze_all(
+        self, requests: list[dict[str, str | None]]
+    ) -> list[dict[str, Any]]: ...
 
 def compile(
     files: ProjectFiles,
@@ -35,8 +62,27 @@ def compile(
     today: str,
     default_theme: str,
     html_policy_ceiling: str | None,
-    sources: list[str],
+    sources: dict[str, str],
+    implicit_source: str | None,
+    sql: SqlAnalyzer | None = None,
+    named: bool = False,
 ) -> CompiledBoard: ...
+def plan(
+    board: CompiledBoard,
+    given: str,
+    now_epoch: int,
+    time_zone: str,
+    all_queries: bool,
+) -> str: ...
+def index(
+    files: ProjectFiles,
+    path: str,
+    *,
+    boards_root: str,
+    today: str,
+    sources: list[str],
+    implicit_source: str | None,
+) -> str: ...
 def load_rows(rows_json: str) -> Rows: ...
 def render_chart(
     rows: Rows, datasets: dict[str, Rows], layout_json: str

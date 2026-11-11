@@ -111,6 +111,18 @@ def _print_warnings(warnings: list[Diagnostic]) -> None:
     print_diagnostics(warnings)
 
 
+def _age_since(ats: list[datetime]) -> str:
+    minutes = int((datetime.now(UTC) - min(ats)).total_seconds()) // 60
+    days, hours = divmod(minutes // 60, 24)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes % 60}m"
+    if minutes:
+        return f"{minutes}m"
+    return "under a minute"
+
+
 def _print_cache_use(hit_ats: list[datetime]) -> None:
     """Tell the user on stderr that this render reused cached warehouse results.
 
@@ -120,18 +132,25 @@ def _print_cache_use(hit_ats: list[datetime]) -> None:
     """
     if not hit_ats:
         return
-    minutes = int((datetime.now(UTC) - min(hit_ats)).total_seconds()) // 60
-    days, hours = divmod(minutes // 60, 24)
-    if days:
-        age = f"{days}d {hours}h"
-    elif hours:
-        age = f"{hours}h {minutes % 60}m"
-    elif minutes:
-        age = f"{minutes}m"
-    else:
-        age = "under a minute"
+    age = _age_since(hit_ats)
     count = "1 query" if len(hit_ats) == 1 else f"{len(hit_ats)} queries"
     print(f"{count} served from cache, oldest result {age} old.", file=sys.stderr)
+
+
+def _print_replayed_failures(failure_ats: list[datetime]) -> None:
+    """Say on stderr that errors came from the cache, not a fresh warehouse call."""
+    if not failure_ats:
+        return
+    count = (
+        "1 query failure"
+        if len(failure_ats) == 1
+        else f"{len(failure_ats)} query failures"
+    )
+    print(
+        f"{count} replayed from cache ({_age_since(failure_ats)} old); "
+        "`--no-cache` re-runs it.",
+        file=sys.stderr,
+    )
 
 
 def _merge_warnings_into_json(
@@ -175,6 +194,12 @@ def _emit_result(
         )
         raise RenderFailed(errors, result.warnings)
 
+    # stderr carries JSON Lines under --diagnostics-json; a prose line would
+    # break its consumers. Printed before a chart-error raise: that is exactly
+    # when a replayed failure needs naming.
+    if not diagnostics_json:
+        _print_replayed_failures(result.replayed_failure_ats)
+
     if fail_on_chart_errors and result.chart_errors:
         raise RenderFailed(result.chart_errors, result.warnings)
 
@@ -184,8 +209,6 @@ def _emit_result(
             emit_diagnostics_jsonl(all_diags)
     elif not no_warnings:
         _print_warnings(result.warnings)
-    # stderr carries JSON Lines under --diagnostics-json; a prose line would
-    # break its consumers.
     if not diagnostics_json:
         _print_cache_use(result.warehouse_cache_hit_ats)
 

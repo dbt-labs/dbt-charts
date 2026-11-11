@@ -97,30 +97,43 @@ def extract_base_column_refs(
     board = compile_result.board
     if board is None:
         raise ValueError("extract_base_column_refs requires a compiled board")
-    sources = board.sources
-    out: dict[str, QueryColumnRefs] = {}
-    for name, query in compile_result.query_registry.items():
-        if not is_sql_query(query):
-            continue
-        source_dialect = sqlglot_dialect(dialect_for_source(query.source, sources))
-        refs = _refs_for_sql(
-            query.sql, dialect=sqlglot_dialect(query.dialect) or source_dialect
+    return {
+        name: query_column_refs(
+            query.sql,
+            query.setup_sql,
+            query.dialect,
+            dialect_for_source(query.source, board.sources),
         )
-        if query.setup_sql and refs.indeterminate is None:
-            setup_columns, defined, setup_via_dbt, setup_indeterminate = _setup_refs(
-                query.setup_sql, dialect=source_dialect
-            )
-            if setup_indeterminate is not None:
-                refs = QueryColumnRefs(indeterminate=setup_indeterminate)
-            else:
-                refs.columns = {
-                    (table, column)
-                    for table, column in refs.columns
-                    if table.lower() not in defined
-                } | setup_columns
-                refs.via_dbt = refs.via_dbt | setup_via_dbt
-        out[name] = refs
-    return out
+        for name, query in compile_result.query_registry.items()
+        if is_sql_query(query)
+    }
+
+
+def query_column_refs(
+    sql: str,
+    setup_sql: str | None,
+    dialect: str | None,
+    source_dialect_name: str | None,
+) -> QueryColumnRefs:
+    """One SQL query's base-table columns, parsed under its own dialect.
+
+    *dialect* is the query's authored one, *source_dialect_name* its source's.
+    """
+    source_dialect = sqlglot_dialect(source_dialect_name)
+    refs = _refs_for_sql(sql, dialect=sqlglot_dialect(dialect) or source_dialect)
+    if setup_sql and refs.indeterminate is None:
+        setup_columns, defined, setup_via_dbt, setup_indeterminate = _setup_refs(
+            setup_sql, dialect=source_dialect
+        )
+        if setup_indeterminate is not None:
+            return QueryColumnRefs(indeterminate=setup_indeterminate)
+        refs.columns = {
+            (table, column)
+            for table, column in refs.columns
+            if table.lower() not in defined
+        } | setup_columns
+        refs.via_dbt = refs.via_dbt | setup_via_dbt
+    return refs
 
 
 def _substitute_dbt_calls(sql: str) -> tuple[str, frozenset[str]] | None:

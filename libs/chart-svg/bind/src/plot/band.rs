@@ -7,7 +7,7 @@ use d3rs::py_float::py_float_sum;
 use diagnostic::{diag, Diagnostic};
 use serde_json::{Map, Value};
 
-use crate::model::{BandDomain, Key};
+use crate::bound::{BandDomain, Key};
 use crate::rows::raw_x_order;
 
 /// How a category's rows fold to the one value it ranks by.

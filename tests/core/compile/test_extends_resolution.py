@@ -484,14 +484,19 @@ def test_merge_metas_raises_if_outside_boards_root(
     and never reach this guard.  A directory whose logical path is genuinely
     outside must raise so callers can detect configuration errors.
     """
+    from dbt_charts.core.compile.errors import CompilationError
     from dbt_charts.core.compile.merge import merge_metas
+    from dbt_charts.core.diagnostics.codes_compile import (
+        ERR_META_OUTSIDE_BOARDS_ROOT,
+    )
 
     _write(tmp_path, "charts/.keep", "")
     _write(tmp_path, "other/.keep", "")
     outside = _directory(tmp_path, "other", local_project)
     boards_root = _directory(tmp_path, "charts", local_project)
-    with pytest.raises(ValueError, match="not under"):
+    with pytest.raises(CompilationError, match="not under") as raised:
         merge_metas(outside, boards_root)
+    assert raised.value.code is ERR_META_OUTSIDE_BOARDS_ROOT
 
 
 def test_merged_patch_link_false_survives_extends_in_both_directions(

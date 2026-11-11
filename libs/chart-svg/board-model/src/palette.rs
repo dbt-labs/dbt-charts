@@ -1,7 +1,9 @@
 //! The shipped palettes and the color-token grammar over them: `palette.slot`, `role[N]`,
 //! `role.alias`, a bare theme role, and a trailing variant, as `compile/resolve/style/palette.py`'s
 //! `color` and `color_from_theme` resolve them. The catalog is the package's palette YAML, compiled
-//! in (`build.rs`); an unknown palette, role, alias or stop is an error naming it.
+//! in (`build.rs`); an unknown palette, role, alias or stop is an error naming it. Palette
+//! references (`:N`, `_r`, a role, a variant) resolve as `compile/resolve/style/palette.py` does,
+//! checked by `tests/test_board_model_palette_fixture.py`.
 
 use indexmap::IndexMap;
 use std::fmt;
@@ -21,6 +23,17 @@ impl fmt::Display for PaletteError {
 }
 
 impl std::error::Error for PaletteError {}
+
+impl PaletteError {
+    /// Python's `UnknownPaletteError`: a name no palette answers to, a perceptual anti-pattern, or
+    /// a variant on a palette that takes none. Every other failure (a tone, an over-request) is
+    /// the palette's own and unusable, not unknown.
+    pub fn is_unknown(&self) -> bool {
+        self.0.starts_with("unknown palette ")
+            || self.0.contains("is a known perceptual anti-pattern")
+            || self.0.contains("has no 'colors:' array")
+    }
+}
 
 fn err<T>(msg: impl Into<String>) -> Result<T, PaletteError> {
     Err(PaletteError(msg.into()))
@@ -190,7 +203,8 @@ fn alias_chain(
         visited.push(current);
         let Some(value) = aliases.get(current) else {
             return err(format!(
-                "alias '{key}' → '{current}' not found in palette aliases"
+                "alias '{key}' → '{current}' not found in palette aliases. Known aliases: {}",
+                known_aliases(aliases)
             ));
         };
         match value {
@@ -212,6 +226,17 @@ fn alias_chain(
     }
 }
 
+/// `sorted(aliases)` as Python prints the list.
+fn known_aliases(aliases: &IndexMap<String, Alias>) -> String {
+    let mut keys: Vec<&String> = aliases.keys().collect();
+    keys.sort_unstable();
+    let items: Vec<String> = keys
+        .into_iter()
+        .map(|k| diagnostic::py_str_repr(k))
+        .collect();
+    format!("[{}]", items.join(", "))
+}
+
 fn positional(name: &str, idx: i64, sp: &Spine) -> Result<String, PaletteError> {
     if sp.aliases.contains_key(&idx.to_string()) {
         return alias_chain(&idx.to_string(), &sp.aliases, sp.colors.as_deref());
@@ -222,8 +247,43 @@ fn positional(name: &str, idx: i64, sp: &Spine) -> Result<String, PaletteError> 
         .filter(|i| (1..=stops.len()).contains(i))
     {
         Some(i) => Ok(stops.get(i - 1).cloned().unwrap_or_default()),
-        None => err(format!("palette '{name}' has no stop {idx}")),
+        None => {
+            let mut valid: Vec<usize> = sp
+                .aliases
+                .keys()
+                .filter_map(|k| {
+                    k.bytes()
+                        .all(|b| b.is_ascii_digit())
+                        .then(|| k.parse().ok())?
+                })
+                .chain(1..=stops.len())
+                .collect();
+            valid.sort_unstable();
+            valid.dedup();
+            err(format!(
+                "palette '{name}' has no stop {idx}; valid stops: {}",
+                stop_runs(&valid).join(", ")
+            ))
+        }
     }
+}
+
+/// Sorted stops as Python words them: a run of three or more consecutive stops is `a-b`.
+fn stop_runs(valid: &[usize]) -> Vec<String> {
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for &n in valid {
+        match groups.last_mut() {
+            Some(run) if run.last().is_some_and(|last| last + 1 == n) => run.push(n),
+            _ => groups.push(vec![n]),
+        }
+    }
+    groups
+        .iter()
+        .flat_map(|run| match (run.first(), run.last()) {
+            (Some(a), Some(b)) if run.len() >= 3 => vec![format!("{a}-{b}")],
+            _ => run.iter().map(usize::to_string).collect(),
+        })
+        .collect()
 }
 
 /// `(base, variant)` when `name` ends in `.dark`, `.light`, `.pale` or `.deep`.
@@ -251,7 +311,10 @@ fn color_without_variant(token: &str) -> Result<String, PaletteError> {
             return alias_chain(slot, &sp.aliases, sp.colors.as_deref());
         }
         if sp.family == "tone" || !is_int(slot) {
-            return err(format!("palette '{palette}' has no alias '{slot}'"));
+            return err(format!(
+                "palette '{palette}' has no alias '{slot}'. Known aliases: {}",
+                known_aliases(&sp.aliases)
+            ));
         }
     }
     if STOP_LIST.contains(&sp.family) {
@@ -315,8 +378,15 @@ fn bound(
     t: &ThemeColors,
 ) -> Result<(String, Option<&'static str>, &'static Spine), PaletteError> {
     let Some(b) = t.palettes.get(role) else {
+        let mut roles: Vec<&str> = t.palettes.keys().map(String::as_str).collect();
+        roles.sort_unstable();
+        let retired = migrate::respell_retired_variant(token)
+            .map(|now| format!(" '{token}' was retired; use '{now}' instead."))
+            .unwrap_or_default();
         return err(format!(
-            "color token {token:?}: theme has no palette assigned to role '{role}'"
+            "color token {}: theme has no palette assigned to role '{role}'.{retired} Roles with a palette: {}. Write a token as `<role>.<alias>` or `<role>[N]` with one of those roles.",
+            diagnostic::py_repr(&token.into()),
+            roles.join(", ")
         ));
     };
     let (name, v) = split_variant(b);
@@ -382,8 +452,17 @@ fn dispatch(
     if let Some((role, alias)) = token.split_once('.') {
         let (name, v, sp) = bound(role, token, t)?;
         if !sp.aliases.contains_key(alias) {
+            let variants = if alias.contains('.') {
+                format!(
+                    " If you meant a variant, the four are: {}.",
+                    color::VARIANT_WORDS.join(", ")
+                )
+            } else {
+                String::new()
+            };
             return err(format!(
-                "palette '{name}' (role '{role}') has no alias '{alias}'"
+                "palette '{name}' (role '{role}') has no alias '{alias}'. Known aliases: {}.{variants}",
+                known_aliases(&sp.aliases)
             ));
         }
         let c = alias_chain(alias, &sp.aliases, sp.colors.as_deref())?;
@@ -471,7 +550,8 @@ fn parse_reference(r: &str) -> Result<(String, Option<usize>, bool), PaletteErro
         Some((n, steps)) => {
             if !is_int(steps) {
                 return err(format!(
-                    "palette reference steps must be a positive integer, got {r:?}"
+                    "palette reference steps must be a positive integer, got {}",
+                    diagnostic::py_str_repr(r)
                 ));
             }
             match steps.parse::<usize>() {
@@ -551,12 +631,12 @@ pub fn palette_list(name: &str) -> Result<Vec<String>, PaletteError> {
     let mut stops = match sp.family {
         "tone" => {
             return err(format!(
-                "'{name}' is a tone palette. Use color('{name}.solid'), not palette()."
+                "'{name}' is a tone palette. Use color('{name}.solid') etc., not palette()."
             ))
         }
         "pattern" => {
             return err(format!(
-                "'{name}' is a pattern palette: it names fill patterns, not color stops"
+                "'{name}' is a pattern palette: it names fill patterns, not color stops. Set it as `style.pattern.palette`."
             ))
         }
         "categorical" | "scaffold" => {
@@ -564,7 +644,7 @@ pub fn palette_list(name: &str) -> Result<Vec<String>, PaletteError> {
             if let Some(n) = steps {
                 if n > stops.len() {
                     return err(format!(
-                        "palette '{name}' has {} stops; cannot return {n}",
+                        "palette '{name}' has {} stops; cannot return {n}. Pick a different palette or reduce steps.",
                         stops.len()
                     ));
                 }
@@ -731,8 +811,9 @@ pub mod hook {
         };
         let stops = match leaf.name() {
             Some(name) => {
-                let r = resolve_palette_ref(&name, &ctx.palettes).map_err(|e| e.0)?;
-                palette_list(&r).map_err(|e| format!("unknown palette {name:?}: {}", e.0))?
+                let r = resolve_palette_ref(&name, &ctx.palettes)
+                    .map_err(|e| named_unknown(&name, e))?;
+                palette_list(&r).map_err(|e| named_unknown(&name, e))?
             }
             None => {
                 let mut colors = leaf.colors();
@@ -746,6 +827,131 @@ pub mod hook {
         };
         *slot = Some(L::from_colors(stops)?);
         Ok(())
+    }
+
+    /// The refusal for a palette field that names nothing usable: `unknown palette "<authored>":
+    /// <why>` when no palette answers to it, `unusable palette "<authored>": <why>` when one does
+    /// but cannot serve as written (a tone, an over-request, a malformed `:N`).
+    pub fn named_unknown(name: &str, e: super::PaletteError) -> String {
+        let lead = if e.is_unknown() {
+            UNKNOWN_PALETTE
+        } else {
+            UNUSABLE_PALETTE
+        };
+        format!("{lead}{name:?}: {}", e.0)
+    }
+
+    /// The start of a refusal [`named_unknown`] words; the authored name follows, quoted.
+    pub const UNKNOWN_PALETTE: &str = "unknown palette ";
+    /// As [`UNKNOWN_PALETTE`], for a palette that exists but cannot be used as written.
+    pub const UNUSABLE_PALETTE: &str = "unusable palette ";
+
+    /// The authored name in a [`named_unknown`] refusal, `None` for any other.
+    pub fn unknown_name(why: &str) -> Option<&str> {
+        quoted_name(why, UNKNOWN_PALETTE).map(|(name, _)| name)
+    }
+
+    /// The authored name and the palette's own reason in an unusable-palette refusal.
+    pub fn unusable_name(why: &str) -> Option<(&str, &str)> {
+        quoted_name(why, UNUSABLE_PALETTE)
+    }
+
+    fn quoted_name<'a>(why: &'a str, lead: &str) -> Option<(&'a str, &'a str)> {
+        why.strip_prefix(lead)?
+            .strip_prefix('"')?
+            .split_once("\": ")
+    }
+
+    /// A palette name in a slot that bakes it later (a gradient, a scale): a theme role is
+    /// replaced by the palette it binds, and the name must still be a shipped palette or a Vega
+    /// scheme. Returns the name to keep.
+    pub fn name_only_ref(ctx: &Ctx, name: &str) -> Result<String, String> {
+        let r = resolve_palette_ref(name, &ctx.palettes).map_err(|e| named_unknown(name, e))?;
+        if d3rs::vega_schemes::scheme(&r).is_none() {
+            palette_list(&r).map_err(|e| named_unknown(name, e))?;
+        }
+        Ok(r)
+    }
+
+    /// [`name_only_ref`] with no theme bindings: the refusal for a name no shipped palette or
+    /// Vega scheme serves.
+    pub fn name_only_check(name: &str) -> Result<(), String> {
+        let ctx = Ctx {
+            palettes: IndexMap::new(),
+            roles: IndexMap::new(),
+            single_series: None,
+        };
+        name_only_ref(&ctx, name).map(drop)
+    }
+
+    /// The refusal for a name that is no shipped palette's stops (a Vega scheme is no answer).
+    pub fn name_check(name: &str) -> Result<(), String> {
+        palette_list(name)
+            .map(drop)
+            .map_err(|e| named_unknown(name, e))
+    }
+
+    /// What Python's model validators say of a palette name before any theme role is known:
+    /// `Some(text)` is the `ValueError` they raise, `None` is a name they accept or defer (a bare
+    /// word may still be a theme role). `gradient` is a gradient or scale slot, which also takes a
+    /// Vega scheme and words a dash-digit variant of one.
+    pub fn python_refusal(authored: &str, gradient: bool) -> Option<String> {
+        if gradient && d3rs::vega_schemes::scheme(authored).is_some() {
+            return None;
+        }
+        let Err(e) = palette_list(authored) else {
+            return None;
+        };
+        if !e.is_unknown() {
+            return Some(e.0);
+        }
+        if gradient {
+            if let Some((base, steps)) = authored.rsplit_once('-') {
+                if d3rs::vega_schemes::scheme(base).is_some()
+                    && !steps.is_empty()
+                    && steps.chars().all(|c| c.is_ascii_digit())
+                {
+                    return Some(format!(
+                        "palette '{authored}' requests a {steps}-step discrete variant of the '{base}' scheme. dbt charts does not support bucketed/quantized color scales yet \u{2014} use the continuous scheme '{base}' instead."
+                    ));
+                }
+            }
+        }
+        let role = !authored.is_empty()
+            && !authored.contains(':')
+            && !authored.starts_with('#')
+            && d3rs::vega_schemes::scheme(authored).is_none()
+            && !["hsv", "jet", "rainbow"].contains(&authored);
+        if role {
+            return None;
+        }
+        Some(match e.0.strip_prefix("unknown palette \"") {
+            Some(rest) => match rest.split_once('"') {
+                Some((name, _)) => unknown_message(name, authored),
+                None => e.0.clone(),
+            },
+            None if e.0.contains("is a known perceptual anti-pattern") => format!(
+                "{}. See https://docs.dbtcharts.com/guides/palette-resolver/#anti-patterns",
+                e.0
+            ),
+            None => e.0,
+        })
+    }
+
+    /// `_unknown_palette_message`: the retirement hint for a retired spelling of `authored`, else
+    /// the shipped palette `name` is closest to.
+    fn unknown_message(name: &str, authored: &str) -> String {
+        if let Some(now) = migrate::respell_retired_variant(authored) {
+            return format!("unknown palette '{name}'. '{authored}' was retired; use '{now}' instead.");
+        }
+        let names: Vec<&str> = match super::catalog() {
+            Ok(c) => c.keys().map(String::as_str).collect(),
+            Err(_) => Vec::new(),
+        };
+        match diagnostic::hints::close_match_at(name, &names, 0.6) {
+            Some(near) => format!("unknown palette '{name}'. Did you mean '{near}'?"),
+            None => format!("unknown palette '{name}'"),
+        }
     }
 
     /// A palette-or-colors leaf type.
@@ -812,7 +1018,7 @@ pub mod hook {
             }
             return Ok(());
         };
-        let r = resolve_palette_ref(&name, &ctx.palettes).map_err(|e| e.0)?;
+        let r = name_only_ref(ctx, &name)?;
         if r != name {
             *slot = Some(L::with_name(r)?);
         }

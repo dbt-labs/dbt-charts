@@ -7,6 +7,13 @@
 //! A strip text is measured against Inter Variable whatever the board's font (`_text_width` reads
 //! `get_font_measurer()` with no family), while a baseline centers on the font it is painted in
 //! (`centered_baseline_offset`).
+//!
+//! [`standalone`] is the band's width and packing edge; [`band`] places the controls by
+//! `lay_out_variables`'s rows and draws them as `variables_strip.py` does; [`inline`] is the band beside
+//! the title under `style.variables.position: title-inline`: `resolve_title_variables_inline_widths`'
+//! column split, `should_use_title_inline_band`'s fit (at most two rows, none wider than the column;
+//! else `None` and the strip stacks under the title via [`standalone`]) and
+//! `compute_title_variables_inline_baseline_layout`'s shared baseline.
 
 use bind::font_stack::with_emoji;
 use bind::variables::{Bounds, Control, Controls, Ornament, Sizing, Widget};

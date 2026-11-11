@@ -1,4 +1,7 @@
-//! The runtime of the typed spine (spec §§ 3-5, 10). No dbt Charts concepts.
+//! The runtime of the typed spine (spec §§ 3-5, 10), the foundation under
+//! `board-model`. No dbt Charts concepts (the one exception is `inherit::emit`'s
+//! named-font and color passes), not published, and `#![deny]` on
+//! `unwrap`/`expect`/`panic`/indexing.
 //!
 //! A hand-written type `T` derives [`Model`] (crate `model-derive`) and gets two
 //! twins, `Authored<T>` and `Patch<T>`, plus a `ModelInfo` (the field table).
@@ -22,9 +25,15 @@
 //! [`FromNode`] reads a spanned `yaml::Node` into a twin and collects every error
 //! ([`Cx`], [`ParseError`]); an unknown key is always an error, and the
 //! [`SourceMap`] (model path to span) comes back beside the twin ([`Parse`]).
+//! Errors are built through `diagnostic::diag`'s constructors, and an unknown key's
+//! hint comes from the field table.
+//!
+//! [`Build`] (`T::try_from(patch)`) builds the total value, naming every unset
+//! leaf by authored path; a hand-written [`Leaf`] is followed by `build_leaf!`.
 //!
 //! [`schema`] builds the schema IR from the field tables, renders JSON Schema
-//! and answers `at(path)`. A type becomes a `TypeExpr` through `Leaf::EXPR`;
+//! (`json_schema(view, extensions)`, shaped like Python's renderer) and answers
+//! `at(path)`. A type becomes a `TypeExpr` through `Leaf::EXPR`;
 //! facet newtypes declare themselves with `facet!`.
 
 #![deny(
@@ -62,8 +71,9 @@ pub use inherit::{
 };
 pub use law::{first_violation, satisfied, Keyed, State, Unanswerable};
 pub use leaf::{
-    merge_map_deep, merge_nullable, merge_patch_slot, spell_leaves, tri_to_authored, tri_to_patch,
-    Empty, Fold, Leaf, LeafValues, Lift, SetLeaves, Slot, Spell, ToAuthored, ToPatch,
+    merge_map_deep, merge_nullable, merge_patch_slot, spell_leaves, tri_drop_nulls, tri_to_authored,
+    tri_to_patch, DropNulls, Empty, Fold, Leaf, LeafValues, Lift, SetLeaves, Slot, Spell,
+    ToAuthored, ToPatch,
 };
 pub use parse::{
     nearest, render_path, Cx, Hint, MapRead, Parse, ParseError, Retired, Retirement, Seg,

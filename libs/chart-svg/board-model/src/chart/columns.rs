@@ -41,6 +41,20 @@ facet!(
     model_core::Keywords::pattern(r"\S")
 );
 
+/// The columns a format slot formats, and how Python names them in a message (`b`, or the list
+/// `['b', 'c']`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SlotColumns<'a> {
+    pub names: Vec<&'a str>,
+    pub shown: String,
+}
+
+impl<'a> SlotColumns<'a> {
+    pub(super) fn one(name: &'a str) -> Self {
+        Self { names: vec![name], shown: name.to_string() }
+    }
+}
+
 /// One column, or a list of them (`y: revenue` / `y: [revenue, margin]`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Columns {
@@ -58,6 +72,20 @@ impl Columns {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    pub fn slot(&self) -> SlotColumns<'_> {
+        match self {
+            Self::One(c) => SlotColumns::one(c.as_str()),
+            Self::Many(c) => {
+                let names: Vec<&str> = c.iter().map(Channel::as_str).collect();
+                let shown = format!(
+                    "[{}]",
+                    names.iter().map(|n| format!("'{n}'")).collect::<Vec<_>>().join(", ")
+                );
+                SlotColumns { names, shown }
+            }
+        }
     }
 
     /// Names no column: an empty list, or a single empty name (Python's `nonempty` on `y`).

@@ -18,13 +18,8 @@ pub struct Entry {
     pub predecessor: Option<String>,
 }
 
-macro_rules! schemas {
-    ($($v:literal),*) => {
-        const FILES: &[(&str, &str)] = &[$(($v, include_str!(concat!(
-            env!("MIGRATE_SCHEMAS"), "/", $v, ".json")))),*];
-    };
-}
-schemas!("0.3.0", "0.3.1", "0.4.0", "0.5.0", "0.6.0", "0.7.0", "0.9.0", "0.10.0", "0.11.0");
+// Every manifest entry's frozen file, written by `build.rs` from the manifest.
+include!(concat!(env!("OUT_DIR"), "/schemas.rs"));
 
 const DEV: &str = include_str!(concat!(env!("MIGRATE_SCHEMAS"), "/dev.json"));
 

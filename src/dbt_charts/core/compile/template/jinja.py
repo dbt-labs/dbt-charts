@@ -84,6 +84,7 @@ from dbt_charts.core.compile.template.variables import (
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_QUERY_DIALECT_MIXED,
+    ERR_QUERY_NAME_RESERVED_WORD,
     ERR_TEXT_QUERIES_NONLITERAL,
 )
 from dbt_charts.core.diagnostics.codes_execute import ERR_SQL_DIALECT_UNSUPPORTED
@@ -254,11 +255,7 @@ def _validate_query_ref_name(name: str) -> None:
     ``(<sql>) AS X``, so X has to be a plain, non-reserved SQL identifier.
     """
     if name.lower() in _SQL_RESERVED_WORDS:
-        raise CompilationError(
-            f"Query '{name}' is referenced via {{{{ queries.{name} }}}}, but "
-            f"'{name}' is a SQL reserved word and cannot be used as a table "
-            f"alias. Rename the query to a non-reserved identifier."
-        )
+        raise CompilationError.from_code(ERR_QUERY_NAME_RESERVED_WORD, name=name)
 
 
 # dbt charts runtime namespaces/callables — always stripped from dependency analysis.

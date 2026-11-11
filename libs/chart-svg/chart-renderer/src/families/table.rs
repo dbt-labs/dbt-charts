@@ -762,10 +762,8 @@ struct ColumnFont {
 }
 
 /// `numeral_scale.py`'s `SuffixMode`. It fixes the register
-/// (`SharedScale.register`: analytic for Anchor, narrative for Repeat) and
-/// which rows paint the magnitude word: `format_kpi_parts` emits it iff
-/// `value != 0 and (mode is REPEAT or is_anchor)` (`format_value.py:308`), and
-/// `table.py:2657-2663` keeps a magnitude token on every row even under
+/// (`SharedScale.register`: analytic for Anchor, narrative for Repeat). Every
+/// nonzero row paints the magnitude word in either mode, even under
 /// `symbol_mode: anchors`.
 #[derive(Deserialize, Clone, Copy, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -1155,12 +1153,11 @@ struct Cell {
     prefix: Option<String>,  // "$" — only when the anchor gate allows it
     suffix: Option<String>,  // "%", "K", "M", … only when the anchor gate allows it
     // `symbol_mode: anchors` columns: the (prefix, suffix) this value paints for
-    // each combination of the two anchor rules, indexed by [`anchor_variant`]: `$`
-    // and `%` anchor on a page's first row, a `shared_scale` magnitude word on its
-    // first nonzero one. A row-pool draws every distinct variant on every row,
-    // hidden off the rows the opening page anchors, so the runtime can show
-    // whichever matches the order.
-    by_anchor: Option<[(Option<String>, Option<String>); 4]>,
+    // for a non-anchor row (slot 0) and the anchor row (slot 1): `$` and `%`
+    // anchor on a page's first row. A row-pool
+    // draws every distinct variant on every row, hidden off the rows the opening
+    // page anchors, so the runtime can show whichever matches the order.
+    by_anchor: Option<[(Option<String>, Option<String>); 2]>,
     // The same affixes UNGATED — what production's measure_column_demands
     // sees (it formats every cell as its own anchor); the paint fields
     // above carry the declare-once gate, these carry the full display.
@@ -1176,12 +1173,6 @@ struct Cell {
     // column carries an explicit `format:` — the paint loop reads this to
     // route the em-dash onto the text path for unformatted columns.
     is_null: bool,
-}
-
-/// The `Cell::by_anchor` slot for a row that is (`symbol_anchor`) the page's first
-/// and (`scale_anchor`) its magnitude anchor.
-fn anchor_variant(symbol_anchor: bool, scale_anchor: bool) -> usize {
-    2 * usize::from(symbol_anchor) + usize::from(scale_anchor)
 }
 
 /// Minimum gap between adjacent per-column header rules (`_RULE_GAP`).
@@ -3317,7 +3308,7 @@ pub(crate) mod tests {
     }
 
     /// A pool over `values` whose revenue shares one millions scale under
-    /// `symbol_mode: anchors`: `$` anchors on the first row, `M` on the first nonzero one.
+    /// `symbol_mode: anchors`: `$` anchors on the first row; `M` prints on every nonzero row.
     fn scaled_pool_payload(values: &[f64], interactive: bool) -> Payload {
         let mut payload = pool_payload("t1", values.len(), 20, interactive, false);
         for (row, value) in payload.rows.iter_mut().zip(values) {
@@ -3362,19 +3353,37 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_pool_gives_the_magnitude_word_its_own_anchor_rule() {
+    fn a_pool_draws_the_magnitude_word_plainly_on_every_nonzero_row() {
         let svg = render(&scaled_pool_payload(&[0.0, 1_200_000.0, 2_400_000.0], true), &test_fonts()).expect("renders");
-        // `$` anchors on row 0, `M` on row 1: each is on every row, hidden off its anchor.
-        let affix = |row: usize, text: &str| {
-            let tags: Vec<&str> = row_group(&svg, row).split("<tspan ").skip(1).filter(|t| t.contains(&format!(">{text}</tspan>"))).collect();
-            assert_eq!(tags.len(), 1, "row {row} `{text}`:\n{svg}");
-            tags[0].to_string()
+        let tags = |row: usize, text: &str| -> Vec<String> {
+            row_group(&svg, row)
+                .split("<tspan ")
+                .skip(1)
+                .filter(|t| t.contains(&format!(">{text}</tspan>")))
+                .map(str::to_string)
+                .collect()
         };
-        assert!(!affix(0, "$").contains("visibility"), "{svg}");
-        assert!(affix(1, "$").contains("visibility=\"hidden\""), "{svg}");
-        assert!(!row_group(&svg, 0).contains(">M</tspan>"), "a zero carries no magnitude word:\n{svg}");
-        assert!(!affix(1, "M").contains("visibility"), "{svg}");
-        assert!(affix(2, "M").contains("visibility=\"hidden\""), "{svg}");
+        // `$` anchors on row 0 and hides elsewhere; `M` is simply on every nonzero row.
+        assert!(!tags(0, "$")[0].contains("visibility"), "{svg}");
+        assert!(tags(1, "$")[0].contains("visibility=\"hidden\""), "{svg}");
+        assert!(tags(0, "M").is_empty(), "a zero carries no magnitude word:\n{svg}");
+        for row in [1, 2] {
+            let m = tags(row, "M");
+            assert_eq!(m.len(), 1, "row {row}:\n{svg}");
+            assert!(!m[0].contains("visibility") && !m[0].contains("dbt-table-affix"), "{}", m[0]);
+        }
+    }
+
+    #[test]
+    fn a_static_anchored_column_repeats_the_analytic_magnitude_word_on_every_row() {
+        let values = [412_000.0, 388_000.0, 406_000.0, 371_000.0];
+        let mut payload = scaled_pool_payload(&values, false);
+        payload.resolved["columns"]["revenue"]["shared_scale"] =
+            json!({"exponent": 3, "mode": "anchor", "digit_spec": ",.0f"});
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert_eq!(svg.matches(">K</tspan>").count(), values.len(), "analytic K on every row:\n{svg}");
+        assert!(!svg.contains(">k</tspan>"), "the register stays analytic:\n{svg}");
+        assert_eq!(svg.matches(">$</tspan>").count(), 1, "the symbol anchors once:\n{svg}");
     }
 
     #[test]
@@ -3385,7 +3394,7 @@ pub(crate) mod tests {
         assert!(!row_group(&pooled, 0).contains("dbt-table-affix"), "{pooled}");
         let on_row_1 = dollar_tspans(row_group(&pooled, 1));
         assert_eq!(on_row_1.len(), 1, "{pooled}");
-        assert!(on_row_1[0].contains("data-dbt-affix=\"12\"") && !on_row_1[0].contains("visibility"), "{}", on_row_1[0]);
+        assert!(on_row_1[0].contains("data-dbt-affix=\"2\"") && !on_row_1[0].contains("visibility"), "{}", on_row_1[0]);
         let hidden_on_row_2 = dollar_tspans(row_group(&pooled, 2));
         assert!(hidden_on_row_2[0].contains("visibility=\"hidden\""), "{pooled}");
         payload.interactive_controls = false;
@@ -3646,12 +3655,51 @@ pub(crate) mod tests {
         assert!(pager_baseline_y(&svg) <= slot, "pager baseline {} is outside {slot}:\n{svg}", pager_baseline_y(&svg));
     }
 
+    fn attr_f64(svg: &str, name: &str) -> f64 {
+        svg.split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
+    }
+
     #[test]
-    fn an_unslotted_pool_with_uneven_wrapped_rows_is_as_tall_as_its_pager() {
+    fn a_slotted_pool_draws_its_pager_under_the_open_page_not_the_tallest() {
+        let svg = render(&uneven_wrapped_pool(520.0), &test_fonts()).expect("renders");
+        let page_rows = attr_f64(&svg, "data-dbt-page-rows") as usize;
+        let heights: Vec<f64> = svg
+            .split("data-dbt-h=\"")
+            .skip(1)
+            .map(|s| s.split('"').next().unwrap().parse().unwrap())
+            .collect();
+        let rows_y = attr_f64(&svg, "data-dbt-rows-y");
+        let rows_end = rows_y + heights[..page_rows].iter().sum::<f64>();
+        assert_eq!(attr_f64(&svg, "data-dbt-rows-end"), rows_end, "{svg}");
+        let mut tallest = heights.clone();
+        tallest.sort_by(|a, b| b.total_cmp(a));
+        assert!(heights[..page_rows].iter().sum::<f64>() < tallest[..page_rows].iter().sum::<f64>(), "page 1 is not the tallest");
+        let pager = pager_baseline_y(&svg);
+        assert!(rows_end < pager && pager < rows_end + 40.0, "pager {pager} is not under the page ending at {rows_end}:\n{svg}");
+    }
+
+    #[test]
+    fn a_scrolling_pool_ends_its_x_scrollbar_and_frozen_edge_under_the_open_page() {
+        let mut payload = uneven_wrapped_pool(520.0);
+        payload.resolved["columns"]["note"]["width"] = json!(2000);
+        payload.resolved["style"]["table"]["column_layout"]["overflow"] = json!("scroll");
+        payload.resolved["style"]["table"]["column_layout"]["freeze"] = json!(1);
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        let rows_end = attr_f64(&svg, "data-dbt-rows-end");
+        let bar = svg.split("<g data-dbt-rows-follow=\"\">").nth(1).unwrap_or_else(|| panic!("{svg}"));
+        let thumb_y = attr_f64(bar.split("data-dbt-scroll-thumb").next().unwrap().rsplit("<rect").next().unwrap(), " y");
+        assert!(rows_end < thumb_y && thumb_y < rows_end + 20.0, "thumb {thumb_y} under {rows_end}:\n{svg}");
+        let edge = svg.split("data-dbt-rows-span=\"\"").nth(1).unwrap_or_else(|| panic!("{svg}"));
+        let header_top = attr_f64(edge, " y");
+        assert_eq!(header_top + attr_f64(edge, " height"), rows_end, "{svg}");
+    }
+
+    #[test]
+    fn an_unslotted_pool_with_uneven_wrapped_rows_holds_its_tallest_page_and_pager() {
         let svg = render(&uneven_wrapped_pool(0.0), &test_fonts()).expect("renders");
         assert!(svg.contains("data-dbt-table=\"t1\""), "{svg}");
         assert!(pager_baseline_y(&svg) <= rendered_height(&svg), "{svg}");
-        // The tallest page a sort can build fits above the pager.
+        // The tallest page a sort can build fits in the canvas, pager below it.
         let mut heights: Vec<f64> = svg
             .split("data-dbt-h=\"")
             .skip(1)
@@ -3660,7 +3708,8 @@ pub(crate) mod tests {
         heights.sort_by(|a, b| b.total_cmp(a));
         let tallest_page: f64 = heights.iter().take(10).sum();
         let rows_y: f64 = svg.split("data-dbt-rows-y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
-        assert!(rows_y + tallest_page <= pager_baseline_y(&svg), "{svg}");
+        let pager_below_rows = pager_baseline_y(&svg) - attr_f64(&svg, "data-dbt-rows-end");
+        assert!(rows_y + tallest_page + pager_below_rows <= rendered_height(&svg), "{svg}");
     }
 
     #[test]
@@ -3811,17 +3860,13 @@ pub(crate) mod tests {
 
     /// Regression: `format_numeric_col`'s `is_symbol_anchor`/`anchor_idx`
     /// used to run ONCE over the whole (unpaged) dataset, so `symbol_mode:
-    /// anchors`' currency prefix and shared_scale magnitude suffix only
-    /// ever anchored on the WHOLE TABLE's row 0 — pages 2+ lost the `$`/`M`
-    /// entirely. Production's `_render_data_rows` computes
-    /// `shared_scale_anchor_row`/`row_idx == 0` on `page_visible_data`, one
-    /// page at a time; this pins
-    /// the port's per-page `build_cell_data` recompute in
-    /// `static_multi_page` does the same. 7 rows at page_rows=3: a real
+    /// anchors`' currency prefix only ever anchored on the WHOLE TABLE's
+    /// row 0 — pages 2+ lost the `$` entirely. `build_cell_data` recomputes
+    /// the anchor per page in `static_multi_page`. 7 rows at page_rows=3: a real
     /// 3-page table (3, 3, 1), every row a 7-digit dollar value so the
     /// whole column shares a millions-tier `shared_scale` (exponent 6).
     #[test]
-    fn static_multi_page_anchors_currency_and_magnitude_per_page_not_globally() {
+    fn static_multi_page_anchors_currency_per_page_not_globally() {
         let rows: Vec<Value> = [1_200_000.0, 2_400_000.0, 3_100_000.0, 1_800_000.0, 2_900_000.0, 4_200_000.0, 5_600_000.0]
             .iter()
             .enumerate()
@@ -3864,7 +3909,11 @@ pub(crate) mod tests {
         let page3 = svg.split("data-page=\"3\"").nth(1).unwrap();
         for (name, page) in [("page 1", page1), ("page 2", page2), ("page 3", page3)] {
             assert!(page.contains('$'), "{name}'s own row 0 anchors the $ prefix:\n{page}");
-            assert!(page.contains('M'), "{name}'s own row 0 anchors the M magnitude suffix:\n{page}");
+            assert_eq!(
+                page.matches('$').count(),
+                1,
+                "{name} paints the $ once, on its own row 0:\n{page}"
+            );
         }
     }
 
@@ -11629,9 +11678,8 @@ mod shared_scale_register_tests {
         Ok(suffixes_of(mode, exponent, "all", &[value])?.remove(0))
     }
 
-    // Production gates the word on `value != 0 and (mode is REPEAT or
-    // is_anchor)` (format_value.py:308); table.py:2657-2663 keeps a magnitude
-    // token on every row even under symbol_mode "anchors".
+    // The word paints on every nonzero row, even under symbol_mode "anchors":
+    // dropping it off a row would change that row's value.
     #[test]
     fn a_repeat_scale_paints_its_word_on_every_nonzero_row_under_anchors() {
         let got = suffixes_of("repeat", 6, "anchors", &[24.7e6, 8.4e6, 3.1e6]).unwrap();
@@ -11639,9 +11687,9 @@ mod shared_scale_register_tests {
     }
 
     #[test]
-    fn an_anchor_scale_paints_its_word_on_the_anchor_row_alone_under_anchors() {
+    fn an_anchor_scale_paints_its_analytic_word_on_every_nonzero_row_under_anchors() {
         let got = suffixes_of("anchor", 6, "anchors", &[24.7e6, 8.4e6, 3.1e6]).unwrap();
-        assert_eq!(got, vec![Some("M".to_string()), None, None]);
+        assert_eq!(got, vec![Some("M".to_string()); 3]);
     }
 
     #[test]
@@ -11886,7 +11934,7 @@ mod shared_scale_register_tests {
     // keep_affix_gaps=True)` is ('US $', '24.73', 'M'): the shared-scale branch
     // falls through to the common tail (`format_value.py:379-390`), where the
     // authored prefix leads the `$`. A non-anchor row under `anchors` (second
-    // row, 8.4e6) is ('US $', '8.4', '') before `table.py:2657-2663` blanks the
+    // row, 8.4e6) is ('US $', '8.4', 'M') before `table.py:2657-2663` blanks the
     // prefix; the demand reads every row as an anchor ('US $', '8.4', 'M').
     #[test]
     fn a_shared_scale_column_paints_an_authored_prefix_ahead_of_the_currency() {
@@ -11896,7 +11944,7 @@ mod shared_scale_register_tests {
 
         let cells = authored_affix_cells(json!({"prefix": "US "}), "anchor", "anchors", &[24_730_000.0, 8_400_000.0]);
         assert_eq!(painted(&cells[0]), (Some("US $"), "24.73", Some("M")));
-        assert_eq!(painted(&cells[1]), (None, "8.4", None));
+        assert_eq!(painted(&cells[1]), (None, "8.4", Some("M")));
         assert_eq!(measured(&cells[1]), (Some("US $"), Some("M")));
         assert_eq!(cells[1].fit_affixes, Some(("US $".to_string(), "M".to_string())));
     }
@@ -11904,11 +11952,10 @@ mod shared_scale_register_tests {
     // Oracle: production's `format_kpi_parts(24730000, {spec: "$,.2~s", suffix:
     // " gross"}, shared_scale=<anchor, 6, ",.2~f">, is_anchor=True,
     // keep_affix_gaps=True)` is ('$', '24.73', 'M gross'): the magnitude word
-    // leads the authored suffix and its gap survives. Non-anchor, the word is
-    // gone and the authored text stays in the lane ('$', '8.4', ' gross'), which
-    // `table.py:2657-2663` then blanks under `anchors`; a `repeat` scale keeps
-    // its word on every row ('$', '8.4', 'm gross'), and that suffix survives
-    // the same strip because it still opens with a magnitude word.
+    // leads the authored suffix and its gap survives. Every nonzero row keeps
+    // its word, anchor or not ('$', '8.4', 'M gross'), and only the currency
+    // blanks off the non-anchor rows (`table.py:2657-2663`); a `repeat` scale
+    // paints the narrative word the same way ('$', '8.4', 'm gross').
     #[test]
     fn a_shared_scale_column_paints_an_authored_suffix_behind_the_magnitude_word() {
         let cells = authored_affix_cells(json!({"suffix": " gross"}), "anchor", "all", &[24_730_000.0]);
@@ -11917,7 +11964,7 @@ mod shared_scale_register_tests {
 
         let cells = authored_affix_cells(json!({"suffix": " gross"}), "anchor", "anchors", &[24_730_000.0, 8_400_000.0]);
         assert_eq!(painted(&cells[0]), (Some("$"), "24.73", Some("M gross")));
-        assert_eq!(painted(&cells[1]), (None, "8.4", None));
+        assert_eq!(painted(&cells[1]), (None, "8.4", Some("M gross")));
         assert_eq!(measured(&cells[1]), (Some("$"), Some("M gross")));
 
         let cells = authored_affix_cells(json!({"suffix": " gross"}), "repeat", "anchors", &[24_730_000.0, 8_400_000.0]);

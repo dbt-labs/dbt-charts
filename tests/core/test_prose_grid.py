@@ -902,3 +902,31 @@ class TestAWideTableKeepsItsSurroundings:
             return table_y - max(y for _, y, _ in lines if y < table_y)
 
         assert gap(chars) == pytest.approx(gap(300), abs=1.5)
+
+
+RULE_COLOR = "#123456"
+
+
+def rule_width(style: str = "") -> float:
+    """Width of the one rule a lone ``---`` block draws, in a three-up board."""
+    divider = f"style:\n  text:\n    divider:\n      color: '{RULE_COLOR}'\n"
+    svg = render_board_to_svg(
+        board(1200, prose_row("---"), cards(3), style=divider + style)
+    )
+    rules = re.findall(rf'<rect [^>]*width="([\d.]+)"[^>]*fill="{RULE_COLOR}"', svg)
+    assert len(rules) == 1, rules
+    return float(rules[0])
+
+
+def test_a_lone_rule_spans_the_whole_card() -> None:
+    edges = card_edges(
+        render_board_to_svg(board(1200, prose_row("SHORT"), cards(3))), 3
+    )
+    assert rule_width() > 2.5 * (edges[1] - edges[0])
+
+
+def test_a_lone_rule_keeps_to_an_authored_max_chars() -> None:
+    wide = rule_width()
+    capped = rule_width("    column:\n      max_chars: 30\n")
+    assert 0 < capped < wide / 2
+    assert rule_width("    column:\n      max_chars: 9999\n") == wide

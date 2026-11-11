@@ -14,14 +14,14 @@ use diagnostic::{diag, refuse, Diagnostic};
 use serde_json::{json, Map, Value};
 
 use crate::formats::locale::NumberLocale;
-use crate::model::{Body, Failure, SparkBar, SparkBarRow};
+use crate::bound::{Family, Failure, SparkBar, SparkBarRow};
 use crate::run::RunResult;
 
 /// Production's `auto_detect_fields` name preferences, tried in order on the first row's keys.
 const LABEL_NAMES: [&str; 4] = ["value", "label", "category", "name"];
 const COUNT_NAMES: [&str; 5] = ["frequency", "count", "freq", "n", "total"];
 
-pub fn bind(id: &ChartId, chart: &SparkBarChart, style: &SparkBarChartStyle, board: &Board, run: &RunResult) -> Result<Body, Diagnostic> {
+pub fn bind(id: &ChartId, chart: &SparkBarChart, style: &SparkBarChartStyle, board: &Board, run: &RunResult) -> Result<Result<Family, Failure>, Diagnostic> {
     let unmodeled = [
         (chart.shared.title.is_some() || chart.shared.subtitle.is_some(), "a spark_bar `title` or `subtitle`"),
         (chart.shared.base.link.is_some(), "a spark_bar `link`"),
@@ -34,7 +34,7 @@ pub fn bind(id: &ChartId, chart: &SparkBarChart, style: &SparkBarChartStyle, boa
         return Err(diag::err_internal(format!("chart {id} has no hoisted query")));
     };
     let dataset = run.dataset(query, id)?;
-    let failure = |diagnostic: Diagnostic| Ok(Body::Failed(Failure { chart: id.clone(), diagnostic: diagnostic.with_sink_param("source_path", json!(format!("charts.{id}"))) }));
+    let failure = |diagnostic: Diagnostic| Ok(Err(Failure { chart: id.clone(), diagnostic: diagnostic.with_sink_param("source_path", json!(format!("charts.{id}"))) }));
     if let Err(mismatch) = dataset.schema.check_rows(&dataset.rows) {
         return failure(mismatch.into_diagnostic().with_sink_param("chart_id", json!(id.as_str())));
     }
@@ -76,7 +76,7 @@ pub fn bind(id: &ChartId, chart: &SparkBarChart, style: &SparkBarChartStyle, boa
     }
     let signed = bound.iter().any(|row| row.value < 0.0);
     let max = bound.iter().fold(0.0_f64, |m, row| m.max(row.value.abs()));
-    Ok(Body::SparkBar(SparkBar { rows: bound, max_value: if max == 0.0 { 1.0 } else { max }, signed, more: rows.len() - visible.len() }))
+    Ok(Ok(Family::SparkBar(SparkBar { rows: bound, max_value: if max == 0.0 { 1.0 } else { max }, signed, more: rows.len() - visible.len() })))
 }
 
 /// The row's label: a text cell as is. Production's `str()` of any other cell, and its numbered

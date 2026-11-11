@@ -7,8 +7,12 @@
 //! does, and the card's `<svg class="dbt-chart-callout">` is part of the DOM contract and is emitted
 //! here. The resolved style is the caller's ([`CalloutStyle`]) until the spine's total style; a text
 //! cut to its line cap, which production clips and warns about, is refused by name.
+//!
+//! [`CalloutStyle::of`] derives the style from the chart's total `CalloutChartStyle` on the board's total
+//! `Style`: a `by_tone` color takes the tone's palette role, and stacks carry the emoji family. The card
+//! rectangle is [`failed`](super::failed)'s.
 
-use bind::model::Callout;
+use bind::bound::Callout;
 use board_model::palette;
 use board_model::style::callout::CalloutChartStyle;
 use board_model::style::style::Style;

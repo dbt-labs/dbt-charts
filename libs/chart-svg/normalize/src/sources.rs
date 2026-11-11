@@ -17,30 +17,67 @@
 
 use crate::files::ProjectFiles;
 use crate::hoist::HoistError;
+use crate::time_zone::SourceZone;
 use board_model::query::QueryAuthored;
 use diagnostic::{diag, py_str_repr};
 use model_core::Tri;
 use project::ProjectPath;
-use std::collections::BTreeSet;
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
 
-/// The names of the host's project source registry, as Python's compile reads it: the `sources:`
+/// The host's project source registry, as Python's compile reads it: name to declaration JSON, the `sources:`
 /// entries of `dbt_charts.yml`, or, for a dbt project that declares none, the one entry its
 /// `profile:` gives (so a dbt project with a profile is never `empty`). A project with neither
 /// says so ([`SourceRegistry::empty`]): the name check is then off, as in Python. The profile's
-/// entry is a name to check against only; a SQL query naming no source still has no default to
-/// take (`ERR-SOURCE-REQUIRED`).
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct SourceRegistry(BTreeSet<String>);
+/// entry is the default a SQL query naming no source takes ([`SourceRegistry::implicit`]). The
+/// declarations pass through unread, for `plan` to carry.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct SourceRegistry(
+    BTreeMap<String, Value>,
+    BTreeMap<String, SourceZone>,
+    Option<String>,
+);
 
 impl SourceRegistry {
     /// A project that declares no sources.
     pub const fn empty() -> Self {
-        Self(BTreeSet::new())
+        Self(BTreeMap::new(), BTreeMap::new(), None)
     }
 
     /// A project that declares these sources (none is [`SourceRegistry::empty`]).
-    pub fn declared<S: Into<String>>(names: impl IntoIterator<Item = S>) -> Self {
-        Self(names.into_iter().map(Into::into).collect())
+    pub fn declared<S: Into<String>>(entries: impl IntoIterator<Item = (S, Value)>) -> Self {
+        Self(
+            entries.into_iter().map(|(n, d)| (n.into(), d)).collect(),
+            BTreeMap::new(),
+            None,
+        )
+    }
+
+    /// The declarations, by source name.
+    pub fn declarations(&self) -> &BTreeMap<String, Value> {
+        &self.0
+    }
+
+    /// The same registry where a SQL query naming no source takes `name`: the one entry a dbt
+    /// project got without declaring it.
+    pub fn with_implicit(mut self, name: Option<String>) -> Self {
+        self.2 = name;
+        self
+    }
+
+    /// The source a SQL query that names none runs against, when the project has one.
+    pub fn implicit(&self) -> Option<&str> {
+        self.2.as_deref()
+    }
+
+    /// The time-zone facts of the sources the host parsed ([`crate::time_zone`]).
+    pub fn with_zones(mut self, zones: impl IntoIterator<Item = (String, SourceZone)>) -> Self {
+        self.1 = zones.into_iter().collect();
+        self
+    }
+
+    pub(crate) fn zone(&self, name: &str) -> Option<&SourceZone> {
+        self.1.get(name)
     }
 }
 
@@ -113,12 +150,14 @@ fn is_identifier(stem: &str) -> bool {
 
 /// Python's `resolve_file_source` and the config built from it: the file is looked for from the
 /// query's directory and the project root (both holding it is ambiguous; neither is not an
-/// error, execute reports a missing file per chart), and its stem names its table.
+/// error, execute reports a missing file per chart, and the query's directory's candidate is
+/// the one named), and its stem names its table. The config is `_resolve_inline_file_source`'s
+/// authored fields; the model's defaults are the reader's to fill.
 fn resolve_file_source(
     usage: &SourceUse,
     anchor: &str,
     files: &dyn ProjectFiles,
-) -> Result<(), HoistError> {
+) -> Result<Value, HoistError> {
     let unresolved = |why: String| {
         HoistError::UnresolvedReference(Box::new(diag::err_unresolved_reference(
             usage.source.as_str(),
@@ -163,28 +202,40 @@ fn resolve_file_source(
         )));
     }
     match is_identifier(stem) {
-        true => Ok(()),
-        false => Err(HoistError::Message(format!(
-            "Query {}: inline file source {} is invalid: files key {} is not a valid SQL identifier",
-            py_str_repr(&usage.query),
-            py_str_repr(&usage.source),
-            py_str_repr(stem)
+        true => {
+            let (_, found) = candidates
+                .iter()
+                .find(|(_, p)| files.exists(p))
+                .or(candidates.first())
+                .ok_or_else(|| unresolved("no candidate path".to_string()))?;
+            let found = found.as_str();
+            Ok(json!({"type": suffix[1..].to_lowercase(), "files": {stem: found}}))
+        }
+        false => Err(HoistError::refused(diag::err_file_source_invalid(
+            usage.query.as_str(),
+            usage.source.as_str(),
+            format!(
+                "files key {} is not a valid SQL identifier",
+                py_str_repr(stem)
+            ),
         ))),
     }
 }
 
 /// Refuses what Python's `normalize_query` refuses of these sources: an inline file source that
 /// does not resolve, and (once the project declares sources, or an inline file source is in use)
-/// a name no source declares.
+/// a name no source declares. Returns the inline file sources, by the ref as authored; the first
+/// use of a ref decides its entry, as Python registers it once.
 pub(crate) fn check_sources(
     uses: &[SourceUse],
     registry: &SourceRegistry,
     files: &dyn ProjectFiles,
-) -> Result<(), HoistError> {
-    let mut filed = false;
+) -> Result<BTreeMap<String, Value>, HoistError> {
+    let mut filed = BTreeMap::new();
     // A registry name that reads as a path is the registry's, never resolved (Python skips a ref
     // its registry already holds).
-    let inline = |u: &&SourceUse| is_file_source_ref(&u.source) && !registry.0.contains(&u.source);
+    let inline =
+        |u: &&SourceUse| is_file_source_ref(&u.source) && !registry.0.contains_key(&u.source);
     for usage in uses.iter().filter(inline) {
         let unlocated = HoistError::UnresolvedReference(Box::new(diag::err_unresolved_reference(
             usage.source.as_str(),
@@ -193,23 +244,23 @@ pub(crate) fn check_sources(
                 py_str_repr(&usage.query)
             ),
         )));
-        resolve_file_source(usage, usage.anchor.as_deref().ok_or(unlocated)?, files)?;
-        filed = true;
+        let config = resolve_file_source(usage, usage.anchor.as_deref().ok_or(unlocated)?, files)?;
+        filed.entry(usage.source.clone()).or_insert(config);
     }
-    if registry.0.is_empty() && !filed {
-        return Ok(());
+    if registry.0.is_empty() && filed.is_empty() {
+        return Ok(filed);
     }
     match uses
         .iter()
         .filter(|u| !inline(u))
-        .find(|u| !registry.0.contains(&u.source))
+        .find(|u| !registry.0.contains_key(&u.source))
     {
-        None => Ok(()),
+        None => Ok(filed),
         Some(usage) => Err(HoistError::SourceNotFound(Box::new(
             diag::err_source_not_found(
                 usage.query.as_str(),
                 usage.source.as_str(),
-                registry.0.iter().map(String::as_str).collect::<Vec<_>>(),
+                registry.0.keys().map(String::as_str).collect::<Vec<_>>(),
                 "",
             ),
         ))),

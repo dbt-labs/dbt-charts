@@ -28,6 +28,8 @@ charts:
     title: [[ path.table | tojson ]]
     type: table
     query: rows
+    style:
+      hide_underscore_columns: false
 
 rows:
   - row_data

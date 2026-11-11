@@ -7,7 +7,11 @@ use std::hash::{Hash, Hasher};
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use board_model::board::{items, Board, BoardBody, LayoutItem};
+use board_model::board::{items, Board as SourceBoard, BoardBody, LayoutItem};
+use board_model::facet::FontWeightValue;
+use board_model::rule::Auto;
+use board_model::style::axis::TextAlign;
+use model_core::Engine;
 use board_model::ids::{BoardId, ChartId, ItemId};
 use board_model::style::board::{ChartTitleStyle, PaddingStyle};
 use board_model::style::table::CellAlign;
@@ -36,10 +40,13 @@ pub enum Invalid {
     /// A grid's panel ids are not `0, 1, 2, …` in cell order.
     GridPanels,
     NoMeasureScale,
-    /// A plot with no datum in any layer or panel: no rows is [`Body::Empty`], the one empty path.
+    /// A plot whose axis styles are not one per measure scale.
+    AxisStyles { styles: usize, scales: usize },
+    /// A plot with no datum in any layer or panel: no rows is [`Cartesian::NoData`], the one empty path.
     EmptyPlot,
     /// A point layer on a plot whose mark style walked no point mark.
     PointsUnstyled { layer: usize },
+    BinsUnstyled { layer: usize },
     /// A layer reads a measure scale `y` does not hold.
     LayerYScale {
         layer: usize,
@@ -52,6 +59,8 @@ pub enum Invalid {
         series: usize,
         series_len: usize,
     },
+    /// A legend toggle that does not name one series of its domain per entry.
+    LegendToggle { legend: usize },
     /// A panel no layer draws a datum in: an absent facet combination is a `None` grid cell.
     EmptyPanel { panel: usize },
     /// A layer holds a different number of panels than the plot's [`Panels`].
@@ -83,7 +92,7 @@ pub enum Invalid {
     },
     /// A failed chart's failure names another chart than the one placed where it is bound.
     FailureChart { key: ItemId, chart: ChartId },
-    /// A chart's frame is present exactly when its body is a [`Body::Plot`] or [`Body::Empty`].
+    /// A chart's frame is present exactly when its family is a [`Family::Cartesian`].
     ChartFrame(ItemId),
     /// A drawn placement with no bound chart.
     DrawnUnbound(ItemId),
@@ -98,20 +107,20 @@ pub enum Invalid {
 
 /// A board's drawn set, its bound charts and its data diagnostics.
 #[derive(Debug)]
-pub struct BoundBoard {
+pub struct Board {
     drawn: DrawnSet,
-    charts: IndexMap<ItemId, BoundChart>,
+    charts: IndexMap<ItemId, Chart>,
     /// Data WARNs; layout appends its own.
     pub diagnostics: Vec<Diagnostic>,
 }
 
-impl BoundBoard {
+impl Board {
     /// `charts` holds one bound chart per placement `drawn` draws on `board`, in board order;
     /// a failure must name the chart placed at its key.
     pub fn new(
-        board: &Board,
+        board: &SourceBoard,
         drawn: DrawnSet,
-        charts: IndexMap<ItemId, BoundChart>,
+        charts: IndexMap<ItemId, Chart>,
         diagnostics: Vec<Diagnostic>,
     ) -> Result<Self, Invalid> {
         let placed = drawn.charts(board)?;
@@ -122,12 +131,12 @@ impl BoundBoard {
             return Err(Invalid::BoundUndrawn(at.clone()));
         }
         for (key, bound) in &charts {
-            if let Body::Failed(failure) = &bound.body {
+            if let Err(failure) = &bound.family {
                 if placed.iter().any(|(at, chart)| at == key && **chart != failure.chart) {
                     return Err(Invalid::FailureChart { key: key.clone(), chart: failure.chart.clone() });
                 }
             }
-            if bound.frame.is_some() != matches!(bound.body, Body::Plot(_) | Body::Empty) {
+            if bound.frame.is_some() != matches!(bound.family, Ok(Family::Cartesian(_))) {
                 return Err(Invalid::ChartFrame(key.clone()));
             }
         }
@@ -141,7 +150,7 @@ impl BoundBoard {
         &self.drawn
     }
 
-    pub fn charts(&self) -> &IndexMap<ItemId, BoundChart> {
+    pub fn charts(&self) -> &IndexMap<ItemId, Chart> {
         &self.charts
     }
 }
@@ -184,7 +193,7 @@ impl DrawnSet {
     /// Every drawn placement on `board` with the chart it shows, in layout order; a chart placed
     /// twice is listed twice. An item in a tab pane draws only in its body's open tab,
     /// and a details board's items only while it is open.
-    pub fn charts<'a>(&self, board: &'a Board) -> Result<Vec<(ItemId, &'a ChartId)>, Invalid> {
+    pub fn charts<'a>(&self, board: &'a SourceBoard) -> Result<Vec<(ItemId, &'a ChartId)>, Invalid> {
         let mut out = Vec::new();
         self.collect(&board.body, &ItemId::root(), &mut out)?;
         Ok(out)
@@ -214,14 +223,15 @@ impl DrawnSet {
 
 /// A chart as bound: the title text and frame facts its drawn body sits in.
 #[derive(Debug)]
-pub struct BoundChart {
+pub struct Chart {
     pub title: Option<String>,
     pub subtitle: Option<String>,
-    /// `Some` for a [`Body::Plot`] or [`Body::Empty`], `None` otherwise: the error card draws
+    /// `Some` for a [`Family::Cartesian`], `None` otherwise: the error card draws
     /// from the error tile and a KPI or callout card from the style its caller resolves, not
-    /// from a chart frame. [`BoundBoard::new`] checks it.
+    /// from a chart frame. [`Board::new`] checks it.
     pub frame: Option<Frame>,
-    pub body: Body,
+    /// What the family bound, or the error card the chart draws instead.
+    pub family: Result<Family, Failure>,
 }
 
 /// A chart's canvas, walked frame style and the sizing facts its natural height is computed from.
@@ -245,21 +255,26 @@ pub struct Sizing {
     pub max_height: f64,
 }
 
-/// A chart's body: what its family bound, or the error card it draws instead.
+/// What a chart's family bound.
 #[derive(Debug)]
-pub enum Body {
+pub enum Family {
     /// bar, line, area, scatter, histogram, heatmap.
-    Plot(Box<Plot>),
+    Cartesian(Cartesian),
     Kpi(Kpi),
     Table(Table),
     Pie(Pie),
     SparkBar(SparkBar),
     Callout(Callout),
-    /// A family that draws marks, bound over no rows: its title and frame around a muted
-    /// "No data" in the plot box. It has no scales, series or legend, so a family never
-    /// invents a domain for nothing.
-    Empty,
-    Failed(Failure),
+}
+
+/// A family that draws marks: its bound [`Plane`], or no rows, which have no domain to draw.
+#[derive(Debug)]
+pub enum Cartesian {
+    Plane(Box<Plane>),
+    /// Bound over no rows: its title and frame around a muted "No data" in the plot box, set in
+    /// the face its y axis labels would have had. It has no scales, series or legend, so a family
+    /// never invents a domain for nothing.
+    NoData(Face),
 }
 
 /// A KPI card's data: the headline in the faces it draws in, its label and its support row.
@@ -267,6 +282,10 @@ pub enum Body {
 pub struct Kpi {
     /// The glyph drawn before the headline, in the glyph face; empty for none.
     pub glyph: String,
+    /// The glyph is the one a `good` sign draws, which takes the arrow face rather than the glyph's.
+    pub arrow: bool,
+    /// The ink of the whole headline run (glyph, prefix, number, suffix) when a `good` sign has a tone.
+    pub ink: Option<String>,
     /// The sign and currency symbol ahead of the number, set in the affix face; empty for none.
     pub prefix: String,
     /// The number, its sign included when there is no prefix for it to move to.
@@ -320,6 +339,8 @@ pub struct Pie {
     pub canvas: String,
     /// The chart's own background, which its card paints (`ResolvedPieChart.background`).
     pub background: String,
+    /// The chart's title as authored; production tests `not title`, so an empty one is untitled.
+    pub title: Option<String>,
     /// Hole to disk ratio of the wheel.
     pub hole: f64,
     pub slices: Vec<PieSlice>,
@@ -399,7 +420,7 @@ pub enum Orient {
 /// The six cartesian families' shared frame: scales, panels, the one series list and the
 /// mark layers drawn over them.
 #[derive(Debug)]
-pub struct Plot {
+pub struct Plane {
     orient: Orient,
     x: Scale,
     y: Vec<Scale>,
@@ -412,11 +433,12 @@ pub struct Plot {
     baselines: Baselines,
     axis_styles: AxisStyles,
     mark_style: MarkStyle,
+    diagnostics: Vec<Diagnostic>,
 }
 
-/// A [`Plot`] before its invariants are checked.
+/// A [`Plane`] before its invariants are checked.
 #[derive(Debug)]
-pub struct PlotParts {
+pub struct PlaneParts {
     pub orient: Orient,
     pub x: Scale,
     /// `y[0]` is the shared measure scale; more only for pinned layer axes.
@@ -431,16 +453,23 @@ pub struct PlotParts {
     pub baselines: Baselines,
     pub axis_styles: AxisStyles,
     pub mark_style: MarkStyle,
+    /// The warnings the chart's own style raises, read off the ladders its bind walked.
+    pub diagnostics: Vec<Diagnostic>,
 }
 
-impl Plot {
+impl Plane {
+    /// The warnings the chart's own style raised at its bind.
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+
     /// Every layer reads a scale in `y`, holds one datum list per panel, and every datum
     /// names a series and sits, at finite numbers, where the x scale can place it; the rail and top legend name
-    /// series the plot holds. A plot with no datum is [`Body::Empty`], not a `Plot`, and every
+    /// series the plot holds. A plot with no datum is [`Cartesian::NoData`], not a `Plane`, and every
     /// panel is drawn in by some layer. A row whose value is null is still a datum (`defined:
     /// false`): "empty" means no rows.
-    pub fn new(parts: PlotParts) -> Result<Self, Invalid> {
-        let PlotParts {
+    pub fn new(parts: PlaneParts) -> Result<Self, Invalid> {
+        let PlaneParts {
             orient,
             x,
             y,
@@ -453,9 +482,13 @@ impl Plot {
             baselines,
             axis_styles,
             mark_style,
+            diagnostics,
         } = parts;
         if y.is_empty() {
             return Err(Invalid::NoMeasureScale);
+        }
+        if axis_styles.y.len() != y.len() {
+            return Err(Invalid::AxisStyles { styles: axis_styles.y.len(), scales: y.len() });
         }
         let panel_count = panels.count();
         for (layer, mark_layer) in layers.iter().enumerate() {
@@ -469,6 +502,9 @@ impl Plot {
             if matches!(mark_layer.mark, Mark::Points { .. }) && mark_style.points.is_none() {
                 return Err(Invalid::PointsUnstyled { layer });
             }
+            if matches!(mark_layer.mark, Mark::Bins) && mark_style.bins.is_none() {
+                return Err(Invalid::BinsUnstyled { layer });
+            }
             if mark_layer.panels.len() != panel_count {
                 return Err(Invalid::LayerPanels {
                     layer,
@@ -477,7 +513,11 @@ impl Plot {
                 });
             }
             for (index, datum) in mark_layer.panels.iter().flatten().enumerate() {
-                let x_finite = !matches!(datum.x, Pos::Num(x) if !x.is_finite());
+                let x_finite = match datum.x {
+                    Pos::Num(x) => x.is_finite(),
+                    Pos::Span(start, end) => start.is_finite() && end.is_finite(),
+                    _ => true,
+                };
                 if !(x_finite && datum.y0.is_finite() && datum.y1.is_finite()) {
                     return Err(Invalid::NonFinite { layer, datum: index });
                 }
@@ -513,6 +553,13 @@ impl Plot {
                 series_len: series.len(),
             });
         }
+        for (legend, entry) in legends.iter().enumerate() {
+            let Some(toggle) = &entry.toggle else { continue };
+            let named = toggle.keys.len() == entry.entries.len() && toggle.keys.iter().all(|key| toggle.domain.contains(key));
+            if !named || toggle.domain.len() < 2 {
+                return Err(Invalid::LegendToggle { legend });
+            }
+        }
         Ok(Self {
             orient,
             x,
@@ -526,7 +573,28 @@ impl Plot {
             baselines,
             axis_styles,
             mark_style,
+            diagnostics,
         })
+    }
+
+    /// The plot taken apart, for a test to change what a family never binds and build it again.
+    #[cfg(feature = "test-support")]
+    pub fn into_parts(self) -> PlaneParts {
+        PlaneParts {
+            orient: self.orient,
+            x: self.x,
+            y: self.y,
+            panels: self.panels,
+            series: self.series,
+            layers: self.layers,
+            naming: self.naming,
+            legends: self.legends,
+            support: self.support,
+            baselines: self.baselines,
+            axis_styles: self.axis_styles,
+            mark_style: self.mark_style,
+            diagnostics: self.diagnostics,
+        }
     }
 
     pub fn orient(&self) -> Orient {
@@ -583,7 +651,7 @@ impl Plot {
 #[derive(Debug)]
 pub struct MarkLayer {
     pub mark: Mark,
-    /// Index into [`Plot::y`].
+    /// Index into [`Plane::y`].
     pub y_scale: usize,
     /// Per panel (in [`PanelId`] order, one for [`Panels::Single`]), the drawn datums in paint order.
     pub panels: Vec<Vec<Datum>>,
@@ -598,6 +666,8 @@ pub enum Mark {
     },
     /// One bar per datum, from `y0` to `y1` at its band position.
     Bars,
+    /// One bar per datum over its `Pos::Span` bin, from `y0` to `y1`: a histogram's.
+    Bins,
     /// One path per series through its datums in x order; a `defined: false` datum breaks the path.
     Lines,
 }
@@ -618,7 +688,7 @@ pub struct Datum {
     /// The base of a stacked or spanned mark; 0 for plain marks.
     pub y0: f64,
     pub y1: f64,
-    /// Index into [`Plot::series`].
+    /// Index into [`Plane::series`].
     pub series: usize,
     pub row: RowRef,
     /// Value label text, formatted.
@@ -650,6 +720,8 @@ pub enum Pos {
     /// Index into a band or point scale's domain.
     Band(usize),
     Num(f64),
+    /// The `[start, end)` extent of a bin on a linear scale.
+    Span(f64, f64),
     Time(Instant),
 }
 
@@ -660,13 +732,18 @@ pub struct RowRef(pub usize);
 /// A datum's hover entries, formatted.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tooltip {
+    /// The series name that heads the hover when the header is the color dimension, which the runtime
+    /// draws as a swatched header (`_tooltip.py`'s `ROLE_HEADER_SWATCHED`).
+    pub header: Option<String>,
     pub entries: Vec<TooltipEntry>,
 }
 
 impl Tooltip {
-    /// The hover text a mark carries as its `aria-label`: each row's `title: value`, joined `; `.
+    /// The hover text a mark carries as its `aria-label`: the swatched header, then each row's
+    /// `title: value`, joined `; `.
     pub fn text(&self) -> String {
-        self.entries.iter().map(|entry| format!("{}: {}", entry.title, entry.value)).collect::<Vec<_>>().join("; ")
+        let header = self.header.iter().map(|name| format!("{}{name}", crate::pie::ROLE_HEADER_SWATCHED));
+        header.chain(self.entries.iter().map(|entry| format!("{}: {}", entry.title, entry.value))).collect::<Vec<_>>().join("; ")
     }
 }
 
@@ -696,7 +773,7 @@ pub struct Rail {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RailEnd {
-    /// Index into [`Plot::series`].
+    /// Index into [`Plane::series`].
     pub series: usize,
     pub text: String,
 }
@@ -714,11 +791,27 @@ pub enum AuthoredLegend {
 pub struct Legend {
     pub title: Option<String>,
     pub entries: Vec<LegendEntry>,
+    /// What a click on an entry does; `None` when the chart's legend hides no series.
+    pub toggle: Option<Toggle>,
+}
+
+/// A legend whose entries are buttons: a click sets the board param `param` to the series it names,
+/// narrowing the chart to it. Bind builds it only for a chart that can hide series (a color
+/// channel of series, no panels, link, layers or wide fold, and a visible hover emphasis), and
+/// only while every series is shown, which is all a render at default variables ever draws.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Toggle {
+    /// The board param a click sets, `_dct_legend_<chart id>`.
+    pub param: String,
+    /// The chart's series in row order: what the click rules choose among.
+    pub domain: Vec<String>,
+    /// The series each entry names, in the entries' order.
+    pub keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LegendEntry {
-    /// Index into [`Plot::series`].
+    /// Index into [`Plane::series`].
     pub series: usize,
     pub label: String,
 }
@@ -735,15 +828,97 @@ pub struct Baselines {
     pub x_threshold: bool,
 }
 
-/// The walked axis slots, one per drawn axis; it has no leaves yet.
+/// The walked axis slots: one [`AxisStyle`] per drawn axis, the x axis and one per measure scale
+/// (`y` is parallel to [`Plane::y`]).
 #[derive(Debug, Clone, PartialEq)]
-pub struct AxisStyles {}
+pub struct AxisStyles {
+    pub x: AxisStyle,
+    pub y: Vec<AxisStyle>,
+}
+
+/// One axis's parts. A part is `None` where production draws nothing for it and reserves no
+/// space: a hidden grid, domain line, tick set, label set or title.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AxisStyle {
+    pub side: Side,
+    /// How far the axis hangs off the plot edge (`ticks.offset`), whether or not its tick marks
+    /// draw; `auto` is none.
+    pub offset: f64,
+    pub grid: Option<Line>,
+    pub domain: Option<Line>,
+    pub ticks: Option<Ticks>,
+    pub labels: Option<Labels>,
+    pub title: Option<Title>,
+}
+
+/// The edge of the plot an axis sits on: an x axis bottom or top, a y axis left or right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Line {
+    pub color: String,
+    pub width: f64,
+    pub opacity: f64,
+    pub dash: Option<Vec<f64>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ticks {
+    pub line: Line,
+    pub length: f64,
+}
+
+/// A text face as the resolved style carries it: the CSS family stack, size, weight and ink.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Face {
+    pub family: String,
+    pub size: f64,
+    pub weight: FontWeightValue,
+    pub color: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Labels {
+    pub face: Face,
+    pub padding: f64,
+    pub min_gap: f64,
+    pub max_width: Engine<f64, Auto>,
+    pub angle: Engine<f64, Auto>,
+    pub align: Engine<TextAlign, Auto>,
+    /// The distance from a range end within which an end label anchors on it (`labels.flush`: `true`
+    /// is a pixel, a number its own); `None` centers every label, as the theme's `auto` does.
+    pub flush: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Title {
+    pub face: Face,
+    pub padding: f64,
+    pub angle: Engine<f64, Auto>,
+    pub align: Engine<TextAlign, Auto>,
+}
 
 /// The walked mark, label and legend slots; only the point mark has leaves yet. A plot with a
 /// point layer always carries its point mark.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MarkStyle {
     pub points: Option<PointStyle>,
+    pub bins: Option<BinStyle>,
+}
+
+/// A histogram bar's walked leaves.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinStyle {
+    /// The top corners' authored radius in pixels.
+    pub radius: f64,
+    /// The share of a bin's pixel span a bar fills.
+    pub band_width: f64,
 }
 
 /// A point mark's walked leaves, as production draws them.
@@ -788,7 +963,7 @@ impl ScaleKind {
                     })
                 }
             }
-            (ScaleKind::Linear(_) | ScaleKind::Log(_), Pos::Num(_))
+            (ScaleKind::Linear(_) | ScaleKind::Log(_), Pos::Num(_) | Pos::Span(..))
             | (ScaleKind::Time(_), Pos::Time(_)) => Ok(()),
             _ => Err(Invalid::PosKind { layer }),
         }
@@ -921,6 +1096,9 @@ pub enum Ladder {
     Fixed(FixedLadder),
     /// `ticks.count` unset: layout picks the count from the plot length.
     BySize { min_step: Option<f64> },
+    /// A count axis (a histogram's): like `BySize`, but never more rungs than the domain's top
+    /// count, and at least one (`tickCount: max(1, min(ceil(height / 40), top))`).
+    Counts,
     /// No data-chosen ticks: log axes, independent multiples.
     None,
 }

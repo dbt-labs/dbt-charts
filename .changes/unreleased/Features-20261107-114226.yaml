@@ -1,0 +1,3 @@
+kind: Features
+body: 'Tables hide query columns whose names start with an underscore; set style.hide_underscore_columns: false to show them.'
+time: 2026-11-07T11:42:26.750819-09:00

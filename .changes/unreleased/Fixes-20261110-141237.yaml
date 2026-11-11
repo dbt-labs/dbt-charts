@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct query runs a board query that reads another query through {{ queries.X.cache }}, executing the upstream once in memory.
+time: 2026-11-10T14:12:37.88984-08:00

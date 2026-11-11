@@ -91,7 +91,7 @@ fn expression_variables(expr: &str) -> BTreeSet<String> {
 }
 
 /// The variables of `id`'s SQL and of every query it embeds.
-fn query_variables(id: &QueryId, queries: &BTreeMap<QueryId, QueryFacts>) -> BTreeSet<String> {
+pub fn query_variables(id: &QueryId, queries: &BTreeMap<QueryId, QueryFacts>) -> BTreeSet<String> {
     let (mut seen, mut pending, mut out) = (BTreeSet::new(), vec![id.clone()], BTreeSet::new());
     while let Some(current) = pending.pop() {
         let Some(facts) = queries.get(&current) else {
@@ -127,22 +127,37 @@ fn closure(
 }
 
 impl Dependencies {
-    /// A variable that depends on itself through others, which Python refuses.
-    pub fn cycle(&self) -> Option<&String> {
-        fn reaches<'a>(
-            from: &'a String,
-            to: &String,
-            all: &'a BTreeMap<String, BTreeSet<String>>,
+    /// The first cycle among the variables, as the names around it with the first repeated at
+    /// the end, which Python refuses.
+    pub fn cycle(&self) -> Option<Vec<String>> {
+        fn walk<'a>(
+            node: &'a String,
+            path: &mut Vec<&'a String>,
             seen: &mut BTreeSet<&'a String>,
-        ) -> bool {
-            all.get(from)
+            all: &'a BTreeMap<String, BTreeSet<String>>,
+        ) -> Option<Vec<String>> {
+            if let Some(at) = path.iter().position(|p| *p == node) {
+                let mut around: Vec<String> =
+                    path.iter().skip(at).map(|p| (*p).clone()).collect();
+                around.push(node.clone());
+                return Some(around);
+            }
+            if !seen.insert(node) {
+                return None;
+            }
+            path.push(node);
+            let found = all
+                .get(node)
                 .into_iter()
                 .flatten()
-                .any(|next| next == to || (seen.insert(next) && reaches(next, to, all, seen)))
+                .find_map(|next| walk(next, path, seen, all));
+            path.pop();
+            found
         }
+        let mut seen = BTreeSet::new();
         self.variables
             .keys()
-            .find(|name| reaches(name, name, &self.variables, &mut BTreeSet::new()))
+            .find_map(|name| walk(name, &mut Vec::new(), &mut seen, &self.variables))
     }
 }
 

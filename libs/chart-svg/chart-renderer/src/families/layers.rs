@@ -2552,7 +2552,7 @@ pub(crate) fn layer_grids(
                 )
             })
             .collect();
-        groups.push(crate::contract::grid_group(lines));
+        groups.push(::layout::contract::grid_group(lines));
     }
     Ok(groups)
 }

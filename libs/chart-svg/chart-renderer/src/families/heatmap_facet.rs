@@ -1115,7 +1115,7 @@ impl<'a> GradientLegend<'a> {
                 )
             })
             .collect();
-        nodes.push(Node::group(Role::Legend, contract::legend_label_attrs(None, false), labels));
+        nodes.push(Node::group(Role::Legend, ::layout::contract::legend_label_attrs(None, false), labels));
         nodes
     }
 }

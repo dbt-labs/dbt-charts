@@ -1,0 +1,50 @@
+[package]
+name = "engine"
+version = "0.0.1"
+edition = "2021"
+publish = false
+description = "The render engine: a board, one run of its queries and the caller's facts to an SVG and its report. Binds, lays out and prints; reads no env or clock, and from disk only the fonts in the caller's fonts_dir."
+
+[features]
+# `JsonSchema` for the plan wire structs, which the drift test exports; never in a shipped build.
+schema = ["dep:schemars"]
+
+[dependencies]
+bind = { path = "../bind" }
+board-model = { path = "../board-model" }
+color = { package = "dbt-charts-color", path = "../color" }
+d3rs = { path = "../d3rs" }
+diagnostic = { path = "../diagnostic" }
+display-text = { path = "../display-text" }
+indexmap = { version = "2", features = ["serde"] }
+jiff = { version = "0.2", default-features = false, features = ["std"] }
+layout = { path = "../layout" }
+measure = { path = "../measure" }
+model-core = { path = "../model-core" }
+normalize = { path = "../normalize" }
+print = { path = "../print" }
+regex = "1"
+scene = { path = "../scene" }
+schemars = { version = "1", features = ["indexmap2"], optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+template = { path = "../template" }
+
+[dev-dependencies]
+engine = { path = ".", features = ["schema"] }
+bind = { path = "../bind", features = ["test-support"] }
+normalize = { path = "../normalize", features = ["fixtures"] }
+project = { path = "../project" }
+column-types = { path = "../column-types" }
+board-model = { path = "../board-model", features = ["fixtures"] }
+diagnostic = { path = "../diagnostic", features = ["test-support"] }
+equivalence = { path = "../equivalence" }
+jiff = { version = "0.2", default-features = false, features = ["std"] }
+
+[[example]]
+name = "refusal_tally"
+test = true
+
+[[example]]
+name = "chart_side"
+test = true

@@ -161,7 +161,7 @@ fn fit_tables(
         .iter()
         .map(|t| height(t, slot))
         .collect::<Result<Vec<_>, _>>()?;
-    let floor = renderer.table_min_content_width(tables)?;
+    let floor = renderer.min_content_width(tables)?;
     let text_width =
         |group: &[(f64, f64)]| group.iter().map(|b| b.1).fold(f64::INFINITY, f64::min) - 2.0 * pad;
 
@@ -592,25 +592,34 @@ fn prose_flow(
     let ceiling = col.max_number.map_or(spans, |m| spans.min(m));
     let (mut metrics, mut stretches) = measured(&blocks, &renderer, measure, table_measure, ceiling)?;
 
-    if !plan.snap && stretches.iter().all(|s| s.n_cols() == 1) {
+    let mut wanted = measure;
+    if !blocks.is_empty() && blocks.iter().all(|b| matches!(b, mdsvg::types::AnyBlock::HorizontalRule(_))) {
+        // `prose.py:_prose_flow`: a rule has no text to keep readable, so it
+        // crosses the whole card, whose edges are span edges too; only an
+        // authored max_chars caps it.
+        wanted = match col.max_chars {
+            Some(_) => capped_measure(width, col.max_chars, char_px),
+            None => width,
+        };
+    } else if !plan.snap && stretches.iter().all(|s| s.n_cols() == 1) {
         // `prose.py:_prose_flow`: with no multi-column prose on the board, a
         // lone column wraps at least as wide as sizing asked for, so a line
         // that fits stays one line; once it outgrows its span it sits in the
         // whole card. Where some block does go multi-column (`snap`), lone ones
         // keep to their span so every edge on the board is a span edge.
-        let wanted = renderer
+        wanted = renderer
             .max_content_width(&blocks)?
             .min(capped_measure(width, col.max_chars, char_px));
-        if wanted > measure {
-            measure = wanted;
-            boxes = vec![(0.0, width + 2.0 * pad)];
-            table_box = boxes[0];
-            table_measure = table_measure.map(|t| t.max(measure));
-            // Without a table of another width the block paints in one piece
-            // and never reads its metrics.
-            if table_measure.is_some_and(|t| t != measure) {
-                (metrics, stretches) = measured(&blocks, &renderer, measure, table_measure, 1)?;
-            }
+    }
+    if wanted > measure {
+        measure = wanted;
+        boxes = vec![(0.0, width + 2.0 * pad)];
+        table_box = boxes[0];
+        table_measure = table_measure.map(|t| t.max(measure));
+        // Without a table of another width the block paints in one piece
+        // and never reads its metrics.
+        if table_measure.is_some_and(|t| t != measure) {
+            (metrics, stretches) = measured(&blocks, &renderer, measure, table_measure, 1)?;
         }
     }
 

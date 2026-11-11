@@ -87,30 +87,11 @@ pub fn axis_group(
     if caption.bare {
         return Ok(children);
     }
-    Ok(vec![axis_frame(channel, &label, origin, children)])
-}
-
-/// `.role-axis` around the axis's coordinate frame and the second `<g>` that undoes its
-/// translate.
-fn axis_frame(channel: AxisChannel, label: &str, (ox, oy): (f64, f64), children: Vec<Node>) -> Node {
     let key = match channel {
         AxisChannel::X => "x-axis",
         AxisChannel::Y => "y-axis",
     };
-    let attrs = Attrs::new()
-        .set("class", "mark-group role-axis")
-        .set("data-dct-role", key)
-        .set("role", "graphics-symbol")
-        .set("aria-roledescription", "axis")
-        .set("aria-label", label);
-    let undo = Node::group(Role::Axis, Attrs::new(), children).translate(-ox, -oy);
-    let frame = Node::group(Role::Axis, Attrs::new(), vec![undo]).translate(ox, oy);
-    Node::group(Role::Axis, attrs, vec![frame])
-}
-
-/// The group Vega draws around an axis's gridlines, holding `children`.
-pub fn grid_group(children: Vec<Node>) -> Node {
-    Node::group(Role::Grid, Attrs::new().set("class", "mark-rule role-axis-grid").set("aria-hidden", "true"), children)
+    Ok(vec![::layout::contract::axis_frame(key, &label, origin, children)])
 }
 
 pub fn rule(role: Role, from: (f64, f64), to: (f64, f64), stroke: &str, width: f64) -> Node {
@@ -129,58 +110,10 @@ pub enum LabelKey {
 /// The attributes of the group Vega draws around an axis title, stamped with the authored
 /// key it edits (`converters/chart.py::_stamp_axis_title_kinds`).
 pub fn axis_title_attrs(key: Option<LabelKey>) -> Attrs {
-    let attrs = Attrs::new().set("class", "mark-text role-axis-title").set("pointer-events", "none");
-    match key {
-        Some(LabelKey::X) => attrs.set("data-authored-kind", "x_label"),
-        Some(LabelKey::Y) => attrs.set("data-authored-kind", "y_label"),
-        None => attrs,
-    }
-}
-
-/// Vega's symbol-legend group (`role-legend`): the thumbnail strips it and
-/// the hover runtime skips a cursor inside it. It holds the title and the
-/// entries group.
-///
-/// `aria` is the legend's own label, set where the entries' names are ambiguous.
-pub fn legend_attrs(aria: Option<&str>) -> Attrs {
-    let attrs = Attrs::new().set("class", "mark-group role-legend");
-    match aria {
-        Some(label) => attrs.set("role", "graphics-symbol").set("aria-roledescription", "legend").set("aria-label", label),
-        None => attrs,
-    }
-}
-
-/// A legend's title group (`role-legend-title`).
-pub fn legend_title_attrs() -> Attrs {
-    Attrs::new().set("class", "mark-text role-legend-title").set("pointer-events", "none")
-}
-
-/// The one group holding every legend entry (`role-legend-entry`).
-pub fn legend_entries_attrs() -> Attrs {
-    Attrs::new().set("class", "mark-group role-legend-entry")
-}
-
-/// One entry's swatch group (`role-legend-symbol`); a `linked` entry takes the pointer so its
-/// `<a>` receives the click.
-pub fn legend_symbol_attrs(linked: bool) -> Attrs {
-    Attrs::new().set("class", "mark-symbol role-legend-symbol").set_if(!linked, "pointer-events", "none")
-}
-
-const LEGEND_LABEL_CLASS: &str = "mark-text role-legend-label";
-
-/// The series a legend entry, a direct label, or a line or area's own ink belongs to.
-pub const SERIES_KEY: &str = "data-dbt-series";
-
-/// The group Vega draws around legend label text (`role-legend-label`): the
-/// runtime reads a legend's labels from it. A gradient legend has one for all
-/// its tick labels, a symbol legend one per entry. `series_key` is the
-/// `data-dbt-series` join key (`_stamp_series_keys`), `None` when none is baked.
-pub fn legend_label_attrs(series_key: Option<&str>, linked: bool) -> Attrs {
-    let attrs = Attrs::new().set("class", LEGEND_LABEL_CLASS).set_if(!linked, "pointer-events", "none");
-    match series_key {
-        Some(key) => attrs.set(SERIES_KEY, key),
-        None => attrs,
-    }
+    ::layout::contract::axis_title_attrs(key.map(|key| match key {
+        LabelKey::X => "x_label",
+        LabelKey::Y => "y_label",
+    }))
 }
 
 /// The group Vega draws around a facet header (`role-title-text`), holding its `text`. The

@@ -15,10 +15,11 @@
 use board_model::primitives::{AffixRepeat, FormatConfig, FormatSpec, Notation, SignPlacement};
 use board_model::rule::Auto;
 use board_model::style::axis::{
-    AxisXStyle, AxisYStyle, BandAxisStyle, BaseAxisStyle, BaseScaleStyle, QuantitativeAxisStyle, TimeUnit,
+    AxisXStyle, AxisYStyle, BandAxisStyle, BaseAxisStyle, BaseScaleStyle, DomainBound, QuantitativeAxisStyle, ScaleDomain, TimeUnit,
 };
 use diagnostic::Diagnostic;
-use model_core::{Engine, Leaf, Patch, Tri};
+use crate::plot::zero::Setting;
+use model_core::{Engine, Leaf, Patch, Spell, Tri};
 
 use super::{Tier, Tiers};
 use crate::channel_type::ChannelType;
@@ -33,6 +34,15 @@ pub enum AxisName {
 
 /// A `format:` block as the board model holds it.
 type Block = <FormatConfig as Leaf>::Whole;
+
+/// How an axis shows its tick marks: authored, or an x axis's `auto`, which shows them only where the
+/// y gridline cannot reach the labels on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TicksShown {
+    Yes,
+    No,
+    Auto,
+}
 
 /// One layer of an axis's priority list.
 pub enum AxisRung<'a> {
@@ -50,9 +60,11 @@ pub enum AxisRung<'a> {
 /// A rung and how it reads `null`. The chart's and the family's patches state it: a `null`
 /// clears every layer below. The board's `charts.axis_*` slots are overlays Python rebuilds
 /// without their nulls (`_full_model_as_overlay`), so a `null` there inherits.
-struct Layer<'a> {
-    rung: AxisRung<'a>,
-    overlay: bool,
+pub(super) struct Layer<'a> {
+    pub(super) rung: AxisRung<'a>,
+    pub(super) overlay: bool,
+    /// The chart's own tier: the rungs a restated key can be authored on.
+    pub(super) own: bool,
 }
 
 impl<'a> Layer<'a> {
@@ -60,13 +72,19 @@ impl<'a> Layer<'a> {
         Self {
             rung,
             overlay: false,
+            own: false,
         }
+    }
+
+    fn owned(self) -> Self {
+        Self { own: true, ..self }
     }
 
     fn overlay(rung: AxisRung<'a>) -> Self {
         Self {
             rung,
             overlay: true,
+            own: false,
         }
     }
 
@@ -99,6 +117,18 @@ impl<'a> Layer<'a> {
 }
 
 impl<'a> AxisRung<'a> {
+    /// The authored key of the slot: `style.<slot>.…`.
+    fn slot(&self) -> &'static str {
+        match self {
+            AxisRung::Axis(_) | AxisRung::Total(_) => "axis",
+            AxisRung::X(_) => "axis_x",
+            AxisRung::Y(_) => "axis_y",
+            AxisRung::Quantitative(_) => "axis_quantitative",
+            AxisRung::Band(_) => "axis_band",
+            AxisRung::Column(_) => "column",
+        }
+    }
+
     fn labels_format(&self) -> Tri<&FormatSpec> {
         match self {
             AxisRung::Axis(p) => p.labels.format.as_ref(),
@@ -119,6 +149,25 @@ impl<'a> AxisRung<'a> {
             AxisRung::Quantitative(p) => sparse(&p.base.labels.visible),
             AxisRung::Band(p) => sparse(&p.base.labels.visible),
             AxisRung::Total(t) => Tri::Value(&t.labels.visible),
+            AxisRung::Column(_) => Tri::Unset,
+        }
+    }
+
+    /// The rung's tick visibility: only an x axis's own slot holds the `auto` rule.
+    fn ticks_visible(&self) -> Tri<&TicksShown> {
+        let shown = |visible: &bool| -> &'static TicksShown { if *visible { &TicksShown::Yes } else { &TicksShown::No } };
+        match self {
+            AxisRung::Axis(p) => map(sparse(&p.ticks.visible), shown),
+            AxisRung::X(p) => match sparse(&p.ticks.visible) {
+                Tri::Value(Engine::Value(visible)) => Tri::Value(shown(visible)),
+                Tri::Value(Engine::Rule(_)) => Tri::Value(&TicksShown::Auto),
+                Tri::Null => Tri::Null,
+                Tri::Unset => Tri::Unset,
+            },
+            AxisRung::Y(p) => map(sparse(&p.ticks.visible), shown),
+            AxisRung::Quantitative(p) => map(sparse(&p.base.ticks.visible), shown),
+            AxisRung::Band(p) => map(sparse(&p.base.ticks.visible), shown),
+            AxisRung::Total(t) => Tri::Value(shown(&t.ticks.visible)),
             AxisRung::Column(_) => Tri::Unset,
         }
     }
@@ -257,7 +306,64 @@ impl<'a> Scale<'a> {
         }
     }
 
-    fn unwalked_leaf(&self) -> Option<&'static str> {
+    /// `scale.continuous.zero` as this rung sets it.
+    fn zero(&self) -> Tri<&'a Engine<bool, Auto>> {
+        match self {
+            Scale::Patch(p, _) => match &p.continuous {
+                Tri::Value(c) => c.zero.as_ref(),
+                Tri::Null => Tri::Null,
+                Tri::Unset => Tri::Unset,
+            },
+            Scale::Total(t) => t.continuous.as_ref().map_or(Tri::Unset, |c| absent(&c.zero)),
+        }
+    }
+
+    /// `scale.continuous.domain` as this rung sets it.
+    fn domain(&self) -> Tri<&'a ScaleDomain> {
+        match self {
+            Scale::Patch(p, _) => match &p.continuous {
+                Tri::Value(c) => c.domain.as_ref(),
+                Tri::Null => Tri::Null,
+                Tri::Unset => Tri::Unset,
+            },
+            Scale::Total(t) => t.continuous.as_ref().map_or(Tri::Unset, |c| absent(&c.domain)),
+        }
+    }
+
+    /// The `scale.continuous` leaf no walk reads yet; `reads_value_leaves` says whether this axis's
+    /// family reads `zero` and `domain` (a y axis, and a quantitative x).
+    fn unwalked_continuous(&self, reads_value_leaves: bool) -> Option<&'static str> {
+        match self {
+            Scale::Patch(p, _) => match &p.continuous {
+                Tri::Unset => None,
+                Tri::Null => Some("scale.continuous"),
+                Tri::Value(c) => [
+                    ("scale.continuous.zero", !reads_value_leaves && !matches!(c.zero, Tri::Unset)),
+                    ("scale.continuous.type", !matches!(c.r#type, Tri::Unset)),
+                    ("scale.continuous.domain", matches!(&c.domain, Tri::Value(d) if !reads_value_leaves || numeric(d).is_none()) || matches!(c.domain, Tri::Null)),
+                    ("scale.continuous.log", !matches!(c.log, Tri::Unset)),
+                    ("scale.continuous.pow", !matches!(c.pow, Tri::Unset)),
+                    ("scale.continuous.symlog", !matches!(c.symlog, Tri::Unset)),
+                ]
+                .into_iter()
+                .find_map(|(name, set)| set.then_some(name)),
+            },
+            Scale::Total(t) => t.continuous.as_ref().and_then(|c| {
+                [
+                    ("scale.continuous.zero", !reads_value_leaves && c.zero.is_some()),
+                    ("scale.continuous.type", c.r#type.is_some()),
+                    ("scale.continuous.domain", c.domain.as_ref().is_some_and(|d| !reads_value_leaves || numeric(d).is_none())),
+                    ("scale.continuous.log", c.log.is_some()),
+                    ("scale.continuous.pow", c.pow.is_some()),
+                    ("scale.continuous.symlog", c.symlog.is_some()),
+                ]
+                .into_iter()
+                .find_map(|(name, set)| set.then_some(name))
+            }),
+        }
+    }
+
+    fn unwalked_leaf(&self, reads_value_leaves: bool) -> Option<&'static str> {
         let padded = |padding: Option<&f64>| padding.is_some_and(|p| *p != 0.0);
         match self {
             Scale::Patch(p, x_reverse) => [
@@ -269,7 +375,6 @@ impl<'a> Scale<'a> {
                     Tri::Null | Tri::Unset => None,
                 })),
                 ("scale.values", !matches!(p.values, Tri::Unset)),
-                ("scale.continuous", !matches!(p.continuous, Tri::Unset)),
                 ("scale.x_reverse", x_reverse.is_some_and(|r| !matches!(r, Tri::Unset))),
             ],
             Scale::Total(t) => [
@@ -278,19 +383,40 @@ impl<'a> Scale<'a> {
                 ("scale.nice", t.nice.is_some()),
                 ("scale.padding", padded(t.padding.as_ref())),
                 ("scale.values", t.values.is_some()),
-                ("scale.continuous", t.continuous.is_some()),
                 ("scale.x_reverse", false),
             ],
         }
         .into_iter()
         .find_map(|(name, set)| set.then_some(name))
+        .or_else(|| self.unwalked_continuous(reads_value_leaves))
     }
+}
+
+/// A domain's bounds when both are numbers: production's `numeric_domain_bounds`.
+fn numeric(domain: &ScaleDomain) -> Option<(f64, f64)> {
+    match (&domain.low, &domain.high) {
+        (DomainBound::Number(low), DomainBound::Number(high)) => Some((*low, *high)),
+        _ => None,
+    }
+}
+
+fn equal<T: PartialEq>(own: &T, fallback: Option<&T>) -> bool {
+    fallback == Some(own)
+}
+
+/// An own key whose removal leaves its leaf resolving to the same value.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Restated {
+    pub slot: &'static str,
+    pub leaf: &'static str,
+    pub value: serde_json::Value,
 }
 
 /// An axis's declared priority list.
 pub struct AxisLadder<'a> {
-    channel: ChannelType,
-    rungs: Ladder<Layer<'a>>,
+    pub(super) axis: AxisName,
+    pub(super) channel: ChannelType,
+    pub(super) rungs: Ladder<Layer<'a>>,
 }
 
 impl<'a> AxisLadder<'a> {
@@ -330,6 +456,7 @@ impl<'a> AxisLadder<'a> {
         };
         let rungs = tier(&tiers.own)
             .into_iter()
+            .map(|layer| layer.map(Layer::owned))
             .chain([column_format.map(|f| Layer::patch(AxisRung::Column(f)))])
             .chain(tier(&tiers.family))
             .chain([
@@ -340,6 +467,7 @@ impl<'a> AxisLadder<'a> {
             .flatten()
             .collect();
         Ok(Self {
+            axis,
             channel,
             rungs: Ladder::new(rungs),
         })
@@ -390,6 +518,11 @@ impl<'a> AxisLadder<'a> {
             .walk(|layer| layer.read(AxisRung::labels_visible))
     }
 
+    /// Whether the ticks draw, as walked: `auto` on an x axis stays the rule.
+    pub fn ticks_shown(&self) -> Option<TicksShown> {
+        self.rungs.walk(|layer| layer.read(AxisRung::ticks_visible)).copied()
+    }
+
     /// Whether the grid draws, and with it the zero and unity threshold rules.
     pub fn grid_visible(&self) -> Option<bool> {
         self.rungs.walk(|layer| layer.read(AxisRung::grid_visible)).copied()
@@ -419,6 +552,30 @@ impl<'a> AxisLadder<'a> {
         matches!(walked, Some(Engine::Value(TimeUnit::None)))
     }
 
+    /// `scale.continuous.zero`, as walked: `auto` is authored, absent is `None`.
+    pub fn zero_setting(&self) -> Option<Setting> {
+        let walked = self.rungs.walk(|layer| layer.read(|rung| match rung.scale() {
+            Tri::Value(scale) => scale.zero(),
+            Tri::Null => Tri::Null,
+            Tri::Unset => Tri::Unset,
+        }));
+        walked.map(|zero| match zero {
+            Engine::Value(value) => Setting::Value(*value),
+            Engine::Rule(_) => Setting::Auto,
+        })
+    }
+
+    /// The authored numeric `scale.continuous.domain`, as walked; a text bound is refused by
+    /// `unwalked_leaf`.
+    pub fn domain(&self) -> Option<(f64, f64)> {
+        let walked = self.rungs.walk(|layer| layer.read(|rung| match rung.scale() {
+            Tri::Value(scale) => scale.domain(),
+            Tri::Null => Tri::Null,
+            Tri::Unset => Tri::Unset,
+        }));
+        walked.and_then(numeric)
+    }
+
     /// `ticks.count`, as walked: `auto` stays the rule.
     pub fn ticks_count(&self) -> Option<&Engine<i64, Auto>> {
         self.rungs.walk(|layer| layer.read(AxisRung::ticks_count))
@@ -429,7 +586,7 @@ impl<'a> AxisLadder<'a> {
     /// label grains, `labels.values`).
     /// No walk reads them yet, so a family that reads the axis refuses a chart that sets one.
     /// A `padding` of 0 pads nothing on any scale, so it is not counted.
-    pub fn unwalked_leaf(&self) -> Option<&'static str> {
+    pub fn unwalked_leaf(&self, reads_value_leaves: bool) -> Option<&'static str> {
         self.rungs.find_map(|layer| {
             if layer.rung.sets_ticks_step() {
                 return Some("ticks.step");
@@ -441,10 +598,61 @@ impl<'a> AxisLadder<'a> {
                 return Some(leaf);
             }
             match layer.rung.scale() {
-                Tri::Value(scale) => scale.unwalked_leaf(),
+                Tri::Value(scale) => scale.unwalked_leaf(reads_value_leaves),
                 Tri::Null | Tri::Unset => None,
             }
         })
+    }
+
+    /// The own keys redundant against what the other rungs answer: for each leaf an own rung sets,
+    /// the same walk with that rung dropped. Where the fallback is an `auto` rule, the leaf is
+    /// restated when the rule decides the authored value: both rules the channel type decides
+    /// (`labels.visible` draws, `labels.format` is `number` on a quantitative axis) need no data and no
+    /// second bind. `ticks.count` and the other `auto` leaves are decided by the data, never equal to an authored one.
+    pub fn restated(&self) -> Vec<Restated> {
+        let mut out = Vec::new();
+        let auto_number = |own: &FormatSpec, fallback: Option<&FormatSpec>| {
+            fallback == Some(own)
+                || self.channel == ChannelType::Quantitative
+                    && matches!((own, fallback), (FormatSpec::Name(o), Some(FormatSpec::Name(f))) if o.as_str() == "number" && f.as_str() == "auto")
+        };
+        let auto_shown = |own: &Engine<bool, Auto>, fallback: Option<&Engine<bool, Auto>>| {
+            fallback == Some(own) || matches!((own, fallback), (Engine::Value(true), Some(Engine::Rule(_))))
+        };
+        self.redundant("labels.format", Layer::format, auto_number, &mut out);
+        self.redundant("labels.visible", |l| l.read(AxisRung::labels_visible), auto_shown, &mut out);
+        self.redundant("grid.visible", |l| l.read(AxisRung::grid_visible), equal, &mut out);
+        self.redundant("grid.threshold.visible", |l| l.read(AxisRung::threshold_visible), equal, &mut out);
+        self.redundant("ticks.count", |l| l.read(AxisRung::ticks_count), equal, &mut out);
+        self.redundant("band_position", |l| l.read(AxisRung::band_position), equal, &mut out);
+        self.redundant(
+            "scale.headroom",
+            |l| {
+                l.read(|rung| match rung.scale() {
+                    Tri::Value(scale) => scale.headroom(),
+                    Tri::Null => Tri::Null,
+                    Tri::Unset => Tri::Unset,
+                })
+            },
+            equal,
+            &mut out,
+        );
+        out
+    }
+
+    fn redundant<T: Spell>(
+        &self,
+        leaf: &'static str,
+        read: impl for<'l> Fn(&'l Layer<'a>) -> Tri<&'l T>,
+        same: impl Fn(&T, Option<&T>) -> bool,
+        out: &mut Vec<Restated>,
+    ) {
+        for (i, layer) in self.rungs.rungs().enumerate().filter(|(_, l)| l.own) {
+            let Tri::Value(own) = read(layer) else { continue };
+            if same(own, self.rungs.walk_without(i, &read)) {
+                out.push(Restated { slot: layer.rung.slot(), leaf, value: own.spell() });
+            }
+        }
     }
 
     /// Where a band sits within its step (0 to 1).

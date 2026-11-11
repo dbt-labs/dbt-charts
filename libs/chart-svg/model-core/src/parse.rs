@@ -78,8 +78,18 @@ pub enum Hint {
 /// What the migration registry knows about a retired key.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Retirement {
-    /// Where the key's value lives now; `None` when it was removed.
+    /// Where the key's value lives now, as a dotted document path; `None` when it was removed.
     pub successor: Option<String>,
+    /// The grammar version that retired it.
+    pub retired_in: String,
+    /// The old spelling relative to where it sits (`zero`, or `a.b` when a move crosses levels).
+    pub old: String,
+    /// The map the old spelling sits in, `root` for the document.
+    pub parent: String,
+    /// What became of it (`was renamed to 'threshold' in 0.7.0.`).
+    pub history: String,
+    /// What to do about it.
+    pub action: String,
 }
 
 /// The migration registry's side of an unknown key. Parse asks it before it
@@ -98,7 +108,90 @@ pub struct ParseError {
     pub hint: Option<Hint>,
 }
 
+const YAML_REFERENCE_URL: &str = "https://docs.dbtcharts.com/reference/yaml-reference/";
+const MAX_ALLOWED_KEYS: usize = 40;
+const MAX_MISPLACED_HOMES: usize = 3;
+
 impl ParseError {
+    /// The diagnostic with what the author is told beyond its code: for an unknown key, the
+    /// generic form of Python's hint (the keys allowed there, the nearest, the blocks that do take the key) and fields
+    /// (`unknown_field`, `parent_path`, `allowed_keys`, `docs_topic`, `suggestion`).
+    pub fn into_diagnostic(self) -> Diagnostic {
+        let (
+            Some(Hint::Keys {
+                mut allowed,
+                nearest,
+                valid_at,
+            }),
+            Some(path),
+        ) = (self.hint, self.diagnostic.path.clone())
+        else {
+            return self.diagnostic;
+        };
+        let (field, parent) = match path.0.split_last() {
+            Some((field, parent)) => (field.clone(), parent.to_vec()),
+            None => return self.diagnostic,
+        };
+        allowed.sort();
+        let shown = if parent.is_empty() {
+            "root".to_string()
+        } else {
+            parent.join(".")
+        };
+        let topic = match path.0.first().map(String::as_str) {
+            Some("variables") => "variables",
+            Some("queries") => "queries",
+            Some("charts") => "charts",
+            Some("rows" | "cols" | "grid" | "tabs") => "layout",
+            _ => "board",
+        };
+        let at = format!(
+            "Unknown field {} at {shown}.",
+            diagnostic::py_str_repr(&field)
+        );
+        let hint = if allowed.is_empty() {
+            format!("{at} See: {YAML_REFERENCE_URL}")
+        } else {
+            let more = if allowed.len() > MAX_ALLOWED_KEYS {
+                ", ..."
+            } else {
+                ""
+            };
+            let keys = allowed
+                .iter()
+                .take(MAX_ALLOWED_KEYS)
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut parts = vec![at, format!("Allowed keys: {}{more}.", keys.join(", "))];
+            if let Some(n) = &nearest {
+                parts.push(format!("Did you mean {}?", diagnostic::py_str_repr(n)));
+            }
+            if !valid_at.is_empty() {
+                let homes: Vec<String> = valid_at
+                    .iter()
+                    .take(MAX_MISPLACED_HOMES)
+                    .map(|h| format!("`{h}`"))
+                    .collect();
+                parts.push(format!(
+                    "`{field}` belongs at {}, not at `{shown}`.",
+                    homes.join(" or ")
+                ));
+            }
+            parts.push(format!("See: {YAML_REFERENCE_URL}"));
+            parts.join(" ")
+        };
+        let mut d = self
+            .diagnostic
+            .with_sink_param("unknown_field", field.into())
+            .with_sink_param("parent_path", shown.into())
+            .with_sink_param("allowed_keys", allowed.into())
+            .with_sink_param("docs_topic", topic.into());
+        if let Some(n) = nearest {
+            d = d.with_sink_param("suggestion", n.into());
+        }
+        d.with_hint(hint)
+    }
+
     /// The model path the error is about; the document itself is `""`.
     pub fn path(&self) -> String {
         self.diagnostic
@@ -109,11 +202,45 @@ impl ParseError {
     }
 }
 
-fn range(span: Span) -> SourceRange {
-    SourceRange {
-        start: span.start,
-        end: span.end,
+/// `root` for the document, else the dotted path.
+fn display_parent(parent: &str) -> &str {
+    if parent.is_empty() {
+        "root"
+    } else {
+        parent
     }
+}
+
+/// What to try for an unknown key: where it is, what is allowed there, the near miss, and the
+/// other blocks that take the key.
+fn unknown_key_hint(
+    key: &str,
+    parent: &str,
+    allowed: &[String],
+    nearest: Option<&str>,
+    valid_at: &[String],
+) -> String {
+    let mut hint = format!("Unknown field '{key}' at {}.", display_parent(parent));
+    if !allowed.is_empty() {
+        let shown: Vec<&str> = allowed.iter().take(40).map(String::as_str).collect();
+        let more = if allowed.len() > 40 { ", ..." } else { "" };
+        hint.push_str(&format!(" Allowed keys: {}{more}.", shown.join(", ")));
+    }
+    if let Some(near) = nearest {
+        hint.push_str(&format!(" Did you mean '{near}'?"));
+    }
+    if !valid_at.is_empty() {
+        let places: Vec<&str> = valid_at
+            .iter()
+            .map(|p| if p.is_empty() { "root" } else { p.as_str() })
+            .collect();
+        hint.push_str(&format!(" The key is also valid at {}.", places.join(", ")));
+    }
+    hint
+}
+
+fn range(span: Span) -> SourceRange {
+    SourceRange::new(span.start, span.end)
 }
 
 /// A parse result: the twin (partial when `errors` is not empty), the errors
@@ -360,15 +487,40 @@ impl<'a> Cx<'a> {
             self.path.pop();
             let retired = self.retired.and_then(|r| r.lookup(&parent, key));
             let (d, hint) = match retired {
-                Some(r) => (diag::err_retired_field(field_path), Hint::Retired(r)),
-                None => (
-                    diag::err_extra_field(field_path),
-                    Hint::Keys {
+                Some(r) => {
+                    let d = diag::err_retired_field(
+                        r.old.as_str(),
+                        r.parent.as_str(),
+                        r.history.as_str(),
+                    )
+                    .with_sink_param("field_path", field_path.into())
+                    .with_sink_param("unknown_field", key.into())
+                    .with_sink_param("parent_path", display_parent(&parent).into())
+                    .with_sink_param("retired_in", r.retired_in.as_str().into())
+                    .with_hint(r.action.as_str());
+                    let d = match &r.successor {
+                        Some(s) => d.with_sink_param("successor", s.as_str().into()),
+                        None => d,
+                    };
+                    (d, Hint::Retired(r))
+                }
+                None => {
+                    let nearest = nearest(key, allowed);
+                    let valid_at = self.valid_elsewhere(key, &parent);
+                    let d = diag::err_extra_field(field_path).with_hint(unknown_key_hint(
+                        key,
+                        &parent,
+                        allowed,
+                        nearest.as_deref(),
+                        &valid_at,
+                    ));
+                    let hint = Hint::Keys {
                         allowed: allowed.to_vec(),
-                        nearest: nearest(key, allowed),
-                        valid_at: self.valid_elsewhere(key, &parent),
-                    },
-                ),
+                        nearest,
+                        valid_at,
+                    };
+                    (d, hint)
+                }
             };
             let at = ModelPath(
                 self.model_path()

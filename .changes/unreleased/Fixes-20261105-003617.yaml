@@ -1,0 +1,3 @@
+kind: Fixes
+body: Tables with a total row first, sibling numeric columns, numeric-year support tables, and bottom support tables now draw their rules, number formats, years and spacing correctly.
+time: 2026-11-05T00:36:17.915068-08:00

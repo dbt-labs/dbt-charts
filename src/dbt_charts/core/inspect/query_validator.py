@@ -821,6 +821,41 @@ def _apply_suppression(
     return active, suppressed
 
 
+def query_findings(
+    sql: str, dialect: str | None
+) -> list[tuple[QueryDiagnostic, str | None]]:
+    """The structural findings of ``sql`` for the engine's SQL seam, each with the output
+    column a date-as-text finding is about (``None`` for the others).
+
+    The engine owns which columns a chart uses as x, so every projection is checked here and
+    the engine keeps the ones it wants. A SQL that does not parse, or is not one SELECT, has
+    none: parse errors are reported elsewhere.
+    """
+    if not sql.strip():
+        return []
+    dialect = require_sqlglot_dialect(dialect)
+    nodes: dict[str, str] = {}
+    statements = parse_sql_statements(name_dbt_nodes(sql, nodes), dialect)
+    if isinstance(statements, str) or len(statements[0]) != 1:
+        return []
+    parsed = statements[0][0]
+    if not isinstance(parsed, exp.Select):
+        return []
+    found: list[tuple[QueryDiagnostic, str | None]] = [
+        (_unmask(d, nodes), None)
+        for d in (
+            *_detect_missing_join_predicates(parsed),
+            *_detect_reaggregation(fold_relation_names(parsed.copy())),
+        )
+    ]
+    for column in dict.fromkeys(p.alias_or_name for p in parsed.expressions):
+        found.extend(
+            (_unmask(d, nodes), column)
+            for d in _detect_date_as_text(parsed, frozenset({column}), dialect)
+        )
+    return found
+
+
 @overload
 def validate_query(
     sql: str,

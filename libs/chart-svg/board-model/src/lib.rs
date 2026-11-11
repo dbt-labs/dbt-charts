@@ -19,7 +19,19 @@
 //! - [`style`]: one module per Python file under
 //!   `dbt-charts/src/dbt_charts/core/compile/models/style/theme/`.
 //!
-//! A module is added when its Python file is ported.
+//! A module is added when its Python file is ported. Each style module's field table is
+//! checked against `tests/fixtures/<module>.json`, which `tests/test_board_model_fixtures.py`
+//! (legend, annotations and axis) and `tests/test_board_model_style_fixtures.py` (the rest,
+//! plus `primitives`) keep equal to the pydantic models. The structure side's field tables
+//! (`query`, `variable`) are checked against `tests/fixtures/{query,variable,constants}.json`
+//! from `tests/test_board_model_query_fixtures.py`. A chart family port adds its module and one
+//! `Chart` variant, and its row in `tests/fixtures/chart.json` from
+//! `tests/test_board_model_chart_fixtures.py`.
+//!
+//! The `fixtures` feature adds `board_model::fixtures`; the `cascade` feature (implied by
+//! `fixtures`, and turned on by `normalize`) adds the generated inherit and `fill` and `TABLES`
+//! in `cascade.rs`, which `UPDATE_GENERATED=1 cargo test -p board-model inherit` rewrites after a
+//! port adds a link.
 //!
 //! | Python file (`core/compile/models/...`) | Rust module |
 //! |---|---|
@@ -78,6 +90,13 @@
 //!   clears the layers below it, and unset and `null` both build to `None`. A non-optional overlay
 //!   (`charts.axis_x`, ...) is `Patch<T>`, and `null` on it is refused when the value is built.
 //! - `InheritSlot(from_path)` is `inherit_slot = "path"`, copied verbatim.
+//! - A named-font slot Python leaves partly `None` (`text.code`/`blockquote`,
+//!   `table.paginator`, `spark_bar.subtitle`/`more_rows`, `point.labels`,
+//!   `table.header.font_compact`, `table.row.roles.{summary,total}.font`: the table renderer
+//!   reads each as set or unset, and applies only the leaves it sets) is `Option<Patch<_>>`,
+//!   absent meaning the enclosing font applies. A map family's chart-level font (`geoshape`,
+//!   `point_map`), which no consumer reads, takes the enclosing `charts.font` through a
+//!   generated link.
 
 #![deny(
     clippy::unwrap_used,
@@ -106,6 +125,7 @@ pub mod query;
 pub mod regional;
 pub mod rule;
 pub mod sql_analysis;
+pub mod sql_wire;
 pub mod style;
 pub mod unit;
 pub mod variable;

@@ -25,8 +25,8 @@ impl Transform {
             Transform::Identity => x,
             Transform::Log { .. } if reflect => -libm::log(-x),
             Transform::Log { .. } => libm::log(x),
-            Transform::Pow(e) if e == 1.0 => x,
-            Transform::Pow(e) if e == 0.5 => {
+            Transform::Pow(1.0) => x,
+            Transform::Pow(0.5) => {
                 if x < 0.0 {
                     -(-x).sqrt()
                 } else {
@@ -50,8 +50,8 @@ impl Transform {
             Transform::Identity => x,
             Transform::Log { .. } if reflect => -js_exp(-x),
             Transform::Log { .. } => js_exp(x),
-            Transform::Pow(e) if e == 1.0 => x,
-            Transform::Pow(e) if e == 0.5 => {
+            Transform::Pow(1.0) => x,
+            Transform::Pow(0.5) => {
                 if x < 0.0 {
                     -x * x
                 } else {

@@ -10,12 +10,28 @@ import yaml
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
+from dbt_charts.core.compile.compiler import CompileResult
 from dbt_charts.core.compile.config import ProjectSourcesConfig
+from dbt_charts.core.compile.host_facts import sql_host_queries
 from dbt_charts.core.dbt_manifest import LoadedManifest, load_manifest
 from dbt_charts.core.dbt_model_columns import (
-    check_model_columns,
+    check_model_columns as _check_model_columns,
     resolve_model_output_columns,
 )
+from dbt_charts.core.project import Project
+
+
+def check_model_columns(result: CompileResult, project: Project) -> None:
+    """Run the check on a compile's queries and file its findings as validate does."""
+    for diagnostic in _check_model_columns(
+        sql_host_queries(result.query_registry),
+        project,
+        result.board.sources if result.board else {},
+    ):
+        if diagnostic.level == "warning":
+            result.warnings.append(diagnostic)
+        elif diagnostic not in result.errors:
+            result.errors.append(diagnostic)
 
 
 def _project_with_manifest(

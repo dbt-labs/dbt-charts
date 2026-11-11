@@ -7,6 +7,19 @@
 //! [`BoxShadow`](crate::primitives::BoxShadow) facet. The four maps (`formats`, `fonts`,
 //! `palettes`, `roles`) are Python's `dict | None`: `None` there is "nothing at this cascade level",
 //! which an empty map says (the patch twin keeps unset apart from empty).
+//!
+//! `Style.charts` and the chart families are `Box`ed so the total builds on a 512 KiB stack
+//! (`a_total_style_builds_on_a_512_kib_stack`). The built `Style` stays total: `omit` (a scalar
+//! or model, `Option` in the built type, twins are its own) is only for a leaf some mount really
+//! leaves unset (the value-label font leaves, which no total builds; a stroke's `color` and
+//! `width` are plain `Engine<_, Auto>` leaves, `fill_at(.. = "auto")` on the mounts whose `_base`
+//! states nothing: Python's unset, the mark family's own color and width). A map, list or model
+//! Python defaults to empty (`default_factory`), or to a `None` its resolved style asserts away
+//! or reads as empty, is `default_empty` (the built value is the empty container or the model
+//! built from an empty patch, which `Schema::of` checks). `tests/fixtures/omittable.json`
+//! (written by `test_board_model_schema_fixture.py`) lists both and the schema parity gate fails
+//! on one the spine states and Python does not. A Rust-required leaf Python leaves optional is
+//! accepted only with `supplied_at`.
 
 use crate::facet::Color;
 use crate::names::PaletteName;
@@ -19,8 +32,79 @@ use crate::style::kpi::KpiTonesStyle;
 use crate::style::layout::LayoutStyle;
 use crate::style::page::{FooterStyle, TimestampStyle};
 use crate::style::variables::VariablesStyle;
+use crate::unit::pixel_length;
 use indexmap::IndexMap;
+use model_core::{build_leaf, Cx, FromNode, Leaf, Merge, Node, ReadScalar, Scalar, Spell, TypeExpr};
 use model_derive::Model;
+use yaml::{Kind, Value};
+
+/// `style.gap`: pixels, written as a number or, in an authored layer, as a pixel length such as
+/// `4px` (Python's `_parse_gap`). A theme file holds the number only.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Gap(f64);
+
+impl Gap {
+    pub fn px(self) -> f64 {
+        self.0
+    }
+
+    fn read_authored(node: &Node, cx: &mut Cx) -> Option<Self> {
+        let text = match &node.kind {
+            Kind::Scalar(Value::Bool(b)) => {
+                let got = if *b { "True" } else { "False" };
+                cx.invalid(
+                    node.span,
+                    format!("Value error, gap must be a number or a pixel length, got {got}"),
+                );
+                return None;
+            }
+            Kind::Scalar(Value::Str(text)) => text,
+            _ => return f64::read(node, cx).map(Self),
+        };
+        let Some(px) = pixel_length(text) else {
+            let got = diagnostic::py_repr(&serde_json::Value::String(text.clone()));
+            cx.invalid(
+                node.span,
+                format!("Value error, gap must be a number or a pixel length like '12px', got {got}"),
+            );
+            return None;
+        };
+        Some(Self(px))
+    }
+}
+
+impl From<f64> for Gap {
+    fn from(px: f64) -> Self {
+        Self(px)
+    }
+}
+
+impl FromNode for Gap {
+    fn authored(node: &Node, cx: &mut Cx) -> Self::Authored {
+        Self::read_authored(node, cx)
+    }
+    fn patch(node: &Node, cx: &mut Cx) -> Self::Patch {
+        Self::read_authored(node, cx)
+    }
+    fn whole(node: &Node, cx: &mut Cx) -> Option<Self::Whole> {
+        f64::read(node, cx).map(Self)
+    }
+}
+
+impl Spell for Gap {
+    fn spell(&self) -> serde_json::Value {
+        self.0.spell()
+    }
+}
+
+impl Leaf for Gap {
+    type Whole = Gap;
+    type Authored = Option<Gap>;
+    type Patch = Option<Gap>;
+    const MERGE: Merge = Merge::Override;
+    const EXPR: TypeExpr = TypeExpr::Scalar(Scalar::Float);
+}
+build_leaf!(Gap);
 
 /// Authoritative compiled style, built from a single theme YAML file.
 ///
@@ -84,5 +168,5 @@ pub struct Style {
     pub margin: Option<SpacingValues>,
     /// Gap between layout items in pixels.
     #[model(absent = "the layout type's own gap")]
-    pub gap: Option<f64>,
+    pub gap: Option<Gap>,
 }

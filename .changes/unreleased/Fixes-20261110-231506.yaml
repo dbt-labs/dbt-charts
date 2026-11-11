@@ -1,0 +1,5 @@
+kind: Fixes
+body: The docs and `dct skills chart` now say which YAML features board files accept and refuse, and which unquoted values YAML 1.1 reads as booleans or numbers.
+time: 2026-11-10T23:15:06.475459378Z
+custom:
+    DbtChartsIssue: "90"

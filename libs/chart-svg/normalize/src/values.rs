@@ -10,7 +10,7 @@
 //! outside ASCII is not a digit.
 
 use crate::daterange::{self, GRAMMAR};
-use board_model::variable::{DefaultValue, InputType, StaticOptions, Variable, VariableDataType};
+use board_model::variable::{DefaultValue, InputType, Member, StaticOptions, Variable};
 use board_model::variable_value::{Atom, VariableValue};
 use diagnostic::{diag, py_repr, py_str_repr, Diagnostic};
 use indexmap::IndexMap;
@@ -19,6 +19,7 @@ use model_core::Engine;
 use serde_json::Value;
 
 /// The board's date and how its weeks and fiscal years run. `week_start` counts from Sunday.
+/// It is `plan`'s own, from [`Clock::at`]; compile's `HostInputs.today` never reaches it.
 #[derive(Debug, Clone, Copy)]
 pub struct Clock {
     pub today: migrate::Date,
@@ -160,15 +161,6 @@ fn repr_json(v: &Value) -> String {
     }
 }
 
-/// What a choice input's values are (`choice_member_type`).
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Member {
-    Text,
-    Number,
-    Date,
-    Boolean,
-}
-
 /// One declared variable, as the board's registry holds it.
 #[derive(Debug, Clone)]
 pub struct Declared {
@@ -220,33 +212,28 @@ fn detect(var: &Variable) -> InputType {
                 None => false,
             }
     });
-    let slider = var.min.is_some() || var.max.is_some() || var.step.is_some();
-    match &var.default {
-        Some(DefaultValue::List(_)) => InputType::Multiselect,
-        _ if slider => InputType::Slider,
-        Some(DefaultValue::Bool(_)) => InputType::Checkbox,
-        _ if has_options || var.column.as_deref().is_some_and(|c| !c.is_empty()) => {
-            InputType::Select
-        }
-        _ => InputType::Text,
+    board_model::variable::InputSignals {
+        list_default: matches!(var.default, Some(DefaultValue::List(_))),
+        slider_field: var.min.is_some() || var.max.is_some() || var.step.is_some(),
+        bool_default: matches!(var.default, Some(DefaultValue::Bool(_))),
+        has_options,
+        has_column: var.column.as_deref().is_some_and(|c| !c.is_empty()),
     }
+    .detect()
 }
 
 impl Declared {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn of(name: &str, var: &Variable) -> Result<Self, String> {
         let input = match &var.input {
             Engine::Value(input) => *input,
             Engine::Rule(_) => detect(var),
         };
         let statics = var.options.as_ref().and_then(|o| o.r#static.as_ref());
-        let member = match (&var.data_type, statics) {
-            (Some(VariableDataType::Number), _) => Member::Number,
-            (Some(VariableDataType::Date), _) => Member::Date,
-            (Some(VariableDataType::Boolean), _) => Member::Boolean,
-            (Some(_), _) => Member::Text,
-            (None, Some(StaticOptions::Numbers(n))) if !n.is_empty() => Member::Number,
-            (None, _) => Member::Text,
-        };
+        let member = Member::of(var.data_type, statics);
         let options = match statics {
             Some(StaticOptions::Strings(s)) => s.clone(),
             Some(StaticOptions::Numbers(n)) => n.iter().map(|f| number_text(*f)).collect(),

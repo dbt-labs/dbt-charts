@@ -153,11 +153,14 @@ from dbt_charts.core.compile.validate.zero_baseline import (
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_BOARD_SOURCE_INVALID,
+    ERR_CHART_REF_QUERY_UNDECLARED,
     ERR_DUPLICATE_CHART_NAME,
     ERR_DUPLICATE_QUERY_NAME,
     ERR_EMPTY_YAML_DOCUMENT,
     ERR_MARKDOWN_NOT_BOARD,
     ERR_MARKDOWN_PARSE,
+    ERR_QUERY_REF_CYCLE,
     ERR_TEXT_UNKNOWN_QUERY,
     ERR_UNKNOWN_QUERY,
     ERR_YAML_SYNTAX,
@@ -1746,9 +1749,10 @@ def _board_level_default_source(
         meta_source = metas.model_dump(exclude_unset=True).get("source")
         return meta_source if isinstance(meta_source, str) else None
     if not isinstance(source, str):
-        raise CompilationError(
-            f"Invalid board-level `source:` in {file_path.relpath}: "
-            f"expected a source name string, got {type(source).__name__}"
+        raise CompilationError.from_code(
+            ERR_BOARD_SOURCE_INVALID,
+            file=file_path.relpath,
+            got=type(source).__name__,
         )
     return source
 
@@ -1940,14 +1944,15 @@ def _resolve_cross_board_query(
     if cache_key in key_cache:
         return key_cache[cache_key]
     if cache_key in resolving:
-        raise CompilationError(
-            f"Circular query reference while resolving chart ref '{chart_ref}': "
-            f"'{name}' in {file_relpath} depends on itself."
+        raise CompilationError.from_code(
+            ERR_QUERY_REF_CYCLE, chart_ref=chart_ref, name=name, file=file_relpath
         )
     if name not in queries_section:
-        raise CompilationError(
-            f"Chart ref '{chart_ref}' requires query '{name}', which is not "
-            f"declared in {file_relpath}'s queries: section."
+        raise CompilationError.from_code(
+            ERR_CHART_REF_QUERY_UNDECLARED,
+            chart_ref=chart_ref,
+            name=name,
+            file=file_relpath,
         )
 
     qualified_key = _cross_board_query_key(file_relpath, name)

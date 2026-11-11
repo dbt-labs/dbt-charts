@@ -552,20 +552,22 @@ def test_resolve_meta_lint_returns_config_when_meta_exists(
 def test_merge_metas_raises_for_genuinely_outside_directory(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """merge_metas must raise ValueError when directory is truly outside boards_root.
+    """merge_metas must raise when directory is truly outside boards_root.
 
     The logical-path fix only applies to SYMLINKED directories (where the
     logical path is inside boards_root). A directory whose logical path is
-    genuinely outside must still raise ValueError.
+    genuinely outside must still raise ERR-META-OUTSIDE-BOARDS-ROOT.
     """
+    from dbt_charts.core.compile.errors import CompilationError
     from dbt_charts.core.compile.merge import merge_metas
 
     (tmp_path / "charts").mkdir()
     (tmp_path / "other").mkdir()
     project = local_project(tmp_path)
 
-    with pytest.raises(ValueError, match="not under"):
+    with pytest.raises(CompilationError, match="not under") as raised:
         merge_metas(project.directory("other"), project.directory("charts"))
+    assert raised.value.code.code == "ERR-META-OUTSIDE-BOARDS-ROOT"
 
 
 # ===========================================================================

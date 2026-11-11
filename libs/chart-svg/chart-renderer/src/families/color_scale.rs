@@ -14,7 +14,6 @@ use crate::families::legend::{
     gradient_labeled_values, gradient_tick_count, unit_position, LegendConfig, GRADIENT_STOP_TICKS,
     VEGA_GRADIENT_THICKNESS, VEGA_LEGEND_TITLE_PADDING,
 };
-use crate::contract;
 use measure::baseline_shift;
 use scene::{Attrs, Node, Role, Shape};
 use measure::FontBook;
@@ -898,7 +897,7 @@ impl VerticalGradient<'_> {
                 Node::text(Role::Label, (label_x, y + baseline_shift(baseline, label_size)), Attrs::new().set("text-anchor", "start").vega("font-family", label_family).num("font-size", label_size).quick_some("font-style", label_font.style.as_deref()).set("font-weight", label_weight.clone()).set("fill", label_color).set_if(!shown, "opacity", "0"), text.as_str())
             })
             .collect();
-        nodes.push(Node::group(Role::Legend, contract::legend_label_attrs(None, false), labels));
+        nodes.push(Node::group(Role::Legend, ::layout::contract::legend_label_attrs(None, false), labels));
         Ok(nodes)
     }
 }

@@ -5,6 +5,8 @@
 //! The footer's laws are production's, cited per item: `compile/sizing.py` (`board_own_width`,
 //! `footer_text_width`, `_footer_row_width`) for the width a board asks for, and `chart-renderer/src/board.rs`
 //! (`footer_attribution_svg`, `render_board_in_scope`) for the row it draws.
+//!
+//! A timestamp directive d3 and Python do not print alike (`%z`, `%T`, `%F` ...) is refused by name.
 
 use bind::font_stack::with_emoji;
 use board_model::style::page::{TimestampAlign, TimestampPosition};

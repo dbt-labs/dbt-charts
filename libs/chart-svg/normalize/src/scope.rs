@@ -6,32 +6,116 @@
 //! board of its own layout (rows when it has none) carrying the tab's `style:`. The result is keyed
 //! by the board's position, as every other per-board fact is.
 
+use crate::files::is_path_ref;
+use crate::merge_warnings::leaves;
+use crate::restated::dotted;
 use board_model::board::layout::{LayoutAuthored, LayoutItemAuthored};
-use board_model::board::theme::built_in_theme;
+use board_model::board::theme::{built_in_theme, is_built_in, BASE_THEME};
+use board_model::board::BoardBodyAuthored;
 use board_model::cascade;
 use board_model::facet::Color;
 use board_model::ids::{ItemId, Step};
+use board_model::names::ThemeName;
 use board_model::nested::{in_force, pie_reaches_donut, scope_patch, GapLayout};
 use board_model::style::style::Style;
-use model_core::{Leaf, Resolved, ToAuthored, ToPatch, Tri};
-use std::collections::BTreeMap;
+use diagnostic::{diag, restated_text, Diagnostic, ModelPath};
+use model_core::{CascadeError, Leaf, Resolved, ToAuthored, ToPatch, Tri};
+use serde_json::Value;
+use std::collections::{BTreeMap, HashMap};
 
 type StylePatch = <Style as Leaf>::Patch;
 
 /// What went wrong resolving a nested scope.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ScopeError(pub String);
+pub enum ScopeError {
+    /// The style of the board or tab refused, coded.
+    Invalid(Vec<Diagnostic>),
+    /// A nested board names a theme that is not a built-in one.
+    Theme(Box<Diagnostic>),
+}
 
 impl std::fmt::Display for ScopeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        match self {
+            Self::Invalid(d) => f.write_str(d.first().map_or("", |d| d.code)),
+            Self::Theme(d) => f.write_str(d.code),
+        }
     }
 }
 
-struct Walk<'a> {
-    theme: &'a StylePatch,
+fn style_err(e: impl std::fmt::Display) -> ScopeError {
+    ScopeError::Invalid(vec![diag::err_internal(e.to_string())])
+}
+
+/// A refused cascade as diagnostics, as Python raises them: an unknown font is `ERR-FONT-UNKNOWN`,
+/// a font cycle or a fill literal its type refuses (a model bug) `ERR-INTERNAL`, and every other
+/// refusal comes from resolving a color token or palette, `ERR-COLOR-TOKEN` over `scope`.
+pub(crate) fn cascade_diagnostics(scope: &str, e: &CascadeError) -> Vec<Diagnostic> {
+    match e {
+        CascadeError::Refused(refused) => refused
+            .iter()
+            .map(|r| match r.why.as_str() {
+                why if why.starts_with("Unknown font") => diag::err_font_unknown(why),
+                why if why.starts_with("Fonts extend") || why.starts_with("the fill literal") => {
+                    diag::err_internal(format!("{scope}.{}: {why}", r.at))
+                }
+                why => diag::err_color_token(scope, why),
+            })
+            .collect(),
+        CascadeError::Unset(_) => vec![diag::err_internal(format!("{scope}: {e}"))],
+    }
+}
+
+/// The theme a nested board declares: the last built-in name among its `extends:` entries and
+/// `theme:` (`_theme_from_extends`), `None` when it names none. A path entry is a board reference
+/// nothing folds for a nested board; a plain name that is no authorable theme is refused, as
+/// `validate_theme_names` does.
+fn declared_theme(body: &BoardBodyAuthored) -> Result<Option<String>, ScopeError> {
+    let mut entries: Vec<&str> = Vec::new();
+    if let Tri::Value(e) = &body.extends {
+        entries.extend(e.0.iter().map(String::as_str));
+    }
+    if let Tri::Value(t) = &body.theme {
+        entries.push(t.as_str());
+    }
+    let mut declared = None;
+    for entry in entries {
+        if is_path_ref(entry) {
+            continue;
+        }
+        if entry == BASE_THEME || !is_built_in(entry) || entry.starts_with('_') {
+            return Err(ScopeError::Theme(Box::new(diag::err_unknown_theme(
+                entry,
+                ThemeName::VALUES.to_vec(),
+            ))));
+        }
+        declared = Some(entry.to_string());
+    }
+    Ok(declared)
+}
+
+/// What a nested scope inherits: its parent's authored patch and effective theme name.
+/// Its patch as nested scopes see it, the same before the pinned background and the prose font a
+/// block's font sets (which the restated-style comparison leaves out), and its theme.
+type Parent<'p> = (Option<&'p StylePatch>, Option<&'p StylePatch>, &'p str);
+
+struct Walk {
     transparent: Color,
     out: BTreeMap<String, Resolved<Style>>,
+    /// Each nested board's restated-style findings, by position.
+    restated: BTreeMap<String, Vec<Diagnostic>>,
+    /// Each nested board's own authored style, by position.
+    authored: BTreeMap<String, StylePatch>,
+    /// The leaves each theme the walk met sets, spelled once.
+    themes: HashMap<String, HashMap<String, Value>>,
+}
+
+/// The scopes of a board's nested boards and tabs, and each nested board's restated-style findings.
+pub struct Scopes {
+    pub styles: BTreeMap<String, Resolved<Style>>,
+    pub restated: BTreeMap<String, Vec<Diagnostic>>,
+    /// What each nested board's `style:` itself authors, by position.
+    pub authored: BTreeMap<String, StylePatch>,
 }
 
 /// Every nested board's and tab's resolved style under `layout`, given the style the root board
@@ -40,23 +124,28 @@ pub fn nested_styles(
     layout: Option<&LayoutAuthored>,
     root_style: Option<&StylePatch>,
     theme: &str,
-) -> Result<BTreeMap<String, Resolved<Style>>, ScopeError> {
-    let built_in = built_in_theme(theme).map_err(|e| ScopeError(e.to_string()))?;
-    let Tri::Value(base) = &built_in.style else {
-        return Err(ScopeError(format!("theme {theme} has no style")));
-    };
-    let transparent =
-        Color::try_from("transparent".to_string()).map_err(|e| ScopeError(e.to_string()))?;
+) -> Result<Scopes, ScopeError> {
+    let transparent = Color::try_from("transparent".to_string()).map_err(style_err)?;
     let mut walk = Walk {
-        theme: base,
         transparent,
         out: BTreeMap::new(),
+        restated: BTreeMap::new(),
+        authored: BTreeMap::new(),
+        themes: HashMap::new(),
     };
     if let Some(layout) = layout {
         let children = scope_patch(None, root_style);
-        walk.layout(layout, &mut Vec::new(), children.as_ref())?;
+        walk.layout(
+            layout,
+            &mut Vec::new(),
+            (children.as_ref(), children.as_ref(), theme),
+        )?;
     }
-    Ok(walk.out)
+    Ok(Scopes {
+        styles: walk.out,
+        restated: walk.restated,
+        authored: walk.authored,
+    })
 }
 
 /// The layout a nested board's `layout.<type>.gap` is read from: rows when it has none, and none
@@ -70,7 +159,7 @@ fn gap_layout(layout: Option<&LayoutAuthored>) -> Option<GapLayout> {
     }
 }
 
-fn own_patch<T>(style: &Tri<Box<T>>) -> Option<StylePatch>
+pub(crate) fn own_patch<T>(style: &Tri<Box<T>>) -> Option<StylePatch>
 where
     T: ToPatch<Out = StylePatch> + Clone,
 {
@@ -80,12 +169,12 @@ where
     }
 }
 
-impl Walk<'_> {
+impl Walk {
     fn layout<'k>(
         &mut self,
         layout: &'k LayoutAuthored,
         at: &mut Vec<Step<'k>>,
-        parent: Option<&StylePatch>,
+        parent: Parent<'_>,
     ) -> Result<(), ScopeError> {
         match layout {
             LayoutAuthored::Rows(items) => self.list("rows", items, at, parent),
@@ -109,10 +198,15 @@ impl Walk<'_> {
                 at.push(Step::Key("items"));
                 for (i, tab) in t.items.iter().flatten().enumerate() {
                     at.push(Step::Index(i));
-                    let scope =
-                        self.scope(&tab.style, gap_layout(tab.layout.as_ref()), at, parent)?;
+                    let (children, plain, theme) = self.scope(
+                        &tab.style,
+                        None,
+                        gap_layout(tab.layout.as_ref()),
+                        at,
+                        parent,
+                    )?;
                     if let Some(inner) = &tab.layout {
-                        self.layout(inner, at, scope.as_ref())?;
+                        self.layout(inner, at, (children.as_ref(), plain.as_ref(), &theme))?;
                     }
                     at.pop();
                 }
@@ -127,7 +221,7 @@ impl Walk<'_> {
         key: &'k str,
         items: &'k [LayoutItemAuthored],
         at: &mut Vec<Step<'k>>,
-        parent: Option<&StylePatch>,
+        parent: Parent<'_>,
     ) -> Result<(), ScopeError> {
         at.push(Step::Key(key));
         for (i, it) in items.iter().enumerate() {
@@ -143,44 +237,117 @@ impl Walk<'_> {
         &mut self,
         item: &'k LayoutItemAuthored,
         at: &mut Vec<Step<'k>>,
-        parent: Option<&StylePatch>,
+        parent: Parent<'_>,
     ) -> Result<(), ScopeError> {
         let LayoutItemAuthored::Board(nested) = item else {
             return Ok(());
         };
         let layout = nested.body.layout.as_ref();
-        let scope = self.scope(&nested.body.style, gap_layout(layout), at, parent)?;
+        let declared = declared_theme(&nested.body)?;
+        let (children, plain, theme) =
+            self.scope(&nested.body.style, declared, gap_layout(layout), at, parent)?;
         if let Some(layout) = layout {
-            self.layout(layout, at, scope.as_ref())?;
+            self.layout(layout, at, (children.as_ref(), plain.as_ref(), &theme))?;
         }
         Ok(())
     }
 
-    /// Resolve the board at `at` and return the patch its own children inherit.
+    /// The leaves of a nested board's own style that its parent's scope over its theme already
+    /// gives it (Python's `tree_restated`, nested branch). Its background is pinned, never
+    /// inherited, so restating the parent's changes the render and is not judged.
+    fn restated(
+        &mut self,
+        own: &StylePatch,
+        parent: Option<&StylePatch>,
+        theme: &str,
+        base: &StylePatch,
+        at: &[Step],
+    ) {
+        let position = ItemId::at(at);
+        let kept: HashMap<String, Value> = scope_patch(parent, None)
+            .map(|kept| leaves(&kept).into_iter().collect())
+            .unwrap_or_default();
+        let below = self
+            .themes
+            .entry(theme.to_string())
+            .or_insert_with(|| leaves(base).into_iter().collect());
+        let prefix = dotted(&position);
+        let found: Vec<Diagnostic> = leaves(own)
+            .into_iter()
+            .filter(|(path, value)| {
+                path.split('.').next() != Some("background")
+                    && !path.ends_with(".extends")
+                    && kept.get(path).or_else(|| below.get(path)) == Some(value)
+            })
+            .map(|(path, value)| {
+                let at = format!("{prefix}.style.{path}");
+                let model_path = ModelPath(at.split('.').map(str::to_string).collect());
+                diag::warn_restated_style(
+                    at,
+                    restated_text(&value),
+                    "what this board inherits from its parent",
+                )
+                .with_sink_param("why", "inherited".into())
+                .at_path(model_path)
+            })
+            .collect();
+        if !found.is_empty() {
+            self.restated.insert(position.as_str().to_string(), found);
+        }
+    }
+
+    /// Resolve the board at `at`, under the theme it `declared` (else its parent's), and return
+    /// the patch its own children inherit with the theme they inherit. A scope that switches theme
+    /// paints that theme's own canvas where it authors no background.
     fn scope<T>(
         &mut self,
         style: &Tri<Box<T>>,
+        declared: Option<String>,
         layout: Option<GapLayout>,
         at: &[Step],
-        parent: Option<&StylePatch>,
-    ) -> Result<Option<StylePatch>, ScopeError>
+        (parent_patch, plain_parent, parent_theme): Parent<'_>,
+    ) -> Result<(Option<StylePatch>, Option<StylePatch>, String), ScopeError>
     where
         T: ToPatch<Out = StylePatch> + Clone,
     {
         let own = own_patch(style);
-        let force = in_force(parent, own.as_ref(), &self.transparent, layout);
+        if let Some(own) = &own {
+            self.authored
+                .insert(ItemId::at(at).as_str().to_string(), own.clone());
+        }
+        let theme = declared.unwrap_or_else(|| parent_theme.to_string());
+        let built_in = built_in_theme(&theme).map_err(style_err)?;
+        let Tri::Value(base) = &built_in.style else {
+            return Err(style_err(format!("theme {theme} has no style")));
+        };
+        if let Some(own) = &own {
+            self.restated(own, plain_parent, &theme, base, at);
+        }
+        let canvas = match (&base.background, theme != parent_theme) {
+            (Some(own), true) => own,
+            _ => &self.transparent,
+        };
+        let force = in_force(parent_patch, own.as_ref(), canvas, layout);
         let mut resolve = force.resolve;
         pie_reaches_donut(&mut resolve);
-        let mut folded = self.theme.clone();
+        let mut folded = (**base).clone();
         let mut context = folded.clone();
         context.palettes.extend(resolve.palettes.clone());
         context.roles.extend(resolve.roles.clone());
         folded.merge(resolve);
-        let resolved = Resolved::base_in(&cascade::TABLES, folded, &context)
-            .map_err(|e| ScopeError(format!("{}: {e}", ItemId::at(at).as_str())))?;
+        let resolved = Resolved::base_in(&cascade::TABLES, folded, &context).map_err(|e| {
+            ScopeError::Invalid(cascade_diagnostics(
+                &format!("{}.style", ItemId::at(at).as_str()),
+                &e,
+            ))
+        })?;
         self.out
             .insert(ItemId::at(at).as_str().to_string(), resolved);
-        Ok(force.children)
+        Ok((
+            force.children,
+            scope_patch(plain_parent, own.as_ref()),
+            theme,
+        ))
     }
 }
 

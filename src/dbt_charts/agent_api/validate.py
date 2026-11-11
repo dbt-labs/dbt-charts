@@ -10,13 +10,17 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from dbt_charts import _engine
+from dbt_charts._docs_site import DEFAULT_DOCS_SITE_URL, docs_site_url
 from dbt_charts.agent_api._paths import (
     resolution_error_diagnostic,
     resolve_board_path,
 )
-from dbt_charts.core.board import partition_compile_warnings
+from dbt_charts.core.board import board_warning_codes, partition_compile_warnings
+from dbt_charts.core.compile.engine import engine_compile
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import missing_format_columns
+from dbt_charts.core.compile.host_facts import parse_host_facts
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.resolve.chart.positional import (
     channel_error,
@@ -31,12 +35,16 @@ from dbt_charts.core.diagnostics import (
     ERR_LOCKED_SCHEMA_VERSION,
     ERR_NO_BOARD_FILES,
     ERR_QUERY_FORMAT_COLUMN_MISSING,
+    ERR_UNRESOLVED_REFERENCE,
     ERR_WAREHOUSE_QUERY_INVALID,
+    REGISTRY,
     WARN_COLUMN_CHECK_UNAVAILABLE,
     WARN_WAREHOUSE_CHECK_UNAVAILABLE,
     Diagnostic,
+    SourceRange,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.registry import ErrorCode
 from dbt_charts.core.execute.chart_columns import (
     chart_column_refs,
     missing_column_error,
@@ -171,6 +179,34 @@ def validate(path: Path, *, project: Project) -> ValidateResult:
     return _validate_resolved(resolved, project, None, True)
 
 
+def _refusal_diagnostics(
+    refusal: _engine.CompileError, relpath: str
+) -> list[Diagnostic]:
+    """The engine's coded refusals as diagnostics."""
+    out: list[Diagnostic] = []
+    for found in refusal.diagnostics:
+        code = REGISTRY.get(found["code"])
+        if not isinstance(code, ErrorCode):
+            raise TypeError(f"engine refused with non-error code {found['code']}")
+        diagnostic = DbtChartsError.from_code(code, **found["params"]).to_diagnostic(
+            file=relpath
+        )
+        placed: dict[str, object] = {}
+        if (path := found.get("path")) is not None:
+            placed["path"] = path
+        if (hint := found.get("hint")) is not None:
+            # The engine reads no environment, so its docs link is the shipped default.
+            placed["hint"] = hint.replace(DEFAULT_DOCS_SITE_URL, docs_site_url())
+        if (located := found.get("range")) is not None:
+            placed["range"] = SourceRange.model_validate(located)
+        if code is ERR_UNRESOLVED_REFERENCE and "context" in diagnostic.fields:
+            # `fields` holds the bare place; only the message's `{context}` carries " in ".
+            bare = diagnostic.fields["context"].removeprefix(" in ")
+            placed["fields"] = {**diagnostic.fields, "context": bare}
+        out.append(diagnostic.model_copy(update=placed))
+    return out
+
+
 def _validate_resolved(
     resolved: ProjectPath,
     project: Project,
@@ -182,6 +218,8 @@ def _validate_resolved(
     *named* is true for a path the user typed, false for one a folder listed.
     """
     from dbt_charts.core.compile.compiler import compile_file, validate_compiled_queries
+    from dbt_charts.core.compile.host_facts import sql_host_queries
+    from dbt_charts.core.compile.validate.links import iter_board_links
     from dbt_charts.core.dbt_model_columns import check_model_columns
     from dbt_charts.core.dbt_ref_check import check_manifest_refs
     from dbt_charts.core.link_targets import check_link_targets
@@ -255,10 +293,36 @@ def _validate_resolved(
         )
 
     validate_compiled_queries(result)
-    check_manifest_refs(result, project)
+    board_sources = result.board.sources if result.board else {}
+    refused: list[Diagnostic] = []
+    if result.board is None:
+        host_queries = {}
+    elif resolved.is_markdown:
+        # The engine compiles YAML boards; a markdown board's queries come from
+        # the Python compile until it reads them.
+        host_queries = sql_host_queries(result.query_registry)
+    else:
+        try:
+            compiled = engine_compile(resolved)
+        except _engine.CompileError as refusal:
+            refused = _refusal_diagnostics(refusal, resolved.relpath)
+            host_queries = {}
+        else:
+            host_queries = parse_host_facts(compiled.host_facts_json())["queries"]
+    for diagnostic in check_manifest_refs(host_queries, project, board_sources):
+        (result.errors if diagnostic.level == "error" else result.warnings).append(
+            diagnostic
+        )
     check_session_time_zones(result, project)
-    check_model_columns(result, project)
-    check_link_targets(result, project, resolved.relpath)
+    for diagnostic in check_model_columns(host_queries, project, board_sources):
+        if diagnostic.level == "warning":
+            result.warnings.append(diagnostic)
+        elif diagnostic not in result.errors:
+            result.errors.append(diagnostic)
+    if result.board is not None:
+        result.warnings += check_link_targets(
+            iter_board_links(result.board), project, resolved.relpath
+        )
     check_channel_sets(result, resolved.relpath)
 
     errors = [*lock_errors, *result.errors]
@@ -267,6 +331,9 @@ def _validate_resolved(
             e.to_diagnostic(file=resolved.relpath)
             for e in chart_color_token_errors(result.board)
         ]
+    # The Python checks may have reported the same defect the engine refused.
+    reported = {e.code for e in errors}
+    errors += [d for d in refused if d.code not in reported]
     warnings = list(result.warnings)
 
     # The warehouse tier runs last and only on a board that already compiled —
@@ -276,8 +343,22 @@ def _validate_resolved(
         errors += wh_errors
         warnings += wh_warnings
 
+    chart_codes: dict[str, set[str]] = {}
+    if resolved.is_markdown:
+        # The engine compiles YAML boards only; a markdown board's charts are read off the
+        # Python board until it reads markdown too.
+        chart_codes = board_warning_codes(result.board)
+    elif result.board is not None:
+        try:
+            facts = parse_host_facts(engine_compile(resolved).host_facts_json())
+        except _engine.CompileError:
+            # validate tolerates what the engine refuses (a source the project does not
+            # declare, a palette stop that does not exist), and reports it itself.
+            chart_codes = board_warning_codes(result.board)
+        else:
+            chart_codes = {c: set(v) for c, v in facts["warnings_ignore"].items()}
     warnings, _suppressed = partition_compile_warnings(
-        warnings, result.board, None, warnings_ignore
+        warnings, chart_codes, None, warnings_ignore
     )
     return ValidateResult(
         success=len(errors) == 0,

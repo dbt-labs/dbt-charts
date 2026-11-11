@@ -587,11 +587,35 @@ fn year_row_width(
     }
 }
 
+/// How far labels `wi` and `wj` wide at domain indices `i < j` reach toward
+/// each other: half of each, except a genuinely flushed domain edge, which
+/// reaches its full width (`text-anchor: start`/`end` doubles its reach from
+/// the edge instead of centering). The first date is flushed on a flushed
+/// axis; the last date only where it stands on a calendar tick of `format_tu`.
+#[allow(clippy::too_many_arguments)]
+fn pair_reach(
+    i: usize,
+    j: usize,
+    wi: f64,
+    wj: f64,
+    dates: &[(i32, u8, u8)],
+    data_tu: TimeUnit,
+    format_tu: TimeUnit,
+    edge_labels_flushed: bool,
+    fiscal_start: u8,
+) -> f64 {
+    let left_flush = edge_labels_flushed && i == 0;
+    let (yj, mj, dj) = dates[j];
+    let right_flush = edge_labels_flushed
+        && j == dates.len() - 1
+        && is_calendar_tick(yj, mj, dj, data_tu, format_tu, fiscal_start);
+    let reach = |width: f64, flush: bool| if flush { width } else { width / 2.0 };
+    reach(wi, left_flush) + reach(wj, right_flush)
+}
+
 /// True when labeled buckets at `labeled[a]`/`labeled[b]` (domain indices
 /// `i < j`) sit at least [`TEMPORAL_LABEL_GAP_PX`] apart. Port of `_pair_clears`:
-/// clearance is `(j - i) * band`; each side reserves half its label width, except a genuinely
-/// flushed domain edge, which reserves its full width (`text-anchor:
-/// start`/`end` doubles its reach from the edge instead of centering). Row 1
+/// clearance is `(j - i) * band` against each side's [`pair_reach`]. Row 1
 /// and the stacked year row are two independent clearances, not one
 /// `max()`'d width (`_pair_clears:359-366`): row 1 of one tick can only ever
 /// collide with row 1 of its neighbor; the year row only with a
@@ -610,28 +634,19 @@ fn pair_clears(
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
 ) -> Result<bool, String> {
     let is_first_i = labeled_pos_i == 0;
-    let left_flush = edge_labels_flushed && i == 0;
     let clearance = (j - i) as f64 * band;
-
-    let (yj, mj, dj) = dates[j];
-    let right_flush = edge_labels_flushed
-        && j == dates.len() - 1
-        && is_calendar_tick(yj, mj, dj, data_tu, format_tu, fiscal_start);
+    let reach = |wi, wj| pair_reach(i, j, wi, wj, dates, data_tu, format_tu, edge_labels_flushed, fiscal_start);
 
     let wi = cadence_token_width(dates, i, format_tu, is_first_i, fiscal_start, authored, measure)?;
     let wj = cadence_token_width(dates, j, format_tu, false, fiscal_start, authored, measure)?;
-    let left_extent = if left_flush { wi } else { wi / 2.0 };
-    let right_extent = if right_flush { wj } else { wj / 2.0 };
-    if left_extent + right_extent + TEMPORAL_LABEL_GAP_PX > clearance {
+    if reach(wi, wj) + TEMPORAL_LABEL_GAP_PX > clearance {
         return Ok(false);
     }
 
     let year_row_i = year_row_width(dates, i, format_tu, is_first_i, fiscal_start, authored, measure)?;
     let year_row_j = year_row_width(dates, j, format_tu, false, fiscal_start, authored, measure)?;
     if let (Some(year_row_i), Some(year_row_j)) = (year_row_i, year_row_j) {
-        let left_year_extent = if left_flush { year_row_i } else { year_row_i / 2.0 };
-        let right_year_extent = if right_flush { year_row_j } else { year_row_j / 2.0 };
-        if left_year_extent + right_year_extent + TEMPORAL_LABEL_GAP_PX > clearance {
+        if reach(year_row_i, year_row_j) + TEMPORAL_LABEL_GAP_PX > clearance {
             return Ok(false);
         }
     }
@@ -779,7 +794,7 @@ pub fn resolve_label_visibility(
             let candidates: &[TimeUnit] =
                 if data_tu == TimeUnit::YearMonthDate { &[TimeUnit::YearMonthDate, TimeUnit::YearWeek] } else { &[TimeUnit::YearWeek] };
             for &candidate in candidates {
-                if submonth_candidate_fits(dates, data_tu, candidate, fiscal_start, plot_width, measure)? {
+                if submonth_candidate_fits(dates, data_tu, candidate, fiscal_start, plot_width, edge_labels_flushed, measure)? {
                     return Ok((candidate, candidate, 1));
                 }
             }
@@ -1485,7 +1500,7 @@ pub fn resolve_vega_label_layout(
         let candidates: &[TimeUnit] =
             if data_tu == TimeUnit::YearMonthDate { &[TimeUnit::YearMonthDate, TimeUnit::YearWeek] } else { &[TimeUnit::YearWeek] };
         for &candidate in candidates {
-            if submonth_candidate_fits(dates, data_tu, candidate, fiscal_start, usable_width, measure)? {
+            if submonth_candidate_fits(dates, data_tu, candidate, fiscal_start, usable_width, edge_labels_flushed, measure)? {
                 return Ok(VegaLabelLayout {
                     format_tu: candidate,
                     visibility_tu: candidate,
@@ -2262,13 +2277,15 @@ fn submonth_candidate_indices(dates: &[(i32, u8, u8)], data_tu: TimeUnit, candid
 /// `candidate`'s labels over daily/weekly `dates` clear each other. Each of
 /// the day-number row and the context row is its own clearance, so a row's
 /// neighbors only compete with each other; the clearance between two labels
-/// is the calendar distance of their indices times the per-bucket band.
+/// is the calendar distance of their indices times the per-bucket band, and
+/// a pair needs its [`pair_reach`] plus one gap.
 fn submonth_candidate_fits(
     dates: &[(i32, u8, u8)],
     data_tu: TimeUnit,
     candidate: TimeUnit,
     fiscal_start: u8,
     usable_width: f64,
+    edge_labels_flushed: bool,
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
 ) -> Result<bool, String> {
     let indices = submonth_candidate_indices(dates, data_tu, candidate);
@@ -2292,9 +2309,10 @@ fn submonth_candidate_fits(
         (context_row, LABEL_GAP_SPACES as f64 * space),
     ] {
         for pair in row.windows(2) {
-            let ((left_index, left), (right_index, right)) = (&pair[0], &pair[1]);
-            let widths = measure(left)? + gap + measure(right)? + gap;
-            if widths / 2.0 > (right_index - left_index) as f64 * band {
+            let (&(i, ref left), &(j, ref right)) = (&pair[0], &pair[1]);
+            let (wi, wj) = (measure(left)?, measure(right)?);
+            let reach = pair_reach(i, j, wi, wj, dates, data_tu, candidate, edge_labels_flushed, fiscal_start);
+            if reach + gap > (j - i) as f64 * band {
                 return Ok(false);
             }
         }
@@ -4353,6 +4371,39 @@ mod tests {
         .unwrap();
         assert_eq!((layout.format_tu, layout.visibility_tu), (TimeUnit::YearWeek, TimeUnit::YearWeek));
         assert!(!layout.parity && layout.angle == 0.0);
+    }
+
+    /// A flushed first Monday paints `start`-anchored at the left edge, so its `Jul'26` reaches its
+    /// full width inward: 42px, half of `Aug`'s 21 and a 7px gap (59.5) against the 49px between
+    /// them on a 7px band, though the same pair centered (21 + 10.5 + 7 = 38.5) clears. Flushed,
+    /// the Monday rung is refused and the axis takes the month openers.
+    #[test]
+    fn a_flushed_first_monday_reserves_its_full_width_on_the_monday_rung() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let dates = on_axis(&iso_range((2026, 7, 27), 1, 106)).civils();
+        let format = |flushed: bool| {
+            resolve_vega_label_layout(
+                &dates,
+                TimeUnit::YearMonthDate,
+                TimeUnit::YearMonthDate,
+                true,
+                106.0 * 7.0,
+                flushed,
+                false,
+                true,
+                1,
+                true,
+                true,
+                Some(&TILT_LADDER),
+                11.0,
+                None,
+                &mut char_measure,
+            )
+            .unwrap()
+            .format_tu
+        };
+        assert_eq!(format(false), TimeUnit::YearWeek);
+        assert_eq!(format(true), TimeUnit::YearMonth);
     }
 
     /// A bar's continuous weekly axis is bucket-aligned: a short series keeps the week day numbers

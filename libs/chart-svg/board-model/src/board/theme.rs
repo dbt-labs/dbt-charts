@@ -1,6 +1,10 @@
 //! The built-in themes as board patches: each `defaults/themes/<name>.yaml` compiled in, parsed as
 //! a board patch, its names-only `extends` chain folded lowest first. A theme is package data,
 //! so a file that fails to parse is a build defect the tests catch, not a runtime state.
+//!
+//! `build.rs` emits `THEME_SOURCES`; `built_in_theme(name)` parses and folds each theme once per
+//! process. `BoardBody.style` and `TabItem.style` are `Option<Box<Style>>`, since a style twin is
+//! about 87 KB.
 
 use crate::board::BoardBody;
 use model_core::{parse_patch, Leaf, Tri};

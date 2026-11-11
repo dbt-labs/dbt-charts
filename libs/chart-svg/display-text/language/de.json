@@ -24,6 +24,7 @@
   "case.extra_small_words": "",
   "case.small_words": "",
   "case.title_style": "first_word",
+  "chart.no_data": "Keine Daten",
   "controls.all": "Alle",
   "controls.all_dates": "Alle Daten",
   "controls.any_date": "Beliebiges Datum",

@@ -372,6 +372,21 @@ class HtmlPolicyCeiling(NamedTuple):
     source: str
 
 
+def html_policy_pin() -> HtmlPolicy | None:
+    """The tier ``DCT_HTML_POLICY_CEILING`` pins, or None when the host pins none.
+
+    Raises:
+        ValueError: If DCT_HTML_POLICY_CEILING is set to an unrecognized value.
+    """
+    env_val = os.getenv("DCT_HTML_POLICY_CEILING")  # noqa: TID251 — DCT_HTML_POLICY_CEILING knob
+    if env_val is None or _is_html_policy(env_val):
+        return env_val
+    raise ValueError(
+        f"DCT_HTML_POLICY_CEILING={env_val!r} is not a valid html_policy_ceiling tier; "
+        f"expected one of {_HTML_POLICY_ORDER}"
+    )
+
+
 def resolve_html_policy_ceiling() -> HtmlPolicyCeiling:
     """Resolve the html_policy ceiling: DCT_HTML_POLICY_CEILING env var → project config.
 
@@ -385,16 +400,10 @@ def resolve_html_policy_ceiling() -> HtmlPolicyCeiling:
     Raises:
         ValueError: If DCT_HTML_POLICY_CEILING is set to an unrecognized value.
     """
-    _env_name = "DCT_HTML_POLICY_CEILING"
-    env_val = os.getenv(_env_name)  # noqa: TID251 — DCT_HTML_POLICY_CEILING knob
-    if env_val is None:
+    pinned = html_policy_pin()
+    if pinned is None:
         return HtmlPolicyCeiling(get_config().html_policy_ceiling, "project config")
-    if _is_html_policy(env_val):
-        return HtmlPolicyCeiling(env_val, f"{_env_name} env var")
-    raise ValueError(
-        f"DCT_HTML_POLICY_CEILING={env_val!r} is not a valid html_policy_ceiling tier; "
-        f"expected one of {_HTML_POLICY_ORDER}"
-    )
+    return HtmlPolicyCeiling(pinned, "DCT_HTML_POLICY_CEILING env var")
 
 
 def cap_html_policy(policy: HtmlPolicy, ceiling: HtmlPolicy) -> HtmlPolicy:

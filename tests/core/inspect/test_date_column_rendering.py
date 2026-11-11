@@ -11,6 +11,7 @@ This test proves the cascade from real DuckDB table → render_inspect_dashboard
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
@@ -121,8 +122,8 @@ def test_date_column_renders_human_readable_in_sample_data(
     assert "19 May 2024" in html, (
         "Expected '19 May 2024' in rendered HTML; got raw datetime.date repr instead"
     )
-    # Sanity: the raw ISO string must NOT appear as a cell value
-    # (it would mean the render path bypassed format_table_cell_value).
-    assert "2024-05-19" not in html, (
+    # The raw ISO string must not be drawn text (that would mean the render path
+    # bypassed format_table_cell_value); a pooled table's sort keys carry it.
+    assert not re.search(r">[^<]*2024-05-19", html), (
         "Raw ISO date '2024-05-19' appeared in HTML — datetime formatting not applied"
     )

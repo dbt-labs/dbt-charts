@@ -29,3 +29,8 @@ board-model = { path = "../board-model", features = ["fixtures"] }
 bind = { path = ".", features = ["test-support"] }
 diagnostic = { path = "../diagnostic", features = ["test-support"] }
 yaml = { path = "../yaml" }
+criterion = { version = "0.5", default-features = false }
+
+[[bench]]
+name = "restated"
+harness = false

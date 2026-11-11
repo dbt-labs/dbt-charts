@@ -4,6 +4,8 @@
 //!
 //! Display order is deliberately absent: the plan decides which slot a value
 //! owns, never the order a chart shows its values in.
+//!
+//! Ported from Python's `plan_board_category_colors`.
 
 use std::collections::{HashMap, HashSet};
 

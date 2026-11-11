@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct render now re-runs queries that failed on a missing table or column instead of replaying the cached error, and says when it replays any other cached query failure.
+time: 2026-11-08T00:55:20.548099-08:00

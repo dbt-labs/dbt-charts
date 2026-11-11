@@ -45,13 +45,7 @@ pub fn allocate(
         .iter()
         .map(|(board, pos, name)| {
             let rhythm_slot = held.get(&(board.as_str(), name.as_str())).copied();
-            (
-                pos.clone(),
-                ChartFacts {
-                    rhythm_slot,
-                    ..ChartFacts::default()
-                },
-            )
+            (pos.clone(), ChartFacts { rhythm_slot })
         })
         .collect()
 }

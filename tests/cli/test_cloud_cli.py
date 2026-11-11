@@ -62,6 +62,7 @@ from dbt_charts.cloud_client.contract import (
     OrgStatus,
     ProjectConnectStarted,
     ProjectList,
+    ProjectSettings,
     ProjectSummary,
     RenderResult,
     SourceList,
@@ -6394,3 +6395,172 @@ class TestIdentityAndConnectionAccess:
         assert api.body(
             "POST", "/api/orgs/acme-data/connections/dwh/access/revoke"
         ) == {"who": "sam@example.com"}
+
+
+SETTINGS_PATH = "/api/orgs/acme-data/projects/analytics/settings"
+SCOPE = ["--org", "acme-data", "--project", "analytics"]
+
+
+def _settings(**changes: object) -> dict[str, object]:
+    return {
+        "name": "Analytics",
+        "slug": "analytics",
+        "description": "",
+        "default_theme": "",
+        "default_theme_composed": False,
+        "honor_agent_instructions": False,
+        "honor_agent_instructions_off_in_file": "",
+        "agent_instructions_honored": False,
+        "extra_skill_paths": [],
+        "custom_system_prompt": "",
+        "branch_mode": False,
+        "allow_self_merge": True,
+        "banner_enabled": False,
+        "banner_text": "",
+        "banner_background": "#fde68a",
+        "banner_color": "#1f2937",
+        **changes,
+    }
+
+
+class TestProjectSettings:
+    def test_shows_each_setting(self, api: FakeApi) -> None:
+        api.add(
+            "GET",
+            SETTINGS_PATH,
+            _settings(extra_skill_paths=["skills/a.md", "skills/b.md"]),
+        )
+
+        result = runner.invoke(app, ["cloud", "project", "settings", *SCOPE])
+
+        assert result.exit_code == 0, out(result)
+        assert re.search(r"name\s+Analytics", result.output)
+        assert re.search(r"allow_self_merge\s+on", result.output)
+        assert re.search(r"extra_skill_paths\s+skills/a.md, skills/b.md", result.output)
+
+    def test_says_when_the_file_keeps_agent_instructions_off(
+        self, api: FakeApi
+    ) -> None:
+        api.add(
+            "GET",
+            SETTINGS_PATH,
+            _settings(
+                honor_agent_instructions=True,
+                honor_agent_instructions_off_in_file=(
+                    "dbt_charts.yml sets cloud.honor_agent_instructions: false"
+                ),
+            ),
+        )
+
+        result = runner.invoke(app, ["cloud", "project", "settings", *SCOPE])
+
+        assert result.exit_code == 0, out(result)
+        assert re.search(r"honor_agent_instructions\s+on", result.output)
+        assert re.search(r"agent_instructions_honored\s+off", result.output)
+        assert "sets cloud.honor_agent_instructions: false" in result.output
+
+    def test_json_is_the_contract_model(self, api: FakeApi) -> None:
+        api.add("GET", SETTINGS_PATH, _settings())
+
+        result = runner.invoke(app, ["cloud", "project", "settings", *SCOPE, "--json"])
+
+        assert result.exit_code == 0, out(result)
+        assert ProjectSettings.model_validate_json(result.stdout).slug == "analytics"
+
+    def test_set_posts_typed_values(self, api: FakeApi) -> None:
+        api.add("POST", SETTINGS_PATH, _settings(honor_agent_instructions=True))
+
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "project",
+                "set",
+                "honor_agent_instructions=on",
+                "allow_self_merge=false",
+                "extra_skill_paths=skills/a.md, skills/b.md",
+                "banner_text=Certified",
+                *SCOPE,
+            ],
+        )
+
+        assert result.exit_code == 0, out(result)
+        assert api.body("POST", SETTINGS_PATH) == {
+            "honor_agent_instructions": True,
+            "allow_self_merge": False,
+            "extra_skill_paths": ["skills/a.md", "skills/b.md"],
+            "banner_text": "Certified",
+        }
+        assert re.search(r"honor_agent_instructions\s+on", result.output)
+
+    def test_set_reads_custom_instructions_from_a_file(
+        self, api: FakeApi, tmp_path: Path
+    ) -> None:
+        prompt = tmp_path / "prompt.md"
+        prompt.write_text("Answer in metric tons.\n")
+        api.add("POST", SETTINGS_PATH, _settings())
+
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "project",
+                "set",
+                "--custom-system-prompt-file",
+                str(prompt),
+                *SCOPE,
+            ],
+        )
+
+        assert result.exit_code == 0, out(result)
+        assert api.body("POST", SETTINGS_PATH) == {
+            "custom_system_prompt": "Answer in metric tons.\n"
+        }
+
+    def test_set_refuses_a_value_that_is_not_on_or_off(self, api: FakeApi) -> None:
+        result = runner.invoke(
+            app, ["cloud", "project", "set", "branch_mode=maybe", *SCOPE]
+        )
+
+        assert result.exit_code == 2
+        assert "branch_mode" in out(result)
+        assert not api.calls
+
+    def test_set_refuses_an_unknown_key_before_calling_cloud(
+        self, api: FakeApi
+    ) -> None:
+        result = runner.invoke(
+            app, ["cloud", "project", "set", "honor_agent_instruction=on", *SCOPE]
+        )
+
+        assert result.exit_code == 2
+        assert "honor_agent_instructions" in out(result)
+        assert not api.calls
+
+    def test_set_with_nothing_to_change_is_a_usage_error(self, api: FakeApi) -> None:
+        result = runner.invoke(app, ["cloud", "project", "set", *SCOPE])
+
+        assert result.exit_code == 2
+        assert not api.calls
+
+    def test_set_refuses_a_repeated_key(self, api: FakeApi) -> None:
+        result = runner.invoke(
+            app,
+            ["cloud", "project", "set", "branch_mode=on", "branch_mode=off", *SCOPE],
+        )
+
+        assert result.exit_code == 2
+        assert "branch_mode" in out(result)
+        assert not api.calls
+
+    def test_set_clears_extra_skill_paths_with_an_empty_value(
+        self, api: FakeApi
+    ) -> None:
+        api.add("POST", SETTINGS_PATH, _settings())
+
+        result = runner.invoke(
+            app, ["cloud", "project", "set", "extra_skill_paths=", *SCOPE]
+        )
+
+        assert result.exit_code == 0, out(result)
+        assert api.body("POST", SETTINGS_PATH) == {"extra_skill_paths": []}

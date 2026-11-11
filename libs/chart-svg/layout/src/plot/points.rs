@@ -3,7 +3,7 @@
 //! Bind draws points only as constant-size circles at numbers on linear scales, in an opaque
 //! fill, so anything else reaching the painter is an engine bug.
 
-use bind::model::{Datum, Mark, MarkLayer, Paint, Plot, Pos, Scale, ScaleKind, Shape, ValueDomain};
+use bind::bound::{self, Datum, Mark, MarkLayer, Paint, Pos, Scale, ScaleKind, Shape, ValueAxis};
 use d3rs::vega_symbol::VegaSymbol;
 use diagnostic::{diag, Diagnostic};
 use scene::{Attrs, Node, Role};
@@ -13,9 +13,11 @@ use crate::geom::Size;
 use crate::plot::value_axis::fraction;
 use crate::scene_path::scene_path;
 
-fn linear<'a>(scale: &'a Scale, axis: &str) -> Result<&'a ValueDomain, Diagnostic> {
+/// The value axis of a linear `scale`; any other scale is an engine bug in a caller that routes it
+/// to a value-axis law.
+pub(crate) fn linear<'a>(scale: &'a Scale, axis: &str) -> Result<&'a ValueAxis, Diagnostic> {
     match &scale.kind {
-        ScaleKind::Linear(value) => Ok(&value.domain),
+        ScaleKind::Linear(value) => Ok(value),
         _ => Err(diag::err_internal(format!("points on a non-linear {axis} scale"))),
     }
 }
@@ -24,15 +26,15 @@ fn linear<'a>(scale: &'a Scale, axis: &str) -> Result<&'a ValueDomain, Diagnosti
 /// plot's point mark. `group` is the mark group's name, which production numbers after the rule
 /// layers drawn before it. [`Plot::new`] holds that every layer's y scale and every datum's
 /// series exist, and that a plot with a point layer carries its point mark.
-pub fn points(plot: &Plot, layer: usize, marks: &MarkLayer, datums: &[Datum], size: Size, group: &str) -> Result<Vec<Node>, Diagnostic> {
+pub fn points(plot: &bound::Plane, layer: usize, marks: &MarkLayer, datums: &[Datum], size: Size, group: &str) -> Result<Vec<Node>, Diagnostic> {
     let Mark::Points { shape: Shape::Circle, size: None } = marks.mark else {
         return Err(diag::err_internal(format!("points painting a {:?} layer", marks.mark)));
     };
     let Some(style) = &plot.mark_style().points else {
         return Err(diag::err_internal("a point layer on a plot with no point mark"));
     };
-    let x = linear(plot.x(), "x")?;
-    let y = linear(&plot.y()[marks.y_scale], "y")?;
+    let x = &linear(plot.x(), "x")?.domain;
+    let y = &linear(&plot.y()[marks.y_scale], "y")?.domain;
     let d = scene_path(&VegaSymbol::Circle.draw(style.size));
     let single = plot.series().len() == 1;
     datums

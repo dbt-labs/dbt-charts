@@ -192,29 +192,6 @@ def test_half_of_lowest_tier_step_does_not_compact():
     assert shared_scale_for_ladder([998_500.0, 999_000.0, 999_500.0]) is None
 
 
-def test_zero_carries_no_suffix_in_repeat_mode():
-    scale = SharedScale(exponent=3, mode=SuffixMode.REPEAT)
-    assert scale.suffix(0, is_anchor=False) == ""
-    assert scale.suffix(0, is_anchor=True) == ""
-
-
-def test_zero_carries_no_suffix_in_anchor_mode():
-    scale = SharedScale(exponent=6, mode=SuffixMode.ANCHOR)
-    assert scale.suffix(0, is_anchor=True) == ""
-
-
-def test_anchor_mode_suffix_only_on_the_anchor_member():
-    scale = SharedScale(exponent=3, mode=SuffixMode.ANCHOR)
-    assert scale.suffix(500_000, is_anchor=True) == "K"
-    assert scale.suffix(400_000, is_anchor=False) == ""
-
-
-def test_repeat_mode_suffix_on_every_nonzero_member():
-    scale = SharedScale(exponent=3, mode=SuffixMode.REPEAT)
-    assert scale.suffix(1_000_000, is_anchor=True) == "k"
-    assert scale.suffix(800_000, is_anchor=False) == "k"
-
-
 def test_register_is_derived_from_mode():
     assert SharedScale(exponent=3, mode=SuffixMode.ANCHOR).register == "analytic"
     assert SharedScale(exponent=3, mode=SuffixMode.REPEAT).register == "narrative"

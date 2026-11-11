@@ -65,7 +65,11 @@ from dbt_charts.core.compile.template.jinja import (
 )
 from dbt_charts.core.diagnostics.ansi import strip_ansi
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_FILE_SOURCE_INVALID,
     ERR_HTTP_QUERY_REMOVED,
+    ERR_INCREMENTAL_NOT_SQL,
+    ERR_QUERY_NOT_IN_FILE,
+    ERR_SETUP_SQL_COMPOSES_QUERY,
     ERR_SOURCE_INLINE_FORBIDDEN,
     ERR_SOURCE_NOT_FOUND,
     ERR_SOURCE_REQUIRED,
@@ -120,8 +124,8 @@ def _resolve_inline_file_source(
             file_type, PurePosixPath(ref).stem, path.relpath
         )
     except PydanticValidationError as e:
-        raise CompilationError(
-            f"Query {name!r}: inline file source {ref!r} is invalid: {e}"
+        raise CompilationError.from_code(
+            ERR_FILE_SOURCE_INVALID, query=name, source=ref, reason=str(e)
         ) from e
     return config.model_dump()
 
@@ -304,10 +308,7 @@ def normalize_query(
 
     # Validate setup_sql doesn't contain query references (non-nestable by design)
     if is_sql_query(query) and query.setup_sql and "{{ queries." in query.setup_sql:
-        raise CompilationError(
-            f"Query '{name}': setup_sql must not contain {{{{ queries.X }}}} references. "
-            "setup_sql is for non-nestable setup statements (CREATE TEMP FUNCTION, etc.)."
-        )
+        raise CompilationError.from_code(ERR_SETUP_SQL_COMPOSES_QUERY, query=name)
 
     # Compile-time SQL guard + variable-dep extraction for SQL queries.
     # UnparseableSqlError is silently deferred (compile lacks the dbt manifest for
@@ -404,9 +405,7 @@ def normalize_query(
     # (they never receive tail queries); only an explicit query-level column
     # is rejected.
     if not is_sql_query(query) and isinstance(query_incremental, str):
-        raise CompilationError(
-            f"Query '{name}': incremental refresh is only supported for SQL queries."
-        )
+        raise CompilationError.from_code(ERR_INCREMENTAL_NOT_SQL, query=name)
 
     # Cascade the incremental setting: query-level overrides board-level.
     # Only SqlQuery can be incremental — other types never receive tail queries.
@@ -518,9 +517,11 @@ def resolve_external_query(
     queries_section, _content = read_section(ref_path, "queries", query_ref)
     if query_name not in queries_section:
         available = ", ".join(queries_section.keys()) if queries_section else "none"
-        raise CompilationError(
-            f"Query '{query_name}' not found in '{file_part}'. "
-            f"Available queries: {available}"
+        raise CompilationError.from_code(
+            ERR_QUERY_NOT_IN_FILE,
+            name=query_name,
+            file=file_part,
+            available=available,
         )
 
     query_registry[registry_key] = normalize_query(

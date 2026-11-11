@@ -10,6 +10,7 @@ pub mod calendar;
 pub mod color;
 pub mod css_colors;
 pub mod format;
+pub mod format_spec;
 pub mod geo;
 pub mod geojson;
 pub mod js_math;

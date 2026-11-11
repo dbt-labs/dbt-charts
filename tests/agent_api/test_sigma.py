@@ -694,7 +694,11 @@ def test_outline_carries_formulas_formats_sorts_and_rules_without_colors(
     assert '"direction":"ascending"' in bar
     assert "Email = [overview/Email]" in table and "$,.0f" in table
     assert '"condition":">","value":0.5' in table and '"bold":true' in table
-    assert "groupings: " in table and "sort: " in table and "order: " in table
+    assert (
+        "grouping: Email = [overview/Email]" in table
+        and "sort: " in table
+        and "order: " in table
+    )
     assert "periodComparison: month" in tile_block(outline, "kp2")
     assert "clear-control" in tile_block(outline, "btn")
     control = tile_block(outline, "ctl")
@@ -718,7 +722,10 @@ def test_every_raw_element_option_is_in_the_outline_or_the_styling_set(
             missing_options(
                 element,
                 tile_block(outline, element["id"]),
-                lambda k: k in module.STYLING_KEYS | module.NON_OPTION_KEYS,
+                # `groupings` prints as `grouping:` lines, covered by its own test.
+                lambda k: (
+                    k in module.STYLING_KEYS | module.NON_OPTION_KEYS | {"groupings"}
+                ),
             )
             == []
         ), element["id"]
@@ -799,3 +806,35 @@ def test_a_tiles_tooltip_columns_are_listed_by_name_with_their_format() -> None:
     assert not any(
         s.startswith("tooltip") for s in module._describe(bare, {}, {}, set(), {})
     )
+
+
+def test_a_tables_grouping_names_its_group_and_calculation_columns() -> None:
+    table = {
+        "id": "t",
+        "kind": "table",
+        "columns": [
+            {"id": "a", "name": "Region", "formula": "[Region]"},
+            {"id": "b", "name": "Segment", "formula": "[Segment]"},
+            {"id": "c", "name": "Revenue", "formula": "Sum([Revenue])"},
+        ],
+        "groupings": [
+            {
+                "id": "g1",
+                "groupBy": ["a", "b"],
+                "calculations": ["c"],
+                "sort": [{"columnId": "c", "direction": "desc"}],
+            }
+        ],
+    }
+    plain = {"id": "p", "kind": "table", "columns": []}
+
+    lines = module._describe(table, {}, {}, set(), {})
+
+    [grouping] = [s for s in lines if s.startswith("grouping:")]
+    assert grouping.startswith(
+        "grouping: Region = [Region]; Segment = [Segment]"
+        " — calculations: Revenue = Sum([Revenue])"
+    )
+    assert "desc" in grouping
+    assert not any("groupBy" in s or "g1" in s for s in lines)
+    assert not any("grouping" in s for s in module._describe(plain, {}, {}, set(), {}))

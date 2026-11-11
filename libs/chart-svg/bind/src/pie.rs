@@ -2,6 +2,14 @@
 //! total. `chart-renderer/src/families/pie/bind.rs` (`bind_wheel`, `bind_slices`, `bind_labels`,
 //! `bind_center`, `pie_row_aria`) and `compile/resolve/chart/pie.py` (`_resolve_pie`) decide the
 //! same facts; what this slice does not model is refused by name.
+//!
+//! Read off `charts.pie` with the family tier's background and padding. The data is each
+//! wedge's theta, the compensated shares the label floor reads, the default label template with
+//! the tooltip's voted format, wedge fills by row position, companion ink, tooltip text and a
+//! donut's center total with its auto caption. A donut reads `charts.donut` over it for the hole
+//! and the total format only. The chart's own `style:`, a visible legend, a shared color field
+//! and every field the slice does not draw are refused by name. `engine`'s `tests/it/board.rs`
+//! replays the recorded `PIES` cases (`record_cases/pie.py`).
 
 use board_model::board::Board;
 use board_model::chart::query::ChartQuery;
@@ -21,7 +29,7 @@ use crate::formats::locale::{active_number_locale, d3_format};
 use crate::formats::{column_format, AuthoredFormat, Formats, Kind, Tiers};
 use crate::kpi::declared_formats;
 use crate::label_template::{Scope, Template};
-use crate::model::{Body, Pie, PieCenter, PieLabel, PieSlice};
+use crate::bound::{Failure, Family, Pie, PieCenter, PieLabel, PieSlice};
 use crate::run::RunResult;
 use crate::{authored_pins, color_field, placed_charts};
 
@@ -33,7 +41,7 @@ const INVISIBLE_SLICE_SHARE: f64 = 0.02;
 
 /// `_tooltip.py`'s role markers (`ROLE_HEADER_SWATCHED`, `MUTED`, `ROLE_TOTAL`): invisible code
 /// points the front end splits a tooltip's rows by.
-const ROLE_HEADER_SWATCHED: char = '\u{2064}';
+pub(crate) const ROLE_HEADER_SWATCHED: char = '\u{2064}';
 const ROLE_TOTAL: char = '\u{2063}';
 const MUTED: char = '\u{2060}';
 
@@ -105,7 +113,7 @@ fn format_block() -> Diagnostic {
 }
 
 /// Binds `chart` to its query's rows at the placement `placed`.
-pub fn bind_pie(id: &ChartId, chart: &PieChart, donut: bool, board: &Board, run: &RunResult, placed: &Placed) -> Result<Body, Diagnostic> {
+pub fn bind_pie(id: &ChartId, chart: &PieChart, donut: bool, board: &Board, run: &RunResult, placed: &Placed) -> Result<Result<Family, Failure>, Diagnostic> {
     let style = &placed.style.charts.pie;
     let hole = effective_inner_radius(placed, donut)?;
     let Some(ChartQuery::Hoisted(query)) = &chart.radial.shared.base.query else {
@@ -151,7 +159,7 @@ pub fn bind_pie(id: &ChartId, chart: &PieChart, donut: bool, board: &Board, run:
     let shares: Vec<f64> = thetas.iter().map(|v| v / shares_total).collect();
     refuse_unlabeled_mode(&shares)?;
 
-    let scope = placed.scope()?;
+    let scope = placed.scope();
     let canvas = placed.canvas(&style.base.background.clone().map_or(Tri::Unset, Tri::Value), scope)?;
     let palette = palette(style, scope)?;
     let companions = palette.iter().map(|c| color::mark_ink(c, &canvas)).collect::<Result<Vec<_>, _>>().map_err(diag::err_internal)?;
@@ -196,7 +204,8 @@ pub fn bind_pie(id: &ChartId, chart: &PieChart, donut: bool, board: &Board, run:
     }
     let center = center(placed, style, donut && hole > 0.0, theta, total, &vote, &locale)?;
     let background = style.base.background.as_ref().map_or(placed.style.charts.background.as_str(), |c| c.as_str()).to_string();
-    Ok(Body::Pie(Pie { canvas, background, hole, slices, total, center }))
+    let title = chart.radial.shared.title.as_ref().map(|t| t.as_str().to_string()).filter(|t| !t.is_empty());
+    Ok(Ok(Family::Pie(Pie { canvas, background, title, hole, slices, total, center })))
 }
 
 /// The hole a pie draws: a donut reads `charts.donut` over `charts.pie`, which for any leaf but
@@ -237,7 +246,7 @@ fn refuse_unmodeled(
     let color_plan = placed_charts(board)?.into_iter().any(|(other, _, c)| other != id && color.is_some() && color_field(c) == color)
         || color.is_some_and(|color| authored_pins(board).contains_key(color));
     let checks = [
-        (radial.shared.title.is_some(), "a `title`"),
+        (radial.shared.title.as_ref().is_some_and(|t| t.as_str().contains("{{") || t.as_str().contains("{%") || t.as_str().contains("{#")), "a templated `title`"),
         (radial.shared.subtitle.is_some(), "a `subtitle`"),
         (base.notes.is_some(), "`notes`"),
         (base.link.is_some(), "a `link`"),

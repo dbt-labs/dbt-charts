@@ -1,5 +1,7 @@
-//! The board's `regional.time_zone`: the zone an instant prints its wall clock
-//! in. Rows keep true instants; the zone applies only when text is printed.
+//! The board's `regional.time_zone` (`board_style.time_zone`, an IANA name resolved
+//! against the compiled-in tz database via `jiff`): the active-scope zone an instant
+//! prints its wall clock in. Rows keep true instants; the zone applies only when text
+//! is printed.
 //!
 //! A tz-aware value (an ISO timestamp carrying `Z` or an offset) is an instant
 //! and prints in the board zone; a naive one is a wall-clock time and prints as

@@ -1176,6 +1176,7 @@ mod tests {
         format_float(&Locale::en_us(), spec, value).expect("a supported spec")
     }
 
+    #[allow(clippy::approx_constant, reason = "3.14159 is the reference sample the format is checked against, not pi")]
     #[test]
     fn tick_format_takes_its_precision_from_the_tick_step() {
         assert_eq!(span(None, 0.0, 1500.0, 1500.0), "1,500");
@@ -1223,7 +1224,7 @@ mod tests {
     #[test]
     fn format_float_prints_twelve_digits_and_trims_the_fraction() {
         assert_eq!(float(None, 0.5), "0.5");
-        assert_eq!(float(None, 1234.567_890_123_456_7), "1,234.56789012");
+        assert_eq!(float(None, 1_234.567_890_123_456_7), "1,234.56789012");
         assert_eq!(float(Some(".3~s"), 1e8), "100M");
         assert_eq!(float(Some("s"), 81_800.0), "81.8k");
         assert_eq!(float(Some(".0%"), 0.25), "25%");
@@ -1395,6 +1396,7 @@ mod tests {
 
     // --- Fill, align, width and zero padding (d3's closing pad step) ---
 
+    #[allow(clippy::approx_constant, reason = "3.14159 is the reference sample the format is checked against, not pi")]
     #[test]
     fn fill_align_width_and_zero_pad_like_the_reference() {
         // uv run python -c "from d3_format import format as f; print(repr(f(SPEC, VALUE)))"

@@ -24,9 +24,9 @@ scene = { path = "../scene" }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 md-5 = "0.11.0"
 sha2 = "0.10"
-print = { path = "../print" }
 
 [dev-dependencies]
+print = { path = "../print" }
 board-model = { path = "../board-model", features = ["fixtures"] }
 bind = { path = "../bind", features = ["test-support"] }
 diagnostic = { path = "../diagnostic", features = ["test-support"] }

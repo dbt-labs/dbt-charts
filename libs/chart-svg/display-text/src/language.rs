@@ -101,7 +101,7 @@ impl Rules {
     fn category(self, n: u64) -> &'static str {
         let (m10, m100) = (n % 10, n % 100);
         let few = (2..=4).contains(&m10) && !(12..=14).contains(&m100);
-        let million = n != 0 && n % 1_000_000 == 0;
+        let million = n != 0 && n.is_multiple_of(1_000_000);
         match self {
             Rules::NoPlural => "other",
             Rules::OneIsExactlyOne if n == 1 => "one",

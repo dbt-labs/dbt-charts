@@ -192,6 +192,7 @@ rows:
         result = compile_with_board_sources(yaml_content)
         assert not result.success
         assert any("Circular variable dependency" in str(e) for e in result.errors)
+        assert [e.code for e in result.errors] == ["ERR-VARIABLE-CYCLE"]
 
     def test_chart_transitive_dependencies(self):
         """Test that chart dependencies include transitive variable dependencies."""

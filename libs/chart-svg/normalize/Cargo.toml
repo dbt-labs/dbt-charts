@@ -8,16 +8,22 @@ description = "The spine's project fold: the project seam and the extends resolv
 [features]
 # Builders returning a board with its layout facts, for bind's tests.
 fixtures = ["board-model/fixtures"]
+# `JsonSchema` for the wire structs, which the drift test exports; never in a shipped build.
+schema = ["dep:schemars"]
 
 [dependencies]
 board-model = { path = "../board-model", features = ["cascade"] }
 d3rs = { path = "../d3rs" }
 diagnostic = { path = "../diagnostic" }
+display-text = { path = "../display-text" }
+color = { package = "dbt-charts-color", path = "../color" }
 migrate = { path = "../migrate" }
 mdsvg = { path = "../mdsvg" }
 model-core = { path = "../model-core" }
 project = { path = "../project" }
 template = { path = "../template" }
+schemars = { version = "1", features = ["indexmap2"], optional = true }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 indexmap = "2"
 jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bundle-always"] }
@@ -26,4 +32,9 @@ unicode-ident = "1"
 unicode-properties = { version = "0.1.4", default-features = false, features = ["general-category"] }
 
 [dev-dependencies]
-normalize = { path = ".", features = ["fixtures"] }
+normalize = { path = ".", features = ["fixtures", "schema"] }
+criterion = { version = "0.5", default-features = false }
+
+[[bench]]
+name = "restated"
+harness = false

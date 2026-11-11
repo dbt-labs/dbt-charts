@@ -229,14 +229,7 @@ fn spacing_css(node: &model_core::Node, cx: &mut model_core::Cx) -> model_core::
         Kind::Scalar(Value::Str(text)) => {
             let lengths: Option<Vec<f64>> = text
                 .split(' ')
-                .map(|part| {
-                    let digits = part.strip_suffix("px").unwrap_or(part);
-                    let (whole, frac) = digits.split_once('.').unwrap_or((digits, "0"));
-                    let ok = |d: &str| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit());
-                    (ok(whole) && ok(frac))
-                        .then(|| digits.parse().ok())
-                        .flatten()
-                })
+                .map(crate::unit::pixel_length)
                 .collect();
             let Some(v) = lengths.filter(|v| (1..=4).contains(&v.len())) else {
                 let got = diagnostic::py_repr(&serde_json::Value::String(text.clone()));

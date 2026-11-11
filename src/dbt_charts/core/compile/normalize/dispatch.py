@@ -136,6 +136,7 @@ from dbt_charts.core.compile.template.listings import (
     reject_listing_calls,
 )
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_CARD_GAP_NESTED,
     ERR_LINKS_NESTED,
     ERR_REGIONAL_NESTED_MISMATCH,
     ERR_TEXT_UNKNOWN_QUERY,
@@ -856,9 +857,7 @@ def normalize_board(
         raise CompilationError(f"Maximum nesting depth ({MAX_DEPTH}) exceeded")
 
     if depth > 0 and board.card_gap:
-        raise CompilationError(
-            "card_gap can only be set on the root board, not on nested boards"
-        )
+        raise CompilationError.from_code(ERR_CARD_GAP_NESTED)
 
     parent_context = parent_context or {}
     # model_fields_set, not a default comparison: an authored `none` must win.

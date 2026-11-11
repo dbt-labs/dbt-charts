@@ -7,7 +7,7 @@ use std::hash::Hash;
 use d3rs::ticks::nice_tick_values;
 
 use super::domain::{authored, clip_to_domain, fixed, headroom_top, nice_bounds, Axis, RungText};
-use crate::model::{Bounds, BoundsReason, Extent, Invalid, Ladder, Pin, PinReason, ValueDomain, Zero};
+use crate::bound::{Bounds, BoundsReason, Extent, Invalid, Ladder, Pin, PinReason, ValueDomain, Zero};
 
 /// The tallest category total, `rows` being one panel's `(category, measures)` with the
 /// category present. A stack piles positives up and negatives down separately, so only

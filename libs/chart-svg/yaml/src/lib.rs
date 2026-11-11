@@ -52,6 +52,7 @@
 
 mod build;
 mod errors;
+pub use errors::UNNAMED_SOURCE;
 mod key;
 pub mod markdown;
 mod node;
@@ -104,7 +105,7 @@ fn load_error(text: &str, e: &dbt_yaml::Error) -> Diagnostic {
     let message = e.to_string();
     let Some(mark) = e.location().map(|l| (l.line(), l.column())) else {
         if message.contains("more than one document") {
-            return match second_document(text) {
+            return match second_document(text).or_else(|| after_comment(text)) {
                 Some((line, column, explicit)) => {
                     let problem = if explicit {
                         SECOND_DOCUMENT
@@ -141,6 +142,27 @@ fn load_error(text: &str, e: &dbt_yaml::Error) -> Diagnostic {
 
 const SECOND_DOCUMENT: &str =
     "expected a single document in the stream: but found another document";
+
+/// A root scalar a comment line ended: the first content line after that comment, which libyaml
+/// reads as a second document with no `---`.
+fn after_comment(text: &str) -> Option<(usize, usize, bool)> {
+    let (mut seen_content, mut ended) = (false, false);
+    for (i, line) in text.split('\n').enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            ended |= seen_content;
+        } else if line.starts_with('%') {
+        } else if ended {
+            return Some((i + 1, line.len() - line.trim_start().len() + 1, false));
+        } else {
+            seen_content = true;
+        }
+    }
+    None
+}
 
 /// Where the second document starts: its `---` (explicit), or the first content
 /// line after a `...` end marker, which libyaml rejects without a `---`.

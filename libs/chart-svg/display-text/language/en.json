@@ -24,6 +24,7 @@
   "case.extra_small_words": "per,with,from,into,onto,upon,out,off,down,up",
   "case.small_words": "a,an,and,as,at,but,by,en,for,if,in,of,on,or,the,to,v,vs,via",
   "case.title_style": "en_small_words",
+  "chart.no_data": "No data",
   "controls.all": "All",
   "controls.all_dates": "All dates",
   "controls.any_date": "Any date",

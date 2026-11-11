@@ -1,6 +1,9 @@
 //! A board file's own `tabs:` and `grid:` as authored, before any fold. Python validates each
 //! file on its own, so a layout missing a required key is refused even when a template would
 //! supply it; the patch parse here fills later and would not notice.
+//!
+//! Refused as Python refuses them: a missing `tabs.items`, `grid.items` or cell `item`, and a null
+//! `tabs` leaf in a file's root board.
 
 use diagnostic::diag::err_validation_field;
 use diagnostic::Diagnostic;

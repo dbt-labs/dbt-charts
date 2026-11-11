@@ -9,7 +9,7 @@
 //! Request shape (JSON):
 //! ```json
 //! {
-//!   "mode": "render" | "measure" | "max_content_width",
+//!   "mode": "render" | "measure" | "max_content_width" | "min_content_width",
 //!   "markdown": "# Title",
 //!   "width": 400.0,
 //!   "padding": 0.0,
@@ -21,7 +21,7 @@
 //!
 //! `render` writes the SVG string to stdout; `measure` writes
 //! `{"width": ..., "height": ...}`; `max_content_width` writes
-//! `{"max_content_width": ...}`. A refused/unported block kind, or any
+//! `{"max_content_width": ...}`; `min_content_width` writes `{"min_content_width": ...}`. A refused/unported block kind, or any
 //! other renderer error, is reported as `{"error": "..."}` on stdout with
 //! exit code 1 — never a silent partial render.
 //!
@@ -212,6 +212,10 @@ fn main() {
         },
         "max_content_width" => match renderer.max_content_width(&blocks) {
             Ok(width) => print!("{}", serde_json::json!({"max_content_width": width})),
+            Err(e) => fail(e),
+        },
+        "min_content_width" => match renderer.min_content_width(&blocks) {
+            Ok(width) => print!("{}", serde_json::json!({"min_content_width": width})),
             Err(e) => fail(e),
         },
         other => fail(format!("unknown mode {other:?}")),

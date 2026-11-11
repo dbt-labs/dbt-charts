@@ -292,7 +292,7 @@ pub fn interpolate_hcl_color(start: Color, end: Color, t: f64) -> Color {
     let h = {
         let d = h1 - h0;
         if differs(d) {
-            let d = if d > 180.0 || d < -180.0 { d - 360.0 * (d / 360.0).round() } else { d };
+            let d = if !(-180.0..=180.0).contains(&d) { d - 360.0 * (d / 360.0).round() } else { d };
             h0 + t * d
         } else if h0.is_nan() {
             h1

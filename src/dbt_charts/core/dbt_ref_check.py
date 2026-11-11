@@ -1,4 +1,4 @@
-"""Extract and validate dbt ref()/source() calls from a compiled result."""
+"""Extract and validate dbt ref()/source() calls from a board's host-facts queries."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from dbt_charts.core.compile.models.query.normalized import is_sql_query
+from dbt_charts.core.compile.host_facts import HostQuery, sql_texts
 from dbt_charts.core.compile.models.source import parse_source_config
 from dbt_charts.core.dbt_manifest import (
     load_manifest,
@@ -25,7 +25,6 @@ from dbt_charts.core.execute.dbt_jinja import REF_CALL_RE, SOURCE_CALL_RE
 from dbt_charts.core.execute.dbt_utils import source_target_path
 
 if TYPE_CHECKING:
-    from dbt_charts.core.compile.compiler import CompileResult
     from dbt_charts.core.project import Project
 
 
@@ -37,18 +36,16 @@ class QueryRefCalls:
     sources: list[tuple[str, str]] = field(default_factory=list)
 
 
-def extract_ref_calls(compile_result: CompileResult) -> dict[str, QueryRefCalls]:
-    """Scan only SqlQuery instances for ref()/source() calls.
+def extract_ref_calls(queries: Mapping[str, HostQuery]) -> dict[str, QueryRefCalls]:
+    """Scan only SQL queries for ref()/source() calls.
 
     Returns only queries that have at least one ref or source call.
     Non-SQL query types are skipped.
     """
     out: dict[str, QueryRefCalls] = {}
-    for name, query in compile_result.query_registry.items():
-        if not is_sql_query(query):
-            continue
-        refs = REF_CALL_RE.findall(query.sql)
-        sources = [(src, tbl) for src, tbl in SOURCE_CALL_RE.findall(query.sql)]
+    for name, query in sql_texts(queries).items():
+        refs = REF_CALL_RE.findall(query["sql"])
+        sources = [(src, tbl) for src, tbl in SOURCE_CALL_RE.findall(query["sql"])]
         if refs or sources:
             out[name] = QueryRefCalls(refs=list(refs), sources=sources)
     return out
@@ -64,15 +61,15 @@ def _manifest_warn_kind(calls: dict[str, QueryRefCalls]) -> str:
     return "ref()"
 
 
-_SourceYaml = Mapping[
+SourceYaml = Mapping[
     str, Mapping[str, object]
 ]  # type-state: object_annotation — unparsed source YAML
 
 
 def named_source_target_path(
     source: str | None,
-    board_sources: _SourceYaml,
-    project_sources: _SourceYaml,
+    board_sources: SourceYaml,
+    project_sources: SourceYaml,
 ) -> str | None:
     """The manifest directory authored on the dbt_profile source a query names.
 
@@ -94,60 +91,62 @@ def named_source_target_path(
 
 
 def query_target_paths(
-    compile_result: CompileResult, project: Project, query_names: Iterable[str]
+    queries: Mapping[str, HostQuery],
+    project: Project,
+    query_names: Iterable[str],
+    board_sources: SourceYaml,
 ) -> dict[str, str | None]:
     """Each SQL query's authored manifest directory, by its named source."""
-    board_sources = compile_result.board.sources if compile_result.board else {}
     wanted = set(query_names)
     return {
         name: named_source_target_path(
-            query.source, board_sources, project.declared_sources.sources
+            query["source"], board_sources, project.declared_sources.sources
         )
-        for name, query in compile_result.query_registry.items()
-        if name in wanted and is_sql_query(query)
+        for name, query in sql_texts(queries).items()
+        if name in wanted
     }
 
 
-def check_manifest_refs(compile_result: CompileResult, project: Project) -> None:
+def check_manifest_refs(
+    queries: Mapping[str, HostQuery], project: Project, board_sources: SourceYaml
+) -> list[Diagnostic]:
     """Validate ref()/source() calls against the dbt manifest.
 
     Each query is checked against the manifest its source's ``target_path``
     names (dbt's default location when it names none).
 
-    Mutates compile_result.errors and compile_result.warnings directly.
-    No-ops when no queries have dbt calls. Warns once per manifest path that
+    Empty when no queries have dbt calls. Warns once per manifest path that
     queries need but is not found.
     """
-    calls = extract_ref_calls(compile_result)
+    calls = extract_ref_calls(queries)
     if not calls:
-        return
+        return []
 
-    target_paths = query_target_paths(compile_result, project, calls)
+    target_paths = query_target_paths(queries, project, calls, board_sources)
+    found: list[Diagnostic] = []
     for target_path in dict.fromkeys(target_paths.values()):
-        _check_manifest(
-            compile_result,
+        found += _check_manifest(
             project,
             target_path,
             {n: c for n, c in calls.items() if target_paths[n] == target_path},
         )
+    return found
 
 
 def _check_manifest(
-    compile_result: CompileResult,
     project: Project,
     target_path: str | None,
     calls: dict[str, QueryRefCalls],
-) -> None:
+) -> list[Diagnostic]:
     try:
         loaded = load_manifest(project, target_path)
     except ExecutionError as exc:
-        compile_result.errors.append(exc.to_diagnostic())
-        return
+        return [exc.to_diagnostic()]
 
     if loaded is None:
         kind = _manifest_warn_kind(calls)
         paths = manifest_relpath(project, target_path)
-        compile_result.warnings.append(
+        return [
             Diagnostic.from_code(
                 WARN_DBT_MANIFEST_MISSING,
                 message=WARN_DBT_MANIFEST_MISSING.message_template.format(
@@ -155,14 +154,14 @@ def _check_manifest(
                 ),
                 fix=WARN_DBT_MANIFEST_MISSING.fix_template,
             )
-        )
-        return
+        ]
 
     index = ref_index(loaded)
-    for _qname, qcalls in calls.items():
+    found: list[Diagnostic] = []
+    for qcalls in calls.values():
         for ref_name in qcalls.refs:
             if ref_name not in index.refs:
-                compile_result.errors.append(
+                found.append(
                     DbtChartsError.from_code(
                         ERR_DBT_REF_UNKNOWN_NODE,
                         ref_name=ref_name,
@@ -171,7 +170,7 @@ def _check_manifest(
                 )
         for src, tbl in qcalls.sources:
             if (src, tbl) not in index.sources:
-                compile_result.errors.append(
+                found.append(
                     DbtChartsError.from_code(
                         ERR_DBT_SOURCE_UNKNOWN_TABLE,
                         source_name=src,
@@ -179,3 +178,4 @@ def _check_manifest(
                         available=index.available_sources,
                     ).to_diagnostic()
                 )
+    return found

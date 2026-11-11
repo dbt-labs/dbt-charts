@@ -23,6 +23,21 @@ impl<R> Ladder<R> {
         first_set(self.0.iter().map(leaf))
     }
 
+    /// The walk as if rung `skip` were not authored: what the leaf would resolve to without it.
+    pub fn walk_without<T>(&self, skip: usize, leaf: impl Fn(&R) -> Tri<&T>) -> Option<&T> {
+        first_set(self.0.iter().enumerate().filter(|(i, _)| *i != skip).map(|(_, r)| leaf(r)))
+    }
+
+    /// The rungs, highest first.
+    pub fn rungs(&self) -> impl Iterator<Item = &R> {
+        self.0.iter()
+    }
+
+    /// The rungs from the lowest to the highest.
+    pub fn lowest_first(&self) -> impl Iterator<Item = &R> {
+        self.0.iter().rev()
+    }
+
     /// The first rung's answer to `find`, in priority order.
     pub fn find_map<T>(&self, find: impl Fn(&R) -> Option<T>) -> Option<T> {
         self.0.iter().find_map(find)

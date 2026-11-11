@@ -166,6 +166,10 @@ pub fn err_board_recording_mismatch(detail: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_BOARD_RECORDING_MISMATCH, [("detail", detail.into())])
 }
 
+pub fn err_board_source_invalid(file: impl Into<Value>, got: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_BOARD_SOURCE_INVALID, [("file", file.into()), ("got", got.into())])
+}
+
 pub fn err_cache_file_unavailable(path: impl Into<Value>, seconds: impl Into<Value>, detail: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_CACHE_FILE_UNAVAILABLE, [("path", path.into()), ("seconds", seconds.into()), ("detail", detail.into())])
 }
@@ -176,6 +180,10 @@ pub fn err_cache_not_attached(query: impl Into<Value>) -> Diagnostic {
 
 pub fn err_cache_sql_failed(detail: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_CACHE_SQL_FAILED, [("detail", detail.into())])
+}
+
+pub fn err_card_gap_nested() -> Diagnostic {
+    Diagnostic::new(&codes::ERR_CARD_GAP_NESTED, [])
 }
 
 pub fn err_category_color_palette_exhausted(value_count: impl Into<Value>, field: impl Into<Value>, swatch_count: impl Into<Value>) -> Diagnostic {
@@ -212,6 +220,14 @@ pub fn err_chart_measure_is_text(column: impl Into<Value>) -> Diagnostic {
 
 pub fn err_chart_painted_no_marks(chart_id: impl Into<Value>, row_count: impl Into<Value>, card_width: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_CHART_PAINTED_NO_MARKS, [("chart_id", chart_id.into()), ("row_count", row_count.into()), ("card_width", card_width.into())])
+}
+
+pub fn err_chart_ref_query_undeclared(chart_ref: impl Into<Value>, name: impl Into<Value>, file: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_CHART_REF_QUERY_UNDECLARED, [("chart_ref", chart_ref.into()), ("name", name.into()), ("file", file.into())])
+}
+
+pub fn err_chart_sources_ambiguous(chart: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_CHART_SOURCES_AMBIGUOUS, [("chart", chart.into())])
 }
 
 pub fn err_color_null_series(chart_type: impl Into<Value>, chart_id: impl Into<Value>, null_rows: impl Into<Value>, color_field: impl Into<Value>) -> Diagnostic {
@@ -354,6 +370,14 @@ pub fn err_engine_refused(message: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_ENGINE_REFUSED, [("message", message.into())])
 }
 
+pub fn err_extends_cycle(file: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_EXTENDS_CYCLE, [("file", file.into())])
+}
+
+pub fn err_extends_invalid(file: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_EXTENDS_INVALID, [("file", file.into()), ("reason", reason.into())])
+}
+
 pub fn err_extends_unresolved(entry: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_EXTENDS_UNRESOLVED, [("entry", entry.into()), ("available", available.into())])
 }
@@ -384,6 +408,10 @@ pub fn err_file_source_decimal_too_wide(source_name: impl Into<Value>, table_nam
 
 pub fn err_file_source_duplicate_column(source_name: impl Into<Value>, table_name: impl Into<Value>, relpath: impl Into<Value>, column: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_FILE_SOURCE_DUPLICATE_COLUMN, [("source_name", source_name.into()), ("table_name", table_name.into()), ("relpath", relpath.into()), ("column", column.into())])
+}
+
+pub fn err_file_source_invalid(query: impl Into<Value>, source: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_FILE_SOURCE_INVALID, [("query", query.into()), ("source", source.into()), ("reason", reason.into())])
 }
 
 pub fn err_file_source_not_found(source_name: impl Into<Value>, relpath: impl Into<Value>, detail: impl Into<Value>) -> Diagnostic {
@@ -514,6 +542,10 @@ pub fn err_histogram_preaggregated(chart_id: impl Into<Value>, field: impl Into<
     Diagnostic::new(&codes::ERR_HISTOGRAM_PREAGGREGATED, [("chart_id", chart_id.into()), ("field", field.into()), ("count_fields", count_fields.into())])
 }
 
+pub fn err_html_policy_ceiling_invalid(message: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_HTML_POLICY_CEILING_INVALID, [("message", message.into())])
+}
+
 pub fn err_http_query_removed() -> Diagnostic {
     Diagnostic::new(&codes::ERR_HTTP_QUERY_REMOVED, [])
 }
@@ -524,6 +556,10 @@ pub fn err_ignore_error_code(code: impl Into<Value>) -> Diagnostic {
 
 pub fn err_image_ref_unresolved(r#ref: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_IMAGE_REF_UNRESOLVED, [("ref", r#ref.into()), ("reason", reason.into())])
+}
+
+pub fn err_incremental_not_sql(query: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_INCREMENTAL_NOT_SQL, [("query", query.into())])
 }
 
 pub fn err_input_invalid(message: impl Into<Value>) -> Diagnostic {
@@ -726,6 +762,10 @@ pub fn err_markdown_parse(detail: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_MARKDOWN_PARSE, [("detail", detail.into())])
 }
 
+pub fn err_meta_outside_boards_root(dir: impl Into<Value>, root: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_META_OUTSIDE_BOARDS_ROOT, [("dir", dir.into()), ("root", root.into())])
+}
+
 pub fn err_meta_schema(message: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_META_SCHEMA, [("message", message.into())])
 }
@@ -842,6 +882,10 @@ pub fn err_palette_rebind_unsatisfied(field_path: impl Into<Value>, bound: impl 
     Diagnostic::new(&codes::ERR_PALETTE_REBIND_UNSATISFIED, [("field_path", field_path.into()), ("bound", bound.into()), ("family", family.into()), ("required", required.into())])
 }
 
+pub fn err_palette_style_invalid(reason: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_PALETTE_STYLE_INVALID, [("reason", reason.into())])
+}
+
 pub fn err_palette_unknown(name: impl Into<Value>, authored: impl Into<Value>, field_path: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_PALETTE_UNKNOWN, [("name", name.into()), ("authored", authored.into()), ("field_path", field_path.into())])
 }
@@ -902,12 +946,36 @@ pub fn err_query_interrupted() -> Diagnostic {
     Diagnostic::new(&codes::ERR_QUERY_INTERRUPTED, [])
 }
 
+pub fn err_query_name_reserved_word(name: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_QUERY_NAME_RESERVED_WORD, [("name", name.into())])
+}
+
+pub fn err_query_not_in_file(name: impl Into<Value>, file: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_QUERY_NOT_IN_FILE, [("name", name.into()), ("file", file.into()), ("available", available.into())])
+}
+
+pub fn err_query_ref_cycle(chart_ref: impl Into<Value>, name: impl Into<Value>, file: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_QUERY_REF_CYCLE, [("chart_ref", chart_ref.into()), ("name", name.into()), ("file", file.into())])
+}
+
+pub fn err_query_ref_invalid(r#ref: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_QUERY_REF_INVALID, [("ref", r#ref.into())])
+}
+
+pub fn err_query_shape_invalid(message: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_QUERY_SHAPE_INVALID, [("message", message.into())])
+}
+
 pub fn err_regional_nested_mismatch(board: impl Into<Value>, authored: impl Into<Value>, root: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_REGIONAL_NESTED_MISMATCH, [("board", board.into()), ("authored", authored.into()), ("root", root.into())])
 }
 
 pub fn err_repo_file_too_large(file_path: impl Into<Value>, limit_mb: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_REPO_FILE_TOO_LARGE, [("file_path", file_path.into()), ("limit_mb", limit_mb.into())])
+}
+
+pub fn err_reserved_variable_name(name: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_RESERVED_VARIABLE_NAME, [("name", name.into())])
 }
 
 pub fn err_resolved_pie_data_mismatch(chart_id: impl Into<Value>) -> Diagnostic {
@@ -934,8 +1002,8 @@ pub fn err_result_numeric_overflow(column: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_RESULT_NUMERIC_OVERFLOW, [("column", column.into())])
 }
 
-pub fn err_retired_field(field_path: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::ERR_RETIRED_FIELD, [("field_path", field_path.into())])
+pub fn err_retired_field(old: impl Into<Value>, parent: impl Into<Value>, history: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_RETIRED_FIELD, [("old", old.into()), ("parent", parent.into()), ("history", history.into())])
 }
 
 pub fn err_scale_domain_requires_continuous_x(chart_id: impl Into<Value>, vl_type: impl Into<Value>) -> Diagnostic {
@@ -948,6 +1016,10 @@ pub fn err_scatter_multi_y_not_numeric(chart_id: impl Into<Value>, y_field: impl
 
 pub fn err_schema_not_found(schema: impl Into<Value>, source: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_SCHEMA_NOT_FOUND, [("schema", schema.into()), ("source", source.into())])
+}
+
+pub fn err_setup_sql_composes_query(query: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_SETUP_SQL_COMPOSES_QUERY, [("query", query.into())])
 }
 
 pub fn err_sort_field_not_found(field: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
@@ -1052,6 +1124,14 @@ pub fn err_support_table_position_invalid(message: impl Into<Value>) -> Diagnost
 
 pub fn err_tab_default_unknown(default: impl Into<Value>, slug: impl Into<Value>, slugs: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_TAB_DEFAULT_UNKNOWN, [("default", default.into()), ("slug", slug.into()), ("slugs", slugs.into())])
+}
+
+pub fn err_tab_title_duplicate_slug(slug: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_TAB_TITLE_DUPLICATE_SLUG, [("slug", slug.into())])
+}
+
+pub fn err_tab_title_empty_slug(title: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_TAB_TITLE_EMPTY_SLUG, [("title", title.into())])
 }
 
 pub fn err_tab_unknown(variable: impl Into<Value>, value: impl Into<Value>, slugs: impl Into<Value>) -> Diagnostic {
@@ -1258,8 +1338,24 @@ pub fn err_validation_field(field_path: impl Into<Value>, pydantic_msg: impl Int
     Diagnostic::new(&codes::ERR_VALIDATION_FIELD, [("field_path", field_path.into()), ("pydantic_msg", pydantic_msg.into())])
 }
 
+pub fn err_values_row_shape(query: impl Into<Value>, row: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_VALUES_ROW_SHAPE, [("query", query.into()), ("row", row.into())])
+}
+
+pub fn err_variable_column_invalid(field_path: impl Into<Value>, column: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_VARIABLE_COLUMN_INVALID, [("field_path", field_path.into()), ("column", column.into())])
+}
+
+pub fn err_variable_cycle(cycle: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_VARIABLE_CYCLE, [("cycle", cycle.into())])
+}
+
 pub fn err_variable_options_failed(variable: impl Into<Value>, query_name: impl Into<Value>, cause: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_VARIABLE_OPTIONS_FAILED, [("variable", variable.into()), ("query_name", query_name.into()), ("cause", cause.into())])
+}
+
+pub fn err_variable_table_invalid(field_path: impl Into<Value>, table: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_VARIABLE_TABLE_INVALID, [("field_path", field_path.into()), ("table", table.into())])
 }
 
 pub fn err_variable_value_invalid(variable: impl Into<Value>, problem: impl Into<Value>) -> Diagnostic {

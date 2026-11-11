@@ -11,7 +11,6 @@ use super::text_format;
 use super::Blank;
 use super::BoardFormats;
 use super::Bound;
-use super::anchor_variant;
 use super::Cell;
 use super::Chart;
 use super::ColConfig;
@@ -1049,18 +1048,11 @@ pub(super) fn format_magnitudes(
         symbol_mode != "anchors" || Some(i) == symbol_anchor_row || is_summary_role(row_roles[i])
     };
 
-    // A shared scale's anchor row is the first one that can carry the
-    // magnitude word (table.py:1981-1988): a zero never does.
-    let magnitude_anchor_row = raw
-        .iter()
-        .position(|v| v.is_some_and(|x| x != 0.0))
-        .unwrap_or(0);
-    let scaled = |is_anchor: bool| {
+    let scaled = || {
         shared.map(|ss| ScaledColumn {
             exponent: ss.exponent,
             digit_spec: ss.digit_spec.as_str(),
             repeat: ss.mode == SuffixMode::Repeat,
-            is_anchor,
         })
     };
 
@@ -1087,26 +1079,19 @@ pub(super) fn format_magnitudes(
                     "table: format {spec:?}: `$` with a `%` or `p` type is not supported"
                 )));
             }
-            let lanes_with = |is_scale_anchor: bool| {
-                format_kpi_parts(
-                    v,
-                    &parts,
-                    &PartsOptions {
-                        keep_affix_gaps: true,
-                        anchored: symbol_mode == "anchors",
-                        shared_scale: scaled(is_scale_anchor),
-                        sub_unit_specs: sub_unit_specs.as_ref(),
-                        cell,
-                        ..PartsOptions::default()
-                    },
-                )
-                .map_err(in_table)
-            };
-            let lanes = lanes_with(
-                symbol_mode != "anchors"
-                    || is_summary_role(row_roles[i])
-                    || i == magnitude_anchor_row,
-            )?;
+            let lanes = format_kpi_parts(
+                v,
+                &parts,
+                &PartsOptions {
+                    keep_affix_gaps: true,
+                    anchored: symbol_mode == "anchors",
+                    shared_scale: scaled(),
+                    sub_unit_specs: sub_unit_specs.as_ref(),
+                    cell,
+                    ..PartsOptions::default()
+                },
+            )
+            .map_err(in_table)?;
             // The decimal pad aligns the number lane on the locale's mark.
             let pad = decimal_pad_for(pad_table, &lanes.number)?;
             let painted = |lanes: &KpiParts, symbol_anchor: bool| {
@@ -1120,19 +1105,9 @@ pub(super) fn format_magnitudes(
                 }
             };
             let (prefix, suffix) = painted(&lanes, is_symbol_anchor(i));
-            let by_anchor = if symbol_mode == "anchors" {
-                let mut variants: [(Option<String>, Option<String>); 4] = Default::default();
-                for scale_anchor in [false, true] {
-                    let lanes = lanes_with(scale_anchor)?;
-                    for symbol_anchor in [false, true] {
-                        variants[anchor_variant(symbol_anchor, scale_anchor)] =
-                            painted(&lanes, symbol_anchor);
-                    }
-                }
-                Some(variants)
-            } else {
-                None
-            };
+            let by_anchor = (symbol_mode == "anchors").then(|| {
+                [false, true].map(|symbol_anchor| painted(&lanes, symbol_anchor))
+            });
             // Width measurement reads the cell as every row's own anchor, in
             // the locale's own currency placement: a shared-scale cell as its
             // lanes (`_rendered_cell_text`), any other as `format_value`
@@ -1142,7 +1117,7 @@ pub(super) fn format_magnitudes(
                 &parts,
                 &PartsOptions {
                     keep_affix_gaps: true,
-                    shared_scale: scaled(true),
+                    shared_scale: scaled(),
                     sub_unit_specs: sub_unit_specs.as_ref(),
                     cell,
                     ..PartsOptions::default()
@@ -1162,7 +1137,7 @@ pub(super) fn format_magnitudes(
                         &PartsOptions {
                             keep_affix_gaps: true,
                             anchored: symbol_mode == "anchors",
-                            shared_scale: scaled(true),
+                            shared_scale: scaled(),
                             cell,
                             ..PartsOptions::default()
                         },

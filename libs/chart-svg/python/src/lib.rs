@@ -6,6 +6,8 @@
 
 mod board;
 mod compile;
+mod plan;
+mod sql;
 
 use diagnostic::Diagnostic;
 use chart_renderer::families::table::width::{measure_natural_width, MeasurePayload};
@@ -318,6 +320,7 @@ fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(apply_case, m)?)?;
     board::register(m)?;
     compile::register(m)?;
+    plan::register(m)?;
     m.add("RenderDiagnosticError", m.py().get_type::<RenderDiagnosticError>())?;
     Ok(())
 }

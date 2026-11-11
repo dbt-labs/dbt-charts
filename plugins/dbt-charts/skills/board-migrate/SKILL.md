@@ -263,7 +263,11 @@ Each rule is one a reviewed migration showed being broken.
   (`GROUP BY ROLLUP` or `GROUPING SETS`) with a role column,
   `IF(GROUPING(<dim>) = 1, 'total', 'value') AS row_role`,
   and `row_role: row_role` on the table chart, so the table styles it as a total
-  row with no row number. Its label cell reads `Total`.
+  row with no row number. Its label cell reads `Total`. Sigma's own total joins
+  are never copied, but every total the source shows is rebuilt with that
+  `ROLLUP` and `row_role` form (a pivot's `totals:` or `axisTotals` with
+  `visibility: shown` counts as shown); a board that drops a shown total is
+  incomplete, not a gap to note.
 - Data bars (Looker `series_cell_visualizations`, Sigma data bars): a table spark
   bar prints no number, so where the source shows data bars, show the value as its own column and the bar in a
   second column right after it (select the value twice, `n` and `n AS n_bar`;
@@ -295,8 +299,20 @@ labels in every query. None of that belongs on a board. Per chart:
   chart's grain. Never a shared *pre-aggregated* base or CTE spine feeding many
   charts. One exception: when three or more charts need the same joins and
   filters, write one row-level base (joins and shared filters, no `GROUP BY`)
-  and have those charts aggregate `FROM {{ queries.<base> }}`. Don't repeat the
-  same join block in every chart.
+  and have those charts aggregate `FROM {{ queries.<base>.cache }}`. Don't
+  repeat the same join block in every chart.
+- One base query, read through the cache: a Sigma data model or Looker derived
+  table that feeds many tiles is written once as a named query, and each tile
+  reads `FROM {{ queries.base.cache }}` with a plain `GROUP BY` or filter in
+  DuckDB SQL. `{{ queries.base }}` inlines the base into every tile, so each
+  tile re-scans the warehouse. A base that scans tens of GB or returns far more
+  rows than the tiles need is a model, not a board query: flag it to the user.
+- Grouped tables (Sigma `groupings`, shown as `grouping:` lines in the outline;
+  Looker has no equivalent) are drill-downs. Migrate the level the page shows:
+  collapsed groups are one `GROUP BY` at the group grain with the group's
+  calculations as aggregates; expanded groups are detail rows with the group
+  columns first. One plain query; never port the self-joins, `rank`,
+  `__Ordering`/`sort_` helper columns or `limit 1000` in Sigma's SQL.
 - `{{ queries.x }}` inlines as `(…) AS x`: refer to its columns as `x.col` and
   never write a second alias after it (`FROM {{ queries.x }} AS r` fails to
   parse).

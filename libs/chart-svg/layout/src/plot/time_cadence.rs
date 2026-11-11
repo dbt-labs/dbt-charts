@@ -77,8 +77,9 @@ pub struct Crowding<'a> {
     pub tilt: Option<&'a [f64]>,
     /// The width the crowding is judged against: the card's width times the theme's usable ratio.
     pub usable_width: f64,
-    /// An edge label anchors on the plot edge, reserving its full width from it.
-    pub flush: bool,
+    /// `labels.flush`: an edge label within this many pixels of a range end anchors on it, reserving
+    /// its full width from it; `None` centers every label.
+    pub flush: Option<f64>,
     pub font_size: f64,
     /// Production's `bucket_aligned_temporal`: the marks span buckets, as a bar's do
     /// (`bar/time_x.rs:468`; a line or area never sets it, `temporal.rs:1442`). A weekly axis then
@@ -240,8 +241,8 @@ impl Ladder<'_> {
     }
 
     /// Whether `candidate`'s labels over daily dates clear each other (`submonth_candidate_fits`):
-    /// the day-number row and the context row (month, year) are each their own clearance, a pair
-    /// needing half its widths plus a gap on each side against the calendar distance between them.
+    /// the day-number row and the context row (month, year) are each their own clearance, a pair's
+    /// [`Self::reach`] plus one gap against the calendar distance between them.
     fn candidate_fits(&self, candidate: TimeUnit, measure: Measure) -> Result<bool, Diagnostic> {
         let indices = self.candidate_indices(candidate);
         if indices.is_empty() {
@@ -268,9 +269,9 @@ impl Ladder<'_> {
             (context_row, LABEL_GAP_SPACES * space),
         ] {
             for pair in row.windows(2) {
-                let ((left_at, left), (right_at, right)) = (&pair[0], &pair[1]);
-                let widths = measure(left)? + gap + measure(right)? + gap;
-                if widths / 2.0 > (right_at - left_at) as f64 * band {
+                let (&(i, ref left), &(j, ref right)) = (&pair[0], &pair[1]);
+                let (wi, wj) = (measure(left)?, measure(right)?);
+                if self.reach((i, wi), (j, wj), candidate) + gap > (j - i) as f64 * band {
                     return Ok(false);
                 }
             }
@@ -541,9 +542,20 @@ impl Ladder<'_> {
         }
     }
 
-    /// Every neighboring pair of `labeled` clears: each reserves half its width, a flushed first
-    /// date its full width and a flushed last date, when it stands on a native tick, likewise; a
-    /// month or quarter's year row clears the neighbor's year row on its own
+    /// How far labels `wi` and `wj` wide at dates `i < j` reach toward each other, as painted: half
+    /// of each, a flushed first date its full width and a flushed last date, when it stands on a
+    /// native tick of `vocabulary`, likewise.
+    fn reach(&self, (i, wi): (usize, f64), (j, wj): (usize, f64), vocabulary: TimeUnit) -> f64 {
+        let flushed = self.crowding.flush.is_some();
+        let left_flush = flushed && i == 0;
+        let right_flush =
+            flushed && j == self.dates.len() - 1 && self.on_tick(j, vocabulary);
+        let half = |width: f64, flush: bool| if flush { width } else { width / 2.0 };
+        half(wi, left_flush) + half(wj, right_flush)
+    }
+
+    /// Every neighboring pair of `labeled` clears by its [`Self::reach`]; a month or quarter's year
+    /// row clears the neighbor's year row on its own
     /// (`temporal_visibility_fits`, `_pair_clears`). A day or week's second row is inside its
     /// token width already, so production's year-row test for the other grains never binds.
     fn clears(
@@ -553,13 +565,9 @@ impl Ladder<'_> {
         measure: Measure,
     ) -> Result<bool, Diagnostic> {
         let band = self.band();
-        let last = self.dates.len() - 1;
         for (k, pair) in labeled.windows(2).enumerate() {
             let (i, j) = (pair[0], pair[1]);
             let clearance = (j - i) as f64 * band;
-            let left_flush = self.crowding.flush && i == 0;
-            let right_flush = self.crowding.flush && j == last && self.on_tick(j, vocabulary);
-            let reach = |width: f64, flush: bool| if flush { width } else { width / 2.0 };
             let (row_i, row_j) = (
                 self.rows(i, vocabulary, k == 0)?,
                 self.rows(j, vocabulary, false)?,
@@ -568,12 +576,12 @@ impl Ladder<'_> {
                 Self::token_width(&row_i, vocabulary, measure)?,
                 Self::token_width(&row_j, vocabulary, measure)?,
             );
-            if reach(wi, left_flush) + reach(wj, right_flush) > clearance {
+            if self.reach((i, wi), (j, wj), vocabulary) > clearance {
                 return Ok(false);
             }
             if !row_i.1.is_empty() && !row_j.1.is_empty() {
                 let (yi, yj) = (measure(&row_i.1)?, measure(&row_j.1)?);
-                if reach(yi, left_flush) + reach(yj, right_flush) > clearance {
+                if self.reach((i, yi), (j, yj), vocabulary) > clearance {
                     return Ok(false);
                 }
             }

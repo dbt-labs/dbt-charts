@@ -10,6 +10,11 @@
 //! The constants and rules below are production's, each cited at its source
 //! (`chart-renderer/src/families/callout/placard.rs`, `callout.rs`): the card is pinned byte for byte
 //! to recorded production output (`tests/it/placard_production.json`).
+//!
+//! `plan` is the lines at a width and the natural height; `draw` the nodes. [`ErrorTile::of`] reads the
+//! theme's `panel` and `stripe` roles, the chart title's ink and the board's emoji family;
+//! `tests/it/error_tile.rs` pins each law on edited styles, and `tests/it/failed_card.rs` replays
+//! `placard_production.json`, recorded by `record_placard.py`.
 
 use bind::failed::FailedText;
 use bind::font_stack::with_emoji;
@@ -24,6 +29,8 @@ use measure::font_files::{font_path, mono_font_path};
 use measure::fonts::cached_measurer;
 use measure::wrap::wrap_plain;
 use scene::{Attrs, Chars, Escape, Extent, Node, PathData, Role, Run, Shape, Transform};
+
+use crate::legacy;
 
 /// callout.rs:45-46. A card is never narrower or shorter.
 pub(super) const MIN_WIDTH: f64 = 120.0;
@@ -82,10 +89,10 @@ impl Weight {
         }
     }
 
-    /// What the stripe id's hash reads (callout.rs:`hash_weight_str`): a number as `print` writes it.
+    /// What the stripe id's hash reads (callout.rs:`hash_weight_str`).
     fn hashed(&self) -> String {
         match self {
-            Weight::Number(n) => print::number(*n),
+            Weight::Number(n) => legacy::hashed_number(*n),
             Weight::Css(css) => css.clone(),
         }
     }
@@ -364,38 +371,30 @@ fn stripes(id: &str, color: &str) -> Node {
     Node::new(Role::Chrome, Attrs::new(), Shape::Defs(vec![pattern]))
 }
 
-/// callout.rs:541 (`callout_hash`). The first 8 hex digits of an md5 over the callout inputs, over-keyed
-/// rather than minimal; a placard has no callout title, so that part is empty. Each number is hashed as
-/// `print` writes it.
+/// callout.rs:541 (`callout_hash`). An md5 over the callout inputs, over-keyed rather than minimal; a
+/// placard has no callout title, so that part is empty.
 fn stripe_hash(card: &ErrorCard, width: f64) -> String {
-    use md5::{Digest, Md5};
-    use std::fmt::Write;
     let tile = &card.tile;
-    let parts = [
+    let number = legacy::hashed_number;
+    legacy::callout_hash(&[
         "",
         card.text.message.as_str(),
         tile.tone.as_str(),
-        &print::number(width),
-        &print::number(tile.padding.left),
-        &print::number(tile.padding.right),
-        &print::number(tile.padding.top),
-        &print::number(tile.padding.bottom),
-        &print::number(tile.section_gap),
+        &number(width),
+        &number(tile.padding.left),
+        &number(tile.padding.right),
+        &number(tile.padding.top),
+        &number(tile.padding.bottom),
+        &number(tile.section_gap),
         tile.title.family.as_str(),
-        &print::number(tile.title.size),
+        &number(tile.title.size),
         &tile.title.weight.hashed(),
         tile.message.family.as_str(),
-        &print::number(tile.message.size),
+        &number(tile.message.size),
         &tile.message.weight.hashed(),
         tile.title.color.as_str(),
         tile.message.color.as_str(),
-    ];
-    let digest = Md5::digest(parts.join("\x00").as_bytes());
-    let mut hex = String::with_capacity(8);
-    for byte in digest.iter().take(4) {
-        let _ = write!(hex, "{byte:02x}");
-    }
-    hex
+    ])
 }
 
 /// callout.rs:460. The card's rounded rectangle from `top` to the slot's bottom.

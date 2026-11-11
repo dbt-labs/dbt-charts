@@ -5,19 +5,26 @@
 //! its junk-free extension loops, the autojunk popularity cut for a second sequence of 200 or
 //! more characters, `get_matching_blocks`, `ratio`), because which near miss wins, and which of
 //! two equal scores, is part of the text. Registered generators not named in [`PORTED`] yield no
-//! hint; `tests/fixtures/hints.json` lists them all.
+//! hint; `tests/fixtures/hints.json`, written by
+//! `tests/test_diagnostic_hints_fixture.py`, is Python's answer and lists every
+//! registered generator. This is a port of the Python `hint_generator`s' difflib
+//! `get_close_matches` for the codes in [`PORTED`].
 
 use crate::py_str_repr;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 
 /// The codes whose generator is ported.
-pub const PORTED: [&str; 5] = [
+pub const PORTED: [&str; 9] = [
     "ERR-DBT-REF-UNKNOWN-NODE",
     "ERR-DBT-MODEL-COLUMN-MISSING",
     "ERR-DBT-SOURCE-UNKNOWN-TABLE",
     "ERR-QUERY-FORMAT-UNKNOWN",
     "ERR-UNKNOWN-QUERY",
+    "ERR-UNRESOLVED-REFERENCE",
+    "ERR-UNKNOWN-THEME",
+    "ERR-EXTENDS-UNRESOLVED",
+    "ERR-SOURCE-NOT-FOUND",
 ];
 
 /// Format names that were renamed: a successor in the pool beats a fuzzy match.
@@ -144,12 +151,17 @@ impl<'a> Matcher<'a> {
 /// `difflib.get_close_matches(word, candidates, n=1, cutoff=0.5)`: the best-scoring candidate,
 /// the greatest string among equal scores.
 fn get_close_match<'a>(word: &str, candidates: &[&'a str]) -> Option<&'a str> {
+    close_match_at(word, candidates, 0.5)
+}
+
+/// [`get_close_match`] with the caller's `cutoff`.
+pub fn close_match_at<'a>(word: &str, candidates: &[&'a str], cutoff: f64) -> Option<&'a str> {
     let b: Vec<char> = word.chars().collect();
     let mut best: Option<(f64, &'a str)> = None;
     for &x in candidates {
         let a: Vec<char> = x.chars().collect();
         let score = Matcher::new(&a, &b).ratio();
-        if score >= 0.5 && best.is_none_or(|(s, bx)| score > s || (score == s && x > bx)) {
+        if score >= cutoff && best.is_none_or(|(s, bx)| score > s || (score == s && x > bx)) {
             best = Some((score, x));
         }
     }
@@ -179,6 +191,44 @@ fn pool(params: &BTreeMap<&'static str, Value>) -> Option<Vec<String>> {
         .collect()
 }
 
+/// `suggest_close_format`: a retired name's successor when the pool holds it, else the closest
+/// name in `available`.
+pub fn close_format(spec: &str, available: &[String]) -> Option<String> {
+    let successor = RETIRED_FORMAT_SUCCESSORS
+        .iter()
+        .find(|(from, _)| *from == spec)
+        .map(|(_, to)| *to)
+        .filter(|to| available.iter().any(|a| a == to));
+    match successor {
+        Some(to) => Some(format!(
+            "{} was renamed to {}.",
+            py_str_repr(spec),
+            py_str_repr(to)
+        )),
+        None => close_match(spec, available),
+    }
+}
+
+/// `suggest_layout_chart`: the edit for a layout name that is no chart key, the closest key first.
+/// A reference outside a layout has no pool and no hint.
+fn layout_chart(name: &str, available: &[String]) -> Option<String> {
+    if available.is_empty() {
+        return None;
+    }
+    let keys: Vec<String> = available.iter().map(|k| format!("`{k}`")).collect();
+    let rule = format!(
+        "Every name in `rows`, `cols` or `grid` is a key under `charts:` ({}).",
+        keys.join(", ")
+    );
+    let candidates: Vec<&str> = available.iter().map(String::as_str).collect();
+    Some(match get_close_match(name, &candidates) {
+        Some(m) => format!("Did you mean `{m}`? Replace `{name}` with it. {rule}"),
+        None => {
+            format!("{rule} Replace `{name}` with one of them, or define `{name}` under `charts:`.")
+        }
+    })
+}
+
 /// The hint `code`'s generator makes of `params`, or `None` for no hint (also: a code whose
 /// generator is not ported, or params that are not the strings the generator reads).
 pub fn generate(code: &str, params: &BTreeMap<&'static str, Value>) -> Option<String> {
@@ -195,22 +245,11 @@ pub fn generate(code: &str, params: &BTreeMap<&'static str, Value>) -> Option<St
             );
             close_match(&name, &available)
         }
-        "ERR-QUERY-FORMAT-UNKNOWN" => {
-            let spec = text(params, "spec")?;
-            let successor = RETIRED_FORMAT_SUCCESSORS
-                .iter()
-                .find(|(from, _)| *from == spec)
-                .map(|(_, to)| *to)
-                .filter(|to| available.iter().any(|a| a == to));
-            match successor {
-                Some(to) => Some(format!(
-                    "{} was renamed to {}.",
-                    py_str_repr(spec),
-                    py_str_repr(to)
-                )),
-                None => close_match(spec, &available),
-            }
-        }
+        "ERR-QUERY-FORMAT-UNKNOWN" => close_format(text(params, "spec")?, &available),
+        "ERR-UNKNOWN-THEME" => close_match(text(params, "theme")?, &available),
+        "ERR-EXTENDS-UNRESOLVED" => close_match(text(params, "entry")?, &available),
+        "ERR-SOURCE-NOT-FOUND" => close_match(text(params, "source")?, &available),
+        "ERR-UNRESOLVED-REFERENCE" => layout_chart(text(params, "ref")?, &available),
         _ => None,
     }
 }

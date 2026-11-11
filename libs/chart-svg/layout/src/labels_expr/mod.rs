@@ -11,6 +11,9 @@
 //! `ERR-CHART-PAINTED-NO-MARKS`; the other families refuse). [`EvalError::Unmodeled`]: the expression reads state of
 //! the view Vega evaluates it in that this engine does not carry (`item.bounds`, `item.mark.items`, an axis no
 //! family laid out); the view it does carry is [`view`].
+//!
+//! [`js_date`] is the interpreter's JavaScript `Date`. chart-renderer's `labels_expr.rs` keeps only the
+//! payload glue and the autosize-fit passes.
 
 #[cfg(test)]
 mod corpus_tests;

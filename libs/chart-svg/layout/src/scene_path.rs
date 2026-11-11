@@ -1,4 +1,6 @@
-//! The one place a d3rs path becomes a `scene::PathData`.
+//! The one place a d3rs path becomes a `scene::PathData`: `scene_path(&[d3rs::path::Command]) -> PathData`
+//! is the only conversion from a d3rs path into scene geometry, so every caller of a d3rs generator goes
+//! through it. `d3rs` cannot depend on `scene`, and `scene` depends on nothing.
 //!
 //! One departure from d3: an `Arc` command (d3-path's `arc(x, y, r, a0, a1, ccw)`, which d3 writes as
 //! one SVG `A`, two for a circle) becomes equal pieces of at most 90 degrees. `print` rounds geometry

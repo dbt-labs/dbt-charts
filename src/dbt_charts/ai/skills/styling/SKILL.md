@@ -207,7 +207,7 @@ Also exist: `font`, `format`, `glyph`.
 - `column_defaults` ({width, align, format, background, font: {}}): Table-level column defaults applied to every column; None means no defaults authored
 - `columns` (map of mapping): Per-column display configuration keyed by column name (label, format, width, etc.)
 - `row_numbers` ({visible, header, align, font: {}}): Leading row-number column configuration
-Also exist: `title`, `preferred_width`, `padding`, `background`, `font`, `border`, `color`, `outer_padding`, `bottom_padding`, `column_layout`, `title_row`, `header_overflow`, `paginator`, `scrollbar`, `symbol_mode`, `more_rows`, `empty_state`, `spark`, `transpose`, `text_baseline_offset`, `title_subtitle_gap`.
+Also exist: `title`, `preferred_width`, `padding`, `background`, `font`, `border`, `color`, `outer_padding`, `bottom_padding`, `column_layout`, `title_row`, `hide_underscore_columns`, `header_overflow`, `paginator`, `scrollbar`, `symbol_mode`, `more_rows`, `empty_state`, `spark`, `transpose`, `text_baseline_offset`, `title_subtitle_gap`.
 
 `table style.header`: `visible`, `height`, `font`, `font_compact`, `background`, `overflow`, `divider`.
 

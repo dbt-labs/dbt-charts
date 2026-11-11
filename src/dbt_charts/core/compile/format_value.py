@@ -62,7 +62,7 @@ from dbt_charts.core.text.format_d3 import (
     portable_strftime,
     split_leading_sign,
 )
-from dbt_charts.core.text.numeral_scale import SuffixMode, suffix_at_register
+from dbt_charts.core.text.numeral_scale import suffix_at_register
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_NATIVE,
     PREDEFINED_TEXT_NAMES,
@@ -205,7 +205,6 @@ def format_kpi_parts(
     default_number: bool = False,
     native: bool = False,
     shared_scale: ResolvedColumnSharedScale | None = None,
-    is_anchor: bool = False,
     keep_affix_gaps: bool = False,
     sign_in_prefix: bool = False,
     anchored: bool = False,
@@ -233,10 +232,6 @@ def format_kpi_parts(
             ``quantitative_tick_labels``'s ``ruler``-aware branch). ``None``
             (the default) is today's per-row independent SI behavior,
             unchanged.
-        is_anchor: whether this row is the column's anchor row (only
-            meaningful when ``shared_scale`` is set). In ANCHOR mode the
-            magnitude suffix appears only when ``is_anchor`` is True; in
-            REPEAT mode it appears on every non-zero row regardless.
         keep_affix_gaps: keep an authored affix's whitespace against the number
             (``"EUR "``); off, lanes are edge-stripped because the painter
             kerns between them.
@@ -311,10 +306,10 @@ def format_kpi_parts(
         if shared_scale is not None:
             scaled_value = value / (10.0**shared_scale.exponent)
             number_str = d3_format(shared_scale.digit_spec)(float(scaled_value))
-            if value != 0 and (shared_scale.mode is SuffixMode.REPEAT or is_anchor):
+            if value != 0:
                 # An explicitly *authored* notation: wins over the
-                # mode-derived register -- a shared magnitude changes which
-                # rows show the suffix, not the author's chosen register.
+                # mode-derived register -- a shared magnitude fixes the scale,
+                # not the author's chosen register.
                 # Deliberately reads `notation` (the raw authored value), not
                 # `effective_notation`: the latter also carries the house
                 # format's own "default to analytic" fallback (below), which

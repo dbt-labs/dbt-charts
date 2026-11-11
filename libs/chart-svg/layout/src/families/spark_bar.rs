@@ -7,7 +7,7 @@
 //! to its column, which production warns of, and the "+N" note of a chart cut to `max_bars` are
 //! refused by name.
 
-use bind::model::SparkBar;
+use bind::bound::SparkBar;
 use board_model::primitives::PaletteChoice;
 use board_model::style::board::EmojiMode;
 use board_model::style::spark_bar::SparkBarChartStyle;

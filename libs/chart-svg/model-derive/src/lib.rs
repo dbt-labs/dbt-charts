@@ -1,3 +1,6 @@
+//! The derive macro of the typed spine's foundation (no dbt Charts concepts, not
+//! published, `#![deny]` on `unwrap`/`expect`/`panic`/indexing).
+//!
 //! `#[derive(Model)]`: from one hand-written spine type, generate
 //! `<T>Authored` and `<T>Patch` (named by `model_core::Authored<T>` /
 //! `Patch<T>`), the `FieldTable` ([`model_core::ModelInfo`]) and
@@ -15,7 +18,8 @@
 //! }
 //! ```
 //!
-//! Field attributes live in one closed `#[model(..)]` set: `absent = ".."`, `omit = ".."`,
+//! Field attributes live in one closed `#[model(..)]` set (`attrs.rs`; `trybuild`
+//! cases in `tests/ui/` pin what is refused): `absent = ".."`, `omit = ".."`,
 //! `default_empty`,
 //! `merge = override | deep | by_key`, `inherit = ".."`, `inherit_slot = ".."`
 //! with `links(leaf = "path", ..)`, `link_at(to = "a.b", from = "path")` and

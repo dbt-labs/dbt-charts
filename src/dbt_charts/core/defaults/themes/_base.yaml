@@ -695,6 +695,7 @@ style:
           # render layer.
           weight: '600'
       wrap: true
+      hide_underscore_columns: true
       symbol_mode: anchors
       row:
         height: 24.0

@@ -463,6 +463,22 @@ def test_docs_corpus_uses_runtime_jinja_variable_scope() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _declared_sources(board: dict[str, Any]) -> str:
+    """A dbt_charts.yml declaring each named source the fence's queries use."""
+    queries = board.get("queries")
+    named = {board.get("source")} | {
+        query.get("source")
+        for query in (queries or {}).values()
+        if isinstance(query, dict)
+    }
+    declared = {
+        name: {"type": "duckdb"}
+        for name in named
+        if isinstance(name, str) and name.isidentifier()
+    }
+    return yaml.dump({"sources": declared}) if declared else ""
+
+
 @pytest.mark.parametrize(
     ("filename", "start_line", "fence_body"),
     _CORPUS_BLOCKS,
@@ -507,6 +523,7 @@ def test_corpus_block_compiles(
         board_yaml = yaml.dump(candidate, allow_unicode=True)
         board_file = tmp_path / "board.yml"
         board_file.write_text(board_yaml)
+        (tmp_path / "dbt_charts.yml").write_text(_declared_sources(candidate))
 
         result = validate(board_file, project=local_project(tmp_path))
         if result.success:

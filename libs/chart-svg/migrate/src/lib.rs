@@ -11,6 +11,17 @@
 //! *current* grammar. Each grammar boundary is one version module (`v0_4_0.rs`, ...) and
 //! one line in [`MODULES`]; its value rewrites are named Rust functions.
 //!
+//! `migrate(node, today) -> Migrated` returns the node, an [`Outcome`], Python's
+//! notice texts, and every applied move or deletion as a span-addressed
+//! [`Edit`]. Schemas are embedded (one copy, read from
+//! `dbt-charts/src/dbt_charts/data/schemas/yaml`), and a reader for the JSON
+//! Schema subset they use lives in `validate.rs`. The declaration kinds are
+//! `Move` (a value rewrite, or a document-aware one that reads the whole
+//! document and owes notices and writes elsewhere), `Deletion`,
+//! `MapKeyDeletion` and `ConditionalMove`, with their gates. The crate is
+//! panic-free (clippy-denied). `dbt-charts/tests/core/compile/test_migrate_text_fixtures.py`
+//! pins the bytes `dct migrate` writes from its edits.
+//!
 //! Every move and deletion that applies is recorded as a span-addressed
 //! [`Edit`], for a text rewrite to replay. [`plan_text`] is that entry for
 //! `dct migrate`: it walks only what a text writer can express (never a
@@ -54,6 +65,7 @@ mod tests;
 
 mod v0_10_0;
 mod v0_11_0;
+pub use v0_11_0::respell_retired_variant;
 mod v0_12_0;
 mod v0_4_0;
 mod v0_5_0;

@@ -94,7 +94,8 @@ fn with_lo(x: f64, l: u32) -> f64 {
 #[allow(
     clippy::approx_constant,
     clippy::eq_op,
-    reason = "bit-exact fdlibm constants (std consts can differ in the last bit) and the fdlibm `y - y` NaN idiom"
+    clippy::excessive_precision,
+    reason = "bit-exact fdlibm constants as published (std consts can differ in the last bit, and rounding a literal changes nothing the oracle can see but hides the source) and the fdlibm `y - y` NaN idiom"
 )]
 pub fn pow(x: f64, y: f64) -> f64 {
     const BP: [f64; 2] = [1.0, 1.5];
@@ -361,7 +362,8 @@ pub fn js_number_string(v: f64) -> String {
 /// that calls `Math.exp` needs this, not `f64::exp`.
 #[allow(
     clippy::approx_constant,
-    reason = "bit-exact fdlibm constant, not std's LOG2_E"
+    clippy::excessive_precision,
+    reason = "bit-exact fdlibm constants as published, not std's LOG2_E"
 )]
 pub fn exp(x: f64) -> f64 {
     const HALF: [f64; 2] = [0.5, -0.5];

@@ -7,7 +7,8 @@ use board_model::board::layout::{LayoutAuthored, LayoutItemAuthored};
 use board_model::board::{Board, HtmlPolicy};
 use board_model::query::{QueryAuthored, Row};
 use board_model::rule::Auto;
-use board_model::variable::{DefaultValue, InputType, OptionsQuery, StaticOptions};
+use board_model::variable::{DefaultValue, OptionsQuery, StaticOptions};
+use diagnostic::{diag, Diagnostic};
 use model_core::{Engine, Leaf, Tri};
 use project::ProjectPath;
 use std::fmt;
@@ -25,18 +26,22 @@ pub enum FillError {
     RowShape { query: String, row: usize },
 }
 
+impl FillError {
+    pub(crate) fn diagnostics(&self) -> Vec<Diagnostic> {
+        vec![match self {
+            Self::BadCeiling(why) => diag::err_html_policy_ceiling_invalid(why.as_str()),
+            Self::NestedCardGap => diag::err_card_gap_nested(),
+            Self::RowShape { query, row } => diag::err_values_row_shape(query.as_str(), *row),
+        }]
+    }
+}
+
 impl fmt::Display for FillError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::BadCeiling(why) => f.write_str(why),
-            Self::NestedCardGap => {
-                f.write_str("card_gap can only be set on the root board, not on nested boards")
-            }
-            Self::RowShape { query, row } => write!(
-                f,
-                "query '{query}': values row {row} does not have one cell per column"
-            ),
-        }
+        self.diagnostics().iter().try_for_each(|d| match d.message() {
+            Ok(text) => f.write_str(&text),
+            Err(_) => f.write_str(d.code),
+        })
     }
 }
 
@@ -99,15 +104,16 @@ macro_rules! settle_input {
             let slider = [&var.min, &var.max, &var.step]
                 .iter()
                 .any(|t| matches!(t, Tri::Value(_)));
-            var.input = Some(Engine::Value(match var.default {
-                Tri::Value(DefaultValue::List(_)) => InputType::Multiselect,
-                _ if slider => InputType::Slider,
-                Tri::Value(DefaultValue::Bool(_)) => InputType::Checkbox,
-                _ if has_options || matches!(&var.column, Tri::Value(c) if !c.is_empty()) => {
-                    InputType::Select
+            var.input = Some(Engine::Value(
+                board_model::variable::InputSignals {
+                    list_default: matches!(var.default, Tri::Value(DefaultValue::List(_))),
+                    slider_field: slider,
+                    bool_default: matches!(var.default, Tri::Value(DefaultValue::Bool(_))),
+                    has_options,
+                    has_column: matches!(&var.column, Tri::Value(c) if !c.is_empty()),
                 }
-                _ => InputType::Text,
-            }));
+                .detect(),
+            ));
         }
     }};
 }

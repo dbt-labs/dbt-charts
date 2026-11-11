@@ -14100,7 +14100,7 @@ mod tests {
         let _locale = ::bind::time_locale::en_us_scope();
         let dates: Vec<String> = (0..23).map(|i| iso_plus_days("2026-03-03", i)).collect();
         let mut payload = native_tick_payload(dated_rows(dates.iter().map(String::as_str)));
-        payload.width = 600.0;
+        payload.width = 800.0;
         payload.resolved["style"]["axis_x"]["labels"]["time_unit"] = serde_json::json!("yearmonth");
         let svg = render(&payload, &test_fonts()).expect("renders");
         let row_y = x_tick_bottom(&svg);
@@ -14593,6 +14593,46 @@ mod tests {
             "the zero rule paints between the colored area fills and the main line strokes: \
              area@{area_i} rule@{rule_i} line@{line_i}: {svg}"
         );
+    }
+
+    /// A single-series area's top edge in the canvas color is a separator, not
+    /// a data line: painted over the zero rule it notches the rule wherever the
+    /// series runs along zero, so the rule paints over it.
+    #[test]
+    fn an_area_top_edge_in_the_canvas_color_paints_under_the_zero_rule() {
+        use serde_json::json;
+        let mut p = make_line_payload(false, false);
+        p["resolved"]["style"]["area_mark"] = json!({"opacity": 1.0, "backdrop": true});
+        p["resolved"]["style"]["line_mark"] = json!({
+            "stroke": {"width": 1.0, "color": "#ffffff", "cap": "round", "join": "round"},
+            "halo_multiplier": 0.0
+        });
+        p["resolved"]["style"]["axis_y"]["grid"] =
+            json!({"visible": true, "threshold": {"color": "#8A8C8F", "width": 2.0}, "width": 1.0, "color": "#D0D3D9", "opacity": 1.0});
+        let svg = render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true).expect("renders");
+
+        let edge_i = svg.find("stroke=\"#ffffff\" stroke-width=\"1\"").expect("the top edge is drawn");
+        let rule_i = svg.find("stroke=\"#8A8C8F\" stroke-width=\"2\"").expect("the zero rule is drawn");
+        assert!(edge_i < rule_i, "the canvas-colored top edge paints under the zero rule: edge@{edge_i} rule@{rule_i}: {svg}");
+    }
+
+    /// A top edge in any other color is the series' line and stays over the rule.
+    #[test]
+    fn an_area_top_edge_in_a_series_color_paints_over_the_zero_rule() {
+        use serde_json::json;
+        let mut p = make_line_payload(false, false);
+        p["resolved"]["style"]["area_mark"] = json!({"opacity": 0.16, "backdrop": true});
+        p["resolved"]["style"]["line_mark"] = json!({
+            "stroke": {"width": 1.0, "color": "#aa0000", "cap": "round", "join": "round"},
+            "halo_multiplier": 0.0
+        });
+        p["resolved"]["style"]["axis_y"]["grid"] =
+            json!({"visible": true, "threshold": {"color": "#8A8C8F", "width": 2.0}, "width": 1.0, "color": "#D0D3D9", "opacity": 1.0});
+        let svg = render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true).expect("renders");
+
+        let edge_i = svg.find("stroke=\"#aa0000\" stroke-width=\"1\"").expect("the top edge is drawn");
+        let rule_i = svg.find("stroke=\"#8A8C8F\" stroke-width=\"2\"").expect("the zero rule is drawn");
+        assert!(rule_i < edge_i, "a series-colored top edge paints over the zero rule: rule@{rule_i} edge@{edge_i}: {svg}");
     }
 
     /// Z1's other half: a LINE chart's zero rule stays prepended under

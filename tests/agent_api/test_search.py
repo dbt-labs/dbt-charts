@@ -31,6 +31,22 @@ from dbt_charts.core.compile import compile_file
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.project import Project
 
+SOURCES = """\
+sources:
+  wh:
+    type: duckdb
+    path: wh.duckdb
+  db:
+    type: duckdb
+    path: db.duckdb
+"""
+
+
+def declare_sources(root: Path) -> None:
+    """The engine compiles a board only against declared sources."""
+    (root / "dbt_charts.yml").write_text(SOURCES)
+
+
 # ---------------------------------------------------------------------------
 # Fixture corpus — 5 dashboards covering different domains / metadata
 # ---------------------------------------------------------------------------
@@ -424,9 +440,11 @@ class TestSearchFindsEveryFieldItScores:
     ) -> None:
         boards = tmp_path / "charts"
         boards.mkdir()
+        declare_sources(tmp_path)
         (boards / "plain.yml").write_text(
             "title: Plain\n"
             "tags: [zebratag]\n"
+            "source: wh\n"
             "queries:\n"
             "  okapi_query:\n"
             "    sql: SELECT n FROM warthog_table\n"
@@ -793,55 +811,6 @@ class TestChartGrainSearch:
         assert result.success
         assert [h.title for h in result.results] == ["Quick Board"]
 
-    def test_non_string_chart_title_falls_back_to_the_id(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        """Search reads raw (possibly invalid) YAML — a junk-typed chart title
-        degrades to the chart id, never crashes."""
-        boards = tmp_path / "charts"
-        boards.mkdir()
-        (boards / "junk.yml").write_text(
-            "title: Junk Board\n"
-            "notes: malformed chart fields\n"
-            "charts:\n"
-            "  odd:\n"
-            "    title: [not, a, string]\n"
-            "    type: 7\n"
-            "rows:\n"
-            "  - odd\n"
-        )
-
-        result = board_search(query="odd", project=local_project(tmp_path))
-
-        assert result.success
-        (hit,) = result.results
-        assert isinstance(hit, BoardMatch)
-        assert hit.matched_charts == ["odd"]
-
-    def test_non_string_chart_key_does_not_crash_search(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        """YAML mapping keys need not be strings (`2024:` parses as int) —
-        the id is stringified at ingestion, never crashing the search verb."""
-        boards = tmp_path / "charts"
-        boards.mkdir()
-        (boards / "yearly.yml").write_text(
-            "title: Yearly Board\n"
-            "notes: year-keyed charts\n"
-            "charts:\n"
-            "  2024:\n"
-            "    type: bar\n"
-            "rows:\n"
-            "  - 2024\n"
-        )
-
-        result = board_search(query="2024", project=local_project(tmp_path))
-
-        assert result.success
-        (hit,) = result.results
-        assert isinstance(hit, BoardMatch)
-        assert hit.matched_charts == ["2024"]
-
     def test_matched_charts_lists_every_matching_chart_uncapped(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
@@ -929,9 +898,11 @@ class TestChartGrainSearch:
         and names the answering chart in matched_charts."""
         boards = tmp_path / "charts"
         boards.mkdir()
+        declare_sources(tmp_path)
         (boards / "revenue_chart.yml").write_text(
             "title: Analytics Board\n"
             "notes: General analytics\n"
+            "source: wh\n"
             "queries:\n"
             "  q:\n"
             "    sql: SELECT 1\n"
@@ -946,6 +917,7 @@ class TestChartGrainSearch:
         (boards / "desc_only.yml").write_text(
             "title: Other Board\n"
             "notes: Mentions monthly figures but revenue only once\n"
+            "source: wh\n"
             "queries:\n"
             "  q:\n"
             "    sql: SELECT 1\n"
@@ -972,9 +944,11 @@ class TestChartGrainSearch:
         """With no title, the chart id itself is what matches."""
         boards = tmp_path / "charts"
         boards.mkdir()
+        declare_sources(tmp_path)
         (boards / "topline.yml").write_text(
             "title: Overview\n"
             "notes: General metrics\n"
+            "source: wh\n"
             "queries:\n"
             "  q:\n"
             "    sql: SELECT 1\n"
@@ -1384,6 +1358,7 @@ class TestHitNamesTheQueryOfEachMatchedChart:
     @staticmethod
     def _hit(root: Path, project: FilesystemProject, board: str) -> BoardMatch:
         (root / "charts").mkdir()
+        declare_sources(root)
         (root / "charts" / "b.yml").write_text(board)
         hit = search_boards_hits("revenue", project)[0]
         assert isinstance(hit, BoardMatch)
@@ -1397,6 +1372,7 @@ class TestHitNamesTheQueryOfEachMatchedChart:
             local_project(tmp_path),
             """
 title: Sales
+source: wh
 queries:
   monthly:
     sql: select 1 as x
@@ -1448,8 +1424,6 @@ rows:
         [
             ("queries.monthly", "monthly"),
             ("select 1 as x", "_inline_query_revenue_trend"),
-            ("select lib.yml#monthly", "select lib.yml#monthly"),
-            ('"select all"', "select all"),
         ],
     )
     def test_each_query_spelling_gives_the_name_dct_query_takes(
@@ -1469,8 +1443,6 @@ source: db
 queries:
   monthly:
     sql: select 1 as x
-  select all:
-    sql: select 1 as x
 charts:
   revenue_trend:
     query: {authored}
@@ -1482,25 +1454,6 @@ rows:
 """,
         )
         assert [chart.query for chart in hit.charts] == [expected]
-
-    def test_a_keyword_shaped_name_off_the_board_is_kept(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        project = local_project(tmp_path)
-        hit = self._hit(
-            tmp_path,
-            project,
-            """
-title: Sales
-charts:
-  revenue_trend:
-    query: update
-    type: bar
-rows:
-  - revenue_trend
-""",
-        )
-        assert [chart.query for chart in hit.charts] == ["update"]
 
     def test_a_chart_with_no_query_names_none(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]

@@ -95,6 +95,12 @@ pub fn column_shares_one_printed_unit(cells: &[(f64, String)]) -> bool {
     suffixes.len() <= 1
 }
 
+/// Whether any non-zero finite cell printed an SI suffix: a column of plain
+/// digits (3.5, 12.1) prints none and so is no evidence of a compact notation.
+pub fn prints_si_suffix(cells: &[(f64, String)]) -> bool {
+    cells.iter().any(|(v, text)| *v != 0.0 && v.is_finite() && !printed_si_suffix(text).is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

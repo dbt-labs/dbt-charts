@@ -59,11 +59,11 @@ _PROJECT_ISH_RE = re.compile(r"project", re.IGNORECASE)
 # sanctioned: the local/parameter is explicitly typed FilesystemProject, or
 # narrowed via isinstance immediately above. Ratchet — shrink, don't grow.
 ALLOWED: dict[tuple[str, int], str] = {
-    ("agent_api/board_index.py", 80): (
+    ("agent_api/board_index.py", 85): (
         "isinstance(project, FilesystemProject)-guarded board index path; a host "
         "with no project folder keeps no index"
     ),
-    ("core/compile/config.py", 655): (
+    ("core/compile/config.py", 664): (
         "resolve_cache_boot(project: FilesystemProject) — already FS-typed"
     ),
     ("core/execute/env.py", 157): (

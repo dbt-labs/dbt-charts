@@ -7,16 +7,27 @@
 //! within its category's band. A single-series bar takes `type: line` layers on its shared y: the
 //! bars first, then one line per layer, each its own series, over one value domain that spans bars
 //! and layers. What the bind does not model yet refuses by name.
+//!
+//! Binds a band x and one value y to a `Family::Cartesian` of vertical bars (`Mark::Bars`).
+//! - A nominal `color:` seats one series per value in production's sorted order, from the
+//!   board-wide plan, with a `Legend`; non-negative bars are painted before negative ones.
+//! - A colorless bar takes `type: line` layers on its shared y: one `Mark::Lines` layer and
+//!   series per layer after the bars, in authored order. The value domain spans bars and
+//!   layers and is rounded as a shared scale; each unauthored layer takes the first palette
+//!   color not yet painted; one `Legend` covers the bars and layers.
+//!
+//! `tests/it/bar.rs` replays `bar_production.json`, recorded by `record_bar_bind.py`, and
+//! `tests/it/bar_layers.rs` replays `bar_layers_production.json`, recorded by
+//! `record_bar_layers_bind.py`.
 
 use std::collections::{HashMap, HashSet};
 
-use board_model::board::{Board, BoardBody};
+use board_model::board::Board;
 use board_model::chart::layer::{CartesianLayer, LineLayer};
 use board_model::chart::{BarChart, ColorColumn, Columns};
 use board_model::ids::ChartId;
 use board_model::style::bar::{Orientation, StackMode};
 use board_model::style::marks::LabelVisible;
-use board_model::style::style::Style;
 use diagnostic::{codes, diag, py_str_repr, refuse, Diagnostic};
 use model_core::{Engine, SetLeaves, Tri};
 
@@ -24,21 +35,18 @@ use crate::channel_type::{classify, y_is_numeric, ChannelType};
 use crate::category_colors::CategoryColorScale;
 use crate::decode::decode;
 use crate::derived::{DerivedChart, Placed};
-use crate::families::cartesian::{self, axis_format, hex, plain_text, threshold_rules, unsupported, value};
+use crate::families::cartesian::{self, axis_format, hex, no_data, plain_text, single_series, threshold_rules, unsupported, value, Prelude};
 use crate::formats::locale::active_number_locale;
 use crate::legend::fold_symbol_limit;
-use crate::formats::{column_format, AuthoredFormat, Formats, Kind, Tiers};
-use crate::model::{
-    AuthoredLegend, AxisStyles, Baselines, Body, BoundChart, Datum, Failure, Key, Legend, LegendEntry, Mark, MarkLayer, MarkStyle, Naming, Orient, Paint,
-    Panels, Plot, PlotParts, Pos, RowRef, Scale, ScaleKind, Series, SeriesKey, Tooltip, TooltipEntry,
+use crate::bound::{self,
+    AuthoredLegend, AxisStyles, Baselines,  Datum, Failure, Key, Legend, LegendEntry, Mark, MarkLayer, MarkStyle, Naming, Orient, Paint,
+    Panels, Pos, RowRef, Scale, ScaleKind, Series, SeriesKey, Tooltip, TooltipEntry,
 };
 use crate::plot::band::band_domain;
 use crate::plot::domain;
 use crate::plot::zero::{self, Family};
-use crate::{colors_of, palette_of};
+use crate::effective_palette;
 use crate::run::RunResult;
-use crate::style::axis::{AxisLadder, AxisName};
-use crate::style::{Tier, Tiers as StyleTiers};
 
 /// What a bar chart's laws bind: the two scales, the series and a datum per row.
 #[derive(Debug)]
@@ -55,11 +63,14 @@ pub struct Bars {
     /// `defined: false`. The layer's series follows the bars' in `series`.
     pub lines: Vec<Vec<Datum>>,
     pub baselines: Baselines,
+    pub axis_styles: AxisStyles,
     /// The frame, fill and legend the placement derives, after the chart's data has passed its refusals.
     pub derived: DerivedChart,
+    /// The chart's own axis keys the other tiers already answer.
+    pub diagnostics: Vec<Diagnostic>,
 }
 
-fn internal(invalid: crate::model::Invalid) -> Diagnostic {
+fn internal(invalid: crate::bound::Invalid) -> Diagnostic {
     diag::err_internal(format!("bar is invalid: {invalid:?}"))
 }
 
@@ -172,46 +183,31 @@ fn refuse_unported(chart: &BarChart, placed: &Placed<'_>) -> Result<(), Diagnost
     Ok(())
 }
 
+/// The legend a derived placement walks, refused where the bind does not model it: `values:` names
+/// the entries of a `color:` legend.
+fn refuse_legend_values(chart: &BarChart, derived: &DerivedChart) -> Result<(), Diagnostic> {
+    if (chart.cartesian.color.is_some() || !chart.layers.is_empty()) && derived.legend.base.values.is_some() {
+        return Err(unsupported(refuse!("a bar legend with `values:` is not supported")));
+    }
+    Ok(())
+}
+
 /// The laws of a bar chart over its rows; `None` when the query returned no rows. `scales` is the
 /// board-wide category color plan a `color:` series paints from.
-#[allow(clippy::too_many_arguments)] // one chart at one placement: the board, its run and its derived facts are separate inputs
 pub fn bars(
     id: &ChartId,
     chart: &BarChart,
     board: &Board,
-    body: &BoardBody,
     run: &RunResult,
     placed: &Placed<'_>,
     scales: &[CategoryColorScale],
 ) -> Result<Option<Bars>, Diagnostic> {
-    let style: &Style = body
-        .style
-        .as_deref()
-        .ok_or_else(|| diag::err_internal("a normalized board carries its total style"))?;
-    if !style.formats.is_empty() {
-        return Err(unsupported(refuse!("a bar on a board with `style.formats` aliases is not supported")));
-    }
-    let formats = Formats::new(None);
-    let x_field = chart
-        .cartesian
-        .x
-        .as_ref()
-        .ok_or_else(|| diag::err_internal("normalize requires a bar's `x:`"))?
-        .as_str();
-    let y_field = match &chart.cartesian.y {
-        Some(Columns::One(y)) => y.as_str(),
-        _ => return Err(diag::err_internal("normalize requires a bar's `y:`")),
-    };
-    let tiers = StyleTiers { own: Tier::from(&*placed.own.charts.bar), family: Tier::from(&*style.charts.bar), charts: &style.charts };
-    let x_ladder = AxisLadder::new(AxisName::X, ChannelType::Nominal, &tiers, None, false)?;
-    let y_ladder = AxisLadder::new(AxisName::Y, ChannelType::Quantitative, &tiers, None, false)?;
-    if let Some(leaf) = x_ladder.unwalked_leaf().or_else(|| y_ladder.unwalked_leaf()) {
-        return Err(unsupported(refuse!("a bar axis that sets `{leaf}` is not supported")));
-    }
-    if x_ladder.labels_format().is_some() {
+    let p = Prelude::of(&chart.cartesian, ChannelType::Nominal, placed)?;
+    let (x_field, y_field) = (p.x_field, p.y_field);
+    if p.x_ladder.labels_format().is_some() {
         return Err(unsupported(refuse!("a bar band axis with a label format is not supported")));
     }
-    let y_format = axis_format(&y_ladder, formats)?;
+    let y_format = axis_format(&p.y_ladder, p.formats)?;
     let color_field = chart.cartesian.color.as_ref().map(ColorColumn::as_str);
     let layers = line_layers(chart)?;
     let layer_fields = layers
@@ -257,14 +253,9 @@ pub fn bars(
     if (color_field.is_some() || !chart.layers.is_empty()) && derived.legend.base.values.is_some() {
         return Err(unsupported(refuse!("a bar legend with `values:` is not supported")));
     }
-    // The chart's own `color.categorical.palette` paints in place of its scope's (`_effective_palette`).
-    let palette = match &placed.own.charts.bar.cartesian.painted.color.categorical {
-        Tri::Value(own) => match &own.palette {
-            Some(palette) => colors_of(palette)?,
-            None => palette_of(style)?,
-        },
-        Tri::Unset | Tri::Null => palette_of(style)?,
-    };
+    let palette = effective_palette(&placed.own.charts.bar.cartesian.painted.color.categorical, |own| own.palette.as_ref(), p.style)?;
+    let derived = placed.derive()?;
+    refuse_legend_values(chart, &derived)?;
     let colors = color_field
         .map(|field| cartesian::color_series(field, dataset, decoded.keys(field)?, scales, &palette, derived.frame.canvas))
         .transpose()?;
@@ -305,16 +296,13 @@ pub fn bars(
     let spanned: Vec<f64> = drawn.iter().copied().chain(layer_values.iter().flatten().flatten().copied()).collect();
 
     let labels: HashMap<String, String> = chart.cartesian.labels.field_labels.clone().into_iter().collect();
-    let x_title = display_text::field_title(x_field, &labels).map_err(diag::err_internal)?;
-    let y_title = display_text::field_title(y_field, &labels).map_err(diag::err_internal)?;
-
-    let y_zero = zero::verdict(Family::Bar { stacked: false, y_start: false, date_span: false }, None, &spanned);
+    let y_zero = zero::verdict(Family::Bar { stacked: false, y_start: false, date_span: false }, p.y_ladder.zero_setting(), &spanned);
     // A layer joining the bars' scale makes it round like any shared scale (`nice_shared_scale`).
     let nice = (!layers.is_empty()).then_some(true);
-    let y_axis = cartesian::measure_axis(&y_ladder, y_zero, &spanned, y_format, domain::Mark::VerticalBar, nice)?;
+    let y_axis = cartesian::measure_axis(&p.y_ladder, y_zero, &spanned, y_format, domain::Mark::VerticalBar, nice)?;
+    let (axis_styles, [x_shown, y_shown]) = cartesian::axes((&p.x_ladder, p.x_title.clone(), false), (&p.y_ladder, p.y_title.clone(), false), &y_axis.domain, placed.scope, "bar", false, false)?;
 
-    let board_tooltip = AuthoredFormat::named(style.charts.tooltip.format.as_str());
-    let tooltip_format = column_format(Kind::Number, Tiers { own: Some(&board_tooltip), ..Tiers::default() }, formats, None, None, &drawn)?;
+    let tooltip_format = p.tooltip_format(&drawn)?;
     let locale = active_number_locale();
     let band_of: HashMap<&Key, usize> = categories.keys().iter().enumerate().map(|(band, key)| (key, band)).collect();
     // A layer's value prints in the bars' format, voted by the bars' values alone.
@@ -334,14 +322,14 @@ pub fn bars(
                     series: series_of(row),
                     row: RowRef(row),
                     label: None,
-                    tooltip: Tooltip { entries },
+                    tooltip: Tooltip { header: None, entries },
                     href: None,
                     defined: y.is_some(),
                 })
             })
             .collect::<Result<Vec<_>, Diagnostic>>()
     };
-    let mut datums = datums_of(&y_values, &y_title, &|row| colors.as_ref().map_or(0, |colors| colors.of_row[row]))?;
+    let mut datums = datums_of(&y_values, &p.y_title, &|row| colors.as_ref().map_or(0, |colors| colors.of_row[row]))?;
     // A color-split chart holding both signs paints its non-negative bars first, then the negative
     // ones: production lays the two signs down as two layers so each rounds its own tip.
     if colors.is_some() && drawn.iter().any(|y| *y > 0.0) && drawn.iter().any(|y| *y < 0.0) {
@@ -349,7 +337,7 @@ pub fn bars(
     }
 
     // Bars grow from a zero-anchored axis, so the rule at zero draws whenever the grid's does.
-    let baselines = Baselines { zero: threshold_rules(&y_ladder)?, unity: false, x_threshold: false };
+    let baselines = Baselines { zero: threshold_rules(&p.y_ladder)?, unity: false, x_threshold: false };
     let (mut series, mut legend) = match colors {
         Some(colors) => {
             let title = display_text::field_title(color_field.expect("a color series has its field"), &labels).map_err(diag::err_internal)?;
@@ -357,22 +345,14 @@ pub fn bars(
             (colors.series, Some(legend))
         }
         None => {
-            let fill = placed.single_series_fill()?;
-            let ink = color::label_ink(&hex(fill), &hex(derived.frame.canvas)).map_err(diag::err_internal)?;
-            let single = Series {
-                key: SeriesKey::Measure(y_field.to_string()),
-                display: y_title.clone(),
-                paint: Paint::Solid(fill),
-                ink: color::parse_css_color(&ink).map_err(diag::err_internal)?,
-            };
-            (vec![single], None)
+            (vec![single_series(placed, y_field, &p.y_title, &derived)?], None)
         }
     };
     let mut lines = Vec::new();
     if !layers.is_empty() {
         let canvas = hex(derived.frame.canvas);
         let mut painted = vec![hex(placed.single_series_fill()?)];
-        let mut names = vec![y_title.clone()];
+        let mut names = vec![p.y_title.clone()];
         for (layer, (field, values)) in layers.iter().zip(layer_fields.iter().zip(&layer_values)) {
             let name = match &layer.base.label {
                 Some(label) => label.clone(),
@@ -396,48 +376,50 @@ pub fn bars(
             names.push(name);
         }
         let entries = series.iter().enumerate().map(|(series, s)| LegendEntry { series, label: s.display.clone() });
-        legend = Some(Legend { title: None, entries: entries.collect() });
+        legend = Some(Legend { title: None, entries: entries.collect(), toggle: None });
     }
     Ok(Some(Bars {
-        x: Scale { kind: ScaleKind::Band(categories), title: Some(x_title) },
-        y: Scale { kind: ScaleKind::Linear(y_axis), title: Some(y_title) },
+        x: Scale { kind: ScaleKind::Band(categories), title: x_shown },
+        y: Scale { kind: ScaleKind::Linear(y_axis), title: y_shown },
         series,
         legend,
         datums,
         lines,
         baselines,
+        axis_styles,
         derived,
+        diagnostics: crate::restated::axes(&p.tiers, [&p.x_ladder, &p.y_ladder], placed.public_id),
     }))
 }
 
-/// `chart` bound over its run, in the style of `body`, the board body that places it. No rows is
-/// [`Body::Empty`] in the chart's frame, once the chart's own style has passed the refusals.
-#[allow(clippy::too_many_arguments)] // as `bars`
+/// `chart` bound over its run, in the style of the board body that places it. No rows is
+/// [`bound::Cartesian::NoData`] in the chart's frame, once the chart's own style has passed the refusals.
 pub fn bind(
     id: &ChartId,
     chart: &BarChart,
     board: &Board,
-    body: &BoardBody,
     run: &RunResult,
     placed: &Placed<'_>,
     scales: &[CategoryColorScale],
-) -> Result<BoundChart, Diagnostic> {
+) -> Result<bound::Chart, Diagnostic> {
     refuse_unported(chart, placed)?;
     let title = plain_text(chart.cartesian.shared.title.as_ref())?;
     let subtitle = plain_text(chart.cartesian.shared.subtitle.as_ref())?;
-    let bars = match bars(id, chart, board, body, run, placed, scales) {
+    let bars = match bars(id, chart, board, run, placed, scales) {
         Err(error) if error.code == codes::ERR_BAR_Y_NOT_NUMERIC.id => {
-            let body = Body::Failed(Failure { chart: id.clone(), diagnostic: error });
-            return Ok(BoundChart { title: None, subtitle: None, frame: None, body });
+            let family = Err(Failure { chart: id.clone(), diagnostic: error });
+            return Ok(bound::Chart { title: None, subtitle: None, frame: None, family });
         }
         other => other?,
     };
     let Some(bars) = bars else {
-        let frame = Some(placed.derive()?.frame);
-        return Ok(BoundChart { title, subtitle, frame, body: Body::Empty });
+        let derived = placed.derive()?;
+        refuse_legend_values(chart, &derived)?;
+        let frame = Some(derived.frame);
+        return Ok(bound::Chart { title, subtitle, frame, family: Ok(bound::Family::Cartesian(no_data(placed, "bar")?)) });
     };
     let frame = Some(bars.derived.frame.clone());
-    let plot = Plot::new(PlotParts {
+    let plot = bound::Plane::new(bound::PlaneParts {
         orient: Orient::Vertical,
         x: bars.x,
         y: vec![bars.y],
@@ -457,9 +439,10 @@ pub fn bind(
         legends: bars.legend.into_iter().collect(),
         support: None,
         baselines: bars.baselines,
-        axis_styles: AxisStyles {},
-        mark_style: MarkStyle { points: None },
+        axis_styles: bars.axis_styles,
+        diagnostics: bars.diagnostics,
+        mark_style: MarkStyle { points: None, bins: None },
     })
     .map_err(internal)?;
-    Ok(BoundChart { title, subtitle, frame, body: Body::Plot(Box::new(plot)) })
+    Ok(bound::Chart { title, subtitle, frame, family: Ok(bound::Family::Cartesian(bound::Cartesian::Plane(Box::new(plot)))) })
 }

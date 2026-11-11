@@ -1,0 +1,3 @@
+kind: Fixes
+body: The chart skill tells agents to mark a peak with a computed note anchor instead of a copied value.
+time: 2026-11-09T10:19:52.624515-08:00

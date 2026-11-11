@@ -1,6 +1,7 @@
 //! The emoji family a board's `font.emoji` mode puts in every font stack it draws
 //! (`_EMOJI_MODE_TO_FAMILY`, `insert_emoji_family`): a law of the text a stack paints, so each
-//! reader of a family applies it at the read, not a pass over the style tree.
+//! reader of a family applies it at the read (`with_emoji`), not a pass over the style tree.
+//! The board's `font.emoji` mode puts its family after a stack's primary font.
 
 use board_model::style::board::EmojiMode;
 

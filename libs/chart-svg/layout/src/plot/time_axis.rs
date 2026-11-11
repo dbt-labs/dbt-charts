@@ -44,7 +44,7 @@ mod on_ticks;
 
 pub use clock::{Clock, DayLabels};
 
-use bind::model::TimeDomain;
+use bind::bound::TimeDomain;
 use bind::plot::time::TimeUnitSetting;
 use bind::temporal::{enumerate_continuous_span, floor_to_bucket_start, next_bucket, TimeUnit};
 use d3rs::calendar::{civil_from_days, days_from_civil, MS_PER_DAY};
@@ -243,7 +243,7 @@ impl<'a> TimeAxis<'a> {
             days.clone().fold(f64::INFINITY, f64::min),
             days.fold(f64::NEG_INFINITY, f64::max),
         );
-        let fiscal_start = domain.fiscal_start.map_or(1, bind::model::Month::get);
+        let fiscal_start = domain.fiscal_start.map_or(1, bind::bound::Month::get);
         let extent = match domain.unit.filter(|_| labels.spans_buckets) {
             Some(unit) => {
                 let (y, m, d) = civil_from_days(last as i64);
@@ -280,7 +280,7 @@ impl<'a> TimeAxis<'a> {
         extent: (f64, f64),
         book: &FontBook,
     ) -> Result<Grained, Diagnostic> {
-        let fiscal_start = domain.fiscal_start.map_or(1, bind::model::Month::get);
+        let fiscal_start = domain.fiscal_start.map_or(1, bind::bound::Month::get);
         let (format, label_auto) = match labels.label_unit {
             TimeUnitSetting::Absent | TimeUnitSetting::Auto => (data, true),
             // A week names an instant rather than a span, so production keeps it whatever the
@@ -370,11 +370,10 @@ impl<'a> TimeAxis<'a> {
     }
 
     /// A grained label's anchor: Vega's flush read on the inset range (`flat_label_anchor`), its
-    /// span left unclamped as production leaves it. Production draws the anchor whatever
-    /// `labels.flush` says; the setting reaches only the cadence ladder's edge reservation.
+    /// span left unclamped as production leaves it, at `labels.flush`'s threshold (none centers).
     fn range_align(&self, frac: f64, width: f64) -> Align {
         let span = width - 2.0 * self.labels.inset;
-        flush_align(frac * span, span)
+        flush_align(frac * span, span, self.labels.crowding.flush)
     }
 
     /// The ticks and labels on a plot `plot` across.
@@ -460,7 +459,7 @@ impl<'a> TimeAxis<'a> {
                         .advance,
                 );
             }
-            let align = flush_align(tick.frac * plot.width, plot.width);
+            let align = flush_align(tick.frac * plot.width, plot.width, self.labels.crowding.flush);
             let x = self.x_at(tick.frac, plot.width);
             // Flat labels share one top, so a second row never changes a gap between boxes.
             vega.push(boxed(x, parity.min(limit), align, font.size));

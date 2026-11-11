@@ -64,7 +64,9 @@ from dbt_charts.core.compile.models.style.authored import (
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_EXTENDS_CYCLE,
     ERR_EXTENDS_UNRESOLVED,
+    ERR_META_OUTSIDE_BOARDS_ROOT,
     WARN_INHERITED_LAYOUT_REPLACED,
 )
 
@@ -720,9 +722,7 @@ def _resolve_entry(
 
         theme_relpath = f"{entry}.yaml"
         if theme_relpath in seen:
-            raise CompilationError(
-                f"Circular extends: {theme_relpath} is already in the extends chain"
-            )
+            raise CompilationError.from_code(ERR_EXTENDS_CYCLE, file=theme_relpath)
         theme_file = _built_in_unified_theme_dir.joinpath(theme_relpath)
         fragment = _fragment_from_yaml(
             theme_file.read_text(encoding="utf-8"), theme_relpath, None
@@ -742,9 +742,7 @@ def _resolve_entry(
     fragment_path = _resolve_fragment_file(entry, ctx)
     fragment_relpath = fragment_path.relpath
     if fragment_relpath in seen:
-        raise CompilationError(
-            f"Circular extends: {fragment_relpath} is already in the extends chain"
-        )
+        raise CompilationError.from_code(ERR_EXTENDS_CYCLE, file=fragment_relpath)
     from dbt_charts.core.compile.migrations import migration_notice_file
 
     with migration_notice_file(fragment_relpath):
@@ -986,9 +984,10 @@ def merge_metas(
     try:
         board_dir_relpath.relative_to(root_relpath)
     except ValueError:
-        raise ValueError(
-            f"directory {board_dir.relpath!r} is not under boards_root "
-            f"{boards_root.relpath!r}"
+        raise CompilationError.from_code(
+            ERR_META_OUTSIDE_BOARDS_ROOT,
+            dir=board_dir.relpath,
+            root=boards_root.relpath,
         ) from None
 
     # A synthetic file in board_dir lets find_meta_files walk the same root→leaf

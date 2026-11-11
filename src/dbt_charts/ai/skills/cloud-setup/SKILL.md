@@ -469,7 +469,7 @@ needs to re-render it. Never wait for it to catch up.
 
 **Compare `COMMIT` to itself, not to your `git rev-parse HEAD`.** It is the
 commit in *Cloud's* copy of the repository that the render read the board
-from. Cloud commits its own board edits to the dbtcharts.com branch and merges your
+from. Cloud commits its own board edits to the dbt Charts branch and merges your
 branch into it on every sync, so those histories diverge the moment anyone
 edits a board in Cloud, and this sha is Cloud's coordinate rather than yours.
 The sha *changing* is the proof; equality with your `HEAD` is not, and waiting

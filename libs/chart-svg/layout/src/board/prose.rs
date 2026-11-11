@@ -7,19 +7,28 @@
 //! What this stage does not model is refused by name: template syntax, images, emphasis (the italic
 //! files are not measured), lists, tables, blockquotes and raw HTML, a letter case, and a text long
 //! enough to flow into more than one column.
+//!
+//! [`title`] is the root's one heading through `mdsvg`, filled with the theme's title ink, with its
+//! measured height, the text's line box, its first baseline and its one-line width. [`text`] is one
+//! column at the measure `plan_board_prose` and `_columns_of` choose, `choose_grid` and `span_boxes`
+//! ported, aligned in its span. [`content_box`] is `compute_board_content_box`, with the band's height,
+//! the inline band's in place of the title's and the controls'.
 
 use board_model::style::board::TextAlign;
 use board_model::style::font::LetterCase;
 use board_model::style::style::Style;
 use diagnostic::{diag, refuse, Diagnostic};
 use mdsvg::renderer::SVGRenderer;
+use mdsvg::style::Style as MdsvgStyle;
 use mdsvg::types::{AnyBlock, Document, Heading, Span, SpanType};
 use regex::Regex;
 use scene::{Attrs, Chars, Child, Element, Escape, Node, Role};
 use std::sync::LazyLock;
 
+use crate::board::width::IntrinsicWidth;
+
 use crate::markdown_style::{
-    char_ratio, compact_style, font_slots, readable_measure, refuse_case, root_title_overrides,
+    char_ratio, compact_style, font_slots, has_italic, readable_measure, refuse_case, root_title_overrides,
     Overrides,
 };
 
@@ -71,36 +80,34 @@ fn refuse_template(text: &str, what: &str) -> Result<(), Diagnostic> {
     Ok(())
 }
 
-fn refuse_spans(spans: &[Span], what: &str) -> Result<(), Diagnostic> {
+/// `italic` says whether the family ships an italic file to measure emphasis against ([`has_italic`]).
+fn refuse_spans(spans: &[Span], what: &str, italic: bool) -> Result<(), Diagnostic> {
     for span in spans {
         if span.span_type == SpanType::Image {
             return Err(Diagnostic::refused(refuse!(
                 "a board's {what} with an image is not supported"
             )));
         }
-        if matches!(span.span_type, SpanType::Italic | SpanType::BoldItalic) || span.italic {
+        if !italic && (matches!(span.span_type, SpanType::Italic | SpanType::BoldItalic) || span.italic) {
             return Err(Diagnostic::refused(refuse!(
-                "a board's {what} with emphasis is not supported"
+                "a board's {what} with emphasis in a family with no italic file is not supported"
             )));
         }
     }
     Ok(())
 }
 
-fn refuse_blocks(blocks: &Document, what: &str) -> Result<(), Diagnostic> {
+fn refuse_blocks(blocks: &Document, what: &str, italic: bool) -> Result<(), Diagnostic> {
     for block in blocks {
         match block {
-            AnyBlock::Paragraph(p) => refuse_spans(&p.spans, what)?,
-            AnyBlock::Heading(h) => refuse_spans(&h.spans, what)?,
+            AnyBlock::Paragraph(p) => refuse_spans(&p.spans, what, italic)?,
+            AnyBlock::Heading(h) => refuse_spans(&h.spans, what, italic)?,
             AnyBlock::CodeBlock(_) | AnyBlock::HorizontalRule(_) => {}
+            AnyBlock::UnorderedList(list) => refuse_items(&list.items, what, italic)?,
+            AnyBlock::OrderedList(list) => refuse_items(&list.items, what, italic)?,
             AnyBlock::ImageBlock(_) => {
                 return Err(Diagnostic::refused(refuse!(
                     "a board's {what} with an image is not supported"
-                )))
-            }
-            AnyBlock::UnorderedList(_) | AnyBlock::OrderedList(_) => {
-                return Err(Diagnostic::refused(refuse!(
-                    "a board's {what} with a list is not supported"
                 )))
             }
             AnyBlock::Table(_) => {
@@ -123,6 +130,14 @@ fn refuse_blocks(blocks: &Document, what: &str) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+fn refuse_items(items: &[mdsvg::types::ListItem], what: &str, italic: bool) -> Result<(), Diagnostic> {
+    for item in items {
+        refuse_spans(&item.spans, what, italic)?;
+        refuse_blocks(&item.children, what, italic)?;
+    }
+    Ok(())
+}
+
 fn renderer(
     fonts_dir: &str,
     style: &Style,
@@ -135,7 +150,7 @@ fn renderer(
 
 /// The title as the heading production draws it (`board_title_markdown`: `# title`), with the
 /// document it is the only block of.
-fn title_blocks(title: &str) -> Result<(Document, Heading), Diagnostic> {
+fn title_blocks(title: &str, italic: bool) -> Result<(Document, Heading), Diagnostic> {
     let blocks = mdsvg::parse(&format!("# {title}"));
     let [AnyBlock::Heading(heading)] = blocks.as_slice() else {
         return Err(Diagnostic::refused(refuse!(
@@ -143,8 +158,63 @@ fn title_blocks(title: &str) -> Result<(Document, Heading), Diagnostic> {
         )));
     };
     let heading = heading.clone();
-    refuse_blocks(&blocks, "title")?;
+    refuse_blocks(&blocks, "title", italic)?;
     Ok((blocks, heading))
+}
+
+/// `WidthMeasurer.board_own_width` (`compile/sizing.py`) for the root's title and text: each needs
+/// its widest unbreakable word and asks for its one-line width up to the readable line length
+/// (`prose_measure`), inside the card padding on both sides. The title is measured in the title
+/// renderer (`title_min_content_width`, `title_max_content_width`) and the text in the body's
+/// (`prose_content_widths`), both over the blocks the paint pass draws.
+pub fn own_width(style: &Style, title: Option<&str>, text: Option<&str>, fonts_dir: &str) -> Result<IntrinsicWidth, Diagnostic> {
+    let body = compact_style(style, &Overrides::PROSE)?;
+    let measure = readable_measure(char_ratio(fonts_dir, &body)? * body.base_font_size, style.text.column.max_chars);
+    let inset = 2.0 * style.frame.card_padding;
+    let ask = |renderer: &SVGRenderer, blocks: &Document| -> Result<IntrinsicWidth, Diagnostic> {
+        let floor = renderer.min_content_width(blocks).map_err(diag::err_internal)?;
+        let one_line = renderer.max_content_width(blocks).map_err(diag::err_internal)?;
+        Ok(IntrinsicWidth { min: Some(floor), preferred: Some(one_line.min(measure)) }.inset(inset))
+    };
+    let mut width = IntrinsicWidth::NONE;
+    if let Some(title) = title {
+        let (blocks, _, renderer) = title_setup(style, title, fonts_dir)?;
+        width = width.combine_max(ask(&renderer, &blocks)?);
+    }
+    if let Some(text) = text {
+        let (blocks, _, renderer) = text_setup(style, text, fonts_dir)?;
+        width = width.combine_max(ask(&renderer, &blocks)?);
+    }
+    Ok(width)
+}
+
+/// What sizing, planning and painting a board's title all read it through (`title_blocks` and
+/// `title_renderer`): its heading, and the renderer of the root title's typography.
+fn title_setup(style: &Style, title: &str, fonts_dir: &str) -> Result<(Document, Heading, SVGRenderer), Diagnostic> {
+    refuse_template(title, "title")?;
+    refuse_case(&style.title.font.case, "board title")?;
+    let overrides = root_title_overrides(style)?;
+    let italic = has_italic(fonts_dir, &compact_style(style, &overrides)?);
+    let (blocks, heading) = title_blocks(title, italic)?;
+    let renderer = renderer(fonts_dir, style, &overrides)?;
+    Ok((blocks, heading, renderer))
+}
+
+/// What sizing, planning and painting a board's text all read it through (`prose_blocks` and the
+/// body renderer): the blocks with their small headings bolded, the body's markdown style and its
+/// renderer.
+fn text_setup(style: &Style, source: &str, fonts_dir: &str) -> Result<(Document, MdsvgStyle, SVGRenderer), Diagnostic> {
+    refuse_template(source, "text")?;
+    refuse_case(&style.text.font.case, "board text")?;
+    let md_style = compact_style(style, &Overrides::PROSE)?;
+    let mut blocks = mdsvg::parse(source);
+    refuse_blocks(&blocks, "text", has_italic(fonts_dir, &md_style))?;
+    if blocks.iter().any(|b| matches!(b, AnyBlock::Heading(_))) && style.title.font.case != LetterCase::None {
+        return Err(Diagnostic::refused(refuse!("a board's text with a heading under a title letter case is not supported")));
+    }
+    bold_small_headings(&mut blocks, |level| md_style.get_heading_size(level), md_style.base_font_size);
+    let renderer = renderer(fonts_dir, style, &Overrides::PROSE)?;
+    Ok((blocks, md_style, renderer))
 }
 
 /// `render_title` for the root board's title at `width`, with its measured height and line box.
@@ -154,10 +224,7 @@ pub fn title(
     fonts_dir: &str,
     width: f64,
 ) -> Result<TitleBlock, Diagnostic> {
-    refuse_template(title, "title")?;
-    refuse_case(&style.title.font.case, "board title")?;
-    let (blocks, heading) = title_blocks(title)?;
-    let renderer = renderer(fonts_dir, style, &root_title_overrides(style)?)?;
+    let (blocks, heading, renderer) = title_setup(style, title, fonts_dir)?;
     let rendered = renderer
         .render_content(&blocks, width, 0.0)
         .map_err(diag::err_internal)?;
@@ -296,22 +363,8 @@ pub fn text(
     fonts_dir: &str,
     slot: Slot,
 ) -> Result<TextBlock, Diagnostic> {
-    refuse_template(source, "text")?;
-    refuse_case(&style.text.font.case, "board text")?;
-    let mut blocks = mdsvg::parse(source);
-    refuse_blocks(&blocks, "text")?;
-    if blocks.iter().any(|b| matches!(b, AnyBlock::Heading(_)))
-        && style.title.font.case != LetterCase::None
-    {
-        return Err(Diagnostic::refused(refuse!(
-            "a board's text with a heading under a title letter case is not supported"
-        )));
-    }
-    let overrides = Overrides::PROSE;
-    let md_style = compact_style(style, &overrides)?;
+    let (blocks, md_style, renderer) = text_setup(style, source, fonts_dir)?;
     let body = md_style.base_font_size;
-    bold_small_headings(&mut blocks, |level| md_style.get_heading_size(level), body);
-    let renderer = renderer(fonts_dir, style, &overrides)?;
     let char_px = char_ratio(fonts_dir, &md_style)? * body;
     let (pad, max_chars) = (style.frame.card_padding, style.text.column.max_chars);
     let boxes = span_boxes(
@@ -342,11 +395,17 @@ pub fn text(
             "a board's text long enough to flow into columns is not supported"
         )));
     }
-    // A lone column wraps at least as wide as sizing asked for, so a line that fits stays one line.
-    let wanted = renderer
-        .max_content_width(&blocks)
-        .map_err(diag::err_internal)?
-        .min(slot.width.min(readable));
+    let wanted = if !blocks.is_empty() && blocks.iter().all(|b| matches!(b, AnyBlock::HorizontalRule(_))) {
+        // A rule has no text to keep readable, so it crosses the whole card; only an authored
+        // max_chars caps it.
+        max_chars.map_or(slot.width, |_| slot.width.min(readable))
+    } else {
+        // A lone column wraps at least as wide as sizing asked for, so a line that fits stays one line.
+        renderer
+            .max_content_width(&blocks)
+            .map_err(diag::err_internal)?
+            .min(slot.width.min(readable))
+    };
     if wanted > measure {
         measure = wanted;
         first = (0.0, slot.width + 2.0 * pad);

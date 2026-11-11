@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use diagnostic::{diag, Diagnostic};
 use serde_json::{Map, Value};
 
-use crate::model::{Grid, Key, PanelId, Panels, Sharing};
+use crate::bound::{Grid, Key, PanelId, Panels, Sharing};
 
 /// A facet field and its decoded key per row.
 #[derive(Clone, Copy)]

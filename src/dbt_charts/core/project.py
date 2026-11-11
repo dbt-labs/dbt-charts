@@ -16,6 +16,7 @@ from dbt_charts.core.utils import IMAGE_SUFFIXES, UniqueKeyLoader
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.config import ProjectSourcesConfig
+    from dbt_charts.core.compile.engine import EngineIndex
     from dbt_charts.core.compile.import_refs import ImportRefs
     from dbt_charts.core.compile.models.config import ProjectCacheConfig
     from dbt_charts.core.compile.parse.board_text import BoardText
@@ -1175,10 +1176,19 @@ class BoardRead(NamedTuple):
     #: False when the file could not be read as text: it is named from its path,
     #: with nothing in it, and that says nothing about what the file holds.
     readable: bool
+    #: What the engine read of a board that folds; None for one it does not read.
+    engine_index: EngineIndex | None
 
 
 def read_board_text(path: ProjectPath) -> BoardRead:
-    from dbt_charts.core.compile.parse.board_text import parse_board_text
+    """A board's label and facts: the engine's when the board folds, else the text-only
+    read in ``board_text`` (a markdown board, or one that does not fold, is still named)."""
+    from dbt_charts.core.compile.engine import engine_index as read_engine_index
+    from dbt_charts.core.compile.parse.board_text import (
+        BoardText,
+        parse_board_text,
+        title_from_slug,
+    )
     from dbt_charts.core.diagnostics.execution import ExecutionError
 
     slug = board_slug(path.relpath)
@@ -1188,7 +1198,18 @@ def read_board_text(path: ProjectPath) -> BoardRead:
     except (OSError, UnicodeDecodeError, ExecutionError):
         content = ""
         readable = False
-    text = parse_board_text(slug, content, is_markdown=path.is_markdown)
+    index = read_engine_index(path) if readable else None
+    if index is None:
+        text = parse_board_text(slug, content, is_markdown=path.is_markdown)
+    else:
+        text = BoardText(
+            title=index["title"] or title_from_slug(slug),
+            notes=index["notes"]
+            or "",  # type-state: silent_fallback — no notes is empty text
+            tags=tuple(index["tags"]),
+            board={},
+            parsed_ok=True,
+        )
     label = BoardLabel(
         path.relpath,
         f"{slug}{PurePosixPath(path.relpath).suffix}",
@@ -1196,7 +1217,7 @@ def read_board_text(path: ProjectPath) -> BoardRead:
         text.notes,
         text.tags,
     )
-    return BoardRead(label, text, readable)
+    return BoardRead(label, text, readable, index)
 
 
 def iter_dir_from_relpaths(

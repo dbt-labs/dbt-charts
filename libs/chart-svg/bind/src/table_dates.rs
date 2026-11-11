@@ -376,18 +376,7 @@ fn time_tail(tail: &str) -> Option<TimeTail> {
     })
 }
 
-/// `is_time_format` (`text/format_d3.py`): a d3-time-format directive
-/// (`%<letter>`, optional `-`/`_`/`0` modifier) after dropping `%%` escapes.
-pub fn is_time_format(spec: &str) -> bool {
-    let spec = spec.replace("%%", "");
-    let b = spec.as_bytes();
-    (0..b.len()).any(|i| {
-        b[i] == b'%' && {
-            let j = i + 1 + usize::from(matches!(b.get(i + 1), Some(b'-' | b'_' | b'0')));
-            b.get(j).is_some_and(u8::is_ascii_alphabetic)
-        }
-    })
-}
+pub use d3rs::format_spec::is_time_format;
 
 /// The text `d.strftime("%<letter>")` gives for the single-field numeric
 /// directives `_PADDED_NUMERIC_DIRECTIVES` (`text/format_d3.py`) carries, in

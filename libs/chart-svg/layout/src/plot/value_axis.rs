@@ -8,12 +8,13 @@
 
 use bind::formats::locale::NumberLocale;
 use bind::formats::ResolvedFormat;
-use bind::model::{Extent, Ladder, ValueDomain, Zero};
+use bind::bound::{Extent, Ladder, ValueDomain};
 use d3rs::ticks::nice_tick_values;
 use diagnostic::{diag, refuse, Diagnostic};
 use measure::shaped::{Font, FontBook};
 use scene::Bounds;
 
+use crate::text_ink;
 use crate::geom::{Insets, Size};
 use crate::plot::label::{
     flush_align, parity_advance, parity_visible, vega_baseline, vega_line, vega_space, Align,
@@ -173,6 +174,9 @@ pub struct ValueLabels<'a> {
     pub locale: &'a NumberLocale,
     pub side: Side,
     pub min_gap: f64,
+    /// `axis.labels.flush` read as a threshold: an end label within this many pixels of a range
+    /// end anchors on it; `None` centers every label.
+    pub flush: Option<f64>,
     pub limit: f64,
     pub tick: f64,
     pub padding: f64,
@@ -222,6 +226,8 @@ pub struct PlacedTitle {
     pub x: f64,
     pub y: f64,
     pub baseline: Baseline,
+    /// The quarter turn a left or right axis's title takes about its anchor, in degrees.
+    pub turn: Option<f64>,
     pub ink: Bounds,
 }
 
@@ -249,7 +255,7 @@ fn default_tick_count(length: f64) -> usize {
 }
 
 /// The domain's ends in scale order: a reversed authored domain starts at its high end.
-fn direction(domain: &ValueDomain) -> (f64, f64) {
+pub(crate) fn direction(domain: &ValueDomain) -> (f64, f64) {
     let bounds = domain.bounds.extent;
     match domain.authored {
         Some(authored) if authored.reversed => (bounds.hi(), bounds.lo()),
@@ -309,6 +315,11 @@ impl<'a> ValueAxis<'a> {
             Ladder::BySize { min_step } => {
                 let ValueLabels { format, locale, estimate_extent, .. } = self.labels;
                 format.unbaked_rungs(locale, (start, stop), default_tick_count(length), *min_step, estimate_extent.hi())
+            }
+            Ladder::Counts => {
+                let ValueLabels { format, locale, estimate_extent, .. } = self.labels;
+                let count = default_tick_count(length).min(hi.floor() as usize).max(1);
+                format.unbaked_rungs(locale, (start, stop), count, None, estimate_extent.hi())
             }
             Ladder::None => Err(diag::err_internal(
                 "a value axis with no data-chosen ladder (log, independent panels) is not laid out here",
@@ -413,11 +424,6 @@ impl<'a> ValueAxis<'a> {
     pub fn place(&self, plot: Size) -> Result<Placement, Diagnostic> {
         if matches!(self.labels.side, Side::Bottom | Side::Top) {
             return self.place_across(plot);
-        }
-        if self.labels.title.is_some() {
-            return Err(Diagnostic::refused(refuse!(
-                "a left or right value axis title is not supported"
-            )));
         }
         let ValueLabels {
             font,
@@ -562,25 +568,33 @@ impl<'a> ValueAxis<'a> {
         // hangs from the right tick and a right axis's ends at the far edge of the primary's
         // gutter: the primary's reserve is inherited, and each ghost label's width extends the
         // margin a second time.
+        let band = self.labels.title.map_or(0.0, |title| title.padding - text_ink::rise(title.font.size, "bottom"));
         let gutter = match side {
             Side::Left => Insets {
                 top,
                 right: ghost.map_or(0.0, |width| tick + padding + width),
                 bottom,
-                left: reach,
+                left: reach + band,
             },
             Side::Right | Side::RightAway => Insets {
                 top,
-                right: reach,
+                right: reach + band,
                 bottom,
                 left: ghost.map_or(0.0, |width| reach + width),
             },
             Side::Bottom | Side::Top => unreachable!("a horizontal axis is placed across"),
         };
+        // The title sits `padding` plus its rotation's nudge past the labels' far edge: the widest label's
+        // start on a left axis, the anchor or the gutter's end on a right one.
+        let title = self
+            .labels
+            .title
+            .map(|title| self.place_rotated_title(title, plot, if side == Side::Left { -reach } else { plot.width + reach }, side == Side::Left))
+            .transpose()?;
         Ok(Placement {
             rungs,
             gutter,
-            title: None,
+            title,
         })
     }
 
@@ -590,7 +604,7 @@ impl<'a> ValueAxis<'a> {
     /// by the face's ascent plus descent (quirk class Q2d). Space is production's: the
     /// gutter reaches the labels' room ([`vega_space`]) and then the title's band,
     /// and the title's baseline sits the label size plus its padding past theirs (`axis_title_flat`), or
-    /// `padding` off the plot edge when nothing is rung, since no tick is drawn. The
+    /// its near edge `padding` off the plot edge when nothing is rung, since no tick is drawn. The
     /// outermost ticks' stroke is the caller's.
     fn place_across(&self, plot: Size) -> Result<Placement, Diagnostic> {
         let ValueLabels {
@@ -600,6 +614,7 @@ impl<'a> ValueAxis<'a> {
             padding,
             limit,
             min_gap,
+            flush,
             ..
         } = self.labels;
         if self.labels.mirror.is_some() {
@@ -640,7 +655,7 @@ impl<'a> ValueAxis<'a> {
         let (mut vega, mut placed) = (Vec::new(), Vec::new());
         for (value, text) in self.rungs(plot.width)? {
             let x = plot.width * fraction(self.domain, value);
-            let align = flush_align(x, plot.width);
+            let align = flush_align(x, plot.width, flush);
             let decided = parity_advance(self.book, &text, &font)?;
             let advance = self
                 .book
@@ -708,10 +723,43 @@ impl<'a> ValueAxis<'a> {
         })
     }
 
+    /// A left or right axis title, turned a quarter and centered on the plot's height, `label_edge` the
+    /// plot-local x of the labels' far edge. It sits `padding` plus the turn's nudge past it
+    /// (`chart-renderer/src/common.rs::axis_title_rotated`, its band `y_title_extra`); a title longer than the plot is refused, as production wraps it.
+    fn place_rotated_title(&self, title: AxisTitle, plot: Size, label_edge: f64, left: bool) -> Result<PlacedTitle, Diagnostic> {
+        if title.text.contains('\n') || title.text.contains(measure::LINE_SEP) {
+            return Err(diag::err_internal(
+                "an axis title reached layout on more than one line: production joins an authored break",
+            ));
+        }
+        let run = self.book.run(title.text, &title.font).map_err(diag::err_internal)?;
+        if run.advance > plot.height {
+            return Err(Diagnostic::refused(refuse!("a value axis title longer than its plot is not supported")));
+        }
+        let sign = if left { -1.0 } else { 1.0 };
+        let x = label_edge + sign * (title.padding - measure::baseline_shift("bottom", title.font.size));
+        let y = plot.height / 2.0;
+        Ok(PlacedTitle {
+            text: title.text.to_string(),
+            x,
+            y,
+            baseline: Baseline::Bottom,
+            turn: Some(sign * 90.0),
+            // The turned text's up points away from the plot.
+            ink: Bounds {
+                x1: x - if left { run.ascent } else { run.descent },
+                y1: y - run.advance / 2.0,
+                x2: x + if left { run.descent } else { run.ascent },
+                y2: y + run.advance / 2.0,
+            },
+        })
+    }
+
     /// A bottom or top axis title centered on the plot: its baseline the label
-    /// size plus `padding` past the labels' (`label_baseline`, with their size), or
-    /// `padding` off the plot edge's baseline when nothing is rung. Its anchor is
-    /// where Vega's baseline offset puts that baseline; its ink is the face's own.
+    /// size plus `padding` past the labels' (`label_baseline`, with their size), or,
+    /// when nothing is rung, its near edge (the top of a bottom axis's title, the
+    /// bottom of a top axis's) `padding` off the plot edge. Its anchor is where
+    /// Vega's baseline offset puts that baseline; its ink is the face's own.
     /// A title wider than the plot is refused: production wraps it at the chart's
     /// width, which this axis does not see. A line break never reaches here, since
     /// production joins an authored one.
@@ -732,9 +780,7 @@ impl<'a> ValueAxis<'a> {
             .run(title.text, &title.font)
             .map_err(diag::err_internal)?;
         if run.advance > plot.width {
-            return Err(Diagnostic::refused(refuse!(
-                "a value axis title wider than its plot is not supported"
-            )));
+            return Err(Diagnostic::refused(refuse!("a value axis title wider than its plot is not supported")));
         }
         let height = run.ascent + run.descent;
         let sign = if below { 1.0 } else { -1.0 };
@@ -758,6 +804,7 @@ impl<'a> ValueAxis<'a> {
             x,
             y,
             baseline,
+            turn: None,
             ink: Bounds {
                 x1: x - run.advance / 2.0,
                 y1,
@@ -766,49 +813,4 @@ impl<'a> ValueAxis<'a> {
             },
         })
     }
-}
-
-/// RL §2e. Whether the value axis's gridlines cap the plot's bottom edge, which
-/// decides the other axis's tick stubs (`_y_gridline_caps_bottom`). False when the grid is hidden; true when
-/// the floor is unknown; else whether the first rung of the baked ladder is the
-/// floor. A `BySize` ladder bakes none, so its floor
-/// is unknown and the verdict is true: production's, not the rung layout picks.
-/// `rail_may_discard_domain` skips a baked bottom bound (a line or area whose
-/// endpoint rail merges the scales).
-pub fn caps_bottom(
-    domain: &ValueDomain,
-    grid_visible: bool,
-    rail_may_discard_domain: bool,
-) -> bool {
-    if !grid_visible {
-        return false;
-    }
-    let first = match &domain.ladder {
-        Ladder::Authored(rungs) => rungs.first().map(|r| r.value),
-        Ladder::Fixed(fixed) => fixed.rungs().first().map(|r| r.value),
-        Ladder::BySize { .. } | Ladder::None => None,
-    };
-    let Some(first) = first else { return true };
-    let anchored = matches!(domain.zero, Zero::Anchored | Zero::Pinned(true));
-    let floor = if let Some(authored) = domain.authored {
-        Some(if authored.reversed {
-            authored.extent.hi()
-        } else {
-            authored.extent.lo()
-        })
-    } else if let (Some(pin), false) = (domain.min, rail_may_discard_domain) {
-        Some(pin.value)
-    } else if anchored {
-        // An authored ladder says nothing about the domain: the floor is zero.
-        Some(match &domain.ladder {
-            Ladder::Fixed(_) => first,
-            _ => 0.0,
-        })
-    } else if matches!(domain.ladder, Ladder::Authored(_)) {
-        None
-    } else {
-        Some(first)
-    };
-    let Some(floor) = floor else { return true };
-    (first - floor).abs() <= 1e-9_f64.max(1e-9 * first.abs().max(floor.abs()))
 }

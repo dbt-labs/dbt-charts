@@ -39,6 +39,7 @@ from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.execute.plan_sources import resolve_source_config
+from dbt_charts.core.execute.query_result import QueryResult
 from dbt_charts.core.execute.run import run_query
 from dbt_charts.core.execute.source_resolver import AD_HOC_QUERY_NAME
 from dbt_charts.core.execute.sql_translate import engine_dialect
@@ -704,6 +705,27 @@ def _fail(
     )
 
 
+def _run_over_memory_cache(
+    board: Board,
+    env: ExecEnv,
+    queries: dict[str, AnyQuery],
+    name: str,
+    variables: dict[str, Any],
+) -> QueryResult:
+    """Run *name* with its ``{{ queries.X.cache }}`` upstreams in a throwaway cache."""
+    from dbt_charts.agent_api.cache import open_cache
+    from dbt_charts.core.execute.plan import make_context
+    from dbt_charts.core.execute.query_results import execute
+
+    cache = open_cache(None)
+    try:
+        ctx = make_context(board, env, query_registry=queries, result_cache=cache)
+        held = execute(ctx, [name], variables).execute_query_result(name, variables)
+    finally:
+        cache.close()
+    return QueryResult(data=held.rows, schema=held.schema)
+
+
 def query_board(
     name: str,
     path: Path,
@@ -713,8 +735,14 @@ def query_board(
     *,
     env: ExecEnv,
 ) -> QueryBoardResult:
-    """Run one named query from a compiled board and return its sample rows."""
+    """Run one named query from a compiled board and return its sample rows.
+
+    No result cache is attached, so the persistent store is never read or
+    written. A query composing another's rows through ``{{ queries.X.cache }}``
+    runs X once against an in-memory cache, discarded on return.
+    """
     from dbt_charts.core.execute.plan import (
+        CACHE_REF_JINJA_RE,
         merge_board_variables,
         resolve_query_references,
         utc_now,
@@ -743,11 +771,13 @@ def query_board(
     query = loaded.all_queries[name].model_copy(update={"limit": limit + 1})
     sql = query.sql if isinstance(query, SqlQuery) else None
     noted = query.notes
+    composes_cache = sql is not None and CACHE_REF_JINJA_RE.search(sql) is not None
 
     # A SQL query against a file source runs through run_query's
     # own materializer dispatch (or its refusal, when no materializer is
     # configured for this registry) and surfaces through exec_result.error
     # below — one dispatch point, not a second copy here.
+    limited = query
     try:
         if isinstance(query, SqlQuery):
             # `compose` inlines {{ queries.X }} in a
@@ -762,13 +792,22 @@ def query_board(
                 query_name=name,
             )
         with board_clock(clock):
-            exec_result = run_query(
-                env,
-                query,
-                variables=merged_vars,
-                board=board,
-                query_name=name,
-            )
+            if composes_cache:
+                exec_result = _run_over_memory_cache(
+                    board,
+                    env,
+                    {**loaded.all_queries, name: limited},
+                    name,
+                    merged_vars,
+                )
+            else:
+                exec_result = run_query(
+                    env,
+                    query,
+                    variables=merged_vars,
+                    board=board,
+                    query_name=name,
+                )
     except Exception as e:  # noqa: BLE001
         return _fail(
             name,

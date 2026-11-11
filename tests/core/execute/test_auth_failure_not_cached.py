@@ -1,4 +1,4 @@
-"""A credentials failure is never cached: re-authenticating must take effect."""
+"""A failure fixed outside the board is never cached: fixing it must take effect."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_BINDER_UNKNOWN_COLUMN,
+    ERR_BINDER_UNKNOWN_RELATION,
     ERR_WAREHOUSE_AUTH,
     ERR_WAREHOUSE_CONNECTION,
     ERR_WAREHOUSE_RUNTIME,
@@ -64,9 +66,23 @@ def _failure(text: str, dialect: str) -> QueryResult:
             connection_failure("bigquery", Exception("could not connect")),
             ERR_WAREHOUSE_CONNECTION,
         ),
+        (
+            QueryResult(
+                data=[],
+                error=QueryError.from_code(ERR_BINDER_UNKNOWN_RELATION, detail="x"),
+            ),
+            ERR_BINDER_UNKNOWN_RELATION,
+        ),
+        (
+            QueryResult(
+                data=[],
+                error=QueryError.from_code(ERR_BINDER_UNKNOWN_COLUMN, detail="x"),
+            ),
+            ERR_BINDER_UNKNOWN_COLUMN,
+        ),
     ],
 )
-def test_credential_or_connection_failure_does_not_replay_once_fixed(
+def test_failure_fixed_outside_the_board_does_not_replay_once_fixed(
     failure: QueryResult, code: ErrorCode
 ) -> None:
     cache = TrivialDuckDBCache()

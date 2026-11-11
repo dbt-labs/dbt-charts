@@ -4,7 +4,8 @@
 //! instant (an offset applied, millisecond precision) and the bucket of its grain. The raw text stays
 //! the key rows, links and tooltips join on. The axis sorts a domain by instant, so no family orders
 //! or compares dates as text. A value that parses as no date is [`Unreadable`], which every family
-//! raises as `ERR-X-VALUE-NOT-A-DATE`.
+//! raises as `ERR-X-VALUE-NOT-A-DATE`. The per-chart `TimeAxis` is shared with
+//! `chart-renderer` (see its `AGENTS.md`).
 
 use std::collections::HashMap;
 
@@ -123,12 +124,7 @@ pub fn parse_iso_date(s: &str) -> Option<(i32, u8, u8)> {
 fn parse_date_part(s: &str) -> Option<(i32, u8, u8)> {
     let b = s.as_bytes();
     match b.len() {
-        10 if b[4] == b'-' && b[7] == b'-' => {
-            let y = parse_digits4(&b[0..4])?;
-            let m = parse_digits2(&b[5..7])?;
-            let d = parse_digits2(&b[8..10])?;
-            ((1..=12).contains(&m) && d >= 1 && u32::from(d) <= days_in_month(y, u32::from(m))).then_some((y, m, d))
-        }
+        10 => d3rs::calendar::parse_ymd(s),
         7 if b[4] == b'-' => {
             let y = parse_digits4(&b[0..4])?;
             let m = parse_digits2(&b[5..7])?;

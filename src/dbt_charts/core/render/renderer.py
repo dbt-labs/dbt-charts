@@ -144,6 +144,7 @@ from dbt_charts.core.render.controls import (
     flat_export,
     interactive_controls,
     is_flat_export,
+    page_runtime,
 )
 from dbt_charts.core.render.converters import to_html, to_pdf, to_png
 from dbt_charts.core.render.errors import (
@@ -976,6 +977,13 @@ def _render(
         collect_plot_width_share_warnings() as _sizing_plot_width_share_warnings,
         collect_pie_total_overflows() as _sizing_pie_total_overflows,
         board_variables(merged_variables),
+        # A pooled table draws its tallest rows per page, so the sizer must
+        # measure it pooled too or the slot it reserves is too short.
+        interactive_controls(
+            options.get(
+                "controls", False
+            )  # type-state: silent_fallback — opt-in host flag, absent means off
+        ),
     ):
         try:
             with variable_options(
@@ -1156,6 +1164,7 @@ def _render(
             collect_contrast_warnings() as _contrast_warnings,
             collect_painted_italic_families(),
             interactive_controls(options.get("controls", False)),
+            page_runtime(format == "html"),
             # A host converting an SVG to an image itself opens this scope.
             flat_export(format in ("png", "pdf") or is_flat_export()),
         ):

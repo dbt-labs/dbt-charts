@@ -778,6 +778,11 @@ pub struct TableChartStyle {
     pub title_row: TableTitleStyle,
     /// Allow cell text wrapping; false clips to single line.
     pub wrap: bool,
+    /// Hide query columns whose names start with an underscore, such as a `_flag`
+    /// computed for a conditional rule or `_fivetran_synced`. A hidden column's values
+    /// still feed rules and links, and a column with its own `style.columns` entry
+    /// always shows. Set false to show them.
+    pub hide_underscore_columns: bool,
     /// Client-side pagination defaults for table charts.
     pub pagination: PaginationConfig,
     /// Table-level column defaults applied to every column.

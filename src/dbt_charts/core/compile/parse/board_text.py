@@ -1,7 +1,12 @@
 """A board file's title and notes, read from its raw text.
 
-The one reading of "what is this board called" for every listing and search
-surface: it never validates, so a board that does not compile is still named.
+The text-only reading of "what is this board called": it never validates, so a board
+that does not compile is still named. `glob_boards` listings use it for every board:
+their dependency closure is the listed files, which a folded title would outgrow.
+Search and `dct search` listings name a board the engine compiles from the engine's
+index instead (`read_board_text`) and use this reading for the rest: markdown boards
+and boards that fail to compile. Such a board is listed with its title, notes and tags
+and with no queries or charts.
 """
 
 from pathlib import PurePosixPath

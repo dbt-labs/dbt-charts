@@ -1,11 +1,13 @@
 //! Builders for the spine's types, for tests that need a value without a board to parse.
 //! Each builds through the field types' `TryFrom`, the way normalize does, so a fixture never
-//! holds a value normalize could not produce. Behind the `fixtures` feature.
+//! holds a value normalize could not produce. Behind the `fixtures` feature; also render's mocks.
+//! The structure-side builders parse and then `Build`. `fixtures::resolved_style(theme)` builds
+//! a built-in theme's total `Style` through the generated inherit.
 
 mod board;
 pub use board::*;
 mod sql;
-pub use sql::{Opaque, Recorded};
+pub use sql::Opaque;
 
 use crate::chart::callout::CalloutChart;
 use crate::chart::ChartQuery;
@@ -175,7 +177,7 @@ pub fn variable_value(wire: &Value) -> Result<crate::variable_value::VariableVal
     crate::variable_value::VariableValue::from_json(wire).map_err(|e| FixtureError(vec![e]))
 }
 
-fn resolved_theme(
+pub fn resolved_theme(
     theme: &str,
 ) -> Result<model_core::Resolved<crate::style::style::Style>, FixtureError> {
     let folded = crate::board::theme::built_in_theme(theme)

@@ -56,6 +56,29 @@ def controls_are_interactive() -> bool:
     return _INTERACTIVE.get()
 
 
+_PAGE_RUNTIME: ContextVar[bool] = ContextVar("dct_page_runtime", default=False)
+
+
+@contextmanager
+def page_runtime(enabled: bool) -> Generator[None]:
+    """Draw for a page that ships ``page_runtime_source()``, for one render.
+
+    A table then pools its rows for the table runtime instead of embedding a
+    pager script of its own. An HTML export opens this scope; a host with
+    interactive controls ships the page runtime too, so it implies the scope.
+    """
+    token = _PAGE_RUNTIME.set(enabled)
+    try:
+        yield
+    finally:
+        _PAGE_RUNTIME.reset(token)
+
+
+def ships_page_runtime() -> bool:
+    """True while a render is being done for a page that ships the page runtime."""
+    return _INTERACTIVE.get() or _PAGE_RUNTIME.get()
+
+
 _FLAT_EXPORT: ContextVar[bool] = ContextVar("dct_flat_export", default=False)
 
 
@@ -170,14 +193,14 @@ def controls_language() -> dict[str, str]:
 
 
 @cache
-def controls_runtime_source() -> str:
-    """The board runtimes (the English controls words, the calendar, chart hover, table scroll and sort/filter, the link modal, then variable controls) as JS for a host to ship in its page.
+def page_runtime_source() -> str:
+    """The board runtimes that need no host (the English controls words, the calendar, chart hover, then table scroll and sort/filter/paging) as JS.
 
-    Strips the ``/*{# ... #}*/``-fenced comments — engineering notes with no
-    audience once the runtime is shipped. Cached: hosts rebuild this per page
-    render, and a packaged asset can't change under a running process.
+    Everything a page can do with the board it already holds: a static HTML
+    export ships exactly this. Strips the ``/*{# ... #}*/``-fenced comments,
+    engineering notes with no audience once the runtime is shipped. Cached: a
+    packaged asset can't change under a running process.
     """
-    # Hover and table first: the controls runtime's mount() hands each board to them.
     # The calendar before both of its users, the table and date controls.
     return "\n".join(
         [
@@ -186,6 +209,17 @@ def controls_runtime_source() -> str:
             hover_runtime_source(),
             strip_js_comments(_read_script("table_scroll.js")),
             strip_js_comments(_read_script("table_runtime.js")),
+        ]
+    )
+
+
+@cache
+def controls_runtime_source() -> str:
+    """The page runtimes, then the link modal and variable controls, as JS for a host that can re-run a board's queries."""
+    # Hover and table first: the controls runtime's mount() hands each board to them.
+    return "\n".join(
+        [
+            page_runtime_source(),
             link_modal_source(),
             strip_js_comments(_read_script("variables.js")),
         ]

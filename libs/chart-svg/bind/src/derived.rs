@@ -2,6 +2,23 @@
 //! and walked legend, derived from the placement's styles as production's style finalization does
 //! (`merge_chart_style`, `_canvases`, `_effective_single_series_fill`, `get_chart_content_height`).
 //! What a tier sets that no walk reads yet is refused by name.
+//!
+//! Derived per placement for a bar, line or scatter:
+//! - The canvas is the chart's own background, else an opaque or clear `charts.background`,
+//!   over each body's background from the root (`_canvases`, `own_canvas`). A translucent card
+//!   fill, which cannot be told from its echo, is refused.
+//! - The padding and aspect ratio come from the folded family style, the min and max height
+//!   from the chart's own, else the board's `charts.*` (`get_chart_content_height`).
+//! - The title and legend are the board's total with the leaves `style/title.rs` and
+//!   `style/legend.rs` walk (`walked_title`, `walked_legend`); any other leaf a chart or family
+//!   tier sets is refused by name.
+//! - The single-series fill and the canvas read the chart's own tier alone (`own`), never the
+//!   family's, as production does: `_effective_single_series_fill` takes a static fill, then
+//!   the chart's own palette, then the board palette's first stop for a chart with layers, else
+//!   the own or board single-series ink at the rhythm slot.
+//!
+//! `engine`'s `tests/it/derived.rs` replays `derived_production.json`, recorded from
+//! production's style finalization by `record_derived_style.py`.
 
 use board_model::board::BoardBody;
 use board_model::chart::Chart;
@@ -12,13 +29,16 @@ use board_model::style::style::Style;
 use color::Rgba;
 use diagnostic::{diag, refuse, Diagnostic};
 use board_model::facet::Color;
-use model_core::{Engine, Patch, SetLeaves, Tri};
+use model_core::{Engine, Leaf, Patch, Resolved, SetLeaves, Tri};
+
+/// A style as one layer authored it, leaf by leaf.
+pub type StylePatch = <Style as Leaf>::Patch;
 
 use crate::families::cartesian::unsupported;
-use crate::model::{Frame, Sizing};
+use crate::bound::{Frame, Sizing};
 use crate::style::legend::walked_legend;
 use crate::style::title::walked_title;
-use crate::style::{Tier, Tiers};
+use crate::style::Tiers;
 
 /// One placement of a cartesian chart: the chart, the bodies from the root to the one that places
 /// it (the last), its folded family style, its own tier alone (the only one production reads for
@@ -27,7 +47,8 @@ pub struct Placed<'a> {
     pub chart: &'a Chart,
     pub chain: Vec<&'a BoardBody>,
     pub style: &'a Style,
-    pub own: &'a Patch<Style>,
+    pub own: &'a StylePatch,
+    pub scope: &'a Resolved<Style>,
     pub rhythm_slot: Option<u32>,
     /// The chart's `Chart.id`: the name production writes in its errors, which for an inline
     /// chart is not its position.
@@ -57,73 +78,80 @@ fn refuse_unwalked(slot: &str, patch: &impl SetLeaves, walked: &[&str]) -> Resul
     }
 }
 
+fn refuse_unwalked_tri(slot: &str, patch: &Tri<impl SetLeaves>, walked: &[&str]) -> Result<(), Diagnostic> {
+    match patch {
+        Tri::Unset => Ok(()),
+        Tri::Null => Err(unsupported(refuse!("a chart that sets `{slot}` to null is not supported"))),
+        Tri::Value(patch) => refuse_unwalked(slot, patch, walked),
+    }
+}
+
 impl Placed<'_> {
     /// The body that places the chart, whose style it draws with.
     pub fn body(&self) -> Result<&BoardBody, Diagnostic> {
         self.chain.last().copied().ok_or_else(|| diag::err_internal("a placement has a placing body"))
     }
 
-    pub fn scope(&self) -> Result<&Style, Diagnostic> {
-        self.body()?.style.as_deref().ok_or_else(|| diag::err_internal("a normalized board carries its total style"))
+    pub fn scope(&self) -> &Style {
+        &self.scope.total
     }
 
     pub fn derive(&self) -> Result<DerivedChart, Diagnostic> {
-        let scope = self.scope()?;
-        let (painted, own_painted, height, own_tier, family_tier) = match self.chart {
+        let scope = self.scope();
+        let (painted, own_painted, height) = match self.chart {
             Chart::Bar(c) => {
                 let (o, f) = (&*self.own.charts.bar, &*scope.charts.bar);
-                if let Tri::Value(legend) = &o.legended.legend {
-                    refuse_unwalked("legend", legend, &LEGEND_WALKED)?;
-                }
-                if let Tri::Value(title) = &o.cartesian.titled.title {
-                    refuse_unwalked("title", title, &TITLE_WALKED)?;
-                }
+                refuse_unwalked_tri("legend", &o.legended.legend, &LEGEND_WALKED)?;
+                refuse_unwalked_tri("title", &o.cartesian.titled.title, &TITLE_WALKED)?;
                 if let Some(legend) = &f.legended.legend {
                     refuse_unwalked("legend", legend, &LEGEND_WALKED)?;
                 }
                 if let Some(title) = &f.cartesian.titled.title {
                     refuse_unwalked("title", title, &TITLE_WALKED)?;
                 }
-                (&self.style.charts.bar.cartesian.painted, &o.cartesian.painted, c.cartesian.height, Tier::from(o), Tier::from(f))
+                (&self.style.charts.bar.cartesian.painted, &o.cartesian.painted, c.cartesian.height)
             }
             Chart::Line(c) => {
                 let (o, f) = (&*self.own.charts.line, &*scope.charts.line);
-                if let Tri::Value(legend) = &o.legended.legend {
-                    refuse_unwalked("legend", legend, &LEGEND_WALKED)?;
-                }
-                if let Tri::Value(title) = &o.cartesian.titled.title {
-                    refuse_unwalked("title", title, &TITLE_WALKED)?;
-                }
+                refuse_unwalked_tri("legend", &o.legended.legend, &LEGEND_WALKED)?;
+                refuse_unwalked_tri("title", &o.cartesian.titled.title, &TITLE_WALKED)?;
                 if let Some(legend) = &f.legended.legend {
                     refuse_unwalked("legend", legend, &LEGEND_WALKED)?;
                 }
                 if let Some(title) = &f.cartesian.titled.title {
                     refuse_unwalked("title", title, &TITLE_WALKED)?;
                 }
-                (&self.style.charts.line.cartesian.painted, &o.cartesian.painted, c.cartesian.height, Tier::from(o), Tier::from(f))
+                (&self.style.charts.line.cartesian.painted, &o.cartesian.painted, c.cartesian.height)
             }
             Chart::Scatter(c) => {
                 let (o, f) = (&*self.own.charts.scatter, &*scope.charts.scatter);
-                if let Tri::Value(legend) = &o.legended.legend {
-                    refuse_unwalked("legend", legend, &LEGEND_WALKED)?;
-                }
-                if let Tri::Value(title) = &o.cartesian.titled.title {
-                    refuse_unwalked("title", title, &TITLE_WALKED)?;
-                }
+                refuse_unwalked_tri("legend", &o.legended.legend, &LEGEND_WALKED)?;
+                refuse_unwalked_tri("title", &o.cartesian.titled.title, &TITLE_WALKED)?;
                 refuse_unwalked("legend", &f.legended.legend, &LEGEND_WALKED)?;
                 if let Some(title) = &f.cartesian.titled.title {
                     refuse_unwalked("title", title, &TITLE_WALKED)?;
                 }
-                (&self.style.charts.scatter.cartesian.painted, &o.cartesian.painted, c.cartesian.height, Tier::from(o), Tier::from(f))
+                (&self.style.charts.scatter.cartesian.painted, &o.cartesian.painted, c.cartesian.height)
+            }
+            // `family_slots!` folds a histogram's own style into `charts.bar`.
+            Chart::Histogram(c) => {
+                let (o, f) = (&*self.own.charts.bar, &*scope.charts.histogram);
+                refuse_unwalked_tri("legend", &o.legended.legend, &LEGEND_WALKED)?;
+                refuse_unwalked_tri("title", &o.cartesian.titled.title, &TITLE_WALKED)?;
+                refuse_unwalked("legend", &f.legended.legend, &LEGEND_WALKED)?;
+                if let Some(title) = &f.cartesian.titled.title {
+                    refuse_unwalked("title", title, &TITLE_WALKED)?;
+                }
+                (&self.style.charts.histogram.cartesian.painted, &o.cartesian.painted, c.cartesian.height)
             }
             other => {
                 return Err(diag::err_internal(format!(
-                    "style is derived for bar, line and scatter, asked of a {} chart",
+                    "style is derived for bar, histogram, line and scatter, asked of a {} chart",
                     crate::board::family(other)
                 )))
             }
         };
-        let tiers = Tiers { own: own_tier, family: family_tier, charts: &scope.charts };
+        let tiers = Tiers::of(self.chart, self.own, &scope.charts)?;
         let ended = || diag::err_internal("the total style ends every title and legend walk");
         let title = walked_title(&tiers).ok_or_else(ended)?;
         let legend = SideLegendStyle {
@@ -188,23 +216,23 @@ impl Placed<'_> {
     /// consulted for the first two.
     pub fn single_series_fill(&self) -> Result<Rgba, Diagnostic> {
         let own = match self.chart {
-            Chart::Bar(_) => &self.own.charts.bar.cartesian.painted,
+            Chart::Bar(_) | Chart::Histogram(_) => &self.own.charts.bar.cartesian.painted,
             Chart::Line(_) => &self.own.charts.line.cartesian.painted,
             Chart::Scatter(_) => &self.own.charts.scatter.cartesian.painted,
             other => {
                 return Err(diag::err_internal(format!(
-                    "style is derived for bar, line and scatter, asked of a {} chart",
+                    "style is derived for bar, histogram, line and scatter, asked of a {} chart",
                     crate::board::family(other)
                 )))
             }
         };
         let has_layers = match self.chart {
-            Chart::Bar(c) => !c.layers.is_empty(),
+            Chart::Bar(c) | Chart::Histogram(c) => !c.layers.is_empty(),
             Chart::Line(c) => !c.layers.is_empty(),
             Chart::Scatter(c) => !c.layers.is_empty(),
             _ => false,
         };
-        self.fill(own, self.scope()?, has_layers)
+        self.fill(own, self.scope(), has_layers)
     }
 
     fn fill(&self, own: &Patch<PaintedChartStyleBase>, scope: &Style, has_layers: bool) -> Result<Rgba, Diagnostic> {
@@ -231,11 +259,12 @@ impl Placed<'_> {
                 }
             }
         }
-        // A chart with layers is a multi-series chart in disguise: its base shares the category
-        // palette with its layers, so the single-series ink never speaks.
+        // A chart with `layers:` is a multi-series chart in disguise: its base shares the category
+        // palette with the layers, so the board's first stop paints it.
         if has_layers {
-            let palette = colors(&board.palette)?;
-            return parse(palette.first().ok_or_else(|| diag::err_internal("a categorical palette has a color"))?);
+            let palette = crate::palette_of(scope)?;
+            let first = palette.first().ok_or_else(|| diag::err_internal("the board's categorical palette is empty"))?;
+            return parse(first);
         }
         let own_ink = match categorical {
             Tri::Value(own) => own.single_series_palette.as_ref(),

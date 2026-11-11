@@ -44,16 +44,16 @@ pub fn focus(
         }
     };
     if index.declared_below.contains(key.as_str()) {
-        return Err(CompileError::Refused(
+        return Err(CompileError::internal(
             "chart_focus on a chart a nested board or another file declares",
         ));
     }
     let needed = all
         .charts
         .get(key.as_str())
-        .ok_or(CompileError::Refused("a focused chart has no dependencies"))?;
+        .ok_or_else(|| CompileError::internal("a focused chart has no dependencies"))?;
     if needed.iter().any(|n| all.nested.contains(n)) {
-        return Err(CompileError::Refused(
+        return Err(CompileError::internal(
             "chart_focus on a chart that reads a variable a nested board declares",
         ));
     }

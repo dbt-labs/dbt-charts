@@ -11,6 +11,7 @@ mdsvg = { path = "../mdsvg" }
 display-text = { path = "../display-text" }
 diagnostic = { path = "../diagnostic" }
 bind = { path = "../bind" }
+board-model = { path = "../board-model" }
 layout = { path = "../layout" }
 column-types = { path = "../column-types" }
 dbt-charts-color = { path = "../color" }

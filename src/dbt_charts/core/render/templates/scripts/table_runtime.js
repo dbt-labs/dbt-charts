@@ -19,7 +19,7 @@
     }
 
     /*{# A wrapped cell is several tspans; joined bare they would run words together. #}*/
-    /*{# An anchor affix ($, %, a shared-scale M) is left out: which row shows it must #}*/
+    /*{# An anchor affix ($, %) is left out: which row shows it must #}*/
     /*{# not change a value's text. #}*/
     function _cellText(el) {
         var lines = Array.prototype.filter.call(el.children, function(child) {
@@ -211,6 +211,7 @@
                 _setHidden(row.rule, !next || next.summary);
             }
         });
+        _followRows(state, y);
         ordered.forEach(function(row, i) {
             if (row.number) row.number.textContent = String(i + 1);
         });
@@ -222,14 +223,27 @@
         _markHeaders(state);
     }
 
+    /*{# The engine draws the pager, x scrollbar and frozen edge to end under the #}*/
+    /*{# open page's rows (`data-dbt-rows-end`); they move with that bottom, so a #}*/
+    /*{# short page keeps its pager close. A stored render without the hook stays put. #}*/
+    function _followRows(state, rowsEnd) {
+        if (state.rowsEnd === null) return;
+        var shift = rowsEnd - state.rowsEnd;
+        _children(state.table, 'data-dbt-pager').concat(state.follow).forEach(function(el) {
+            if (shift) el.setAttribute('transform', 'translate(0 ' + shift + ')');
+            else el.removeAttribute('transform');
+        });
+        state.spans.forEach(function(span) {
+            span.el.setAttribute('height', String(span.height + shift));
+        });
+    }
+
     /*{# The engine draws each anchored affix on every row, tagged with a bitmask of the #}*/
-    /*{# (symbol anchor?, magnitude anchor?) slots that paint it (bit 2*symbol + magnitude). #}*/
-    /*{# A column's $ and % anchor on its first non-null data row of the page; a #}*/
-    /*{# shared-scale column's M anchors on its first nonzero row, else the first. A #}*/
-    /*{# summary row paints its own, never anchors. #}*/
+    /*{# (symbol anchor?) slots that paint it (bit 1 = the anchor row). A column's $ and #}*/
+    /*{# % anchor on its first non-null data row of the page. A summary row paints its #}*/
+    /*{# own, never anchors. A shared-scale magnitude word is no affix: it prints on every row. #}*/
     function _markAffixes(state, onPage) {
         var dataRows = onPage.filter(function(row) { return !row.summary; });
-        var first = dataRows[0];
         var symbolRows = {};
         function symbolRow(col) {
             if (!(col in symbolRows)) {
@@ -239,20 +253,9 @@
             }
             return symbolRows[col];
         }
-        var magnitudeRows = {};
-        function magnitudeRow(col) {
-            if (!(col in magnitudeRows)) {
-                magnitudeRows[col] = dataRows.find(function(row) {
-                    var cell = row.cells[col];
-                    var value = cell && cell.key !== null && cell.key.trim() !== '' ? Number(cell.key) : NaN;
-                    return isFinite(value) && value !== 0;
-                }) || first;
-            }
-            return magnitudeRows[col];
-        }
         state.rows.forEach(function(row) {
             row.affixes.forEach(function(affix) {
-                var slot = 2 * (row === symbolRow(affix.col) ? 1 : 0) + (row === magnitudeRow(affix.col) ? 1 : 0);
+                var slot = row === symbolRow(affix.col) ? 1 : 0;
                 affix.el.classList.toggle('dbt-table-affix-shown', ((affix.mask >> slot) & 1) === 1);
             });
         });
@@ -536,6 +539,11 @@
             pageRows: _numberHook(table, 'data-dbt-page-rows'),
             rowsY: _numberHook(table, 'data-dbt-rows-y'),
             gap: _numberHook(table, 'data-dbt-summary-gap'),
+            rowsEnd: table.hasAttribute('data-dbt-rows-end') ? _numberHook(table, 'data-dbt-rows-end') : null,
+            follow: Array.prototype.slice.call(table.querySelectorAll('[data-dbt-rows-follow]')),
+            spans: Array.prototype.map.call(table.querySelectorAll('[data-dbt-rows-span]'), function(el) {
+                return { el: el, height: _numberHook(el, 'height') };
+            }),
             perPagePagers: _children(table, 'data-dbt-pager').some(function(pager) {
                 return pager.getAttribute('data-dbt-pager') !== 'compact';
             }),
@@ -634,4 +642,11 @@
 
     window.dbtChartHover.addPictureStep(_pictureRows);
     window.dbtTableRuntime = { mount: mount };
+
+    /*{# A page with no controls runtime (a static export) has no one else to mount it. #}*/
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() { mount(document); }, { once: true });
+    } else {
+        mount(document);
+    }
 })();

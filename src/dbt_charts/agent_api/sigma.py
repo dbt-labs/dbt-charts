@@ -237,6 +237,7 @@ _OWN_LINES = frozenset(
         "description",
         "columns",
         "tooltip",
+        "groupings",
     }
 )
 
@@ -327,6 +328,14 @@ def _describe(
     if el.get("tooltip"):
         names = "; ".join(col(c["id"]) for c in el["tooltip"]["columns"])
         lines.append(with_rest(f"tooltip: {names}", el["tooltip"], {"columns"}))
+    for grouping in el.get("groupings", []):
+        head = (
+            "grouping: "
+            + "; ".join(col(i) for i in grouping["groupBy"])
+            + " \N{EM DASH} calculations: "
+            + "; ".join(col(i) for i in grouping["calculations"])
+        )
+        lines.append(with_rest(head, grouping, {"id", "groupBy", "calculations"}))
     # Sigma writes `stacking` only when it is not the default, so a bar or area
     # chart without the key stacks its series; say so, or it reads as grouped.
     if el["kind"] in ("bar-chart", "area-chart") and "stacking" not in el:

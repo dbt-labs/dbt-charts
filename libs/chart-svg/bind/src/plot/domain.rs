@@ -5,7 +5,7 @@
 use d3rs::measure_axis::{apply_headroom, bake_ticks, MeasureAxis};
 use diagnostic::{diag, Diagnostic};
 
-use crate::model::{Authored, Bounds, BoundsReason, Extent, Invalid, Ladder, Pin, PinReason, Rung, ValueDomain, Zero};
+use crate::bound::{Authored, Bounds, BoundsReason, Extent, Invalid, Ladder, Pin, PinReason, Rung, ValueDomain, Zero};
 
 /// `ticks.count: auto`.
 pub const AUTO_TICK_TARGET: usize = 6;
@@ -251,7 +251,7 @@ pub(crate) fn fixed(ticks: Vec<f64>, authored: Option<Extent>, text: RungText) -
             Extent::new(lo, hi)?
         }
     };
-    Ok(Ladder::Fixed(crate::model::FixedLadder::new(rungs(&ticks, text), bounds)?))
+    Ok(Ladder::Fixed(crate::bound::FixedLadder::new(rungs(&ticks, text), bounds)?))
 }
 
 pub(crate) fn rungs(values: &[f64], text: RungText) -> Vec<Rung> {

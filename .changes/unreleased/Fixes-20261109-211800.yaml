@@ -1,0 +1,3 @@
+kind: Fixes
+body: Live tables with a few wrapping rows keep their page size instead of shrinking to a couple of rows.
+time: 2026-11-09T21:18:00.581628-08:00

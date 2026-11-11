@@ -16,7 +16,7 @@
 //! What layout cannot see and production reads is the caller's to refuse: `labels.values`, `labels.expr`
 //! and `scale.continuous.domain` (each makes production keep Vega's own labels or extent).
 
-use bind::model::TimeDomain;
+use bind::bound::TimeDomain;
 use bind::temporal::TimeUnit;
 use d3rs::calendar::MS_PER_DAY;
 use d3rs::time::Unit;

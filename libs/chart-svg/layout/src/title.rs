@@ -2,8 +2,9 @@
 //! card gives.
 
 use board_model::facet::FontWeightValue;
+use board_model::style::board::OverflowMode;
 use board_model::style::style::Style;
-use diagnostic::{diag, Diagnostic};
+use diagnostic::{diag, refuse, Diagnostic};
 use measure::shaped::{Font, FontBook};
 use model_core::Engine;
 
@@ -41,6 +42,67 @@ pub fn chart_title_spec(style: &Style, width: f64) -> Result<(f64, FontWeightVal
         _ => style.charts.font.family.as_str().to_string(),
     };
     Ok((size, weight, family))
+}
+
+/// The gap between an object title's block and its body when `title.position.offset` is unset
+/// (common.rs:`wrap_title_block`'s `unwrap_or(10.0)`).
+const DEFAULT_TITLE_OFFSET: f64 = 10.0;
+
+/// `title_ascent`'s ratio of a title's size to its first baseline (sizing.rs:`title_ascent`).
+const TITLE_ASCENT_RATIO: f64 = 0.8;
+
+/// A chart's one-line title as it draws: its text, its band and the face it paints in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChartTitle {
+    pub text: String,
+    /// The block's top to the first baseline, and that baseline to the body (`vega_title_block`).
+    pub metrics: TitleMetrics,
+    pub size: f64,
+    pub weight: FontWeightValue,
+    /// The family stack as the style states it, before the board's emoji mode.
+    pub family: String,
+}
+
+/// A chart's title at its card's outer `width`, in the `avail_w` the card's padding leaves: the one
+/// place a family gets a title. The face is `chart_title_spec`'s, the case the chart title slot's,
+/// the overflow `charts.title.overflow`, and the gap under the text `title.position.offset`. The
+/// band is production's Vega-Lite title (title_shift.rs:`vega_title_block`): the first baseline at
+/// `round(0.8 * size)`, the body `size + offset` under the top; the font's own ascent and descent
+/// (`title_block`) only decide whether the text fits one line. A title that wraps or is cut is
+/// refused by name, since the engine carries no warning out of a painter.
+/// `None` when the text is blank.
+pub fn chart_title(chart_id: &str, text: &str, style: &Style, width: f64, avail_w: f64, book: &FontBook) -> Result<Option<ChartTitle>, Diagnostic> {
+    let slot = &style.charts.title;
+    if matches!(slot.font.size, Engine::Value(_)) {
+        return Err(Diagnostic::refused(refuse!("a chart title with an authored font size is not supported")));
+    }
+    let (size, weight, family) = chart_title_spec(style, width)?;
+    let cased = display_text::case::apply_case(text, slot.font.case.as_str()).map_err(diag::err_internal)?;
+    let axis = match &weight {
+        FontWeightValue::Number(n) => *n as f32,
+        FontWeightValue::Name(name) => measure::fonts::css_weight_axis(name).map_err(diag::err_internal)?.ok_or_else(|| Diagnostic::refused(refuse!("a chart title whose font weight names no axis value is not supported")))?,
+    };
+    let font = Font { family: measure::stand_in_family(&family), size, weight: axis, italic: slot.font.style.as_str() == "italic" };
+    let overflow = match slot.base.overflow {
+        OverflowMode::Clip => Overflow::Clip,
+        OverflowMode::Truncate => Overflow::Truncate,
+        OverflowMode::WrapTwo => Overflow::WrapTwo,
+        OverflowMode::Wrap => Overflow::Wrap,
+    };
+    let offset = slot.base.position.offset.unwrap_or(DEFAULT_TITLE_OFFSET);
+    let fitted = TitleText { text: &cased, font, overflow };
+    let Some(block) = title_block(chart_id, Some(&fitted), None, offset, avail_w, book).map_err(diag::err_internal)? else {
+        return Ok(None);
+    };
+    let [line] = block.title.as_slice() else {
+        return Err(Diagnostic::refused(refuse!("a chart title that needs more than one line is not supported")));
+    };
+    if !block.diagnostics.is_empty() {
+        return Err(Diagnostic::refused(refuse!("a chart title cut to its width is not supported")));
+    }
+    let ascent = (size * TITLE_ASCENT_RATIO).round_ties_even();
+    let metrics = TitleMetrics { ascent, tail: size + offset - ascent };
+    Ok(Some(ChartTitle { text: line.text.clone(), metrics, size, weight, family }))
 }
 
 /// How a title's text fits its limit.

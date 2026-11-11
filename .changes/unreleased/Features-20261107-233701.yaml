@@ -1,0 +1,3 @@
+kind: Features
+body: '`dct cloud project settings` and `dct cloud project set` read and change a project''s settings, including whether the agent honors the repo''s AGENTS.md.'
+time: 2026-11-07T23:37:01.217554-08:00

@@ -1,5 +1,6 @@
-//! What every axis's labels share: how a label sits on its anchor, Vega's flush anchor and its
-//! parity rule.
+//! What every axis's labels share: how a label sits on its anchor, Vega's flush anchor, the parity
+//! rule and its measure, and Vega's baseline. [`vega_space`] is the room production reserves for a
+//! label, which every gutter reads while the ink stays the face's own.
 
 use diagnostic::{diag, Diagnostic};
 use measure::shaped::{Font, FontBook};
@@ -21,13 +22,17 @@ pub enum Baseline {
     Bottom,
 }
 
-/// Vega's `labelFlush` with its default `labelFlushOffset` of 0: a label within a pixel of a
-/// range end anchors on it, the nearer end winning a tie.
-pub(crate) fn flush_align(x: f64, span: f64) -> Align {
+/// Vega's `labelFlush` with its default `labelFlushOffset` of 0: a label within `threshold` pixels
+/// of a range end anchors on it, the nearer end winning a tie; no threshold centers every label
+/// (production's `flush_edge`, with `axis.labels.flush` read through `flush_threshold`).
+pub(crate) fn flush_align(x: f64, span: f64, threshold: Option<f64>) -> Align {
+    let Some(threshold) = threshold else {
+        return Align::Center;
+    };
     let (near_start, near_end) = (x.abs(), (span - x).abs());
-    if near_start < near_end && near_start <= 1.0 {
+    if near_start < near_end && near_start <= threshold {
         Align::Left
-    } else if near_end <= 1.0 {
+    } else if near_end <= threshold {
         Align::Right
     } else {
         Align::Center
@@ -35,7 +40,7 @@ pub(crate) fn flush_align(x: f64, span: f64) -> Align {
 }
 
 /// Where Vega puts the baseline of a text whose `baseline` edge sits on `anchor`
-/// (`baseline_shift`, quirk class Q2d).
+/// (`baseline_shift`; the ink is the face's own).
 pub(crate) fn vega_baseline(anchor: f64, baseline: Baseline, size: f64) -> f64 {
     let edge = match baseline {
         Baseline::Top => "top",

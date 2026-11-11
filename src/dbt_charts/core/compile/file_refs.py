@@ -22,7 +22,10 @@ from dbt_charts.core.compile.migrations.migrations import (
     prepare_board_mapping,
 )
 from dbt_charts.core.compile.parse.parser import load_yaml_text
-from dbt_charts.core.diagnostics.codes_compile import ERR_FILE_SOURCE_AMBIGUOUS
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_FILE_SOURCE_AMBIGUOUS,
+    ERR_QUERY_REF_INVALID,
+)
 from dbt_charts.core.diagnostics.codes_render import ERR_IMAGE_REF_UNRESOLVED
 from dbt_charts.core.utils import IMAGE_SUFFIXES
 
@@ -78,10 +81,7 @@ def split_external_query_ref(query_ref: str) -> tuple[str, str]:
     """
     file_part, _, query_name = query_ref.partition("#")
     if not file_part or not query_name:
-        raise CompilationError(
-            f"Invalid external query reference: '{query_ref}'. "
-            "Expected format: 'path/to/file.yml#query_name'"
-        )
+        raise CompilationError.from_code(ERR_QUERY_REF_INVALID, ref=query_ref)
     return file_part, query_name
 
 

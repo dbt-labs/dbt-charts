@@ -1,4 +1,4 @@
-//! Decode (spec § 5.1, pass 1): a dataset's cells against its declared schema, once, into
+//! Decode (spec § 5.1, pass 1), the first board-wide pass: a dataset's cells against its declared schema, once, into
 //! one [`Key`] variant per column. The declared type picks the variant, never the cell. A
 //! number or date key keeps its wire text, so `2` and `2.0` are two keys, as production's
 //! canonical-JSON partition key keeps them.
@@ -13,7 +13,7 @@ use column_types::{CellMismatch, ColumnType, Dataset};
 use diagnostic::Diagnostic;
 use serde_json::{Map, Value};
 
-use crate::model::Key;
+use crate::bound::Key;
 use crate::time_axis::{Grain, TimeAxis};
 
 /// A dataset's scalar columns as keys, column-major, one key per row.

@@ -27,7 +27,11 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     next_minor,
     structural_schema_bytes,
 )
-from dbt_charts.schema_release import freeze_yaml_schema, verify_released_yaml_schema
+from dbt_charts.schema_release import (
+    _migrate_crate_src,
+    freeze_yaml_schema,
+    verify_released_yaml_schema,
+)
 
 
 def _write_schema_file(directory: Path, filename: str, schema: dict) -> str:
@@ -64,6 +68,21 @@ def _dev_entry(version: str, *, predecessor: str | None) -> dict:
         "sha256": None,
         "predecessor": predecessor,
     }
+
+
+def _write_dev_module(crate_src: Path, version: str, predecessor: str) -> None:
+    """A migrate crate registering *version* as its DEV boundary module."""
+    name = f"v{version.replace('.', '_')}"
+    crate_src.mkdir(exist_ok=True)
+    (crate_src / f"{name}.rs").write_text(
+        f"//! The {predecessor} -> {version} boundary.\n", encoding="utf-8"
+    )
+    (crate_src / "lib.rs").write_text(
+        f"mod v0_1_0;\nmod {name};\n\nconst MODULES = &[\n"
+        '    ("0.1.0", v0_1_0::declarations),\n'
+        f'    ("{version}", {name}::declarations),\n];\n',
+        encoding="utf-8",
+    )
 
 
 def _write_manifest(directory: Path, entries: list[dict]) -> None:
@@ -553,8 +572,8 @@ def test_freeze_ignores_description_only_change(tmp_path: Path) -> None:
     written, only DEV is renumbered."""
     directory = tmp_path / "schemas"
     directory.mkdir()
-    versions_directory = tmp_path / "versions"
-    versions_directory.mkdir()
+    crate_src = tmp_path / "crate"
+    crate_src.mkdir()
 
     old_candidate = {
         "type": "object",
@@ -562,7 +581,7 @@ def test_freeze_ignores_description_only_change(tmp_path: Path) -> None:
         "description": "old doc",
     }
     sha = _write_schema_file(directory, "0.3.0.json", old_candidate)
-    (versions_directory / "v0_4_0.py").write_text("", encoding="utf-8")
+    _write_dev_module(crate_src, "0.4.0", "0.3.0")
     _write_manifest(
         directory,
         [
@@ -574,7 +593,7 @@ def test_freeze_ignores_description_only_change(tmp_path: Path) -> None:
     new_candidate = {**old_candidate, "description": "new, clearer doc"}
     result = freeze_yaml_schema(
         directory,
-        versions_directory,
+        crate_src,
         version="0.4.0",
         released_at=date(2026, 8, 1),
         candidate=new_candidate,
@@ -618,12 +637,12 @@ def test_freeze_unchanged_grammar_renumbers_dev_without_writing(
     """An unchanged candidate returns None, writes no entry, and only renumbers DEV."""
     directory = tmp_path / "schemas"
     directory.mkdir()
-    versions_directory = tmp_path / "versions"
-    versions_directory.mkdir()
+    crate_src = tmp_path / "crate"
+    crate_src.mkdir()
 
     candidate = {"type": "object", "additionalProperties": False}
     sha = _write_schema_file(directory, "0.3.0.json", candidate)
-    (versions_directory / "v0_4_0.py").write_text("", encoding="utf-8")
+    _write_dev_module(crate_src, "0.4.0", "0.3.0")
     _write_manifest(
         directory,
         [
@@ -634,7 +653,7 @@ def test_freeze_unchanged_grammar_renumbers_dev_without_writing(
 
     result = freeze_yaml_schema(
         directory,
-        versions_directory,
+        crate_src,
         version="0.4.0",
         released_at=date(2026, 8, 1),
         candidate=candidate,
@@ -645,16 +664,23 @@ def test_freeze_unchanged_grammar_renumbers_dev_without_writing(
     assert [e.version for e in catalog.entries] == ["0.5.0", "0.3.0"]
     assert catalog.dev.version == "0.5.0"
     assert catalog.latest_released.version == "0.3.0"
-    assert not (versions_directory / "v0_4_0.py").exists()
-    assert (versions_directory / "v0_5_0.py").exists()
+    assert not (crate_src / "v0_4_0.rs").exists()
+    assert (crate_src / "v0_5_0.rs").read_text(encoding="utf-8") == (
+        "//! The 0.3.0 -> 0.5.0 boundary.\n"
+    )
+    assert (crate_src / "lib.rs").read_text(encoding="utf-8") == (
+        "mod v0_1_0;\nmod v0_5_0;\n\nconst MODULES = &[\n"
+        '    ("0.1.0", v0_1_0::declarations),\n'
+        '    ("0.5.0", v0_5_0::declarations),\n];\n'
+    )
 
 
 def test_freeze_changed_grammar_releases_dev_and_appends_next(tmp_path: Path) -> None:
     """A changed candidate flips DEV to RELEASED and appends the next DEV."""
     directory = tmp_path / "schemas"
     directory.mkdir()
-    versions_directory = tmp_path / "versions"
-    versions_directory.mkdir()
+    crate_src = tmp_path / "crate"
+    crate_src.mkdir()
 
     old_candidate = {"type": "object", "additionalProperties": False}
     sha = _write_schema_file(directory, "0.3.0.json", old_candidate)
@@ -669,7 +695,7 @@ def test_freeze_changed_grammar_releases_dev_and_appends_next(tmp_path: Path) ->
     new_candidate = {**old_candidate, "title": "Board"}
     result = freeze_yaml_schema(
         directory,
-        versions_directory,
+        crate_src,
         version="0.4.0",
         released_at=date(2026, 8, 1),
         candidate=new_candidate,
@@ -708,7 +734,7 @@ def test_freeze_writes_the_registered_warning_codes_beside_the_snapshot(
 
     freeze_yaml_schema(
         directory,
-        tmp_path,
+        tmp_path / "crate",
         version="0.4.0",
         released_at=date(2026, 8, 1),
         candidate={**old_candidate, "title": "Board"},
@@ -754,12 +780,12 @@ def test_every_packaged_release_lists_its_warning_codes() -> None:
 def test_freeze_renumbers_dev_upward_on_a_major_bump(tmp_path: Path) -> None:
     directory = tmp_path / "schemas"
     directory.mkdir()
-    versions_directory = tmp_path / "versions"
-    versions_directory.mkdir()
+    crate_src = tmp_path / "crate"
+    crate_src.mkdir()
 
     old_candidate = {"type": "object", "additionalProperties": False}
     sha = _write_schema_file(directory, "0.6.0.json", old_candidate)
-    (versions_directory / "v0_7_0.py").write_text("", encoding="utf-8")
+    _write_dev_module(crate_src, "0.7.0", "0.6.0")
     _write_manifest(
         directory,
         [
@@ -771,7 +797,7 @@ def test_freeze_renumbers_dev_upward_on_a_major_bump(tmp_path: Path) -> None:
     new_candidate = {**old_candidate, "title": "Board"}
     result = freeze_yaml_schema(
         directory,
-        versions_directory,
+        crate_src,
         version="1.0.0",
         released_at=date(2026, 8, 1),
         candidate=new_candidate,
@@ -779,8 +805,14 @@ def test_freeze_renumbers_dev_upward_on_a_major_bump(tmp_path: Path) -> None:
 
     assert result is not None
     assert result.version == "1.0.0"
-    assert not (versions_directory / "v0_7_0.py").exists()
-    assert (versions_directory / "v1_0_0.py").exists()
+    assert not (crate_src / "v0_7_0.rs").exists()
+    assert (crate_src / "v1_0_0.rs").exists()
+    # rustfmt orders `mod` lines by name, so v1_0_0 now sorts last.
+    assert (
+        (crate_src / "lib.rs")
+        .read_text(encoding="utf-8")
+        .startswith("mod v0_1_0;\nmod v1_0_0;\n")
+    )
 
     catalog = load_yaml_schema_catalog_from(directory)
     assert catalog.latest_released.version == "1.0.0"
@@ -793,12 +825,12 @@ def test_freeze_renumbers_dev_downward_on_a_patch_with_grammar_change(
     """A patch release that ships a grammar change renumbers DEV downward."""
     directory = tmp_path / "schemas"
     directory.mkdir()
-    versions_directory = tmp_path / "versions"
-    versions_directory.mkdir()
+    crate_src = tmp_path / "crate"
+    crate_src.mkdir()
 
     old_candidate = {"type": "object", "additionalProperties": False}
     sha = _write_schema_file(directory, "0.6.0.json", old_candidate)
-    (versions_directory / "v0_7_0.py").write_text("", encoding="utf-8")
+    _write_dev_module(crate_src, "0.7.0", "0.6.0")
     _write_manifest(
         directory,
         [
@@ -810,7 +842,7 @@ def test_freeze_renumbers_dev_downward_on_a_patch_with_grammar_change(
     new_candidate = {**old_candidate, "title": "Board"}
     result = freeze_yaml_schema(
         directory,
-        versions_directory,
+        crate_src,
         version="0.6.1",
         released_at=date(2026, 8, 1),
         candidate=new_candidate,
@@ -819,8 +851,8 @@ def test_freeze_renumbers_dev_downward_on_a_patch_with_grammar_change(
     assert result is not None
     assert result.version == "0.6.1"
     assert result.predecessor == "0.6.0"
-    assert not (versions_directory / "v0_7_0.py").exists()
-    assert (versions_directory / "v0_6_1.py").exists()
+    assert not (crate_src / "v0_7_0.rs").exists()
+    assert (crate_src / "v0_6_1.rs").exists()
 
     catalog = load_yaml_schema_catalog_from(directory)
     assert catalog.latest_released.version == "0.6.1"
@@ -830,12 +862,12 @@ def test_freeze_renumbers_dev_downward_on_a_patch_with_grammar_change(
 def test_freeze_raises_without_an_existing_manifest(tmp_path: Path) -> None:
     """The no-manifest bootstrap path is gone: freeze now requires a DEV entry to release."""
     directory = tmp_path / "schemas"
-    versions_directory = tmp_path / "versions"
+    crate_src = tmp_path / "crate"
 
     with pytest.raises(FileNotFoundError, match=str(directory)):
         freeze_yaml_schema(
             directory,
-            versions_directory,
+            crate_src,
             version="0.3.0",
             released_at=date(2026, 7, 30),
             candidate={"type": "object", "additionalProperties": False},
@@ -850,15 +882,15 @@ def test_freeze_rejects_a_release_version_already_used_by_a_released_entry(
     touching the tree."""
     directory = tmp_path / "schemas"
     directory.mkdir()
-    versions_directory = tmp_path / "versions"
-    versions_directory.mkdir()
+    crate_src = tmp_path / "crate"
+    crate_src.mkdir()
 
     old_candidate = {"type": "object", "additionalProperties": False}
     older_sha = _write_schema_file(directory, "0.5.0.json", old_candidate)
     newer_candidate = {**old_candidate, "title": "0.6.0"}
     newer_sha = _write_schema_file(directory, "0.6.0.json", newer_candidate)
-    (versions_directory / "v0_6_0.py").write_text("frozen 0.6.0\n", encoding="utf-8")
-    (versions_directory / "v0_7_0.py").write_text("dev 0.7.0\n", encoding="utf-8")
+    (crate_src / "v0_6_0.rs").write_text("frozen 0.6.0\n", encoding="utf-8")
+    (crate_src / "v0_7_0.rs").write_text("dev 0.7.0\n", encoding="utf-8")
     _write_manifest(
         directory,
         [
@@ -872,16 +904,14 @@ def test_freeze_rejects_a_release_version_already_used_by_a_released_entry(
     with pytest.raises(ValueError, match="0.6.0"):
         freeze_yaml_schema(
             directory,
-            versions_directory,
+            crate_src,
             version="0.6.0",
             released_at=date(2026, 8, 1),
             candidate=candidate,
         )
 
-    assert (versions_directory / "v0_6_0.py").read_text(encoding="utf-8") == (
-        "frozen 0.6.0\n"
-    )
-    assert (versions_directory / "v0_7_0.py").exists()
+    assert (crate_src / "v0_6_0.rs").read_text(encoding="utf-8") == ("frozen 0.6.0\n")
+    assert (crate_src / "v0_7_0.rs").exists()
     assert load_yaml_schema_catalog_from(directory).dev.version == "0.7.0"
 
 
@@ -894,13 +924,13 @@ def test_freeze_rejects_a_release_version_not_newer_than_the_latest_released_ent
     rejected outright, even when its grammar matches DEV's."""
     directory = tmp_path / "schemas"
     directory.mkdir()
-    versions_directory = tmp_path / "versions"
-    versions_directory.mkdir()
+    crate_src = tmp_path / "crate"
+    crate_src.mkdir()
 
     candidate = {"type": "object", "additionalProperties": False}
     older_sha = _write_schema_file(directory, "0.5.0.json", candidate)
     newer_sha = _write_schema_file(directory, "0.6.0.json", candidate)
-    (versions_directory / "v0_6_0.py").write_text("frozen 0.6.0\n", encoding="utf-8")
+    (crate_src / "v0_6_0.rs").write_text("frozen 0.6.0\n", encoding="utf-8")
     _write_manifest(
         directory,
         [
@@ -915,15 +945,13 @@ def test_freeze_rejects_a_release_version_not_newer_than_the_latest_released_ent
     ):
         freeze_yaml_schema(
             directory,
-            versions_directory,
+            crate_src,
             version="0.5.2",
             released_at=date(2026, 8, 1),
             candidate=candidate,
         )
 
-    assert (versions_directory / "v0_6_0.py").read_text(encoding="utf-8") == (
-        "frozen 0.6.0\n"
-    )
+    assert (crate_src / "v0_6_0.rs").read_text(encoding="utf-8") == ("frozen 0.6.0\n")
     catalog = load_yaml_schema_catalog_from(directory)
     assert catalog.dev.version == "0.7.0"
     assert [e.version for e in catalog.entries] == ["0.7.0", "0.6.0", "0.5.0"]
@@ -938,14 +966,14 @@ def test_freeze_rejects_a_changed_release_version_behind_a_later_released_entry(
     duplicate versions."""
     directory = tmp_path / "schemas"
     directory.mkdir()
-    versions_directory = tmp_path / "versions"
-    versions_directory.mkdir()
+    crate_src = tmp_path / "crate"
+    crate_src.mkdir()
 
     candidate = {"type": "object", "additionalProperties": False}
     older_sha = _write_schema_file(directory, "0.5.0.json", candidate)
     newer_sha = _write_schema_file(directory, "0.6.0.json", candidate)
-    (versions_directory / "v0_6_0.py").write_text("frozen 0.6.0\n", encoding="utf-8")
-    (versions_directory / "v0_7_0.py").write_text("dev 0.7.0\n", encoding="utf-8")
+    (crate_src / "v0_6_0.rs").write_text("frozen 0.6.0\n", encoding="utf-8")
+    (crate_src / "v0_7_0.rs").write_text("dev 0.7.0\n", encoding="utf-8")
     _write_manifest(
         directory,
         [
@@ -958,16 +986,14 @@ def test_freeze_rejects_a_changed_release_version_behind_a_later_released_entry(
     with pytest.raises(ValueError, match="0.6.0"):
         freeze_yaml_schema(
             directory,
-            versions_directory,
+            crate_src,
             version="0.5.5",
             released_at=date(2026, 8, 1),
             candidate={**candidate, "title": "changed"},
         )
 
-    assert (versions_directory / "v0_6_0.py").read_text(encoding="utf-8") == (
-        "frozen 0.6.0\n"
-    )
-    assert (versions_directory / "v0_7_0.py").exists()
+    assert (crate_src / "v0_6_0.rs").read_text(encoding="utf-8") == ("frozen 0.6.0\n")
+    assert (crate_src / "v0_7_0.rs").exists()
     assert not (directory / "0.5.5.json").exists()
     catalog = load_yaml_schema_catalog_from(directory)
     assert catalog.dev.version == "0.7.0"
@@ -983,12 +1009,12 @@ def test_freeze_rejects_an_existing_snapshot_before_renaming_the_dev_module(
     written to match it."""
     directory = tmp_path / "schemas"
     directory.mkdir()
-    versions_directory = tmp_path / "versions"
-    versions_directory.mkdir()
+    crate_src = tmp_path / "crate"
+    crate_src.mkdir()
 
     candidate = {"type": "object", "additionalProperties": False}
     sha = _write_schema_file(directory, "0.6.0.json", candidate)
-    (versions_directory / "v0_7_0.py").write_text("dev 0.7.0\n", encoding="utf-8")
+    (crate_src / "v0_7_0.rs").write_text("dev 0.7.0\n", encoding="utf-8")
     (directory / "0.8.0.json").write_bytes(b"orphaned snapshot")
     _write_manifest(
         directory,
@@ -1001,28 +1027,26 @@ def test_freeze_rejects_an_existing_snapshot_before_renaming_the_dev_module(
     with pytest.raises(FileExistsError, match="0.8.0.json"):
         freeze_yaml_schema(
             directory,
-            versions_directory,
+            crate_src,
             version="0.8.0",
             released_at=date(2026, 8, 1),
             candidate={**candidate, "title": "changed"},
         )
 
-    assert (versions_directory / "v0_7_0.py").read_text(encoding="utf-8") == (
-        "dev 0.7.0\n"
-    )
-    assert not (versions_directory / "v0_8_0.py").exists()
+    assert (crate_src / "v0_7_0.rs").read_text(encoding="utf-8") == ("dev 0.7.0\n")
+    assert not (crate_src / "v0_8_0.rs").exists()
     assert (directory / "0.8.0.json").read_bytes() == b"orphaned snapshot"
 
 
 def test_freeze_rejects_a_malformed_version_before_mutating(tmp_path: Path) -> None:
     directory = tmp_path / "schemas"
     directory.mkdir()
-    versions_directory = tmp_path / "versions"
-    versions_directory.mkdir()
+    crate_src = tmp_path / "crate"
+    crate_src.mkdir()
 
     candidate = {"type": "object", "additionalProperties": False}
     sha = _write_schema_file(directory, "0.6.0.json", candidate)
-    (versions_directory / "v0_7_0.py").write_text("dev 0.7.0\n", encoding="utf-8")
+    (crate_src / "v0_7_0.rs").write_text("dev 0.7.0\n", encoding="utf-8")
     _write_manifest(
         directory,
         [
@@ -1034,14 +1058,14 @@ def test_freeze_rejects_a_malformed_version_before_mutating(tmp_path: Path) -> N
     with pytest.raises(ValueError, match="0.7"):
         freeze_yaml_schema(
             directory,
-            versions_directory,
+            crate_src,
             version="0.7",
             released_at=date(2026, 8, 1),
             candidate={**candidate, "title": "changed"},
         )
 
-    assert (versions_directory / "v0_7_0.py").exists()
-    assert not (versions_directory / "v0_7.py").exists()
+    assert (crate_src / "v0_7_0.rs").exists()
+    assert not (crate_src / "v0_7.rs").exists()
     assert not (directory / "0.7.json").exists()
     catalog = load_yaml_schema_catalog_from(directory)
     assert catalog.dev.version == "0.7.0"
@@ -1055,13 +1079,13 @@ def test_rename_dev_module_raises_instead_of_clobbering_an_existing_destination(
     on POSIX with no diagnostic."""
     directory = tmp_path / "schemas"
     directory.mkdir()
-    versions_directory = tmp_path / "versions"
-    versions_directory.mkdir()
+    crate_src = tmp_path / "crate"
+    crate_src.mkdir()
 
     candidate = {"type": "object", "additionalProperties": False}
     sha = _write_schema_file(directory, "0.6.0.json", candidate)
-    (versions_directory / "v0_7_0.py").write_text("dev 0.7.0\n", encoding="utf-8")
-    (versions_directory / "v0_8_0.py").write_text("stray 0.8.0\n", encoding="utf-8")
+    (crate_src / "v0_7_0.rs").write_text("dev 0.7.0\n", encoding="utf-8")
+    (crate_src / "v0_8_0.rs").write_text("stray 0.8.0\n", encoding="utf-8")
     _write_manifest(
         directory,
         [
@@ -1070,26 +1094,24 @@ def test_rename_dev_module_raises_instead_of_clobbering_an_existing_destination(
         ],
     )
 
-    with pytest.raises(FileExistsError, match="v0_8_0.py"):
+    with pytest.raises(FileExistsError, match="v0_8_0.rs"):
         freeze_yaml_schema(
             directory,
-            versions_directory,
+            crate_src,
             version="0.8.0",
             released_at=date(2026, 8, 1),
             candidate={**candidate, "title": "changed"},
         )
 
-    assert (versions_directory / "v0_8_0.py").read_text(encoding="utf-8") == (
-        "stray 0.8.0\n"
-    )
-    assert (versions_directory / "v0_7_0.py").exists()
+    assert (crate_src / "v0_8_0.rs").read_text(encoding="utf-8") == ("stray 0.8.0\n")
+    assert (crate_src / "v0_7_0.rs").exists()
 
 
 def test_release_verification_requires_a_current_yaml_schema(tmp_path: Path) -> None:
     directory = tmp_path / "schemas"
     directory.mkdir()
-    versions_directory = tmp_path / "versions"
-    versions_directory.mkdir()
+    crate_src = tmp_path / "crate"
+    crate_src.mkdir()
 
     candidate = {"type": "object", "additionalProperties": False}
     sha = _write_schema_file(directory, "0.2.0.json", candidate)
@@ -1102,7 +1124,7 @@ def test_release_verification_requires_a_current_yaml_schema(tmp_path: Path) -> 
     )
     freeze_yaml_schema(
         directory,
-        versions_directory,
+        crate_src,
         version="0.3.0",
         released_at=date(2026, 7, 30),
         candidate=candidate,
@@ -1184,3 +1206,39 @@ def test_the_dev_grammar_the_migrate_crate_embeds_is_the_live_one() -> None:
     committed = PACKAGE_SCHEMA_DIR.joinpath("dev.json").read_bytes()
 
     assert committed == structural_schema_bytes(compute_current_schema())
+
+
+def test_freeze_refuses_a_dev_module_lib_rs_does_not_register(tmp_path: Path) -> None:
+    """A half-renamed crate would silently drop the module's declarations."""
+    directory = tmp_path / "schemas"
+    directory.mkdir()
+    crate_src = tmp_path / "crate"
+    _write_dev_module(crate_src, "0.7.0", "0.6.0")
+    (crate_src / "lib.rs").write_text("mod v0_7_0;\n", encoding="utf-8")
+    candidate = {"type": "object", "additionalProperties": False}
+    sha = _write_schema_file(directory, "0.6.0.json", candidate)
+    _write_manifest(
+        directory,
+        [
+            _released_entry("0.6.0", sha256=sha, predecessor=None),
+            _dev_entry("0.7.0", predecessor="0.6.0"),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="v0_7_0::declarations"):
+        freeze_yaml_schema(
+            directory,
+            crate_src,
+            version="0.8.0",
+            released_at=date(2026, 8, 1),
+            candidate={**candidate, "title": "changed"},
+        )
+
+    assert (crate_src / "v0_7_0.rs").exists()
+    assert not (crate_src / "v0_8_0.rs").exists()
+
+
+def test_the_release_finds_the_migrate_crate_it_renames_modules_in() -> None:
+    lib = (_migrate_crate_src() / "lib.rs").read_text(encoding="utf-8")
+
+    assert "pub(crate) const MODULES" in lib

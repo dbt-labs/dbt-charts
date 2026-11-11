@@ -4,8 +4,12 @@
 //! here walks it leaf by leaf (`walk.rs`). A ladder reads three tiers, most specific
 //! first: the chart's own patches, its family's (`charts.<family>`), and the board's
 //! (`charts.*`), whose total slot ends the list.
+//!
+//! `axis.rs`, `legend.rs`, `title.rs` (and the subtitle) and `marks.rs` (a layer's mark over
+//! its parent's) each declare their list once.
 
 pub mod axis;
+pub mod axis_parts;
 pub mod legend;
 pub mod marks;
 pub mod title;
@@ -38,6 +42,14 @@ pub struct Tier<'a> {
     pub axis_band: Option<&'a Patch<BandAxisStyle>>,
     pub legend: Option<&'a Patch<LegendStyleBase>>,
     pub title: Option<&'a Patch<ChartTitleStyle>>,
+}
+
+impl Tier<'_> {
+    /// Whether the tier authors any axis slot: a chart whose own tier does not has no key to restate.
+    pub fn sets_axis(&self) -> bool {
+        [self.axis.is_some(), self.axis_x.is_some(), self.axis_y.is_some(), self.axis_quantitative.is_some(), self.axis_band.is_some()]
+            .contains(&true)
+    }
 }
 
 /// An authored slot speaks only when set: Python cannot tell an authored `null` from an absent one.

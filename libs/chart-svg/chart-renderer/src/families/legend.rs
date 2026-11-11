@@ -13,7 +13,6 @@ use serde::Deserialize;
 use diagnostic::codes;
 use diagnostic::Diagnostic;
 use crate::common::{field_display_text, truncate_label, truncate_label_with, FieldLabels, Font, MeasuredAs};
-use crate::contract;
 use crate::pattern::library;
 use measure::baseline_shift;
 use scene::{Attrs, Chars, Escape, Node, PathData, Role, Run, Shape};
@@ -1205,7 +1204,7 @@ pub fn symbol_legend(
         let tf = &cfg.title.font;
         let tfs = tf.size_or(12.0);
         let title = Node::text(Role::Legend, (legend_x, legend_y + baseline_shift("top", tfs)), Attrs::new().set("text-anchor", "start").vega("font-family", tf.family_or("sans-serif")).num("font-size", tfs).quick_some("font-style", tf.style.as_deref()).set("font-weight", tf.weight_str()).set("fill", tf.color.as_deref().unwrap_or("#313233")), legend.title.as_str());
-        children.push(Node::group(Role::Legend, contract::legend_title_attrs(), vec![title]));
+        children.push(Node::group(Role::Legend, ::layout::contract::legend_title_attrs(), vec![title]));
     }
     let legend_y = legend_y + legend.title_band;
     let grid = &legend.grid;
@@ -1241,7 +1240,7 @@ pub fn symbol_legend(
         let symbol = (!overflow).then(|| {
             let mut symbol = symbol_node(symbol, entry.fill, (x + c, y + c));
             symbol.attrs = receded(std::mem::take(&mut symbol.attrs));
-            Node::group(Role::Legend, contract::legend_symbol_attrs(linked), vec![symbol])
+            Node::group(Role::Legend, ::layout::contract::legend_symbol_attrs(linked), vec![symbol])
         });
         // `data-dbt-series` -- the untruncated join key `_stamp_series_keys`
         // (converters/chart.py:367-385, :457-461: the label's text, stripped) stamps -- fires exactly when
@@ -1258,7 +1257,7 @@ pub fn symbol_legend(
             .set("fill", color);
         let at = (x + if overflow { 0.0 } else { grid.label_x }, y + c + baseline_shift("middle", size));
         let label = text_revealing_full_name(Role::Legend, at, receded(label_attrs), entry.label, entry.series_key.map(str::trim).filter(|full| *full != entry.label));
-        let label_group = contract::legend_label_attrs(series_key, linked);
+        let label_group = ::layout::contract::legend_label_attrs(series_key, linked);
         let label_group = match entry.action {
             Some(LegendAction::Toggle { view, series }) => view.clickable(label_group, series),
             _ => label_group,
@@ -1286,8 +1285,8 @@ pub fn symbol_legend(
             _ => cells.extend(symbol.into_iter().chain([label])),
         }
     }
-    children.push(Node::group(Role::Legend, contract::legend_entries_attrs(), cells));
-    Node::group(Role::Legend, contract::legend_attrs(aria.as_deref()), children)
+    children.push(Node::group(Role::Legend, ::layout::contract::legend_entries_attrs(), cells));
+    Node::group(Role::Legend, ::layout::contract::legend_attrs(aria.as_deref()), children)
 }
 
 /// A text mark painting `shown`; when `full` is the untruncated text it was cut from, the
@@ -1510,7 +1509,7 @@ impl SizeLegend {
                     .translate(x + cell.symbol_x, row_y + cell.c),
             );
             let text = Node::text(Role::Legend, (x + cell.label_x, row_y + cell.c + baseline_shift("middle", label_size)), Attrs::new().vega("font-family", lf.family_or("sans-serif")).num("font-size", label_size).quick_some("font-style", lf.style.as_deref()).set("font-weight", lf.weight_str()).set("fill", lf.color.as_deref().unwrap_or("#626366")), label.as_str());
-            nodes.push(Node::group(Role::Legend, contract::legend_label_attrs(None, false), vec![text]));
+            nodes.push(Node::group(Role::Legend, ::layout::contract::legend_label_attrs(None, false), vec![text]));
         }
         nodes
     }

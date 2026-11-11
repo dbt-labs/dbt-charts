@@ -1670,7 +1670,7 @@ pub(super) fn render_horizontal_panel(
                     Some(field) => crate::contract::series_label_attrs(field, series)?,
                     None => Attrs::new(),
                 };
-                let label_attrs = Attrs::new().set("text-anchor", "middle").vega("font-family", sl.font_family.as_str()).num("font-size", sl.font_size).set("font-weight", sl.font_weight.as_str()).set("font-style", sl.font_style.as_str()).set(crate::contract::SERIES_KEY, series.as_str()).set("fill", rcolor.as_str()).extend(rail_label_attrs);
+                let label_attrs = Attrs::new().set("text-anchor", "middle").vega("font-family", sl.font_family.as_str()).num("font-size", sl.font_size).set("font-weight", sl.font_weight.as_str()).set("font-style", sl.font_style.as_str()).set(::layout::contract::SERIES_KEY, series.as_str()).set("fill", rcolor.as_str()).extend(rail_label_attrs);
                 let label_attrs = crate::legend_view::direct_label(r.legend_view.as_ref(), label_attrs, series);
                 rail_labels.push(Node::text(Role::Label, (seg_mid, rail_y), label_attrs, series.as_str()));
             }
@@ -1719,7 +1719,7 @@ pub(super) fn render_horizontal_panel(
             }
             lines.push(Node::line(Role::Grid, (x, gd), (x, plot_h + gd), grid.faded_stroke(gc, gw)));
         }
-        plot.push(crate::contract::grid_group(lines));
+        plot.push(::layout::contract::grid_group(lines));
     }
     if let Some(t) = &tear {
         let gc = crate::common::required_ink(grid.color.as_deref(), "bar", "grid.color")?;

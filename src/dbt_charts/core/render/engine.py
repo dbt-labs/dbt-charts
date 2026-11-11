@@ -131,7 +131,7 @@ from dbt_charts.core.render.chart.x_domain_paint_order import (
     XDomainPaintOrder,
     record_x_domain_paint_order,
 )
-from dbt_charts.core.render.controls import controls_are_interactive, is_flat_export
+from dbt_charts.core.render.controls import is_flat_export, ships_page_runtime
 from dbt_charts.core.render.geo.loader import load_geometry_text
 from dbt_charts.core.render.sizing import TABLE_PAGINATION_CONTROL_HEIGHT
 from dbt_charts.core.render.svg_utils import css_color
@@ -415,7 +415,7 @@ def build_chart_layout(
         "variable_options": dict(current_variable_options()),
         "title_shift": title_shift.model_dump(mode="json"),
         "filter_variables": sorted(get_filter_variables_context()),
-        "interactive_controls": controls_are_interactive(),
+        "interactive_controls": ships_page_runtime(),
         "link_context": None if link_context is None else asdict(link_context),
         "width": width,
         "height": height,

@@ -47,9 +47,13 @@ from dbt_charts.core.compile.template.variables import (
 )
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_DUPLICATE_VARIABLE_NAME,
+    ERR_RESERVED_VARIABLE_NAME,
     ERR_SOURCE_REQUIRED,
     ERR_UNKNOWN_VARIABLE,
     ERR_VALIDATION_FIELD,
+    ERR_VARIABLE_COLUMN_INVALID,
+    ERR_VARIABLE_CYCLE,
+    ERR_VARIABLE_TABLE_INVALID,
 )
 from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 from dbt_charts.core.diagnostics.execution import ExecutionError
@@ -374,15 +378,14 @@ def promote_column_option_queries(
         if not all(
             _SQL_IDENTIFIER_RE.fullmatch(part) for part in table_name.split(".")
         ):
-            raise CompilationError(
-                f"{source_field}: table name {table_name!r} is not a valid SQL "
-                "identifier — use only letters, digits, and underscores, optionally "
-                "schema-qualified (e.g. 'gis.fact_sales')"
+            raise CompilationError.from_code(
+                ERR_VARIABLE_TABLE_INVALID, field_path=source_field, table=table_name
             )
         if not _SQL_IDENTIFIER_RE.fullmatch(column_name):
-            raise CompilationError(
-                f"{source_field}: column name {column_name!r} is not a valid SQL "
-                "identifier — use only letters, digits, and underscores"
+            raise CompilationError.from_code(
+                ERR_VARIABLE_COLUMN_INVALID,
+                field_path=source_field,
+                column=column_name,
             )
 
         sql = (
@@ -475,10 +478,8 @@ def _collect_variables_recursive(
     if board.variables:
         for var_name, var in board.variables.items():
             if var_name in RESERVED_VARIABLE_NAMES:
-                raise CompilationError(
-                    f"Variable name '{var_name}' is reserved. "
-                    f"It conflicts with a dbt charts helper or dbt Jinja builtin. "
-                    f"Choose a different name."
+                raise CompilationError.from_code(
+                    ERR_RESERVED_VARIABLE_NAME, name=var_name
                 )
             path = prefixed(board_path, f"variables.{var_name}")
             location = "an imported board" if board_path is None else path
@@ -920,10 +921,8 @@ def _detect_circular_variable_deps(dep_graph: dict[str, set[str]]) -> None:
             # Found a cycle - build the cycle path for error message
             cycle_start = path.index(node)
             cycle = path[cycle_start:] + [node]
-            raise CompilationError(
-                f"Circular variable dependency detected: {' → '.join(cycle)}. "
-                "Variables cannot depend on each other in a cycle. "
-                "Check the options queries for these variables."
+            raise CompilationError.from_code(
+                ERR_VARIABLE_CYCLE, cycle=" → ".join(cycle)
             )
 
         if node in visited:

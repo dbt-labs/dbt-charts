@@ -24,6 +24,7 @@
   "case.extra_small_words": "",
   "case.small_words": "",
   "case.title_style": "none",
+  "chart.no_data": "데이터 없음",
   "controls.all": "전체",
   "controls.all_dates": "모든 날짜",
   "controls.any_date": "임의 날짜",

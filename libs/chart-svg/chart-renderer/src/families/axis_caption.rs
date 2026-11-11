@@ -4,7 +4,8 @@
 //! axis; a family supplies only what Vega reads: the rendered title, the
 //! scale's type and final domain, and the axis's `format`.
 
-use d3rs::format::{format, format_float, parse_parts, vega_tick_format};
+use d3rs::format::{format, format_float};
+use layout::contract::{axis_description, linear_value_text, span_description};
 
 use ::bind::table_dates::{strftime, Moment};
 use super::temporal::{axis_time_format, time_unit_specifier, LabelUnit};
@@ -19,8 +20,6 @@ use ::bind::formats::locale::active_number_locale;
 /// How many values a discrete domain lists before it elides the middle
 /// (`domainCaption`'s `maxlen`, 7).
 const MAX_LISTED_VALUES: usize = 7;
-/// The tick count `domainCaption` sizes a numeric format's precision for.
-const CAPTION_TICK_COUNT: usize = 5;
 pub const MS_PER_DAY: f64 = 86_400_000.0;
 
 /// Vega-Lite's numeric scale types with a continuous domain.
@@ -121,7 +120,6 @@ impl AxisCaption {
             AxisChannel::X => "X",
             AxisChannel::Y => "Y",
         };
-        let titled = self.title.as_ref().map(|t| format!(" titled '{t}'")).unwrap_or_default();
         let (kind, domain) = match &self.scale {
             CaptionScale::Discrete { values, format } => ("discrete", discrete_caption(values, format.as_deref())?),
             CaptionScale::Numeric { kind, domain, format } => {
@@ -131,7 +129,7 @@ impl AxisCaption {
                 (if *utc { "utc" } else { "time" }, span_caption(domain, |v| time_text(*utc, *aware, format.as_deref(), v))?)
             }
         };
-        Ok(format!("{xy}-axis{titled} for a {kind} scale with {domain}"))
+        Ok(axis_description(xy, self.title.as_deref(), kind, &domain))
     }
 }
 
@@ -277,7 +275,7 @@ pub fn drawn_title(text: &str, style: &AxisTitle) -> Option<String> {
 }
 
 fn span_caption(domain: &(f64, f64), text: impl Fn(&f64) -> Result<String, String>) -> Result<String, String> {
-    Ok(format!("values from {} to {}", text(&domain.0)?, text(&domain.1)?))
+    Ok(span_description(&text(&domain.0)?, &text(&domain.1)?))
 }
 
 fn discrete_caption(values: &[String], format: Option<&str>) -> Result<String, String> {
@@ -312,12 +310,7 @@ fn numeric_text(kind: NumericScale, domain: (f64, f64), spec: Option<&str>, valu
     if kind == NumericScale::Log {
         return format_float(locale, spec, *value);
     }
-    // vega-format's `formatSpan` only derives from the tick step when the spec has no precision;
-    // d3-scale's `tickFormat` also fixes one SI prefix for an `s` spec that has one.
-    if let Some(spec) = spec.filter(|spec| parse_parts(spec).is_ok_and(|parts| parts.precision.is_some())) {
-        return format(locale, spec, *value);
-    }
-    vega_tick_format(locale, spec, domain.0, domain.1, CAPTION_TICK_COUNT, *value)
+    linear_value_text(locale, spec, domain, *value)
 }
 
 fn time_text(utc: bool, aware: bool, spec: Option<&str>, value: &f64) -> Result<String, String> {

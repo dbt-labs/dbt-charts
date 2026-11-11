@@ -85,10 +85,11 @@ def suffix_at_register(exponent: int, register: Notation) -> str:
 class SuffixMode(Enum):
     """Which of the two compacting modes a shared scale uses.
 
-    ANCHOR declares the magnitude once (the top tick, or the ledger's first
-    row) and leaves every other member bare. REPEAT declares it on every
-    non-zero member, because the set has outgrown the tier the magnitude
-    names.
+    ANCHOR speaks the analytic register: an axis ruler declares the magnitude
+    once, on its anchor tick (a ruler's ticks read as a sequence), while a
+    table column prints it on every non-zero row (each cell is read alone).
+    REPEAT speaks the narrative register on every non-zero member, because the
+    set has outgrown the tier the magnitude names.
     """
 
     ANCHOR = "anchor"
@@ -123,20 +124,6 @@ class SharedScale:
     def suffix_string(self) -> str:
         """The one suffix string this scale ever emits, at its register."""
         return suffix_at_register(self.exponent, self.register)
-
-    def suffix(self, value: float, is_anchor: bool) -> str:
-        """The magnitude suffix a given member of the set should carry.
-
-        Zero never carries a magnitude suffix, in either mode, at any scale —
-        ``0k`` is meaningless, and zero is zero at any scale. In ANCHOR mode
-        only the anchor member carries it; every other member is bare. In
-        REPEAT mode every non-zero member carries it.
-        """
-        if value == 0:
-            return ""
-        if self.mode is SuffixMode.ANCHOR and not is_anchor:
-            return ""
-        return self.suffix_string
 
 
 def _integer_digit_count(value: float) -> int:
@@ -338,6 +325,19 @@ def column_shares_one_printed_unit(cells: Iterable[tuple[float, str]]) -> bool:
     return len(suffixes) <= 1
 
 
+def prints_si_suffix(cells: Iterable[tuple[float, str]]) -> bool:
+    """True when any non-zero, finite cell printed an SI suffix.
+
+    A column of plain digits (3.5, 12.1) prints none, so it is no evidence of a
+    compact notation.
+    """
+    return any(
+        bool(_printed_si_suffix(text))
+        for value, text in cells
+        if value != 0 and math.isfinite(value)
+    )
+
+
 def shared_scale_for_column(values: list[float]) -> SharedScale | None:
     """Resolve the shared scale for an arbitrary column, or None if it doesn't compact.
 
@@ -374,6 +374,23 @@ def shared_scale_for_column(values: list[float]) -> SharedScale | None:
     if _mode_for_scaled_extreme(extreme / (10.0**majority_tier)) is SuffixMode.REPEAT:
         return None
     return SharedScale(exponent=majority_tier, mode=SuffixMode.ANCHOR)
+
+
+def forced_shared_scale(values: list[float]) -> SharedScale | None:
+    """The shared scale a column takes when a sibling column prints SI and its own
+    vote declined: the unit of its largest value, so every cell reads in one
+    unit (858 beside 1,270 becomes 0.858K beside 1.27K).
+
+    ``None`` when the largest value is itself below thousands or has outgrown
+    that unit ("2,659 K").
+    """
+    extreme = max(abs(v) for v in values)
+    exponent = _natural_tier(extreme)
+    if exponent is None:
+        return None
+    if _mode_for_scaled_extreme(extreme / (10.0**exponent)) is SuffixMode.REPEAT:
+        return None
+    return SharedScale(exponent=exponent, mode=SuffixMode.ANCHOR)
 
 
 def decimal_reservation_pad(
@@ -501,7 +518,9 @@ def ruler_digit_format(format_spec: str) -> tuple[str, str]:
     return parsed.symbol, digit_spec
 
 
-def column_digit_format(format_spec: str, finest_scaled: float) -> tuple[str, str]:
+def column_digit_format(
+    format_spec: str, finest_scaled: float, min_precision: int = 0
+) -> tuple[str, str]:
     """Split a table column's SI format spec into (currency prefix, digit-only spec).
 
     Mirrors ``ruler_digit_format``'s split, but the decimal precision is not
@@ -526,10 +545,16 @@ def column_digit_format(format_spec: str, finest_scaled: float) -> tuple[str, st
     compensates for, as it already does for axis rulers. Passing the
     largest value instead silently truncates every smaller row (e.g. a
     column's 3.46 rounding to a bare "3").
+
+    ``min_precision`` is the maximum precision a sibling column on the same
+    scale needs; the digit spec is trim-enabled, so a value prints only the
+    places it has.
     """
     parsed = _d3_parse(format_spec)
     sig_figs = parsed.precision if parsed.precision is not None else 6
-    decimal_precision = max(0, sig_figs - _decimal_exponent(finest_scaled))
+    decimal_precision = max(
+        min_precision, sig_figs - _decimal_exponent(finest_scaled), 0
+    )
     digit_spec = _digit_spec(parsed, decimal_precision)
     return parsed.symbol, digit_spec
 

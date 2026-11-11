@@ -1,6 +1,15 @@
 //! The hoist pass: an inline chart in a layout moves into `Board.charts` under the id of its place
 //! (`@rows[1]`, spec D-05) and the layout item becomes that chart's name. Ids derive from tree
-//! position, never from the chart's title, so a title edit moves no id.
+//! position, never from the chart's title, so a title edit moves no id. A board with no layout is
+//! rows of its own charts; `LayoutFacts::charts` places each, checked against Python's chart
+//! type per place.
+//!
+//! After the move each chart's and each layer's `query:` name resolves to its `QueryId`
+//! (`ChartAuthored::query_mut`, `layer_queries_mut`; `ERR-UNKNOWN-QUERY` for an undeclared name,
+//! SQL text becomes an inline query), and a variable's SQL-text `options.query`
+//! (`OptionsQuery::Sql`, told from a name at parse) moves into `queries`. A chart's `file.yml#name`
+//! reads that file's `queries:` and hoists under the key `<resolved file>#<name>`, `QueryId`'s
+//! printed form.
 //!
 //! Charts land in the root's map whatever board they sit in, as Python's one chart registry does:
 //! the `charts:` a nested board declares are lifted there too, and a name two boards declare is an
@@ -51,6 +60,7 @@ use model_core::parse;
 use model_core::Leaf;
 use model_core::Tri;
 use project::ProjectPath;
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -72,12 +82,16 @@ pub enum HoistError {
     /// A layer names a query nothing declares (`ERR-UNRESOLVED-REFERENCE` in Python, which names
     /// the chart and the layer).
     UnresolvedReference(Box<Diagnostic>),
+    /// A refusal with a registered code (Python's own code where Python refuses too): a query
+    /// reference that does not resolve, a board-level `source:` that is no name, an inline file
+    /// source that is invalid.
+    Refused(Box<Diagnostic>),
     /// Another file's text that is not YAML the engine reads (`ERR-YAML-SYNTAX` and its kin).
     File(Vec<Diagnostic>),
     /// Something Python compiles and the engine does not yet, named.
     NotYet(String),
-    /// A failure Python raises as a plain `CompilationError`, with no code: a malformed
-    /// `<file>#<name>`, a name the file does not declare, a query that does not read.
+    /// A failure Python raises as a plain `CompilationError`, with no code: a source name that is
+    /// no identifier, a query that does not read.
     Message(String),
     /// A field Python's validation refuses (`ERR-VALIDATION-FIELD`): a variable's column binding
     /// that is no `table.column`.
@@ -96,13 +110,19 @@ pub enum HoistError {
     /// A declared constraint of a query model that the evaluator cannot read (a model bug, not
     /// something Python compiles that the engine does not).
     Constraint(String),
-    /// A composition cycle among queries (`ERR-JINJA-ERROR`, Python's `_detect_circular`).
+    /// A cycle: queries composing each other (`ERR-JINJA-ERROR`, Python's `_detect_circular`), or
+    /// board files placing each other (`ERR-BOARD-IMPORT-CYCLE`).
     Cycle(Box<Diagnostic>),
     /// A query id the file's name cannot carry (a `#` ends the file in a query id).
     QueryId(String),
 }
 
 impl HoistError {
+    pub(crate) fn refused(d: Diagnostic) -> Self {
+        Self::Refused(Box::new(d))
+    }
+
+    /// The registered diagnostics; an error Python raises without a code is `ERR-INTERNAL`.
     pub(crate) fn diagnostics(&self) -> Vec<Diagnostic> {
         match self {
             Self::DuplicateChart(d)
@@ -113,6 +133,7 @@ impl HoistError {
             | Self::SourceRequired(d)
             | Self::SourceNotFound(d)
             | Self::AmbiguousFile(d)
+            | Self::Refused(d)
             | Self::Cycle(d) => vec![(**d).clone()],
             Self::File(d) => d.clone(),
             Self::Meta(e) => e.diagnostics(),
@@ -121,7 +142,7 @@ impl HoistError {
             | Self::NotYet(_)
             | Self::Message(_)
             | Self::Constraint(_)
-            | Self::QueryId(_) => Vec::new(),
+            | Self::QueryId(_) => vec![diag::err_internal(self.to_string())],
         }
     }
 }
@@ -138,6 +159,7 @@ impl fmt::Display for HoistError {
             | Self::SourceRequired(d)
             | Self::SourceNotFound(d)
             | Self::AmbiguousFile(d)
+            | Self::Refused(d)
             | Self::Cycle(d)
             | Self::FieldInvalid(d) => match d.message() {
                 Ok(text) => f.write_str(&text),
@@ -160,7 +182,7 @@ impl std::error::Error for HoistError {}
 /// Moves every inline chart of `patch`'s layout, and the charts its nested boards declare, into
 /// `patch.body.charts`. `imports` names the charts a ref brought in from another file, whose
 /// query names are that file's. Returns the public id of every chart of the root's map
-/// ([`BoardIndex`]).
+/// ([`BoardIndex`]), and the inline file sources its queries name, by the ref as authored.
 pub fn hoist_charts(
     patch: &mut Patch,
     file: &ProjectPath,
@@ -168,8 +190,13 @@ pub fn hoist_charts(
     today: Date,
     imports: &Imports,
     sources: &SourceRegistry,
-) -> Result<BoardIndex, HoistError> {
-    let root_scope = scope(&patch.body.source, None)?;
+) -> Result<(BoardIndex, BTreeMap<String, Value>), HoistError> {
+    let implicit = sources
+        .implicit()
+        .map(SourceName::try_from)
+        .transpose()
+        .map_err(HoistError::Message)?;
+    let root_scope = scope(&patch.body.source, implicit.as_ref())?;
     let mut found = Found {
         file,
         scope: root_scope.clone(),
@@ -179,6 +206,7 @@ pub fn hoist_charts(
         },
         pending: Vec::new(),
         declared: Vec::new(),
+        declared_in: BTreeMap::new(),
         charts: Vec::new(),
         queries: Vec::new(),
         names: declared_names(patch),
@@ -221,14 +249,19 @@ pub fn hoist_charts(
     }
     // A layout item names a chart of the board; one spelled as a chart ref is no chart (Python
     // resolves refs only under `charts:`), and an undeclared plain name is none either.
-    if let Some((missing, _)) = found.scopes.placed.iter().find(|(n, _)| {
+    if let Some((missing, _, at)) = found.scopes.placed.iter().find(|(n, ..)| {
         !patch.body.charts.contains_key(n.as_str())
             && (!is_special(n) || ChartRef::try_from(n.as_str()).is_ok())
     }) {
         return Err(HoistError::UnresolvedReference(Box::new(
-            diag::err_unresolved_reference(missing.as_str(), " in layout item"),
+            diag::err_unresolved_reference(missing.as_str(), " in layout item")
+                .with_sink_param("available", serde_json::json!(found.names))
+                .at_path(diagnostic::ModelPath(
+                    at.split('.').map(str::to_string).collect(),
+                )),
         )));
     }
+    let query_boards = found.declared_in;
     for (name, query) in found.declared {
         if patch.body.queries.insert(name.clone(), query).is_some() {
             return Err(HoistError::DuplicateQuery(name));
@@ -269,7 +302,7 @@ pub fn hoist_charts(
         &found.scopes,
     )?;
     elsewhere.gathered.extend(imports.queries.iter().cloned());
-    let slot = patch.body.layout.as_ref().is_some_and(places_board_file);
+    let slot = imports.boards || patch.body.layout.as_ref().is_some_and(places_board_file);
     refuse_cycles(&patch.body.queries, &elsewhere.scoped, slot)?;
     patch
         .body
@@ -314,7 +347,7 @@ pub fn hoist_charts(
             });
         }
     }
-    check_sources(&uses, sources, files)?;
+    let inline = check_sources(&uses, sources, files)?;
     let mut public_ids = std::mem::take(&mut found.public);
     for name in patch.body.charts.keys().filter(|k| !k.starts_with('@')) {
         let id =
@@ -330,10 +363,15 @@ pub fn hoist_charts(
             .filter(|name| imports.charts.contains_key(name.as_str()))
             .cloned(),
     );
-    Ok(BoardIndex {
-        public_ids,
-        declared_below,
-    })
+    Ok((
+        BoardIndex {
+            public_ids,
+            declared_below,
+            query_boards,
+            ..BoardIndex::default()
+        },
+        inline,
+    ))
 }
 
 /// The shape rules of Python's authored query models: a values query has no connection slot and
@@ -348,12 +386,16 @@ fn check_shape(name: &str, query: &QueryAuthored, external: bool) -> Result<(), 
             false => matches!(q.base.source, Tri::Value(_)),
         };
         if written {
-            return Err(HoistError::Message(
-                "source: Extra inputs are not permitted".to_string(),
-            ));
+            return Err(shape(format!(
+                "Query '{name}': source: Extra inputs are not permitted. A values query has no connection; remove `source:`."
+            )));
         }
     }
     refuse_shape(name, query, !external)
+}
+
+fn shape(message: String) -> HoistError {
+    HoistError::refused(diag::err_query_shape_invalid(message))
 }
 
 fn refuse_shape(name: &str, query: &QueryAuthored, authored: bool) -> Result<(), HoistError> {
@@ -361,7 +403,7 @@ fn refuse_shape(name: &str, query: &QueryAuthored, authored: bool) -> Result<(),
         .violation(name, authored)
         .map_err(|e| HoistError::Constraint(e.to_string()))?
     {
-        Some(message) => Err(HoistError::Message(message)),
+        Some(message) => Err(shape(message)),
         None => Ok(()),
     }
 }
@@ -453,25 +495,20 @@ fn check_query(name: &str, query: &QueryAuthored, external: bool) -> Result<(), 
     if let QueryAuthored::Schema(q) = query {
         if let Tri::Value(source) = &q.base.source {
             literal_text(source.as_str())
-                .map_err(|m| HoistError::Message(format!("source: Value error, {m}")))?;
+                .map_err(|m| shape(format!("Query '{name}': source: Value error, {m}")))?;
         }
     }
     check_shape(name, query, external)?;
-    let refuse = HoistError::Message;
+    let not_sql = || HoistError::refused(diag::err_incremental_not_sql(name));
     let watermark =
         |b: &QueryBaseAuthored| matches!(b.incremental, Tri::Value(Incremental::Column(_)));
     match query {
-        QueryAuthored::Values(q) if watermark(&q.base) => Err(refuse(format!(
-            "Query '{name}': incremental refresh is only supported for SQL queries."
-        ))),
-        QueryAuthored::Schema(q) if watermark(&q.base) => Err(refuse(format!(
-            "Query '{name}': incremental refresh is only supported for SQL queries."
-        ))),
+        QueryAuthored::Values(q) if watermark(&q.base) => Err(not_sql()),
+        QueryAuthored::Schema(q) if watermark(&q.base) => Err(not_sql()),
         QueryAuthored::Sql(q) => match &q.setup_sql {
-            Tri::Value(s) if s.contains("{{ queries.") => Err(refuse(format!(
-                "Query '{name}': setup_sql must not contain {{{{ queries.X }}}} references. \
-                 setup_sql is for non-nestable setup statements (CREATE TEMP FUNCTION, etc.)."
-            ))),
+            Tri::Value(s) if s.contains("{{ queries.") => {
+                Err(HoistError::refused(diag::err_setup_sql_composes_query(name)))
+            }
             _ => Ok(()),
         },
         _ => Ok(()),
@@ -823,6 +860,8 @@ struct Found<'f> {
     pending: Vec<Pending>,
     /// Queries nested boards declare under their own `queries:`, by authored name.
     declared: Vec<(String, <Query as Leaf>::Patch)>,
+    /// The position of the nested board that declared each of `declared`, by query name.
+    declared_in: BTreeMap<String, String>,
     /// Each lifted chart with the authoring path of its declaration.
     charts: Vec<(String, String, <Chart as Leaf>::Patch)>,
     queries: Vec<(String, <Query as Leaf>::Patch)>,
@@ -844,7 +883,8 @@ struct Scopes {
     /// The source of every nested board that has one (its own, else the enclosing board's).
     boards: Vec<SourceName>,
     /// Where each declared chart is placed: its name and the source of the placing board.
-    placed: Vec<(String, Option<SourceName>)>,
+    /// Each placement also names the item's position in the layout (`rows.0`).
+    placed: Vec<(String, Option<SourceName>, String)>,
     /// The source of the board that declares a chart, for a chart nothing places.
     declared_in: std::collections::BTreeMap<String, Option<SourceName>>,
     /// Each layout chart's own board source.
@@ -866,14 +906,12 @@ impl Scopes {
         let mut places = self
             .placed
             .iter()
-            .filter(|(name, _)| name == chart)
-            .map(|(_, source)| source);
+            .filter(|(name, ..)| name == chart)
+            .map(|(_, source, _)| source);
         let declared = self.declared_in.get(chart).unwrap_or(&self.root);
         let source = places.next().unwrap_or(declared);
         if places.any(|other| other != source) {
-            return Err(HoistError::Message(format!(
-                "chart '{chart}' is placed in boards with different sources, so its inline query has no one source; declare the query by name"
-            )));
+            return Err(HoistError::refused(diag::err_chart_sources_ambiguous(chart)));
         }
         Ok(source.clone())
     }
@@ -1137,6 +1175,10 @@ fn item<'a>(
                 ));
             for (name, mut query) in std::mem::take(&mut nested.body.queries) {
                 stamp(&mut query, found.scope.as_ref());
+                found.declared_in.insert(
+                    name.clone(),
+                    board_model::ids::ItemId::at(at).as_str().to_string(),
+                );
                 found.declared.push((name, query));
             }
             let mut vars = nested.body.variables.iter_mut().map(|(n, v)| {
@@ -1155,10 +1197,11 @@ fn item<'a>(
             found.scope = outer;
             found.used = outer_used;
         }
-        LayoutItemAuthored::Chart(id) => found
-            .scopes
-            .placed
-            .push((id.as_str().to_string(), found.scope.clone())),
+        LayoutItemAuthored::Chart(id) => found.scopes.placed.push((
+            id.as_str().to_string(),
+            found.scope.clone(),
+            at.iter().map(step_loc).collect::<Vec<_>>().join("."),
+        )),
     }
     Ok(())
 }
@@ -1279,16 +1322,10 @@ fn check_column_binding(
             && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
     };
     if !table.split('.').all(ident) {
-        return Err(HoistError::Message(format!(
-            "{at}: table name {} is not a valid SQL identifier \u{2014} use only letters, digits, and underscores, optionally schema-qualified (e.g. 'gis.fact_sales')",
-            py_str_repr(table)
-        )));
+        return Err(HoistError::refused(diag::err_variable_table_invalid(at, table)));
     }
     if !ident(name) {
-        return Err(HoistError::Message(format!(
-            "{at}: column name {} is not a valid SQL identifier \u{2014} use only letters, digits, and underscores",
-            py_str_repr(name)
-        )));
+        return Err(HoistError::refused(diag::err_variable_column_invalid(at, name)));
     }
     match has_source {
         true => Ok(()),

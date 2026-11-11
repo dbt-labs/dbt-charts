@@ -24,6 +24,7 @@
   "case.extra_small_words": "",
   "case.small_words": "",
   "case.title_style": "first_word",
+  "chart.no_data": "Ei tietoja",
   "controls.all": "Kaikki",
   "controls.all_dates": "Kaikki päivämäärät",
   "controls.any_date": "Mikä tahansa päivämäärä",

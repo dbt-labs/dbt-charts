@@ -24,6 +24,7 @@
   "case.extra_small_words": "",
   "case.small_words": "",
   "case.title_style": "first_word",
+  "chart.no_data": "Немає даних",
   "controls.all": "Усі",
   "controls.all_dates": "Усі дати",
   "controls.any_date": "Будь-яка дата",

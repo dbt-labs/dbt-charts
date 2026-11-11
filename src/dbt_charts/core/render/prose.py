@@ -50,7 +50,7 @@ from dbt_charts.core.render.svg_utils import (
     px,
     translate_group,
 )
-from mdsvg import Heading, OrderedList, Table, UnorderedList
+from mdsvg import Heading, HorizontalRule, OrderedList, Table, UnorderedList
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board
@@ -402,7 +402,14 @@ def _prose_flow(
         plan.board_width,
         plan.gap,
     )
-    if not plan.snap and all(s.n_cols == 1 for s in stretches):
+    wanted = measure
+    if blocks and all(isinstance(b, HorizontalRule) for b in blocks):
+        # A rule has no text to keep readable, so it crosses the whole card,
+        # whose edges are span edges too; only an authored max_chars caps it.
+        wanted = width
+        if col.max_chars is not None:
+            wanted = _measure(width, col.max_chars, char_px)
+    elif not plan.snap and all(s.n_cols == 1 for s in stretches):
         # Columns are for text long enough to earn them. On a board where no
         # block goes multi-column, a lone column wraps at least as wide as sizing
         # asked for, so a line that fits stays one line; once it outgrows its
@@ -412,18 +419,16 @@ def _prose_flow(
             renderer.max_content_width(blocks),
             _measure(width, col.max_chars, char_px),
         )
-        if wanted > measure:
-            measure = wanted
-            boxes = ((0.0, width + 2 * pad),)
-            table_box = boxes[0]
-            if table_measure is not None:
-                table_measure = max(table_measure, measure)
-            # Without a table of another width the block paints in one piece and
-            # never reads its metrics.
-            if table_measure not in (None, measure):
-                metrics, stretches = _measured(
-                    blocks, renderer, measure, table_measure, 1
-                )
+    if wanted > measure:
+        measure = wanted
+        boxes = ((0.0, width + 2 * pad),)
+        table_box = boxes[0]
+        if table_measure is not None:
+            table_measure = max(table_measure, measure)
+        # Without a table of another width the block paints in one piece and
+        # never reads its metrics.
+        if table_measure not in (None, measure):
+            metrics, stretches = _measured(blocks, renderer, measure, table_measure, 1)
 
     # A heading wraps at the columns it titles, so it is measured there too.
     n_cols = max((s.n_cols for s in stretches), default=1)

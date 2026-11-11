@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct import sigma names a table's grouping columns, and the migrate skill flattens drill-downs, draws totals by row role and reads a shared base query from the cache.
+time: 2026-11-10T10:32:22.467692-08:00

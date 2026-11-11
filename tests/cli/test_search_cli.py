@@ -200,10 +200,12 @@ class TestDftSearchShowsMatchedCharts:
             "charts:\n"
             "  k_revenue:\n"
             "    title: Revenue\n"
-            "    type: kpi\n"
+            "    type: callout\n"
+            "    message: hi\n"
             "  k_orders:\n"
             "    title: Orders\n"
-            "    type: kpi\n"
+            "    type: callout\n"
+            "    message: hi\n"
             "rows:\n"
             "  - k_revenue\n"
             "  - k_orders\n"
@@ -221,10 +223,13 @@ class TestDftSearchShowsMatchedCharts:
 class TestSearchNamesEachChartsQuery:
     @staticmethod
     def _project(root: Path) -> None:
-        (root / "dbt_charts.yml").write_text("# project marker\n")
+        (root / "dbt_charts.yml").write_text(
+            "sources:\n  wh:\n    type: duckdb\n    path: wh.duckdb\n"
+        )
         (root / "charts").mkdir()
         (root / "charts" / "sales.yml").write_text(
             "title: Sales\n"
+            "source: wh\n"
             "queries:\n"
             "  monthly:\n"
             "    sql: select 1 as x\n"

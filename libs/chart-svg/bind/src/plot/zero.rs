@@ -1,7 +1,7 @@
 //! The smart-zero verdict: whether a value axis includes zero. One verdict feeds the
 //! ladder, the floor and the baseline rule.
 
-use crate::model::Zero;
+use crate::bound::Zero;
 
 /// Data at or below this ratio of near edge to far edge starts "close to zero".
 const ZERO_EXTEND_THRESHOLD: f64 = 0.25;
@@ -120,7 +120,7 @@ fn extent(values: &[f64]) -> Option<(f64, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::Ladder;
+    use crate::bound::Ladder;
     use crate::plot::domain::{linear, Axis, Count, Mark};
 
     const LINE: Family = Family::Line;

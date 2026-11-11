@@ -356,7 +356,7 @@ class BoardSummary(ContractModel):
         description=(
             "Full SHA of the commit whose tree that render read the board "
             "from, in Cloud's own copy of the repository -- on a project "
-            "edited in Cloud that is a dbtcharts.com branch commit, not one the "
+            "edited in Cloud that is a dbt Charts branch commit, not one the "
             "caller has locally. It advances when the board's own content "
             "changes, not on every commit: a board a push did not touch is "
             "not normally re-rendered, so it keeps the commit it was last "
@@ -387,7 +387,7 @@ class ProjectSummary(ContractModel):
     )
     trunk_branch: str = Field(description="Repository branch Cloud pulls from.")
     work_branch: str = Field(
-        description="dbtcharts.com branch, where Cloud commits edits."
+        description="dbt Charts branch, where Cloud commits edits."
     )
     git_subdirectory: str = Field(
         description="Path to the dbt project inside the repo; empty for the root."
@@ -544,6 +544,75 @@ class SyncResult(ContractModel):
 
     queued: bool = Field(description="Whether this call enqueued a new sync.")
     message: str = Field(description="What happened, in one line.")
+
+
+class ProjectSettings(ContractModel):
+    """A project's settings: the General and Agent settings pages.
+
+    Every field outside ``PROJECT_SETTINGS_READ_ONLY`` is also a key
+    ``POST .../settings`` accepts.
+    """
+
+    name: str = Field(description="Display name.")
+    slug: str = Field(description="URL slug; the old slug keeps redirecting.")
+    description: str = Field(description="One-line description.")
+    default_theme: str = Field(
+        description=(
+            "The charts/meta.yml theme every board without its own inherits;"
+            " empty for the dbt Charts default."
+        )
+    )
+    default_theme_composed: bool = Field(
+        description=(
+            "Whether charts/meta.yml composes `extends:` from several entries,"
+            " which `default_theme` cannot represent or change."
+        )
+    )
+    honor_agent_instructions: bool = Field(
+        description=(
+            "Cloud's switch for reading the repo's AGENTS.md, CLAUDE.md and"
+            " skills/ folders."
+        )
+    )
+    honor_agent_instructions_off_in_file: str = Field(
+        description=(
+            "Why the work branch's dbt_charts.yml keeps that switch off, or"
+            " empty when it does not."
+        )
+    )
+    agent_instructions_honored: bool = Field(
+        description="Whether the agent reads them: the switch, unless the file says no."
+    )
+    extra_skill_paths: list[str] = Field(
+        description="Repo-relative files the agent can load as skills."
+    )
+    custom_system_prompt: str = Field(
+        description="Instructions added to every chat in this project."
+    )
+    branch_mode: bool = Field(
+        description="Whether the work branch advances only by merging reviewed changes."
+    )
+    allow_self_merge: bool = Field(
+        description="Whether, in branch mode, authors may merge their own changes."
+    )
+    banner_enabled: bool = Field(description="Whether the banner shows.")
+    banner_text: str = Field(description="The banner's text.")
+    banner_background: str = Field(description="The banner's background, #rrggbb.")
+    banner_color: str = Field(description="The banner's text color, #rrggbb.")
+
+
+PROJECT_SETTINGS_READ_ONLY = frozenset(
+    {
+        "default_theme_composed",
+        "honor_agent_instructions_off_in_file",
+        "agent_instructions_honored",
+    }
+)
+PROJECT_SETTINGS_SETTABLE = tuple(
+    name
+    for name in ProjectSettings.model_fields
+    if name not in PROJECT_SETTINGS_READ_ONLY
+)
 
 
 class RenderResult(ContractModel):

@@ -513,6 +513,21 @@ def test_duplicate_variable_name_points_at_both_declarations() -> None:
     assert error.path == "rows.1.variables.v"
 
 
+def test_reserved_variable_name_is_refused_with_its_code() -> None:
+    result = compile(
+        "source: db\n"
+        f"variables:\n  queries: {_VARIABLE}\n"
+        f"queries:\n  q: {_QUERY}\n"
+        f"charts:\n  c: {_KPI}\n"
+        "rows:\n  - c\n",
+        file="board.yaml",
+    )
+
+    [error] = result.errors
+    assert error.code == "ERR-RESERVED-VARIABLE-NAME"
+    assert error.message.startswith("Variable name 'queries' is reserved.")
+
+
 def test_duplicate_variable_name_from_an_imported_board_says_so(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:

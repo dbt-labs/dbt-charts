@@ -6,13 +6,10 @@
 
 use crate::compile::CompileError;
 use crate::hoist::HoistError;
-use crate::index::{ChartFacts, MissingColumn};
-use crate::rhythm;
-use board_model::chart::{ChartQuery, Columns};
-use board_model::ids::{ItemId, QueryId};
+use board_model::ids::QueryId;
 use board_model::query::QueryAuthored;
 use board_model::sql_analysis::{
-    Analysis, Guard, Lint, OutputColumn, ParseError, SqlAnalysis, SqlOutcome, SqlRequest,
+    Analysis, Guard, Lint, ParseError, SqlAnalysis, SqlOutcome, SqlRequest,
 };
 use diagnostic::{diag, Diagnostic, ModelPath};
 use model_core::Tri;
@@ -41,20 +38,6 @@ pub struct QueryFacts {
     pub embeds: BTreeSet<String>,
 }
 
-impl QueryFacts {
-    /// The columns of the query's final SELECT, only when the host named every projection.
-    /// A partial list (`select *, x`) or none (a parse error, not one SELECT-family statement)
-    /// answers `None`: absence from it proves nothing.
-    pub fn complete_output_columns(&self) -> Option<&[OutputColumn]> {
-        match &self.sql {
-            SqlFacts::Analyzed(a) if a.outputs_complete && !a.outputs.is_empty() => {
-                Some(&a.outputs)
-            }
-            SqlFacts::Analyzed(_) | SqlFacts::ParseError(_) => None,
-        }
-    }
-}
-
 /// Python's `extract_sql_variable_dependencies`. A template the parser rejects, or one it cannot
 /// read the dependencies of, is refused by name: an empty set would be a wrong fact that looks
 /// right.
@@ -68,22 +51,17 @@ fn variable_deps(
         if !text.contains("{{") && !text.contains("{%") {
             continue;
         }
-        let info = template::parse(text, Kind::Sql).map_err(|errors| CompileError::SqlRefused {
-            query: query.to_string(),
-            why: format!(
-                "variable dependencies not read: the template does not parse ({})",
-                errors
-                    .iter()
-                    .map(|e| e.message.as_str())
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            ),
+        let info = template::parse(text, Kind::Sql).map_err(|errors| {
+            let found: Vec<&str> = errors.iter().map(|e| e.message.as_str()).collect();
+            CompileError::Invalid(vec![diag::err_jinja_error(format!(
+                "query '{query}': {}",
+                found.join("; ")
+            ))])
         })?;
         if let Some(why) = info.unanalyzed {
-            return Err(CompileError::SqlRefused {
-                query: query.to_string(),
-                why: format!("variable dependencies not read: {why}"),
-            });
+            return Err(CompileError::internal(format!(
+                "query '{query}': variable dependencies not read: {why}"
+            )));
         }
         deps.extend(info.variables);
         embeds.extend(info.queries);
@@ -161,7 +139,7 @@ fn parse_warning(name: &str, e: &ParseError) -> Diagnostic {
 }
 
 /// The query id a map key names: `<file>#<name>` for another file's query, else a query of `file`.
-pub(crate) fn query_id(key: &str, file: &ProjectPath) -> Result<QueryId, CompileError> {
+pub fn query_id(key: &str, file: &ProjectPath) -> Result<QueryId, CompileError> {
     let text = match key.contains('#') {
         true => key.to_string(),
         false => format!("{file}#{key}"),
@@ -207,20 +185,18 @@ pub fn analyze_queries(
     let requests: Vec<SqlRequest> = asked.iter().map(|(_, r)| *r).collect();
     let outcomes = analysis.analyze_all(&requests);
     if outcomes.len() != asked.len() {
-        return Err(CompileError::SqlAnswers {
-            asked: asked.len(),
-            answered: outcomes.len(),
-        });
+        return Err(CompileError::internal(format!(
+            "the SQL analyzer answered {} of {} requests",
+            outcomes.len(),
+            asked.len()
+        )));
     }
     let mut facts = BTreeMap::new();
     let mut warnings = Vec::new();
     for ((key, request), outcome) in asked.into_iter().zip(outcomes) {
         let sql = match outcome {
             SqlOutcome::Refused(why) => {
-                return Err(CompileError::SqlRefused {
-                    query: key.to_string(),
-                    why,
-                })
+                return Err(CompileError::internal(format!("query '{key}': {why}")))
             }
             SqlOutcome::Analyzed(a) => {
                 if let Some(e) = fatal(key, &a) {
@@ -246,56 +222,4 @@ pub fn analyze_queries(
         );
     }
     Ok((facts, warnings))
-}
-
-/// Fills `missing_columns` of each placed chart whose query's output columns are all known.
-pub fn record_missing_columns(
-    patch: &mut Patch,
-    queries: &BTreeMap<QueryId, QueryFacts>,
-    charts: &BTreeMap<ItemId, String>,
-    facts: &mut BTreeMap<ItemId, ChartFacts>,
-) {
-    for (pos, name) in charts {
-        let Some(Some(chart)) = patch.body.charts.get_mut(name) else {
-            continue;
-        };
-        let Some(Tri::Value(ChartQuery::Hoisted(id))) = chart.query_mut().map(|q| &*q) else {
-            continue;
-        };
-        let Some(known) = queries
-            .get(id)
-            .and_then(QueryFacts::complete_output_columns)
-        else {
-            continue;
-        };
-        let Some(c) = rhythm::cartesian(chart) else {
-            continue;
-        };
-        let mut named: Vec<(&'static str, &str)> = Vec::new();
-        if let Tri::Value(x) = &c.x {
-            named.push(("x", x.as_str()));
-        }
-        match &c.y {
-            Tri::Value(Columns::One(y)) => named.push(("y", y.as_str())),
-            Tri::Value(Columns::Many(ys)) => named.extend(ys.iter().map(|y| ("y", y.as_str()))),
-            Tri::Unset | Tri::Null => {}
-        }
-        if let Tri::Value(color) = &c.color {
-            named.push(("color", color.as_str()));
-        }
-        let missing: Vec<MissingColumn> = named
-            .into_iter()
-            .filter(|(_, column)| {
-                let column = column.to_lowercase();
-                !known.iter().any(|o| o.name.to_lowercase() == column)
-            })
-            .map(|(channel, column)| MissingColumn {
-                channel,
-                column: column.to_string(),
-            })
-            .collect();
-        if let Some(f) = facts.get_mut(pos) {
-            f.missing_columns = missing;
-        }
-    }
 }

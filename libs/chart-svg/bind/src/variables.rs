@@ -3,6 +3,10 @@
 //! `format_variable_display_value`, `format_date_label`) decides the same facts. Data only: where a
 //! control sits and what it measures to is layout's.
 //!
+//! Settled from `RunResult.variables` and `overridden`, by `variables_resolve.py`'s laws: the
+//! widget, label, drawn and committed text, ticked state, slider bounds and unset label of a
+//! `text`, `number`, `checkbox`, `slider`, `select` (static options) or `date` input.
+//!
 //! Compile settles `input: auto` to a widget, so an unsettled one is an internal error. What this
 //! slice does not model is refused by name: a multiselect, a daterange, a radio and the aliases of
 //! the inputs it does draw, a select whose options a query answers, an `enabled:` that is not a

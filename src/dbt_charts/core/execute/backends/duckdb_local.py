@@ -243,11 +243,23 @@ def _apply_duckdb_extensions(
     DuckDBSourceConfig, rejected at parse time. A dbt_profile-expanded
     target (DbtTargetSourceConfig, extra="allow") is not validated against
     that model, so `name` is re-checked here for that path.
+
+    An extension already installed (statically linked or on disk) skips
+    INSTALL, which would otherwise still contact the repository.
     """
+
+    def install_and_load(name: str) -> None:
+        row = conn.execute(
+            "SELECT installed FROM duckdb_extensions() WHERE extension_name = ?",
+            [name],
+        ).fetchone()
+        if row is None or not row[0]:
+            conn.install_extension(name)
+        conn.load_extension(name)
+
     for extension in extensions:
         if isinstance(extension, str):
-            conn.install_extension(extension)
-            conn.load_extension(extension)
+            install_and_load(extension)
             continue
         name = extension.get("name")
         if not name:
@@ -262,8 +274,7 @@ def _apply_duckdb_extensions(
             conn.execute(f"INSTALL {ident_name} FROM '{_duckdb_literal(repo)}'")
             conn.load_extension(ident_name)
         else:
-            conn.install_extension(name)
-            conn.load_extension(name)
+            install_and_load(name)
 
 
 def _apply_duckdb_settings(

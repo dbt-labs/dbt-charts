@@ -127,11 +127,7 @@ pub(crate) fn composed_queries(sql: &str) -> Vec<String> {
 /// Python's `_validate_query_ref_name`: a composed name is a table alias.
 fn reserved(name: &str) -> Result<(), HoistError> {
     match RESERVED.binary_search(&name.to_lowercase().as_str()) {
-        Ok(_) => Err(HoistError::Message(format!(
-            "Query '{name}' is referenced via {{{{ queries.{name} }}}}, but '{name}' is a SQL \
-             reserved word and cannot be used as a table alias. Rename the query to a \
-             non-reserved identifier."
-        ))),
+        Ok(_) => Err(HoistError::refused(diag::err_query_name_reserved_word(name))),
         Err(_) => Ok(()),
     }
 }
@@ -201,10 +197,7 @@ fn setup_sql_composes(key: &str, query: &Option<QueryAuthored>) -> Result<(), Ho
         Some(QueryAuthored::Sql(q)) if matches!(&q.setup_sql, Tri::Value(s) if s.contains("{{ queries.")) =>
         {
             let name = registry_key(key);
-            Err(HoistError::Message(format!(
-                "Query '{name}': setup_sql must not contain {{{{ queries.X }}}} references. \
-                 setup_sql is for non-nestable setup statements (CREATE TEMP FUNCTION, etc.)."
-            )))
+            Err(HoistError::refused(diag::err_setup_sql_composes_query(name)))
         }
         _ => Ok(()),
     }

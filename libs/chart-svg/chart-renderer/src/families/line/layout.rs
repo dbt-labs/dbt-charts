@@ -4084,9 +4084,8 @@ pub(super) fn fit(
             canvas_h = composed_pad_t
                 + m.top
                 + m.plot_h
-                + m.bottom
-                + pad_b
-                + if bottom_strip { strip_h + strip_axis_offset } else { 0.0 };
+                + if bottom_strip { m.bottom.max(strip_axis_offset + strip_h) } else { m.bottom }
+                + pad_b;
             if detected_data_tu.is_some() || bare_temporal {
                 support_table_strip::skip_strip(&r.id, &mut rows, strip_labeled.as_deref(), strip_style.row.padding.horizontal, y_on_right.then_some(m.plot_w + ay_stub_pad));
             }
@@ -5549,7 +5548,7 @@ pub(super) fn fit(
             };
             lines.push(Node::line(Role::Grid, (gx, gy1), (gx, gy2), xg.faded_stroke(gc, gw)));
         }
-        plot.push(crate::contract::grid_group(lines));
+        plot.push(::layout::contract::grid_group(lines));
     }
 
     if yg.visible.unwrap_or(false) {
@@ -5566,7 +5565,7 @@ pub(super) fn fit(
             let (gx1, gx2) = if y_visible.as_ref().is_some_and(|v| !v[i]) { (ad, plot_w + ad) } else { (gx1, gx2) };
             lines.push(Node::line(Role::Grid, (gx1, gy), (gx2, gy), yg.faded_stroke(gc, gw)));
         }
-        plot.push(crate::contract::grid_group(lines));
+        plot.push(::layout::contract::grid_group(lines));
     }
 
     // Dual axis: each layer's own independent scale draws its OWN grid, painted
@@ -5663,7 +5662,8 @@ pub(super) fn fit(
         plot.extend(crate::annotation::nodes(&annotations, crate::annotation::Plane::Background)?);
     }
 
-    // Paint order for area charts: backdrop areas → halo lines → colored areas → zero rule → main lines.
+    // Paint order for area charts: backdrop areas → halo lines → colored areas → zero rule → main lines,
+    // with the zero rule after the main lines when the top edge is a canvas-colored separator.
     // For line charts: zero rule → halo lines → main lines.
     // A stacked area's own recipe (`_area_stacked_layer`) has no backdrop,
     // no halo, and no separate top-edge line at all — one combined
@@ -5735,6 +5735,12 @@ pub(super) fn fit(
     // resolved `line_mark.stroke` (production's stack-mode swap already put
     // `marks.area.stacked.stroke`'s color/width/cap/join there), painting
     // the fill's own full perimeter, not a separate top-edge-only line.
+    // An unstacked area's top edge in the canvas color separates the fill from
+    // the canvas; over the zero rule it would notch the rule wherever the series
+    // runs along zero, so the rule paints after it.
+    let edge_is_separator = draw_areas
+        && !is_stacked
+        && r.style.line_mark.stroke.color.as_deref().is_some_and(|ink| ink.eq_ignore_ascii_case(canvas));
     if draw_areas && is_stacked {
         // `_area_stacked_layer`'s own docstring: "the theme's stacked
         // recipe always supplies a stroke" — production emits NO `stroke`
@@ -5758,7 +5764,7 @@ pub(super) fn fit(
             // The path's first item: the first x's own datum, or the imputed row there.
             let anchor = selection.mark(r.link_open.anchor(datum_href(0, &data_key_of(series))));
             let fill = Attrs::new().set("fill", &mark.fill).num("fill-opacity", area_opacity).quick_some("data-dbt-ink", mark.ink.as_deref());
-            let series_key = |attrs: Attrs| attrs.set_if(is_multi, crate::contract::SERIES_KEY, display_label(series));
+            let series_key = |attrs: Attrs| attrs.set_if(is_multi, ::layout::contract::SERIES_KEY, display_label(series));
             let mut marks = Vec::new();
             // A patterned band draws fill-only, then its shared edge line.
             let path = match &mark.ink {
@@ -5820,14 +5826,14 @@ pub(super) fn fit(
                     } else {
                         Attrs::new()
                     })
-                    .set_if(is_multi, crate::contract::SERIES_KEY, display_label(series)),
+                    .set_if(is_multi, ::layout::contract::SERIES_KEY, display_label(series)),
             );
             plot.push(crate::contract::connected_group("area", "layer_2_marks", vec![crate::href::linked(anchor, path)]));
         }
         // Z1: an area chart's zero rule paints here — above the fills it
         // just drew, below the point-marker halos and main strokes below. A
         // layer on its own scale nests it after the base's whole ink instead.
-        if y_sides.is_none() {
+        if y_sides.is_none() && !edge_is_separator {
             plot.extend(baseline_rules()?);
         }
     }
@@ -6089,10 +6095,13 @@ pub(super) fn fit(
                     .num("stroke-width", line_w)
                     .set("stroke-linecap", cap)
                     .set("stroke-linejoin", join)
-                    .set_if(is_multi, crate::contract::SERIES_KEY, display_label(series));
+                    .set_if(is_multi, ::layout::contract::SERIES_KEY, display_label(series));
                 let line = with_dash(line, ink_dash.clone().or_else(|| dash_of(series)));
                 plot.push(crate::contract::connected_group("line", "layer_3_marks", vec![crate::href::linked(anchor, Node::path(mark_of(series, None), d, line))]));
             }
+        }
+        if edge_is_separator && y_sides.is_none() {
+            plot.extend(baseline_rules()?);
         }
     }
 
@@ -6119,7 +6128,7 @@ pub(super) fn fit(
                 for px in datum_xs(i) {
                     let py = datum_y(data_key, i, yv);
                     let circle = Attrs::new()
-                        .set_if(is_multi, crate::contract::SERIES_KEY, display_label(data_key))
+                        .set_if(is_multi, ::layout::contract::SERIES_KEY, display_label(data_key))
                         .set("fill", color.as_str())
                         .set_if(tooltip_labels, "opacity", "1")
                         .extend(label_attrs.clone());
@@ -6698,7 +6707,7 @@ pub(super) fn fit(
                 .num("font-size", sl.font_size)
                 .set("font-weight", sl.font_weight.as_str())
                 .set("font-style", sl.font_style.as_str())
-                .set_if(is_multi, crate::contract::SERIES_KEY, display_label(series))
+                .set_if(is_multi, ::layout::contract::SERIES_KEY, display_label(series))
                 .set("fill", crate::selected::ink(selection.recede_of_series(series), &rcolor))
                 .extend(rail_label_attrs.clone());
             let label_attrs = crate::legend_view::direct_label(r.legend_view.as_ref().filter(|_| !layered_rail), label_attrs, series);

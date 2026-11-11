@@ -46,12 +46,13 @@ These are every tool a board needs.
 Also exist: `notes`, `tags`, `aliases`, `html_policy`, `cache`, `incremental`, `card_gap`, `chart_focus`, `details`, `id`, `visible`, `links`, `regional`.
 - Board can only have one layout type (rows, cols, grid, or tabs)
 - Board must have at least one layout type, text, title, or chart
-- Quote a text value that holds `: ` or is all digits: `title: "Mix: 2006 vs 2015"`, `label: "2009"`.
+- Quote text that holds `: `, is all digits, or is `yes`/`no`/`on`/`off`/`1:30` (YAML 1.1), keys too: `title: "Mix: 2006 vs 2015"`, `label: "2009"`, `"no": category[4]`.
+- Anchors, aliases and `<<:` merge keys work within one file; anchor on first use (no `anchors:` key).
 
 ## Queries
 
 `queries.<name>`:
-- `sql`: The SQL to run, as Jinja2. `{{ queries.base }}` inlines another query of the same source as a subquery already aliased to its name (add no `AS`); a bare `FROM base` fails. Variables go in through `filter()`, `filter_date_range()` or `{{ name }}`
+- `sql`: The SQL to run, as Jinja2. `{{ queries.base }}` inlines another query of the same source as a subquery already aliased to its name (add no `AS`), so base reruns inside every query that reads it; a bare `FROM base` fails. `{{ queries.base.cache }}` runs base once and composes over its cached rows in DuckDB SQL: use it when several charts read one expensive base. Variables go in through `filter()`, `filter_date_range()` or `{{ name }}`
 - `source` (text|map of any): Source name reference, or an inline file path (e.g. `./data/sales.csv`)
 - `notes`: What this query returns; handed to tooling with its results, never drawn
 - `formats` (map of name|text): A column's format, set once on its query, only where the default would misread (currency, percent, a unit); counts and plain numbers need none. Every chart showing the column follows it; a chart sets its own only to differ. A d3 spec is rejected
@@ -117,6 +118,9 @@ Also exist: `pie`, `donut`, `point_map`, `bubble_map`, `map`, `geoshape`, `spark
 For a shape no built-in type draws, read the custom-chart-build skill.
 - A table is as tall as its rows and takes no `height`: `style.pagination.page_rows` caps the rows shown; a `height` on the layout row around it caps its slot.
 
+`a table's style`:
+- `hide_underscore_columns` (bool): Hide query columns whose names start with an underscore, such as a `_flag` computed for a conditional rule or `_fivetran_synced`. A hidden column's values still feed rules and links, and a column with its own `style.columns` entry always shows. Set false to show them
+
 `layers[]`:
 - `type` (bar): Selects the layer's mark
 - `y`: Y-axis column name for this layer
@@ -133,7 +137,7 @@ Layer types: `bar`, `line`, `area`, `scatter`.
 
 Derived series (rolling averages, running totals, YoY) are window functions or extra columns, plotted as another `y` or a `layers:` entry. The delivered page is static: never caption anything as available "on hover".
 
-`annotations:` (bar, line, area, scatter) are `type: rule` (a straight line at `y: 25`, `y: avg()`, `x: <date>`), `band` (`from`/`to`), `note` (at `x` and `y`) or `trend` (`fit: linear()`), each with `text`. One target value is a rule; a target per bar or period is the targets recipe.
+`annotations:` (bar, line, area, scatter) are `type: rule` (a line at `y: 25`, `y: avg()`, `x: <date>`), `band` (`from`/`to`), `note` (at `x` and `y`) or `trend` (`fit: linear()`), each with `text`. One target value is a rule; a target per bar or period is the targets recipe. Peak note: `y: max()`, no `x`; never paste a result.
 
 `bullet`, `waterfall`, `lollipop`, `dumbbell`, `slope`, `bump`, `gantt`, targets and pacers are recipes, never a `type:`: read them on the recipes page (`get_skill('chart-recipes')`) first.
 

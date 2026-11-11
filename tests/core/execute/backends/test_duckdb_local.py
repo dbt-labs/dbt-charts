@@ -1662,15 +1662,39 @@ class TestDuckDBSqlBuilders:
         loaded: list[str] = []
 
         class _FakeConn:
+            def execute(self, sql: str, params: list[str]) -> _FakeConn:
+                return self
+
+            def fetchone(self) -> None:
+                return None
+
             def install_extension(self, name: str) -> None:
                 installed.append(name)
 
             def load_extension(self, name: str) -> None:
                 loaded.append(name)
 
-        _apply_duckdb_extensions(_FakeConn(), [{"name": "json"}])
-        assert installed == ["json"]
-        assert loaded == ["json"]
+        _apply_duckdb_extensions(_FakeConn(), [{"name": "h3"}])
+        assert installed == ["h3"]
+        assert loaded == ["h3"]
+
+    def test_apply_duckdb_extensions_skips_install_of_a_present_extension(
+        self, tmp_path: Path
+    ) -> None:
+        """json is statically linked; installing it would still reach the
+        repository, which here does not exist."""
+        from dbt_charts.core.execute.backends.duckdb_local import (
+            _apply_duckdb_extensions,
+        )
+
+        conn = duckdb.connect(
+            config={
+                "extension_directory": str(tmp_path / "ext"),
+                "custom_extension_repository": str(tmp_path / "no-repo"),
+            }
+        )
+        _apply_duckdb_extensions(conn, ["json", {"name": "json"}])
+        assert conn.execute("SELECT json('[1]') AS j").fetchone() == ("[1]",)
 
     def test_apply_duckdb_extensions_dict_form_installs_from_repo(self) -> None:
         """{name, repo} installs via SQL (INSTALL ... FROM '<repo>') instead of

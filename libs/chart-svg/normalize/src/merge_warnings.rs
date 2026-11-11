@@ -159,52 +159,6 @@ pub(crate) fn cascaded(own: &Patch) -> Patch {
     narrow
 }
 
-/// The text a restatement message shows for a leaf, as Python's `restated_diagnostic` makes it:
-/// a string as is, a whole float as the integer, anything else as `json.dumps` (a float as `repr`).
-fn message_text(v: &Value) -> String {
-    match v {
-        Value::String(s) => s.clone(),
-        Value::Number(n) if n.is_f64() && n.as_f64().is_some_and(|f| f.fract() == 0.0) => {
-            format!("{:.0}", n.as_f64().unwrap_or_default())
-        }
-        _ => dumps(v),
-    }
-}
-
-/// `json.dumps`: `", "` and `": "` separators, non-ASCII escaped.
-fn dumps(v: &Value) -> String {
-    match v {
-        Value::String(s) => {
-            let mut out = String::new();
-            for c in serde_json::to_string(s).unwrap_or_default().chars() {
-                if c.is_ascii() {
-                    out.push(c);
-                } else {
-                    for unit in c.encode_utf16(&mut [0; 2]) {
-                        out.push_str(&format!("\\u{unit:04x}"));
-                    }
-                }
-            }
-            out
-        }
-        Value::Array(items) => {
-            let items: Vec<String> = items.iter().map(dumps).collect();
-            format!("[{}]", items.join(", "))
-        }
-        Value::Object(map) => {
-            let items: Vec<String> = map
-                .iter()
-                .map(|(k, v)| format!("{}: {}", dumps(&Value::String(k.clone())), dumps(v)))
-                .collect();
-            format!("{{{}}}", items.join(", "))
-        }
-        Value::Number(n) if n.is_f64() => {
-            d3rs::py_float::float_repr(n.as_f64().unwrap_or_default())
-        }
-        _ => v.to_string(),
-    }
-}
-
 /// Why the restated warnings cannot be computed: the theme in force is not a built-in one.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RestatedError(pub String);
@@ -225,7 +179,8 @@ fn value_paths(patch: &Patch) -> BTreeSet<String> {
     out
 }
 
-fn leaves(patch: &Patch) -> Vec<(String, Value)> {
+/// The leaves of `patch` with their spelled values, a leaf being a path nothing extends.
+pub(crate) fn leaves(patch: &impl model_core::LeafValues) -> Vec<(String, Value)> {
     let mut all = Vec::new();
     patch.leaf_values("", &mut |p, v| all.push((p.to_string(), v.spell())));
     // A model's own path is reported beside its leaves: only a path nothing extends is a leaf.
@@ -237,6 +192,34 @@ fn leaves(patch: &Patch) -> Vec<(String, Value)> {
         })
         .cloned()
         .collect()
+}
+
+/// What a built-in theme sets: its leaves and every path it sets.
+struct ThemeLeaves {
+    held: BTreeMap<String, Value>,
+    set: BTreeSet<String>,
+}
+
+/// A built-in theme's leaves, read once per process: the theme is a static, and walking it is the
+/// whole cost of the check.
+fn theme_leaves(name: &str) -> Result<std::sync::Arc<ThemeLeaves>, RestatedError> {
+    static CACHE: std::sync::Mutex<BTreeMap<String, std::sync::Arc<ThemeLeaves>>> =
+        std::sync::Mutex::new(BTreeMap::new());
+    let mut cache = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(found) = cache.get(name) {
+        return Ok(found.clone());
+    }
+    let body = built_in_theme(name).map_err(|e| RestatedError(e.to_string()))?;
+    let theme = Patch {
+        body: body.clone(),
+        ..Default::default()
+    };
+    let found = std::sync::Arc::new(ThemeLeaves {
+        held: leaves(&theme).into_iter().collect(),
+        set: value_paths(&theme),
+    });
+    cache.insert(name.to_string(), found.clone());
+    Ok(found)
 }
 
 /// WARN-RESTATED-STYLE for the board's own file: its theme and its cascaded keys that the layers
@@ -270,41 +253,64 @@ pub(crate) fn restated(
         out.push(MergeWarning {
             file: None,
             diagnostic: diag::warn_restated_style("extends", below, source)
+                .with_sink_param(
+                    "why",
+                    if meta_themes > 0 { "meta.yml theme" } else { "default theme" }.into(),
+                )
                 .at_path(ModelPath(vec!["extends".to_string()])),
         });
     }
-    let in_force = themes.last().map_or(below, String::as_str);
-    let theme = built_in_theme(in_force).map_err(|e| RestatedError(e.to_string()))?;
-    let theme_patch = Patch {
-        body: theme.clone(),
-        ..Default::default()
-    };
-    let mut stack: Vec<(String, &Patch)> =
-        vec![(format!("the default in theme `{in_force}`"), &theme_patch)];
-    stack.extend(layers.iter().map(|(f, p)| (format!("set in `{f}`"), p)));
-    let mut lower = Patch::default();
-    for (_, patch) in &stack {
-        lower.merge((*patch).clone());
+    // A board that authors no cascaded key has nothing to judge; the theme is not read.
+    let own_leaves = leaves(&cascaded(own));
+    if own_leaves.is_empty() {
+        return Ok(out);
     }
-    let held: BTreeMap<String, Value> = leaves(&lower).into_iter().collect();
-    let sets: Vec<BTreeSet<String>> = stack.iter().map(|(_, p)| value_paths(p)).collect();
-    for (path, value) in leaves(&cascaded(own)) {
+    let in_force = themes.last().map_or(below, String::as_str);
+    let theme = theme_leaves(in_force)?;
+    // The layers' own leaves are few; the theme's are enumerated once per process. A path is
+    // looked up top layer first, then the theme: this equals the fold of the layers only while
+    // no layer nulls or replaces whole a slot the theme populates (no shipped theme fills one).
+    let layer_leaves: Vec<BTreeMap<String, Value>> = layers
+        .iter()
+        .map(|(_, p)| leaves(p).into_iter().collect())
+        .collect();
+    let mut layer_sets: Option<Vec<BTreeSet<String>>> = None;
+    for (path, value) in own_leaves {
         // A font slot that names another font drops what it inherits: its key is no restatement.
-        if path.ends_with(".extends") || held.get(&path) != Some(&value) {
+        if path.ends_with(".extends") {
+            continue;
+        }
+        let held = layer_leaves
+            .iter()
+            .rev()
+            .find_map(|l| l.get(&path))
+            .or_else(|| theme.held.get(&path));
+        if held != Some(&value) {
             continue;
         }
         // A value no layer sets is a model default, not an inherited one.
-        if let Some((label, _)) = stack
+        let sets = layer_sets
+            .get_or_insert_with(|| layers.iter().map(|(_, p)| value_paths(p)).collect());
+        let mut why = "inherited";
+        let label = layers
             .iter()
-            .zip(&sets)
+            .zip(sets.iter())
             .rev()
-            .find_map(|(layer, set)| set.contains(&path).then_some(layer))
-        {
-            let value = message_text(&value);
+            .find_map(|((file, _), set)| set.contains(&path).then(|| format!("set in `{file}`")))
+            .or_else(|| {
+                theme.set.contains(&path).then(|| {
+                    why = "theme default";
+                    format!("the default in theme `{in_force}`")
+                })
+            });
+        if let Some(label) = label {
+            let value = diagnostic::restated_text(&value);
             let at = ModelPath(path.split('.').map(str::to_string).collect());
             out.push(MergeWarning {
                 file: None,
-                diagnostic: diag::warn_restated_style(path, value, label.clone()).at_path(at),
+                diagnostic: diag::warn_restated_style(path, value, label)
+                    .with_sink_param("why", why.into())
+                    .at_path(at),
             });
         }
     }

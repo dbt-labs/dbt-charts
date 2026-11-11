@@ -79,6 +79,7 @@ pub fn d3_ticks(start: f64, stop: f64, count: usize) -> Vec<f64> {
 /// [`d3_ticks`] over a count that need not be whole: d3-scale's log ticks ask
 /// for `min(logs(hi) - logs(lo), count)` exponents.
 pub fn d3_ticks_fractional(start: f64, stop: f64, count: f64) -> Vec<f64> {
+    #[allow(clippy::neg_cmp_op_on_partial_ord, reason = "a NaN count draws nothing, which `count <= 0.0` would not say")]
     if !(count > 0.0) {
         return vec![];
     }
@@ -91,6 +92,7 @@ pub fn d3_ticks_fractional(start: f64, stop: f64, count: f64) -> Vec<f64> {
     } else {
         tick_spec(start, stop, count)
     };
+    #[allow(clippy::neg_cmp_op_on_partial_ord, reason = "a NaN step range draws nothing, which `i2 < i1` would not say")]
     if !(i2 >= i1) {
         return vec![];
     }
@@ -170,7 +172,7 @@ fn tick_spec(start: f64, stop: f64, count: f64) -> (f64, f64, f64) {
             i2 -= 1.0;
         }
     }
-    if i2 < i1 && 0.5 <= count && count < 2.0 {
+    if i2 < i1 && (0.5..2.0).contains(&count) {
         return tick_spec(start, stop, count * 2.0);
     }
     (i1, i2, inc)

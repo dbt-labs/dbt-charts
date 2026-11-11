@@ -15,7 +15,7 @@ pub fn title_ladder<'a>(tiers: &Tiers<'a>) -> Ladder<Rung<'a, ChartTitleStyle>> 
 }
 
 /// The board's total title with the leaves this slot walks (`min_height`, `subtitle.overflow`)
-/// taken from the walk; `None` when a walk finds no rung, which the total ends.
+/// taken from the walk.
 pub fn walked_title(tiers: &Tiers<'_>) -> Option<ChartTitleStyle> {
     let ladder = title_ladder(tiers);
     let mut title = tiers.charts.title.clone();

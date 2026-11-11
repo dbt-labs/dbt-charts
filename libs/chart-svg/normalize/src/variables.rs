@@ -1,7 +1,8 @@
 //! The visible variables of a board with their defaults, as Python's `variable_defaults` hold
 //! them after `normalize_render_values`: what a control starts at. A default of a shape this
 //! reads is not thereby valid: `validate_variable_value` (the type check on `default:`) is a
-//! later pass, so an `Ok` here is a value, not a verdict.
+//! later pass, so an `Ok` here is a value, not a verdict. A default is a value (`FactsDefault`),
+//! or a daterange preset id kept as written.
 
 use board_model::variable::{DefaultValue, InputType, VariableAuthored, VariablePatch};
 use board_model::variable_value::{Atom, VariableValue};

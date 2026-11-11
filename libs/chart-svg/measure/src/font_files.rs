@@ -2,24 +2,35 @@
 //! wrapped text: the files mdsvg loads, apart from [`FontBook`](crate::FontBook)'s
 //! face matching.
 
-/// `fonts.py::registry_family` + `get_font_path`, restricted to the one
-/// branch markdown measuring ever reaches (`numeric=False`): a "Source
-/// Serif" stack measures against the vendored Source Serif 4 file, every
-/// other family — including one we do not vendor — falls back to Inter
-/// Variable, the documented "closest honest estimate" default.
+use crate::weighted::registry_family;
+
+/// `fonts.py::get_font_path` restricted to the one branch markdown measuring ever reaches
+/// (`numeric=False`): a "Source Serif" stack measures against the vendored Source Serif 4 file, every
+/// other family, including one we do not vendor, falls back to Inter Variable, the documented
+/// "closest honest estimate" default.
 pub fn font_path(fonts_dir: &str, family_css: &str) -> String {
-    let primary = family_css
-        .split(',')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .trim_matches(['\'', '"']);
-    let file = if primary.starts_with("Source Serif") {
+    let file = if registry_family(family_css) == "Source Serif 4" {
         "SourceSerif4Variable.ttf"
     } else {
         "InterVariable.ttf"
     };
     format!("{fonts_dir}/{file}")
+}
+
+/// `font_measure.py::_face_for(registry_family(family), "italic", ..)`: the italic file a CSS stack's
+/// primary family ships. Only Inter Variable and Source Serif 4 at its regular and bold weights are
+/// returned here; the registry's other italics (the medium and semibold cuts) and a family it does
+/// not vendor give `None`, which board prose refuses rather than estimates.
+pub fn italic_font_path(fonts_dir: &str, family_css: &str) -> Option<String> {
+    let primary = registry_family(family_css);
+    let file = if primary == "Source Serif 4" {
+        "SourceSerif4-Italic.ttf"
+    } else if primary == "Inter Variable" {
+        "InterVariable-Italic.ttf"
+    } else {
+        return None;
+    };
+    Some(format!("{fonts_dir}/{file}"))
 }
 
 /// `fonts.py::get_mono_font_path` — always Source Code Pro, no family input.
@@ -36,5 +47,8 @@ mod tests {
         assert_eq!(font_path("/f", "'Source Serif 4', serif"), "/f/SourceSerif4Variable.ttf");
         assert_eq!(font_path("/f", "Georgia, serif"), "/f/InterVariable.ttf");
         assert_eq!(mono_font_path("/f"), "/f/SourceCodePro-Regular.ttf");
+        assert_eq!(italic_font_path("/f", "'Source Serif 4', serif").as_deref(), Some("/f/SourceSerif4-Italic.ttf"));
+        assert_eq!(italic_font_path("/f", "'Inter Variable', Inter").as_deref(), Some("/f/InterVariable-Italic.ttf"));
+        assert_eq!(italic_font_path("/f", "Georgia, serif"), None);
     }
 }

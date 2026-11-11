@@ -1,11 +1,12 @@
 //! Python's board warnings (`compile/validate/board_warnings.py`), read off the merged root: the
 //! findings that do not refuse the board. Each detector keeps Python's order and wording; the
-//! warnings oracle (`tests/it/warnings_sweep.rs`) pins every code listed in its `PORTED`.
+//! live gate (`tests/test_engine_compile_live.py`) pins every code listed in its `PORTED`.
 //!
 //! Python runs them on the compiled board, after `chart_focus` has narrowed it. The two
 //! unreferenced detectors read what the board was before (Python records it in `board.meta`), so
 //! they judge the board as written; the others judge what focus left, which for a title is none.
 
+use crate::board_warnings;
 use crate::sql::QueryFacts;
 use crate::tree::{nested, Nested};
 use board_model::board::value::VisibleAuthored;
@@ -181,7 +182,10 @@ fn single_chart_redundant_title(
     }
     let chart = patch.body.charts.get(chart)?.as_ref()?;
     let chart_title = filled(chart.title())?;
-    Some(diag::warn_single_chart_redundant_title(title, chart_title))
+    Some(
+        diag::warn_single_chart_redundant_title(title, chart_title)
+            .at_path(board_warnings::path(&["title"])),
+    )
 }
 
 /// Every warning, in Python's order. `focused` is whether `chart_focus` narrowed the board, which
@@ -190,14 +194,21 @@ pub fn lint(
     patch: &Patch,
     file: &ProjectPath,
     placed: &BTreeMap<ItemId, String>,
+    prose_imports: &BTreeSet<ItemId>,
     focused: bool,
     queries: &BTreeMap<QueryId, QueryFacts>,
+    facts: &board_warnings::Facts,
 ) -> Vec<Diagnostic> {
     let below = patch.body.layout.as_ref().map(nested).unwrap_or_default();
     let mut out = Vec::new();
+    let double = board_warnings::double_header(patch);
+    let in_slot = double.is_some() && filled(root_text(&patch.body.text)).is_none();
+    out.extend(double);
+    out.extend(board_warnings::untitled_sections(patch, in_slot));
     if !focused {
         out.extend(single_chart_redundant_title(patch, placed, &below));
     }
+    out.extend(board_warnings::adjacent_text_rows(patch, prose_imports));
     let placed: BTreeSet<&str> = placed.values().map(String::as_str).collect();
     let mut orphans: Vec<&str> = patch
         .body
@@ -219,6 +230,24 @@ pub fn lint(
         })
         .collect();
     unread.sort_unstable();
-    out.extend(unread.into_iter().map(diag::warn_unreferenced_query));
+    out.extend(unread.into_iter().map(|name| {
+        diag::warn_unreferenced_query(name).at_path(board_warnings::path(&["queries", name]))
+    }));
+    let leaves = board_warnings::Leaves::of(patch);
+    out.extend(board_warnings::retired_ignore_codes(
+        &leaves,
+        facts.public_ids,
+    ));
+    let theme = board_warnings::theme_leaves(facts.theme);
+    out.extend(board_warnings::axis_align_discarded(
+        patch,
+        &leaves,
+        &theme,
+        facts.public_ids,
+    ));
+    out.extend(board_warnings::unused_format_names(
+        &facts.own_format_names,
+        &leaves,
+    ));
     out
 }

@@ -1,9 +1,12 @@
 //! A failed chart's error card, as text: what the card says, before any width decides how it wraps.
+//! The card carries the code, the docs href, the message with its query, the diagnostic's hint
+//! and the link words. A code whose hint generator is not ported and that carries none is
+//! refused by name.
 
 use diagnostic::{codes, refuse, Diagnostic, Level};
 use serde_json::{json, Value};
 
-use crate::model::Failure;
+use crate::bound::Failure;
 
 /// The site production links error codes to when the host sets none (`_docs_site.py::DEFAULT_DOCS_SITE_URL`).
 pub const DEFAULT_DOCS_SITE: &str = "https://docs.dbtcharts.com";

@@ -1,6 +1,23 @@
 //! Structured diagnostics: a registered code plus the params its message is
-//! rendered from. The codes, their templates and a typed constructor per code
-//! are generated from `codes/*.yaml`; `Diagnostic::message` fills the template.
+//! rendered from. The registry is data: `codes/<domain>.yaml` (code, level,
+//! title, template, fix, doc, docs topic, optional hint id, which `Code::hint`
+//! carries) is the only place a code is authored, and
+//! `chart_svg_dev/gen_diagnostic_codes.py` generates from it `src/codes.rs`
+//! (every domain's `Code`s), `src/diag.rs` (a typed constructor per code,
+//! `diag::err_unknown_chart(chart, available)`, so a placeholder mismatch does
+//! not compile), the Python `codes_<domain>.py` (hint callables stay in
+//! `hints.py`, named by hint id), `compile/src/codes.rs` and
+//! `tests/it/messages.json` (the text Python renders per code, which
+//! `Diagnostic::message` must reproduce). `tests/test_diagnostic_codes.py`
+//! fails on drift.
+//!
+//! `Diagnostic { code, params, range, path, related, hint }`, the warning sink
+//! and `refuse!` live here. `hint` is built in `Diagnostic::new` by
+//! `hints.rs`; `message.rs` fills the compiled-in template.
+//!
+//! Every crate that raises or carries a diagnostic depends on this one. The
+//! `test-support` feature adds the text helpers unit tests compare a refusal
+//! with.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -12,8 +29,10 @@ pub mod codes;
 pub mod diag;
 pub mod hints;
 mod message;
+mod restated;
 use d3rs::py_float::float_repr;
 pub use message::MessageError;
+pub use restated::restated_text;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -22,6 +41,16 @@ use serde_json::Value;
 pub enum Level {
     Error,
     Warning,
+}
+
+impl Level {
+    /// The wire spelling, as Python's `Diagnostic.level`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Level::Error => "error",
+            Level::Warning => "warning",
+        }
+    }
 }
 
 /// A registered diagnostic code: its level, title, message template and the
@@ -44,6 +73,30 @@ pub struct Code {
 pub struct SourceRange {
     pub start: usize,
     pub end: usize,
+    /// The range stands for whole lines: a mark that names no columns even where it sits on one
+    /// line (a container collapsed to its key line).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub lines_only: bool,
+}
+
+impl SourceRange {
+    pub fn new(start: usize, end: usize) -> Self {
+        SourceRange {
+            start,
+            end,
+            lines_only: false,
+        }
+    }
+}
+
+/// Another place a finding names: a range, or a model path the host resolves to one.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Related {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<ModelPath>,
+    pub message: String,
 }
 
 /// A hint's text behind a thin pointer: a `Diagnostic` is the `Err` of most results in the spine,
@@ -73,7 +126,7 @@ pub struct Diagnostic {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<ModelPath>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub related: Vec<(SourceRange, String)>,
+    pub related: Vec<Related>,
     /// What to try, for the codes whose Python `hint_generator` is ported ([`hints::PORTED`]) or
     /// a producer that set one; `None` is no hint. Boxed to keep a `Diagnostic` under clippy's
     /// `result_large_err` size, which every `Result<_, Diagnostic>` is measured by; read it with
@@ -128,7 +181,21 @@ impl Diagnostic {
     }
 
     pub fn relating(mut self, range: SourceRange, label: impl Into<String>) -> Self {
-        self.related.push((range, label.into()));
+        self.related.push(Related {
+            range: Some(range),
+            path: None,
+            message: label.into(),
+        });
+        self
+    }
+
+    /// Names another place by its model path; the stamping pass resolves it to a range.
+    pub fn relating_path(mut self, path: ModelPath, label: impl Into<String>) -> Self {
+        self.related.push(Related {
+            range: None,
+            path: Some(path),
+            message: label.into(),
+        });
         self
     }
 
@@ -149,6 +216,9 @@ impl Diagnostic {
     /// print (e.g. a flag that tells a recorded fact from a user warning).
     pub fn with_sink_param(mut self, name: &'static str, value: Value) -> Self {
         self.params.insert(name, value);
+        if self.hint.is_none() {
+            self.hint = hints::generate(self.code, &self.params).map(|h| Box::new(Hint(h)));
+        }
         self
     }
 

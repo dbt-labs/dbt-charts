@@ -170,6 +170,7 @@ def test_cli_render_command_uses_project_with_block(tmp_path: Path) -> None:
         suppressed_warnings=[],
         chart_errors=[],
         warehouse_cache_hit_ats=[],
+        replayed_failure_ats=[],
         validation_errors=None,
         board_error=None,
     )
@@ -593,6 +594,21 @@ class TestDftRenderDefaultCache:
         assert "oldest result under a minute old" in second.stderr
         assert "--no-cache" not in second.stderr
 
+    def test_a_replayed_failure_is_named_once_on_stderr(self, tmp_path: Path) -> None:
+        args = _sql_project(tmp_path)
+        board = tmp_path / "project" / "charts" / "board.yml"
+        board.write_text(
+            _SQL_BOARD.replace("SELECT 42 AS v", "SELECT CAST('x' AS INT) AS v")
+        )
+        first = runner.invoke(app, args)
+        assert first.exit_code != 0
+        assert "replayed from cache" not in first.stderr
+
+        second = runner.invoke(app, args)
+        assert second.exit_code != 0
+        assert second.stderr.count("1 query failure replayed from cache") == 1
+        assert "(under a minute old); `--no-cache` re-runs it." in second.stderr
+
     def test_hits_on_a_database_file_source_need_no_notice(
         self, tmp_path: Path
     ) -> None:
@@ -911,6 +927,7 @@ class TestRenderCommandWalkRootWhenNoProjectDir:
             suppressed_warnings=[],
             chart_errors=[],
             warehouse_cache_hit_ats=[],
+            replayed_failure_ats=[],
             validation_errors=None,
             board_error=None,
         )

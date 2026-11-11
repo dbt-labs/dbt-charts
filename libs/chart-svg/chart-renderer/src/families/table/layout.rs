@@ -15,7 +15,6 @@ use super::bind::is_plain_date_lane_cell;
 use super::bind::is_summary_role;
 use super::bind::is_swatch;
 use super::bind::measured_cell_text;
-use super::anchor_variant;
 use super::bind::parse_spark_thresholds;
 use super::bind::resolve_cell_glyph;
 use super::bind::resolve_cell_link;
@@ -940,6 +939,9 @@ pub(super) struct ScrollPanes<'a> {
     pub rows_top: f64,
     /// Bottom of the rows the viewport shows.
     pub body_bottom: f64,
+    /// A pooled page's rows bottom: the x scrollbar and frozen edge end there,
+    /// and the runtime moves them with the page.
+    pub pool_rows_end: Option<f64>,
     pub svg_w: f64,
     /// How far the content scrolls on each axis; zero for an axis that fits.
     pub max_x: f64,
@@ -1024,6 +1026,8 @@ fn mark_rules(nodes: Vec<Node>) -> Vec<Node> {
 /// binds them from `controls_runtime_source()`.
 pub(super) fn emit_scroll_panes(tree: &mut Tree, p: ScrollPanes) {
     let (scroll_x, scroll_y) = (p.max_x > 0.0, p.max_y > 0.0);
+    let follows_rows = p.pool_rows_end.is_some();
+    let rows_end = p.pool_rows_end.unwrap_or(p.body_bottom);
     // Clip ids carry the chart id and the geometry: a chart id repeats across
     // a board tree, and two clips sharing an id must share a shape.
     let geometry = format!(
@@ -1137,11 +1141,12 @@ pub(super) fn emit_scroll_panes(tree: &mut Tree, p: ScrollPanes) {
     // stepped a pixel at a time (a gradient a static export also draws),
     // shown once content scrolls beneath it.
     if let (Some(edge), Some((head_rules, body_rules))) = (&p.edge, edge_rules) {
-        let height = p.body_bottom - p.header_top;
+        let height = rows_end - p.header_top;
         tree.rect(
             Role::Chrome,
             (p.frozen_right - 1.0, p.header_top, 1.0, height),
             Attrs::new()
+                .set_if(follows_rows, "data-dbt-rows-span", "")
                 .quick("fill", edge.line_color)
                 .quick("shape-rendering", "crispEdges")
                 .quick("pointer-events", "none"),
@@ -1160,6 +1165,7 @@ pub(super) fn emit_scroll_panes(tree: &mut Tree, p: ScrollPanes) {
                 Role::Chrome,
                 (p.frozen_right + i as f64, p.header_top, 1.0, height),
                 Attrs::new()
+                    .set_if(follows_rows, "data-dbt-rows-span", "")
                     .quick("fill", edge.shade_color)
                     .num("fill-opacity", EDGE_SHADE_OPACITY * (steps - i) as f64 / steps as f64)
                     .quick("shape-rendering", "crispEdges"),
@@ -1216,13 +1222,19 @@ pub(super) fn emit_scroll_panes(tree: &mut Tree, p: ScrollPanes) {
         // Under the rows, in the band the layout reserved for it.
         let end = p.view_right - bar.inset;
         let start = p.frozen_right + bar.inset;
+        if follows_rows {
+            tree.open(Open::Group, Role::Chrome, Attrs::new().quick("data-dbt-rows-follow", ""));
+        }
         thumb(
             tree,
             "x",
-            (start, end - start, p.body_bottom + bar.inset),
+            (start, end - start, rows_end + bar.inset),
             p.view_right - p.frozen_right,
             p.max_x,
         );
+        if follows_rows {
+            tree.close(Open::Group);
+        }
     }
     if scroll_y {
         // Right of the rows, in the band the layout reserved for it.
@@ -2032,7 +2044,7 @@ pub(super) fn render_spark_cell<'a>(
 }
 
 /// The class on a pooled affix tspan that only some anchor variants paint. Its
-/// `data-dbt-affix` is the bitmask of [`anchor_variant`] slots that do; the host
+/// `data-dbt-affix` is the bitmask of `Cell::by_anchor` slots that do; the host
 /// stylesheet hides it and shows the ones the table runtime marks.
 const AFFIX_CLASS: &str = "dbt-table-affix";
 
@@ -2062,10 +2074,10 @@ fn affix_tspan(
 }
 
 /// The tspans one affix lane draws. A pooled anchored cell lists each distinct
-/// text with the variants that paint it (`None` when all four do, so it is plain);
+/// text with the variants that paint it (`None` when both do, so it is plain);
 /// any other cell draws what it painted.
 fn affix_lane<'a>(
-    by_anchor: Option<&'a [(Option<String>, Option<String>); 4]>,
+    by_anchor: Option<&'a [(Option<String>, Option<String>); 2]>,
     lane: fn(&(Option<String>, Option<String>)) -> Option<&str>,
     painted: Option<&'a str>,
 ) -> Vec<(&'a str, Option<u8>)> {
@@ -2082,7 +2094,7 @@ fn affix_lane<'a>(
     }
     texts
         .into_iter()
-        .map(|(text, mask)| (text, (mask != 0b1111).then_some(mask)))
+        .map(|(text, mask)| (text, (mask != 0b11).then_some(mask)))
         .collect()
 }
 
@@ -2294,20 +2306,6 @@ impl TableBody<'_> {
         // The row link covers the data columns, never the index gutter.
         let (band_x, band_w) = (outer + rn_w, content_w - rn_w);
 
-        // The row each column's `shared_scale` magnitude word anchors on in the page
-        // a pool opens with: its first nonzero value, else the first row.
-        let magnitude_rows: Vec<usize> = cols
-            .iter()
-            .map(|col| {
-                let start = pool_page_rows.map_or(0, |p| (pool_first_page - 1) * p);
-                (start..page_n_shown)
-                    .find(|&ri| {
-                        coerce_numeric_cell(rows[ri].get(col.name.as_str())).is_some_and(|v| v != 0.0)
-                    })
-                    .unwrap_or(start)
-            })
-            .collect();
-
         // The row each column's `$` and unit suffix anchor on in the opening
         // page: its first non-null detail row.
         let symbol_rows: Vec<Option<usize>> = (0..cols.len())
@@ -2424,9 +2422,14 @@ impl TableBody<'_> {
                     let line_h = summary_divider.width.trunc().max(1.0);
                     let (rule_x1, rule_x2) = (outer + pad, outer + content_w - pad);
                     if matches!(role, RowRole::Total) {
+                        // A total opening a page sits under the header rule, which
+                        // the pair would stack on, so it hangs below the row instead.
                         let gap = 1.0;
-                        let y_upper = row_y - line_h - gap - line_h;
-                        let y_lower = row_y - line_h;
+                        let opens_page = local_ri == 0
+                            || pool_page_rows.is_some_and(|p| local_ri % p == 0);
+                        let edge_y = if opens_page { row_y + this_row_h } else { row_y };
+                        let y_upper = edge_y - line_h - gap - line_h;
+                        let y_lower = edge_y - line_h;
                         for y_line in [y_upper, y_lower] {
                             emit_divider_segment(
                                 tree,
@@ -2850,8 +2853,7 @@ impl TableBody<'_> {
                         .by_anchor
                         .as_ref()
                         .filter(|_| pool_page_rows.is_some() && !is_summary && !left_run);
-                    let variant =
-                        anchor_variant(symbol_rows[ci] == Some(local_ri), ri == magnitude_rows[ci]);
+                    let variant = usize::from(symbol_rows[ci] == Some(local_ri));
                     let glyph = cell_style.glyph.as_deref();
                     let glyph_fill = glyph.and(cell_style.glyph_color.as_deref());
                     // A null is always centered on the number lane, even in a run.
@@ -4748,6 +4750,9 @@ pub(crate) fn lay_out(
     // tallest page so the card does not resize between pages.
     let shown_rows_h: f64 = row_heights[live_rows.clone()].iter().sum();
     let indicator_y = rows_start_y + shown_rows_h + last_gap + th.bottom_padding + hbar_band;
+    // A pool's pager, x scrollbar and frozen edge end under the open page;
+    // the runtime moves them by how far a sort or filter moves this bottom.
+    let pool_rows_end = rows_start_y + shown_rows_h + last_gap;
     // A zero-row table holds one row of body for its "No data" label, so the
     // label sits below the header instead of over it.
     let canvas_rows_h: f64 = if n_rows == 0 {
@@ -4853,6 +4858,7 @@ pub(crate) fn lay_out(
                 .quick("data-dbt-page-rows", page_rows.to_string())
                 .quick("data-dbt-page", current_page.to_string())
                 .quick("data-dbt-rows-y", rows_start_y.to_string())
+                .quick("data-dbt-rows-end", pool_rows_end.to_string())
                 .quick("data-dbt-summary-gap", summary_gap_unit.to_string())
                 .quick("data-dbt-language", pool_runtime_words()?)
                 .quick_some(
@@ -5287,7 +5293,7 @@ pub(crate) fn lay_out(
                     true_total_pages as i64,
                     &page_var_name,
                     svg_w,
-                    canvas_y,
+                    indicator_y,
                     data_rank[first] + 1,
                     data_rank[last],
                     data_rank[n_rows],
@@ -5316,7 +5322,7 @@ pub(crate) fn lay_out(
                 2,
                 &page_var_name,
                 svg_w,
-                canvas_y,
+                indicator_y,
                 data_rank[0] + 1,
                 data_rank[n_shown.min(n_rows)],
                 data_rank[n_rows],
@@ -5436,6 +5442,7 @@ pub(crate) fn lay_out(
                 body_top: leaf_header_y + header_h,
                 rows_top: rows_start_y,
                 body_bottom,
+                pool_rows_end: (pool_page_rows.is_some() && !scroll_y).then_some(pool_rows_end),
                 svg_w,
                 max_x: if scroll_x { content_w - table_w } else { 0.0 },
                 max_y: if scroll_y {

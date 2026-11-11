@@ -136,7 +136,7 @@ fn is_alias(s: &str) -> bool {
 
 /// The 0.9.0 third-segment spelling that replaced a retired companion token,
 /// or `None` for anything outside that closed set of shapes.
-fn respell_retired_variant(token: &str) -> Option<String> {
+pub fn respell_retired_variant(token: &str) -> Option<String> {
     let split = |rest: &'_ str| {
         VARIANT_SUCCESSORS.iter().find_map(|(suffix, variant)| {
             rest.strip_prefix(suffix).map(|r| (r.to_string(), *variant))

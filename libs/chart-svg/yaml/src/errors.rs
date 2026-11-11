@@ -1,4 +1,4 @@
-use diagnostic::{codes, Diagnostic};
+use diagnostic::{codes, Diagnostic, SourceRange};
 use serde_json::Value;
 
 pub const UNNAMED_SOURCE: &str = "the given YAML content";
@@ -30,6 +30,32 @@ pub fn syntax(text: &str, line: usize, column: usize, problem: &str) -> Diagnost
     )
     .with_sink_param("line", Value::from(line))
     .with_sink_param("column", Value::from(column))
+    .at(SourceRange::new(
+        offset_of(text, line, column),
+        offset_of(text, line, column),
+    ))
+}
+
+/// The byte offset of `line`/`column` (1-based, in characters, YAML's line breaks), or the end of
+/// the text when it lies past it.
+fn offset_of(text: &str, line: usize, column: usize) -> usize {
+    let (mut l, mut c) = (1, 1);
+    let mut chars = text.char_indices().peekable();
+    while let Some((i, ch)) = chars.next() {
+        if (l, c) == (line, column) {
+            return i;
+        }
+        match ch {
+            '\r' | '\n' | '\u{85}' | '\u{2028}' | '\u{2029}' => {
+                if ch == '\r' && matches!(chars.peek(), Some((_, '\n'))) {
+                    chars.next();
+                }
+                (l, c) = (l + 1, 1);
+            }
+            _ => c += 1,
+        }
+    }
+    text.len()
 }
 
 pub fn empty() -> Diagnostic {

@@ -60,6 +60,7 @@ from dbt_charts.core.execute.lookup import (
     Ledger,
     cache_hit_ats,
     query_data_ages,
+    replayed_failure_ats,
     warehouse_cache_hit_ats,
 )
 from dbt_charts.core.execute.plan import make_context, utc_now
@@ -79,7 +80,9 @@ if TYPE_CHECKING:
 
 
 from dbt_charts.core.compile.compiler import validate_compiled_queries
+from dbt_charts.core.compile.host_facts import sql_host_queries
 from dbt_charts.core.compile.image_assets import image_scope
+from dbt_charts.core.compile.validate.links import iter_board_links
 from dbt_charts.core.dbt_ref_check import check_manifest_refs
 from dbt_charts.core.link_targets import check_link_targets
 from dbt_charts.core.render import RenderError, render
@@ -129,6 +132,9 @@ class BoardRenderResult(BaseModel):
     # version) was written. `dct render` reports it so a re-render that skipped
     # the warehouse says so.
     warehouse_cache_hit_ats: list[datetime] = []
+    # When each cached query failure this render replayed was written;
+    # `dct render` reports it so a replayed error is not mistaken for a fresh one.
+    replayed_failure_ats: list[datetime] = []
     # Wall time of the pre-render query pass and the result-cache hits the
     # render served; set on success.
     query_ms: float | None = None
@@ -202,6 +208,17 @@ def _charts_meta_default_source(charts_dir: ProjectDirectory) -> str | None:
     return None
 
 
+def _check_manifest_refs(result: CompileResult, project: Project) -> None:
+    for diagnostic in check_manifest_refs(
+        sql_host_queries(result.query_registry),
+        project,
+        result.board.sources if result.board else {},
+    ):
+        (result.errors if diagnostic.level == "error" else result.warnings).append(
+            diagnostic
+        )
+
+
 def _input_error(message: str) -> BoardRenderResult:
     """Build a BoardRenderResult failure from a plain input-validation message.
 
@@ -261,27 +278,30 @@ def _with_template_output_budget(
     return wrapper
 
 
+def board_warning_codes(board: Board | None) -> dict[str, set[str]]:
+    """Each chart's own `warnings_ignore`, by chart id; a failed compile has no *board*."""
+    if board is None:
+        return {}
+    return {
+        chart_id: set(chart.warnings_ignore)
+        for chart_id, chart in board.charts.items()
+        if chart.warnings_ignore
+    }
+
+
 def partition_compile_warnings(
     warnings: list[Diagnostic],
-    board: Board | None,
+    chart_codes: dict[str, set[str]],
     ignore_codes: set[str] | None,
     project_codes: frozenset[str],
 ) -> tuple[list[Diagnostic], list[Diagnostic]]:
     """Apply the render-time ignore layers (--ignore-warning, dbt_charts.yml,
-    per-chart codes) to compile warnings; a failed compile has no *board*."""
+    per-chart codes by chart id) to compile warnings."""
     return _partition_warnings(
         warnings,
         cli_codes=ignore_codes or set(),
         project_codes=set(project_codes),
-        per_chart_codes=(
-            {
-                chart_id: set(chart.warnings_ignore)
-                for chart_id, chart in board.charts.items()
-                if chart.warnings_ignore
-            }
-            if board is not None
-            else {}
-        ),
+        per_chart_codes=chart_codes,
     )
 
 
@@ -289,7 +309,10 @@ def _compile_failed(
     result: CompileResult, ignore_codes: set[str] | None, project_codes: frozenset[str]
 ) -> BoardRenderResult:
     active, suppressed = partition_compile_warnings(
-        list(result.warnings), result.board, ignore_codes, project_codes
+        list(result.warnings),
+        board_warning_codes(result.board),
+        ignore_codes,
+        project_codes,
     )
     return BoardRenderResult(
         status="failed",
@@ -414,16 +437,22 @@ def render_dashboard(
         if not result.success:
             return _compile_failed(result, ignore_codes, _warnings_ignore)
         validate_compiled_queries(result)
-        check_manifest_refs(result, project)
+        _check_manifest_refs(result, project)
         check_session_time_zones(result, project)
-        check_link_targets(result, project, board.path.relpath)
+        if result.board is not None:
+            result.warnings += check_link_targets(
+                iter_board_links(result.board), project, board.path.relpath
+            )
         if result.errors:
             # Ref/source errors land here: this arm has no execution layer to
             # catch them per chart, and a board that cannot execute must not
             # come back "ok" with a preview URL.
             return _compile_failed(result, ignore_codes, _warnings_ignore)
         active, suppressed = partition_compile_warnings(
-            list(result.warnings), result.board, ignore_codes, _warnings_ignore
+            list(result.warnings),
+            board_warning_codes(result.board),
+            ignore_codes,
+            _warnings_ignore,
         )
         return BoardRenderResult(
             status="ok",
@@ -492,10 +521,13 @@ def render_dashboard(
     # Errors this appends are re-derived per chart by DbtRefResolver during
     # execution, which contains them to the failing chart instead of failing the
     # whole board; only WARN-DBT-MANIFEST-MISSING needs the board-level call.
-    check_manifest_refs(result, project)
+    _check_manifest_refs(result, project)
     check_session_time_zones(result, project)
     if file_path is not None:
-        check_link_targets(result, project, file_path.relpath)
+        if result.board is not None:
+            result.warnings += check_link_targets(
+                iter_board_links(result.board), project, file_path.relpath
+            )
     compiled_board = result.board
     if compiled_board is not None and chart is not None:
         # Reuse-by-reference: render one existing chart (with its dependent
@@ -520,7 +552,10 @@ def render_dashboard(
     # `ignore:` or meta.yml lint config); `compile_suppressed` matched a
     # render-time layer. Both belong in the result.
     compile_active, compile_suppressed = partition_compile_warnings(
-        list(result.warnings), compiled_board, ignore_codes, _warnings_ignore
+        list(result.warnings),
+        board_warning_codes(compiled_board),
+        ignore_codes,
+        _warnings_ignore,
     )
 
     from dbt_charts.core.render.render_result import RenderResult as _RenderResult
@@ -689,6 +724,7 @@ def render_dashboard(
         url=url,
         board_query_data_ages=query_data_ages(ledger),
         warehouse_cache_hit_ats=warehouse_cache_hit_ats(ledger),
+        replayed_failure_ats=replayed_failure_ats(ledger),
         query_ms=render_result.query_ms,
         cache_hits=len(cache_hit_ats(ledger)),
         prefetch_query_names=sorted(render_result.prefetch_query_names),

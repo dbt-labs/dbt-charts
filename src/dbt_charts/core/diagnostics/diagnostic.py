@@ -64,7 +64,7 @@ class RelatedLocation(BaseModel):
     maps onto LSP's ``DiagnosticRelatedInformation``.
     """
 
-    path: str
+    path: str | None = None
     range: SourceRange | None = None
     message: str
 

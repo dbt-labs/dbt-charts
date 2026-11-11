@@ -12,6 +12,7 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.compile.normalize.queries import normalize_query
@@ -449,3 +450,53 @@ class TestSetupSqlMutatingGuard:
         result = adapter.execute(query)
         assert result.error is None, result.error
         assert result.data[0]["result"] == 15
+
+
+class TestRefusalCodes:
+    """User-facing refusals carry registered codes, not ERR-INTERNAL."""
+
+    def test_setup_sql_that_composes_a_query_has_its_own_code(self):
+        with pytest.raises(CompilationError) as raised:
+            normalize_query(
+                "q",
+                {"sql": "SELECT 1", "source": "db", "setup_sql": "{{ queries.a }}"},
+                sources={},
+            )
+        assert raised.value.code.code == "ERR-SETUP-SQL-COMPOSES-QUERY"
+
+    def test_incremental_on_a_values_query_has_its_own_code(self):
+        with pytest.raises(CompilationError) as raised:
+            normalize_query(
+                "q",
+                {"columns": ["n"], "values": [[1]], "incremental": "n"},
+                sources={},
+            )
+        assert raised.value.code.code == "ERR-INCREMENTAL-NOT-SQL"
+
+    def test_a_reserved_word_query_name_has_its_own_code(self):
+        from dbt_charts.core.compile.template.jinja import _validate_query_ref_name
+
+        with pytest.raises(CompilationError) as raised:
+            _validate_query_ref_name("select")
+        assert raised.value.code.code == "ERR-QUERY-NAME-RESERVED-WORD"
+
+    @pytest.mark.parametrize(
+        ("column", "code"),
+        [
+            ("1bad.x", "ERR-VARIABLE-TABLE-INVALID"),
+            ("t.x-y", "ERR-VARIABLE-COLUMN-INVALID"),
+        ],
+    )
+    def test_a_variable_column_that_is_no_identifier_has_its_own_code(
+        self, column, code
+    ):
+        from types import SimpleNamespace
+
+        from dbt_charts.core.compile.normalize.variables import (
+            promote_column_option_queries,
+        )
+
+        variables = {"v": SimpleNamespace(options=None, column=column)}
+        with pytest.raises(CompilationError) as raised:
+            promote_column_option_queries(variables, {}, "db", sources={})
+        assert raised.value.code.code == code

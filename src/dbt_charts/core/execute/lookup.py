@@ -30,6 +30,8 @@ from dbt_charts.core.compile.models.cache import CachePolicy
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_BINDER_UNKNOWN_COLUMN,
+    ERR_BINDER_UNKNOWN_RELATION,
     ERR_QUERY_INTERRUPTED,
     ERR_WAREHOUSE_AUTH,
     ERR_WAREHOUSE_CONNECTION,
@@ -82,6 +84,8 @@ class Ledger:
     # snapshot expires_at; the cache-hit ones drive the "data as of" stamp.
     ages: list[DataAge] = field(default_factory=list)
     warehouse_hit_ats: list[datetime] = field(default_factory=list)
+    # When each cached failure replayed this render was written.
+    replayed_failure_ats: list[datetime] = field(default_factory=list)
     # Query name -> why its dbt column formats could not be derived; raised
     # where a chart reading that query resolves (column_formats.py).
     column_format_errors: dict[str, DbtChartsError] = field(default_factory=dict)
@@ -101,6 +105,12 @@ def warehouse_cache_hit_ats(ledger: Ledger) -> list[datetime]:
     """The ``cache_hit_ats`` whose cache key folds no content version, so their
     data may have changed since the write."""
     return list(ledger.warehouse_hit_ats)
+
+
+def replayed_failure_ats(ledger: Ledger) -> list[datetime]:
+    """Write-timestamps of every cached query failure this render replayed
+    without asking the warehouse."""
+    return list(ledger.replayed_failure_ats)
 
 
 def data_age(ledger: Ledger, query_name: str) -> tuple[datetime, bool] | None:
@@ -464,6 +474,7 @@ def lookup_and_record(
                 ledger.truncations[miss.name] = miss.tail.truncation
     for name, failure in found.failures.items():
         if failure.failed_at is not None:
+            ledger.replayed_failure_ats.append(failure.failed_at)
             ledger.ages.append(
                 (name, failure.failed_at, by_name[name].query.cache, False)
             )
@@ -629,11 +640,18 @@ def cache_failure(
     ):
         return
     # Says nothing about the query: it was stopped, not answered.
-    # Credential and connection failures are fixed outside the board, so
-    # the next render must run the query again rather than replay them.
+    # Credential, connection, and missing-relation or -column failures are
+    # fixed outside the board (re-auth, `dbt run`, a migration), so the next
+    # render must run the query again rather than replay them.
     if isinstance(exception, DbtChartsError) and (
         exception.code
-        in (ERR_QUERY_INTERRUPTED, ERR_WAREHOUSE_AUTH, ERR_WAREHOUSE_CONNECTION)
+        in (
+            ERR_QUERY_INTERRUPTED,
+            ERR_WAREHOUSE_AUTH,
+            ERR_WAREHOUSE_CONNECTION,
+            ERR_BINDER_UNKNOWN_RELATION,
+            ERR_BINDER_UNKNOWN_COLUMN,
+        )
     ):
         return
     try:

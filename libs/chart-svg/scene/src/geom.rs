@@ -36,7 +36,9 @@ impl Bounds {
     /// scaling, the enclosing box under a rotation.
     pub fn transformed(&self, map: &Affine) -> Bounds {
         let corners = [(self.x1, self.y1), (self.x2, self.y1), (self.x2, self.y2), (self.x1, self.y2)];
-        Bounds::of_points(corners.map(|p| map.apply(p))).expect("four corners")
+        let [first, rest @ ..] = corners.map(|p| map.apply(p));
+        let at = |(x, y): (f64, f64)| Bounds { x1: x, y1: y, x2: x, y2: y };
+        rest.into_iter().fold(at(first), |acc, p| acc.union(at(p)))
     }
 }
 

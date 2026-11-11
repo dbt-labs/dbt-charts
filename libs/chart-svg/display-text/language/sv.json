@@ -24,6 +24,7 @@
   "case.extra_small_words": "",
   "case.small_words": "",
   "case.title_style": "first_word",
+  "chart.no_data": "Inga data",
   "controls.all": "Alla",
   "controls.all_dates": "Alla datum",
   "controls.any_date": "Valfritt datum",

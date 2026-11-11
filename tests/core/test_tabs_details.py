@@ -806,6 +806,7 @@ tabs:
         result = compile(yaml_content)
         assert not result.success
         assert any("Duplicate tab slug" in str(e) for e in result.errors)
+        assert [e.code for e in result.errors] == ["ERR-TAB-TITLE-DUPLICATE-SLUG"]
 
     def test_empty_tab_title_raises_error(self):
         """Tabs with empty titles should fail (produces empty slug)."""
@@ -821,6 +822,7 @@ tabs:
         result = compile(yaml_content)
         assert not result.success
         assert any("empty slug" in str(e) for e in result.errors)
+        assert [e.code for e in result.errors] == ["ERR-TAB-TITLE-EMPTY-SLUG"]
 
 
 _TWO_TAB_BOARD = """

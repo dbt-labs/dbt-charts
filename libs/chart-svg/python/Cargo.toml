@@ -21,6 +21,7 @@ crate-type = ["cdylib"]
 chart-renderer = { path = "../chart-renderer" }
 diagnostic = { path = "../diagnostic" }
 display-text = { path = "../display-text" }
+engine = { path = "../engine" }
 measure = { path = "../measure" }
 migrate = { path = "../migrate" }
 normalize = { path = "../normalize" }

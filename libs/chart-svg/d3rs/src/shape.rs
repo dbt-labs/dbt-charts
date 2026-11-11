@@ -402,6 +402,7 @@ fn step_edge(path: &mut Path, points: &[(f64, f64)], t: f64, edge: Edge) -> usiz
 }
 
 /// One cubic segment — d3's `point(that, t0, t1)`.
+#[allow(clippy::too_many_arguments, reason = "d3's own `point(that, x0, y0, x1, y1, t0, t1)` plus the axis swap")]
 fn bezier(path: &mut Path, x0: f64, y0: f64, x1: f64, y1: f64, t0: f64, t1: f64, swap: bool) {
     let dx = (x1 - x0) / 3.0;
     let (ax, ay, bx, by) = (x0 + dx, y0 + dx * t0, x1 - dx, y1 - dx * t1);

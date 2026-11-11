@@ -963,7 +963,7 @@ pub(super) fn render_vertical_continuous_x_panel(
                 Node::line(Role::Grid, (grid_x1, gy), (grid_x2, gy), ax_y.grid.stroke(gc, gw).num("opacity", go))
             })
             .collect();
-        plot.push(crate::contract::grid_group(lines));
+        plot.push(::layout::contract::grid_group(lines));
     }
     plot.extend(crate::families::layers::layer_grids(&layer_axes, ax_y, (plot_w, plot_h), "bar")?);
 

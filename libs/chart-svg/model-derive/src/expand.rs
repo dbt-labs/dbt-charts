@@ -495,6 +495,13 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
                     quote!(#n: ::model_core::ToAuthored::to_authored(self.#n))
                 }
             });
+            let drop_nulls = slots.iter().map(|s| {
+                let n = &s.name;
+                match &s.nullable {
+                    Some(t) => quote!(::model_core::tri_drop_nulls::<<#t as ::model_core::Leaf>::Patch>(&mut self.#n);),
+                    None => quote!(::model_core::DropNulls::drop_nulls(&mut self.#n);),
+                }
+            });
             let info = info(&slots);
             let build = build_impl(name, &authored, &patch, &reads);
             if let Some(k) = container.shorthand.as_deref() {
@@ -546,6 +553,9 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
                 }
                 impl ::model_core::Slot for #patch {
                     fn merge(&mut self, upper: Self) { #patch::merge(self, upper) }
+                }
+                impl ::model_core::DropNulls for #patch {
+                    fn drop_nulls(&mut self) { #(#drop_nulls)* }
                 }
                 impl ::model_core::ToAuthored for #patch {
                     type Out = #authored;

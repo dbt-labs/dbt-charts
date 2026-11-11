@@ -17,6 +17,16 @@
 //!
 //! The escapers are public for the families that still write markup strings.
 
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )
+)]
+
 use std::borrow::Cow;
 
 use quick_xml::events::attributes::Attribute;

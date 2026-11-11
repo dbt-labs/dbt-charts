@@ -1,5 +1,5 @@
 //! A table's data: the text of each cell of a flat table of text columns, and the header each
-//! column heads with. `chart-renderer/src/families/table/bind.rs` (`visible_columns`,
+//! column heads with: a text column's humanized header, cased by the header font. `chart-renderer/src/families/table/bind.rs` (`visible_columns`,
 //! `build_cell_data`) and `compile/resolve/chart/_table.py` decide the same facts; what this slice
 //! does not model is refused by name.
 
@@ -13,12 +13,12 @@ use diagnostic::{diag, refuse, Diagnostic};
 use serde_json::Value;
 
 use crate::kpi::declared_formats;
-use crate::model::{Body, Table, TableColumn};
+use crate::bound::{Failure, Family, Table, TableColumn};
 use crate::run::RunResult;
 use crate::table_dates::parse_temporal;
 
 /// Binds `chart` to its query's rows, with the `style` of the placement it is bound at.
-pub fn bind_table(id: &ChartId, chart: &TableChart, style: &TableChartStyle, own: &TableChartStylePatch, board: &Board, run: &RunResult) -> Result<Body, Diagnostic> {
+pub fn bind_table(id: &ChartId, chart: &TableChart, style: &TableChartStyle, own: &TableChartStylePatch, board: &Board, run: &RunResult) -> Result<Result<Family, Failure>, Diagnostic> {
     refuse_unmodeled(chart, style, board, run)?;
     let Some(ChartQuery::Hoisted(query)) = &chart.shared.base.query else {
         return Err(diag::err_internal(format!("chart {id} has no hoisted query")));
@@ -65,7 +65,7 @@ pub fn bind_table(id: &ChartId, chart: &TableChart, style: &TableChartStyle, own
     if columns.is_empty() {
         return Err(Diagnostic::refused(refuse!("a table whose columns are all hidden is not supported")));
     }
-    Ok(Body::Table(Table { columns }))
+    Ok(Ok(Family::Table(Table { columns })))
 }
 
 /// Every chart field, style and board fact that changes what the table says and is not modeled.

@@ -70,7 +70,7 @@ impl RefKind {
 }
 
 /// The directory a ref is anchored at: the compiling board's, `.` at the project root.
-fn dir_of(board: &ProjectPath) -> &str {
+pub(crate) fn dir_of(board: &ProjectPath) -> &str {
     board.as_str().rsplit_once('/').map_or("", |(d, _)| d)
 }
 
@@ -84,7 +84,7 @@ fn unresolved(spec: &str, context: String) -> HoistError {
 impl External<'_> {
     /// `file` anchored at `dir`, read and migrated: the file's path and its top-level mapping.
     /// Python's `resolve_ref` and the front of `read_section`.
-    fn open(
+    pub(crate) fn open(
         &self,
         spec: &str,
         dir: &str,
@@ -166,9 +166,7 @@ impl External<'_> {
             ))));
         }
         if name.is_empty() {
-            return Err(HoistError::Message(format!(
-                "Invalid external query reference: '{spec}'. Expected format: 'path/to/file.yml#query_name'"
-            )));
+            return Err(HoistError::refused(diag::err_query_ref_invalid(spec)));
         }
         let (path, file) = self.open(spec, dir_of(board), file_part)?;
         let section = Self::section("queries", spec, &path, &file)?;
@@ -179,8 +177,8 @@ impl External<'_> {
             } else {
                 available.join(", ")
             };
-            return Err(HoistError::Message(format!(
-                "Query '{name}' not found in '{file_part}'. Available queries: {available}"
+            return Err(HoistError::refused(diag::err_query_not_in_file(
+                name, file_part, available,
             )));
         };
         let parsed = parse_patch::<Query>(&entry.value, None);
@@ -309,9 +307,10 @@ impl External<'_> {
                             chart
                         }
                         _ => {
-                            if matches!(kind, RefKind::Query) {
-                                imports.queries.insert(name.clone());
-                            }
+                            match kind {
+                                RefKind::Query => imports.queries.insert(name.clone()),
+                                _ => imports.variables.insert(name.clone()),
+                            };
                             self.referenced(&spec, dir, kind)?
                         }
                     };
@@ -398,9 +397,7 @@ impl External<'_> {
                     yaml::Kind::Seq(_) => "list",
                     yaml::Kind::Map(_) => "dict",
                 };
-                Err(HoistError::Message(format!(
-                    "Invalid board-level `source:` in {path}: expected a source name string, got {got}"
-                )))
+                Err(HoistError::refused(diag::err_board_source_invalid(path.as_str(), got)))
             }
         }
     }
@@ -447,9 +444,7 @@ impl External<'_> {
             return self.walk_query(name, &origin.path, queries, source, &mut walk);
         };
         if file_part.is_empty() || query.is_empty() {
-            return Err(HoistError::Message(format!(
-                "Invalid external query reference: '{name}'. Expected format: 'path/to/file.yml#query_name'"
-            )));
+            return Err(HoistError::refused(diag::err_query_ref_invalid(name)));
         }
         let (path, file) = self.open(name, dir_of(&origin.path), file_part)?;
         let queries = Self::section("queries", &origin.spec, &path, &file)?;
@@ -476,9 +471,10 @@ impl External<'_> {
             return Ok(id);
         }
         let Some(entry) = queries.and_then(|q| q.get(name)) else {
-            return Err(HoistError::Message(format!(
-                "Chart ref '{}' requires query '{name}', which is not declared in {path}'s queries: section.",
-                walk.chart_ref
+            return Err(HoistError::refused(diag::err_chart_ref_query_undeclared(
+                walk.chart_ref,
+                name,
+                path.as_str(),
             )));
         };
         walk.resolving.insert(key.clone());
@@ -496,9 +492,10 @@ impl External<'_> {
                 )
                 .map_err(HoistError::QueryId)?;
                 if walk.resolving.contains(&target_id.to_string()) {
-                    return Err(HoistError::Message(format!(
-                        "Circular query reference while resolving chart ref '{}': '{target_name}' in {target_path} depends on itself.",
-                        walk.chart_ref
+                    return Err(HoistError::refused(diag::err_query_ref_cycle(
+                        walk.chart_ref,
+                        target_name.as_str(),
+                        target_path.as_str(),
                     )));
                 }
                 let target_key = target_id.to_string();
@@ -587,6 +584,13 @@ pub struct Imports {
     /// The `queries:` entries of the importing board that a ref stands in for: Python reads them
     /// as another file's queries, not as the board's own.
     pub queries: BTreeSet<String>,
+    /// Whether a layout placed a board file, which Python then compiles into the root's registry.
+    pub boards: bool,
+    /// The positions of placed boards that are long prose, which the adjacent-text-rows warning
+    /// counts toward a run without reporting them as authored rows.
+    pub prose: BTreeSet<board_model::ids::ItemId>,
+    /// The `variables:` entries a ref stands in for; a variable name is unique to its board tree.
+    pub variables: BTreeSet<String>,
 }
 
 /// One imported chart's query walk: the queries gathered so far, and the ones in progress.

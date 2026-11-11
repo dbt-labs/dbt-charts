@@ -10,3 +10,5 @@ indexmap = { version = "2", features = ["serde"] }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 fancy-regex = "0.19"
 
+[build-dependencies]
+serde_json = "1"

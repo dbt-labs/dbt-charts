@@ -14,6 +14,7 @@ import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import TableChart
+from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
@@ -329,6 +330,68 @@ class TestStyleInputColumnsAutoHide:
         assert ">Row Bg<" not in svg, "the helper must not render a header"
 
 
+class TestUnderscoreColumnsAutoHide:
+    """A query column whose name starts with `_` is a helper (a flag a rule
+    keys on, or pipeline metadata such as `_fivetran_synced`), hidden by
+    default; `hide_underscore_columns: false` turns that off."""
+
+    _DATA = [
+        {"name": "Acme", "arr": 120, "_at_risk": "flagged"},
+        {"name": "Globex", "arr": 80, "_at_risk": "clear"},
+    ]
+
+    def test_underscore_column_is_hidden_by_default(self) -> None:
+        svg = _render({}, self._DATA)
+        assert "Acme" in svg
+        assert "flagged" not in svg
+        assert "At Risk" not in svg
+
+    def test_hidden_underscore_column_stays_in_the_resolved_mapping(self) -> None:
+        resolved = _resolve({}, self._DATA)
+        assert resolved.columns is not None
+        assert resolved.columns["_at_risk"].visible is False
+
+    def test_explicit_entry_shows_the_underscore_column(self) -> None:
+        svg = _render({"columns": {"_at_risk": {"label": "Risk"}}}, self._DATA)
+        assert "Risk" in svg
+        assert "flagged" in svg
+
+    def test_chart_toggle_off_shows_the_underscore_column(self) -> None:
+        svg = _render({"hide_underscore_columns": False}, self._DATA)
+        assert "flagged" in svg
+
+    def test_board_toggle_off_shows_the_underscore_column(self) -> None:
+        patch = StylePatch.model_validate(
+            {"charts": {"table": {"hide_underscore_columns": False}}}
+        )
+        _, ctx = resolve_style_and_context(get_theme_style(), patch)
+        chart = TableChart(id="test", type="table", style={})
+        resolved = resolve(chart, self._DATA, chart_style_context=ctx)
+        assert resolved.columns is not None
+        assert resolved.columns["_at_risk"].visible is not False
+
+    def test_chart_toggle_beats_board_toggle(self) -> None:
+        patch = StylePatch.model_validate(
+            {"charts": {"table": {"hide_underscore_columns": False}}}
+        )
+        _, ctx = resolve_style_and_context(get_theme_style(), patch)
+        chart = TableChart(
+            id="test", type="table", style={"hide_underscore_columns": True}
+        )
+        resolved = resolve(chart, self._DATA, chart_style_context=ctx)
+        assert resolved.columns is not None
+        assert resolved.columns["_at_risk"].visible is False
+
+    def test_link_template_reads_a_hidden_underscore_column(self) -> None:
+        data = [{"name": "Alice", "_id": "acct_123"}]
+        svg = _render(
+            {"columns": {"name": {"link": "https://example.com/a/{{ _id }}"}}},
+            data,
+        )
+        assert "https://example.com/a/acct_123" in svg
+        assert svg.count("acct_123") == 1
+
+
 class TestUnaddressedVisibleEntryRaises:
     """A `visible:` entry that addresses no rendered column, no row-role
     marker, and no expanded measure key is unreachable authoring (a typo, or
@@ -396,8 +459,8 @@ class TestUnaddressedVisibleEntryRaises:
 
     def test_fanned_leaf_keeps_shared_scale_anchor_formatting(self) -> None:
         """The fan must carry resolve's baked shared_scale onto each leaf —
-        an ANCHOR-mode magnitude suffix appears once per column, exactly as
-        the flat-table control formats the same data."""
+        an ANCHOR-mode magnitude suffix is the analytic ``M`` on every row,
+        exactly as the flat-table control formats the same data."""
         data = [
             {"region": "East", "quarter": "Q1", "amt": 1500000, "cnt": 1},
             {"region": "East", "quarter": "Q2", "amt": 2500000, "cnt": 2},
@@ -411,9 +474,9 @@ class TestUnaddressedVisibleEntryRaises:
             columns=["quarter"],
             values=["amt", "cnt"],
         )
-        assert svg.count("M<") == 2, (
-            "one anchored suffix per amt column — dropping shared_scale "
-            "repeats it on every row"
+        assert svg.count("M<") == 4 and svg.count("m<") == 0, (
+            "an analytic suffix on each of the four amt cells — dropping "
+            "shared_scale would print each row's own letter"
         )
 
     def test_measure_width_does_not_fan_onto_leaves(self) -> None:

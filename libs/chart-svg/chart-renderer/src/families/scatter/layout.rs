@@ -1863,7 +1863,7 @@ pub(super) fn fit(
                 )
             })
             .collect();
-        plot.push(crate::contract::grid_group(lines));
+        plot.push(::layout::contract::grid_group(lines));
     }
     if ax_y.grid.visible.unwrap_or(false) {
         let gc = crate::common::required_ink(ax_y.grid.color.as_deref(), "scatter", "axis_y.grid.color")?;
@@ -1886,7 +1886,7 @@ pub(super) fn fit(
                 )
             })
             .collect();
-        plot.push(crate::contract::grid_group(lines));
+        plot.push(::layout::contract::grid_group(lines));
     }
 
     plot.extend(crate::families::layers::layer_grids(&layer_axes, ax_y, (plot_w, plot_h), "scatter")?);

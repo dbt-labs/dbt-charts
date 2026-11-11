@@ -57,6 +57,8 @@ charts:
     title: "Sample Data"
     type: table
     query: sample_data
+    style:
+      hide_underscore_columns: false
 
 rows:
   - rows_kpi

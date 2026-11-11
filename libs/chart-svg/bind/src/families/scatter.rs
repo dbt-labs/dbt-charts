@@ -3,36 +3,55 @@
 //! tooltip formats (`formats`) and the zero-rule gates. A row with a null x draws nothing,
 //! yet its y joins the y domain, as Vega-Lite's invalid filter keeps it there. What the
 //! bind does not model yet refuses by name.
+//!
+//! A nominal `color:` splits the points into series painted from the board's category plan
+//! (`cartesian::color_series`), heads each hover with the series name, and names them in a side
+//! legend whose entries are buttons (`bound::Toggle`) where the theme shows a hover emphasis. A
+//! legend with `values:` or past its `symbol_limit:`, and a row that draws no point (its series
+//! would still name a legend entry in production), refuse by name.
+//!
+//! `multiples:` partitions the rows into panels (`plot::facets`) on shared scales: the domains and
+//! ladders span every row, each panel holds its drawn datums in query order, and a panel's hover
+//! reads x then y where a single plot's reads y then x (production's facet marks carry Vega-Lite's
+//! own description). Independent scales refuse by name, and a panel with no drawn point does too.
+//! `tests/it/scatter_facets.rs` replays `scatter_facets_production.json`, recorded by
+//! `record_scatter_facets.py`.
+//!
+//! Binds a quantitative x and y to a `Family::Cartesian`; any other x or y type is refused by name.
+//! `tests/it/scatter.rs` replays `scatter_production.json`, production's final SVG of each YAML
+//! twin, recorded by `record_scatter_bind.py`.
 
 use std::collections::HashMap;
 
-use board_model::board::{Board, BoardBody};
-use board_model::chart::{Columns, ScatterChart};
+use board_model::board::Board;
+use board_model::chart::{ColorColumn, Columns, MultiplesConfig, MultiplesScale, ScatterChart};
 use board_model::ids::ChartId;
 use board_model::style::font::SymbolShape;
 use board_model::style::marks::LabelVisible;
 use model_core::Engine;
-use board_model::style::style::Style;
 use diagnostic::{diag, refuse, Diagnostic};
 
 use crate::channel_type::{classify, ChannelType};
 use crate::decode::decode;
 use crate::derived::Placed;
-use crate::families::cartesian::{self, axis_format, count, hex, plain_text, threshold_rules, unsupported, value};
+use crate::category_colors::CategoryColorScale;
+use crate::families::cartesian::{self, axis_format, count, no_data, plain_text, single_series, threshold_rules, unsupported, value, Prelude};
+use crate::legend::fold_symbol_limit;
+use crate::effective_palette;
 use crate::formats::locale::{active_number_locale, NumberLocale};
-use crate::formats::{column_format, AuthoredFormat, Formats, Kind, ResolvedFormat, Tiers};
-use crate::model::{
-    AuthoredLegend, AxisStyles, Baselines, Body, BoundChart, Bounds, BoundsReason, Extent, Datum, Mark, MarkLayer, MarkStyle, Naming, Orient,
-    FixedLadder, Ladder, Paint, Panels, Plot, PlotParts, Pos, RowRef, Rung, Scale, ScaleKind, Series, SeriesKey, Shape,
-    PointStyle, Tooltip, TooltipEntry, ValueAxis, ValueDomain, Zero,
+use crate::formats::ResolvedFormat;
+use crate::bound::{self,
+    AuthoredLegend, Baselines,  Bounds, BoundsReason, Extent, Datum, Mark, MarkLayer, MarkStyle, Naming, Orient,
+    FixedLadder, Ladder, PlaneParts, Sharing, Pos, RowRef, Rung, Scale, ScaleKind, Shape,
+    PointStyle, Toggle, Tooltip, TooltipEntry, ValueAxis, ValueDomain, Zero,
 };
 use crate::plot::domain::{self, Count};
+use crate::plot::facets::{self, FacetAxis, Facets};
 use crate::plot::zero::{self, Family};
 use crate::run::RunResult;
-use crate::style::axis::{AxisLadder, AxisName};
-use crate::style::{Tier, Tiers as StyleTiers};
+use crate::style::axis::AxisLadder;
 
-fn internal(context: &str) -> impl Fn(crate::model::Invalid) -> Diagnostic + '_ {
+fn internal(context: &str) -> impl Fn(crate::bound::Invalid) -> Diagnostic + '_ {
     move |invalid| diag::err_internal(format!("scatter {context} is invalid: {invalid:?}"))
 }
 
@@ -40,12 +59,10 @@ fn internal(context: &str) -> impl Fn(crate::model::Invalid) -> Diagnostic + '_ 
 fn refuse_unported(chart: &ScatterChart) -> Result<(), Diagnostic> {
     let fields = &chart.cartesian;
     let unported = [
-        ("`color:`", fields.color.is_some()),
         ("`size:`", chart.size.is_some()),
         ("`shape:`", chart.shape.is_some()),
         ("`layers:`", !chart.layers.is_empty()),
         ("`annotations:`", !chart.annotations.is_empty()),
-        ("`multiples:`", fields.multiples.is_some()),
         ("`tooltip:` columns", !chart.tooltip.tooltip.is_empty()),
         ("a list `y:`", matches!(fields.y, Some(Columns::Many(_)))),
         ("`x_label:` or `y_label:`", fields.x_label.is_some() || fields.y_label.is_some()),
@@ -55,6 +72,15 @@ fn refuse_unported(chart: &ScatterChart) -> Result<(), Diagnostic> {
     match unported.into_iter().find_map(|(field, set)| set.then_some(field)) {
         Some(field) => Err(unsupported(refuse!("a scatter with {field} is not supported"))),
         None => Ok(()),
+    }
+}
+
+/// Panels on their own scales are not modeled yet. A mirrored y axis is refused with every scatter's
+/// axis leaves.
+fn refuse_unported_facets(multiples: &MultiplesConfig) -> Result<(), Diagnostic> {
+    match multiples.scale {
+        MultiplesScale::Shared => Ok(()),
+        MultiplesScale::Independent => Err(unsupported(refuse!("a scatter with `multiples.scale: independent` is not supported"))),
     }
 }
 
@@ -118,7 +144,7 @@ fn value_axis(
         headroom,
         count: axis_count,
         values: None,
-        domain: None,
+        domain: ladder.domain(),
         min_step,
         independent: false,
         nice: None,
@@ -131,7 +157,7 @@ fn value_axis(
     if baked == Baked::X {
         let target = count(ladder)?.unwrap_or(Count::Auto).target();
         // Production fits an x to its data only clear of zero; a fit across zero stays niced.
-        if zero == Zero::Free && !cartesian::spans_zero(values) {
+        if zero == Zero::Free && domain.authored.is_none() && !cartesian::spans_zero(values) {
             let data = (domain.extent.lo(), domain.extent.hi());
             let (lo, hi) = domain::nice_clear_of_data(data.0, data.1, data, target, None);
             domain.bounds = Bounds { extent: Extent::new(lo, hi).map_err(internal(context))?, reason: BoundsReason::ClearOfData };
@@ -156,49 +182,38 @@ fn x_ladder(target: usize, domain: &ValueDomain, format: &ResolvedFormat, values
     Ok(Ladder::Fixed(FixedLadder::new(rungs, bounds).map_err(internal("x ladder"))?))
 }
 
+/// Whether zero is on a scatter x: an authored domain decides alone, else a pinned zero or data
+/// that reaches it.
+fn x_holds_zero(axis: &ValueAxis, zero: Zero, values: &[f64]) -> bool {
+    match axis.domain.authored {
+        Some(authored) => authored.extent.lo() <= 0.0 && 0.0 <= authored.extent.hi(),
+        None => zero == Zero::Pinned(true) || cartesian::spans_zero(values),
+    }
+}
+
 /// `chart` bound over its run, in the style of `body`, the board body that places it. No rows is
-/// [`Body::Empty`] in the chart's frame, once the chart's own style has passed the refusals.
+/// [`bound::Cartesian::NoData`] in the chart's frame, once the chart's own style has passed the refusals.
 pub fn bind(
     id: &ChartId,
     chart: &ScatterChart,
     board: &Board,
-    body: &BoardBody,
     run: &RunResult,
     placed: &Placed<'_>,
-) -> Result<BoundChart, Diagnostic> {
+    scales: &[CategoryColorScale],
+) -> Result<bound::Chart, Diagnostic> {
     refuse_unported(chart)?;
     let title = plain_text(chart.cartesian.shared.title.as_ref())?;
     let subtitle = plain_text(chart.cartesian.shared.subtitle.as_ref())?;
-    let style: &Style = body
-        .style
-        .as_deref()
-        .ok_or_else(|| diag::err_internal("a normalized board carries its total style"))?;
-    if !style.formats.is_empty() {
-        return Err(unsupported(refuse!("a scatter on a board with `style.formats` aliases is not supported")));
-    }
-    let formats = Formats::new(None);
-    let x_field = chart
-        .cartesian
-        .x
-        .as_ref()
-        .ok_or_else(|| diag::err_internal("normalize requires a scatter's `x:`"))?
-        .as_str();
-    let y_field = match &chart.cartesian.y {
-        Some(Columns::One(y)) => y.as_str(),
-        _ => return Err(diag::err_internal("normalize requires a scatter's `y:`")),
-    };
-    let tiers = StyleTiers { own: Tier::from(&*placed.own.charts.scatter), family: Tier::from(&*style.charts.scatter), charts: &style.charts };
-    let x_ladder = AxisLadder::new(AxisName::X, ChannelType::Quantitative, &tiers, None, false)?;
-    let y_ladder = AxisLadder::new(AxisName::Y, ChannelType::Quantitative, &tiers, None, false)?;
-    if let Some(leaf) = x_ladder.unwalked_leaf().or_else(|| y_ladder.unwalked_leaf()) {
-        return Err(unsupported(refuse!("a scatter axis that sets `{leaf}` is not supported")));
-    }
-    let x_format = axis_format(&x_ladder, formats)?;
-    let y_format = axis_format(&y_ladder, formats)?;
-    let dataset = cartesian::dataset(id, &chart.cartesian, board, run, &[x_field, y_field])?;
+    let p = Prelude::of(&chart.cartesian, ChannelType::Quantitative, placed)?;
+    let (x_field, y_field) = (p.x_field, p.y_field);
+    let x_format = axis_format(&p.x_ladder, p.formats)?;
+    let y_format = axis_format(&p.y_ladder, p.formats)?;
+    let color_field = chart.cartesian.color.as_ref().map(ColorColumn::as_str);
+    let fields: Vec<&str> = [x_field, y_field].into_iter().chain(color_field).collect();
+    let dataset = cartesian::dataset(id, &chart.cartesian, board, run, &fields)?;
     if dataset.rows.is_empty() {
         let frame = Some(placed.derive()?.frame);
-        return Ok(BoundChart { title, subtitle, frame, body: Body::Empty });
+        return Ok(bound::Chart { title, subtitle, frame, family: Ok(bound::Family::Cartesian(no_data(placed, "scatter")?)) });
     }
     for field in [x_field, y_field] {
         if !dataset.schema.get(field).map_err(Diagnostic::refused)?.is_number() {
@@ -207,6 +222,14 @@ pub fn bind(
     }
     let decoded = decode(dataset)?;
     let (xs, ys) = (decoded.keys(x_field)?, decoded.keys(y_field)?);
+    let partition = match &chart.cartesian.multiples {
+        Some(multiples) => {
+            refuse_unported_facets(multiples)?;
+            let facets = facet_fields(multiples, &decoded, dataset)?;
+            facets::partition(&dataset.rows, Some(&facets))?
+        }
+        None => facets::partition(&dataset.rows, None)?,
+    };
     let mut drawn = Vec::new();
     let (mut x_values, mut y_values) = (Vec::new(), Vec::new());
     for (row, (x, y)) in xs.iter().zip(ys).enumerate() {
@@ -226,6 +249,9 @@ pub fn bind(
     if drawn.is_empty() {
         return Err(unsupported(refuse!("a scatter whose rows draw no point is not supported")));
     }
+    if color_field.is_some() && drawn.len() != xs.len() {
+        return Err(unsupported(refuse!("a scatter `color:` with a row that draws no point is not supported")));
+    }
     // A year-shaped x reads as a time axis, as production's x-type law rules.
     for (field, dimension) in [(x_field, true), (y_field, false)] {
         if classify(&dataset.schema, &dataset.rows, Some(field), dimension)? != ChannelType::Quantitative {
@@ -233,62 +259,133 @@ pub fn bind(
         }
     }
 
-    let labels: HashMap<String, String> = chart.cartesian.labels.field_labels.clone().into_iter().collect();
-    let x_title = display_text::field_title(x_field, &labels).map_err(diag::err_internal)?;
-    let y_title = display_text::field_title(y_field, &labels).map_err(diag::err_internal)?;
-
-    let x_zero = zero::scatter_x(None, false, false, &x_values);
-    let y_zero = zero::verdict(Family::Scatter, None, &y_values);
-    let x_axis = value_axis(&x_ladder, Baked::X, x_zero, &x_values, x_format, "x domain")?;
-    let y_axis = value_axis(&y_ladder, Baked::Y, y_zero, &y_values, y_format, "y domain")?;
+    let x_zero = zero::scatter_x(p.x_ladder.zero_setting(), p.x_ladder.domain().is_some(), false, &x_values);
+    let y_zero = zero::verdict(Family::Scatter, p.y_ladder.zero_setting(), &y_values);
+    let x_axis = value_axis(&p.x_ladder, Baked::X, x_zero, &x_values, x_format, "x domain")?;
+    let y_axis = value_axis(&p.y_ladder, Baked::Y, y_zero, &y_values, y_format, "y domain")?;
+    let (axis_styles, [x_shown, y_shown]) = cartesian::axes((&p.x_ladder, p.x_title.clone(), false), (&p.y_ladder, p.y_title.clone(), false), &y_axis.domain, placed.scope, "scatter", true, true)?;
 
     let tooltip_values: Vec<f64> = y_values.iter().chain(&x_values).copied().collect();
-    let board_tooltip = AuthoredFormat::named(style.charts.tooltip.format.as_str());
-    let y_tooltip = column_format(Kind::Number, Tiers { own: Some(&board_tooltip), ..Tiers::default() }, formats, None, None, &tooltip_values)?;
+    let y_tooltip = p.tooltip_format(&tooltip_values)?;
     // Production paints the x row with the tooltip format's spec alone, no affix or register.
     let x_tooltip = ResolvedFormat { spec: y_tooltip.spec.clone(), ..ResolvedFormat::default() };
     let locale = active_number_locale();
-    let datums = drawn
-        .into_iter()
-        .map(|(row, x, y)| datum(row, x, y, [(&y_title, &y_tooltip, y), (&x_title, &x_tooltip, x)], &locale))
-        .collect::<Result<Vec<_>, _>>()?;
+    // Production's panel marks carry Vega-Lite's own description, x then y; a single plot's tooltip
+    // reads y then x.
+    let faceted = chart.cartesian.multiples.is_some();
+    let mut panel_of = vec![0; dataset.rows.len()];
+    for (panel, rows) in partition.panels.iter().enumerate() {
+        for &row in &rows.rows {
+            panel_of[row] = panel;
+        }
+    }
+    let mut panels: Vec<Vec<Datum>> = vec![Vec::new(); partition.panels.len()];
+    for (row, x, y) in drawn {
+        let entries = if faceted {
+            [(&p.x_title, &x_tooltip, x), (&p.y_title, &y_tooltip, y)]
+        } else {
+            [(&p.y_title, &y_tooltip, y), (&p.x_title, &x_tooltip, x)]
+        };
+        panels[panel_of[row]].push(datum(row, x, y, entries, &locale)?);
+    }
+    if panels.iter().any(Vec::is_empty) {
+        return Err(unsupported(refuse!("a scatter panel whose rows draw no point is not supported")));
+    }
 
     let baselines = Baselines {
-        zero: cartesian::zero_rule(&y_ladder, y_zero, &y_values)?,
+        zero: cartesian::zero_rule(&p.y_ladder, y_zero, &y_values)?,
         unity: false,
-        x_threshold: threshold_rules(&x_ladder)? && cartesian::spans_zero(&x_values),
+        x_threshold: threshold_rules(&p.x_ladder)? && x_holds_zero(&x_axis, x_zero, &x_values),
     };
     let derived = placed.derive()?;
     let frame = Some(derived.frame.clone());
-    let fill = placed.single_series_fill()?;
-    let ink = color::label_ink(&hex(fill), &hex(derived.frame.canvas)).map_err(diag::err_internal)?;
-    let series = Series {
-        key: SeriesKey::Measure(y_field.to_string()),
-        display: y_title.clone(),
-        paint: Paint::Solid(fill),
-        ink: color::parse_css_color(&ink).map_err(diag::err_internal)?,
+    if color_field.is_some() && chart.cartesian.multiples.is_some() {
+        return Err(unsupported(refuse!("a scatter `color:` with `multiples:` is not supported")));
+    }
+    if color_field.is_some() && derived.legend.base.values.is_some() {
+        return Err(unsupported(refuse!("a scatter legend with `values:` is not supported")));
+    }
+    let palette = effective_palette(&placed.own.charts.scatter.cartesian.painted.color.categorical, |own| own.palette.as_ref(), p.style)?;
+    let colors = color_field
+        .map(|field| cartesian::color_series(field, dataset, decoded.keys(field)?, scales, &palette, derived.frame.canvas))
+        .transpose()?;
+    if let (Some(colors), Some(limit)) = (&colors, derived.legend.base.symbol_limit) {
+        if fold_symbol_limit(colors.series.len(), limit as usize).is_some() {
+            return Err(unsupported(refuse!("a scatter legend with more entries than its `symbol_limit:` is not supported")));
+        }
+    }
+    let mut panels = panels;
+    if let Some(colors) = &colors {
+        for datum in panels.iter_mut().flatten() {
+            datum.series = colors.of_row[datum.row.0];
+            datum.tooltip.header = Some(colors.series[datum.series].display.clone());
+        }
+    }
+    let (series, legends) = match colors {
+        Some(colors) => {
+            let labels: HashMap<String, String> = chart.cartesian.labels.field_labels.clone().into_iter().collect();
+            let title = display_text::field_title(color_field.expect("a color series has its field"), &labels).map_err(diag::err_internal)?;
+            let mut legend = colors.legend(title);
+            // A click hides series only where the theme shows a hover emphasis, since nothing else
+            // shows an entry hidden (`LegendView::of`); a single series has nothing to narrow to.
+            if p.style.charts.hover_emphasis.visible && colors.series.len() > 1 {
+                let mut domain: Vec<String> = Vec::new();
+                for &index in &colors.of_row {
+                    let name = &colors.series[index].display;
+                    if !domain.contains(name) {
+                        domain.push(name.clone());
+                    }
+                }
+                legend.toggle = Some(Toggle {
+                    param: format!("_dct_legend_{}", placed.public_id),
+                    domain,
+                    keys: colors.series.iter().map(|series| series.display.clone()).collect(),
+                });
+            }
+            (colors.series, vec![legend])
+        }
+        None => (vec![single_series(placed, y_field, &p.y_title, &derived)?], Vec::new()),
     };
-    let plot = Plot::new(PlotParts {
+    let plot = bound::Plane::new(PlaneParts {
         orient: Orient::Vertical,
-        x: Scale { kind: ScaleKind::Linear(x_axis), title: Some(x_title) },
-        y: vec![Scale { kind: ScaleKind::Linear(y_axis), title: Some(y_title) }],
-        panels: Panels::Single,
-        series: vec![series],
-        layers: vec![MarkLayer { mark: Mark::Points { shape: Shape::Circle, size: None }, y_scale: 0, panels: vec![datums] }],
+        x: Scale { kind: ScaleKind::Linear(x_axis), title: x_shown },
+        y: vec![Scale { kind: ScaleKind::Linear(y_axis), title: y_shown }],
+        panels: partition.layout,
+        series,
+        layers: vec![MarkLayer { mark: Mark::Points { shape: Shape::Circle, size: None }, y_scale: 0, panels }],
         naming: Naming {
             rail: None,
             entries: Vec::new(),
             asks_top_strip: false,
             authored: AuthoredLegend::Side(derived.legend.clone()),
         },
-        legends: Vec::new(),
+        legends,
         support: None,
         baselines,
-        axis_styles: AxisStyles {},
-        mark_style: MarkStyle { points: Some(point_style(chart)?) },
+        axis_styles,
+        diagnostics: crate::restated::axes(&p.tiers, [&p.x_ladder, &p.y_ladder], placed.public_id),
+        mark_style: MarkStyle { points: Some(point_style(chart)?), bins: None },
     })
     .map_err(internal("plot"))?;
-    Ok(BoundChart { title, subtitle, frame, body: Body::Plot(Box::new(plot)) })
+    Ok(bound::Chart { title, subtitle, frame, family: Ok(bound::Family::Cartesian(bound::Cartesian::Plane(Box::new(plot)))) })
+}
+
+/// `multiples:` as the partition reads it: each axis's field with the keys decoded per row. A field
+/// the query lacks is production's `ERR-MULTIPLES-FIELD-NOT-FOUND`, found by the partition's own scan.
+fn facet_fields<'a>(
+    multiples: &'a MultiplesConfig,
+    decoded: &'a crate::decode::Decoded,
+    dataset: &column_types::Dataset,
+) -> Result<Facets<'a>, Diagnostic> {
+    if multiples.rows.is_some() && multiples.rows == multiples.columns {
+        return Err(diag::err_multiples_self_crossed(multiples.rows.clone()));
+    }
+    let axis = |field: &'a Option<String>| -> Result<Option<FacetAxis<'a>>, Diagnostic> {
+        let Some(field) = field else { return Ok(None) };
+        let keys = if dataset.schema.get(field).is_ok() { decoded.keys(field)? } else { &[] };
+        Ok(Some(FacetAxis { field, keys }))
+    };
+    Ok(Facets { rows: axis(&multiples.rows)?, columns: axis(&multiples.columns)?, x: Sharing::Shared, y: Sharing::Shared, mirror: false })
 }
 
 fn datum(
@@ -309,7 +406,7 @@ fn datum(
         series: 0,
         row: RowRef(row),
         label: None,
-        tooltip: Tooltip { entries },
+        tooltip: Tooltip { header: None, entries },
         href: None,
         defined: true,
     })

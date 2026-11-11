@@ -435,3 +435,38 @@ class TestComposedQueryPropagatesSetupSql:
         )
         assert result.success is True, result.errors
         assert result.data == [{"v": 5}]
+
+
+class TestCacheComposedQuery:
+    """A query reading `{{ queries.X.cache }}` runs its upstream once in memory."""
+
+    def test_query_board_runs_a_cache_composed_query_with_no_cache_attached(
+        self,
+        tmp_path: Path,
+        probe_registry: ExecEnv,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        board = tmp_path / "cached.yml"
+        board.write_text(
+            "source: mem\n"
+            "queries:\n"
+            "  base:\n"
+            "    sql: SELECT 1 AS one, 7 AS seven\n"
+            "  summary:\n"
+            "    sql: SELECT seven * 2 AS doubled FROM {{ queries.base.cache }}\n"
+            "charts:\n"
+            "  c:\n"
+            "    query: summary\n"
+            "    type: table\n"
+            "rows:\n"
+            "  - c\n"
+        )
+
+        result = query_board(
+            "summary", board, local_project(tmp_path), env=probe_registry
+        )
+
+        assert result.success is True, result.errors
+        assert result.data == [{"doubled": 14}]

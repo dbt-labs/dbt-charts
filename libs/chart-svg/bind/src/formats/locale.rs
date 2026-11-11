@@ -7,6 +7,10 @@
 //! does the same: [`with_number_locale`] opens the scope for one render and
 //! [`d3_format`] is the single formatting entry every family goes through.
 //! Outside any scope the locale is en-US, production's `HOUSE_EN_US`.
+//!
+//! The board's locale is `board_style.format_locale`; the active-scope `d3_format` is
+//! what the renderer's families still print through. See `docs/laws-shared.md`
+//! § Number formatting.
 
 use std::cell::RefCell;
 use std::rc::Rc;

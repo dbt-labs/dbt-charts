@@ -6,6 +6,16 @@
 //! Markup layout does not own (a markdown block, a custom chart's template output) rides as
 //! an [`Element`] or its [`Chars`] among the typed nodes.
 
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )
+)]
+
 use std::borrow::Cow;
 
 mod geom;
@@ -282,6 +292,8 @@ impl Node {
     /// A typed node. Panics if `attrs` names geometry (it belongs in the
     /// shape) or if a mark has no geometry to measure: both are bugs in the
     /// layout that built the node.
+    // A `Result` here would put an error path on every one of the hundred-odd node constructions.
+    #[allow(clippy::panic)]
     pub fn new(role: Role, attrs: Attrs, shape: Shape) -> Self {
         let mut run_attrs = Vec::new();
         if let Shape::Text { runs, .. } = &shape {
@@ -355,7 +367,9 @@ impl Node {
         Some(runs.iter().filter_map(|run| if let Run::Chars(chars) = run { Some(chars.text.as_str()) } else { None }).collect())
     }
 
-    /// The box layout measured for this text.
+    /// The box layout measured for this text. Panics on any other shape, a layout bug as in
+    /// [`Node::new`].
+    #[allow(clippy::panic)]
     pub fn with_text_bounds(mut self, measured: Bounds) -> Self {
         let Shape::Text { bounds, .. } = &mut self.shape else { panic!("only a text node has a measured box") };
         *bounds = Some(measured);

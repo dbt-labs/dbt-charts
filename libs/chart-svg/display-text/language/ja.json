@@ -24,6 +24,7 @@
   "case.extra_small_words": "",
   "case.small_words": "",
   "case.title_style": "none",
+  "chart.no_data": "データがありません",
   "controls.all": "すべて",
   "controls.all_dates": "すべての日付",
   "controls.any_date": "任意の日付",

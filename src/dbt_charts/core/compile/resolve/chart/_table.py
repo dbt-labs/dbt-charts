@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Collection, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any
 
-from d3_format import format as _d3_fmt
+from d3_format import format as _d3_fmt, parse as _d3_parse
 from dbt_charts.core.colors import CanvasTone, sanitize_color
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
@@ -88,7 +89,9 @@ from dbt_charts.core.text.numeral_scale import (
     build_decimal_pad_table,
     column_digit_format,
     column_shares_one_printed_unit,
+    forced_shared_scale,
     fractional_digit_count,
+    prints_si_suffix,
     shared_scale_for_column,
     tier_distance,
 )
@@ -165,6 +168,7 @@ def _materialize_table_columns(
     pivot_measure_names: frozenset[str],
     table_column_links: Mapping[str, str],
     table_column_rows: Sequence[Mapping[str, str]],
+    hide_underscore_columns: bool,
 ) -> dict[str, TableColumnConfig] | None:
     """Build the final per-column config mapping once, from trusted inputs.
 
@@ -182,8 +186,9 @@ def _materialize_table_columns(
     those columns and never narrows this mapping. Hiding is the per-column
     ``visible: false`` — such entries stay present here carrying
     ``visible=False`` (render filters at display time), and a column
-    consumed as a style input (see ``_style_input_columns``) is materialized
-    with ``visible=False`` derived automatically.
+    consumed as a style input (see ``_style_input_columns``), or named with a
+    leading underscore while ``hide_underscore_columns`` is on, is
+    materialized with ``visible=False`` derived automatically.
 
     A pivoted measure's real leaf-column key space (leaf keys, or bare
     pivoted values for a single-dim single-measure pivot) only exists after
@@ -248,7 +253,10 @@ def _materialize_table_columns(
             values=() if align_already_set else [row.get(key) for row in data],
             # An explicit entry is a display signal that beats derivation:
             # auto-hide applies only to columns the author never mentioned.
-            auto_hidden=source is None and key in style_inputs,
+            auto_hidden=source is None
+            and (
+                key in style_inputs or (hide_underscore_columns and key.startswith("_"))
+            ),
         )
     return result
 
@@ -349,6 +357,111 @@ def _with_resolved_scale_stops(
     filter_variables: frozenset[str],
     link_open: LinkOpen,
 ) -> dict[str, ResolvedTableColumnConfig] | None:
+    """Bake every column's scale stops, with one notation across the table.
+
+    A sibling that still prints an SI suffix makes a column whose cells would
+    mix units compact to one unit instead of falling back to exact digits, so
+    no column mixes notations and no two columns read in different ones.
+    """
+    bake = functools.partial(
+        _bake_scale_stops,
+        columns,
+        text_color,
+        canvas_tone,
+        formats,
+        font_family,
+        rows,
+        allow_shared_scale,
+        own_formats,
+        defaults_format,
+        declared,
+        filter_variables,
+        link_open,
+    )
+    resolved = bake(force_one_unit=False)
+    if not resolved:
+        return resolved
+    prints_exact = [
+        c.format is not None and c.format.spec == UNCOMPACTED_COLUMN_SPEC
+        for c in resolved.values()
+    ]
+
+    def prints_si(name: str, column: ResolvedTableColumnConfig) -> bool:
+        if column.shared_scale is not None:
+            return True
+        if column.format is not None:
+            return False
+        effective = column_format(
+            "number",
+            formats,
+            own_formats.get(name),
+            board=defaults_format,
+            query_formats=declared,
+            columns=name,
+            text=True,
+        )
+        # A string cell renders verbatim, so number-like text ("2024") prints no suffix.
+        values = _coerced_column_values(
+            [row for row in rows if not isinstance(row.get(name), str)], name
+        )
+        return is_d3_si_spec(effective.spec) and prints_si_suffix(
+            _per_cell_texts(values, effective.spec, effective.raw, formats)
+        )
+
+    anchored = [c.shared_scale is not None for c in resolved.values()]
+    per_cell_si = [
+        not a and prints_si(n, c)
+        for a, (n, c) in zip(anchored, resolved.items(), strict=True)
+    ]
+    # A column printing its unit on every cell beside one printing it once reads
+    # as two notations: forcing re-bakes both into the anchored one.
+    mixed_anchoring = any(anchored) and any(per_cell_si)
+    force_one_unit = (any(prints_exact) or mixed_anchoring) and any(
+        prints_si(n, c) for n, c in resolved.items()
+    )
+    if force_one_unit:
+        resolved = bake(force_one_unit=True)
+        if not resolved:
+            return resolved
+
+    # Columns on one scale share the largest precision any of them needs; the
+    # digit spec trims, so each value still prints only the places it has.
+    def precision(scale: ResolvedColumnSharedScale) -> int:
+        baked = _d3_parse(scale.digit_spec).precision
+        if baked is None:
+            raise ValueError(f"baked digit spec {scale.digit_spec!r} has no precision")
+        return baked
+
+    scales = [c.shared_scale for c in resolved.values() if c.shared_scale is not None]
+    floors: dict[int, int] = {}
+    for scale in scales:
+        floors[scale.exponent] = max(
+            floors.get(
+                scale.exponent, 0
+            ),  # type-state: silent_fallback — 0 is the identity for max, not a default
+            precision(scale),
+        )
+    if all(precision(s) == floors[s.exponent] for s in scales):
+        return resolved
+    return bake(force_one_unit=force_one_unit, precision_floors=floors)
+
+
+def _bake_scale_stops(
+    columns: dict[str, TableColumnConfig] | None,
+    text_color: str | None,
+    canvas_tone: CanvasTone,
+    formats: FormatTable | None,
+    font_family: str,
+    rows: list[dict[str, Any]],  # type-state: explicit_any — rows are raw query output
+    allow_shared_scale: bool,
+    own_formats: Mapping[str, AuthoredFormat | None],
+    defaults_format: AuthoredFormat | None,
+    declared: Mapping[str, str] | None,
+    filter_variables: frozenset[str],
+    link_open: LinkOpen,
+    force_one_unit: bool,
+    precision_floors: Mapping[int, int] = MappingProxyType({}),
+) -> dict[str, ResolvedTableColumnConfig] | None:
     """Construct ResolvedTableColumnConfig entries with baked scale stops.
 
     Every string palette on a table column is resolved to stops via the
@@ -371,9 +484,8 @@ def _with_resolved_scale_stops(
     (decimal_pad_table still bakes either way): a chart-attached legend
     "table" (pie/donut) shares this function's column-resolution machinery
     with real authored tables (this module's own docstring), but a legend
-    entry is read beside its own slice, not scanned down a column -- an
-    ANCHOR-mode magnitude declared once on the top entry and stripped from
-    the rest reads as data loss there, not alignment. Callers synthesizing a
+    entry is read beside its own slice, not scanned down a column, so it
+    keeps each entry's own magnitude. Callers synthesizing a
     legend/attachment table pass ``False``; real authored tables keep the
     default.
     """
@@ -414,6 +526,9 @@ def _with_resolved_scale_stops(
         shared_scale: ResolvedColumnSharedScale | None = None
         if allow_shared_scale and coerced_values and is_d3_si_spec(si_check_fmt):
             raw_scale = shared_scale_for_column(coerced_values)
+            forced = raw_scale is None and force_one_unit
+            if forced:
+                raw_scale = forced_shared_scale(coerced_values)
             if raw_scale is not None:
                 magnitude = 10.0**raw_scale.exponent
                 nonzero = [v for v in coerced_values if v != 0]
@@ -436,11 +551,21 @@ def _with_resolved_scale_stops(
                 # at all -- refuses the whole bake instead, same as a column
                 # with no majority tier in the first place.
                 distance = tier_distance(finest, raw_scale.exponent)
+                if distance is None and forced and abs(finest) < 1_000:
+                    # A forced scale reads sub-thousand cells as fractions of
+                    # its unit (858 -> 0.858K), one tier below the unit.
+                    distance = 1
                 if distance is None or distance > 1:
                     shared_scale = None
                 else:
                     finest_scaled = abs(finest) / magnitude
-                    _, digit_spec = column_digit_format(si_check_fmt, finest_scaled)
+                    _, digit_spec = column_digit_format(
+                        si_check_fmt,
+                        finest_scaled,
+                        precision_floors.get(
+                            raw_scale.exponent, 0
+                        ),  # type-state: silent_fallback — no sibling on this exponent raises the floor
+                    )
                     # Even within that bound, a low-enough authored
                     # significant-figure count (e.g. an explicit `.0~s`)
                     # can still leave zero decimals to lean on, rendering a
@@ -718,7 +843,9 @@ def _resolve_table(
         pivot_measure_names,
         table_column_links,
         table_column_rows,
+        table.hide_underscore_columns,
     )
+
     resolved_columns = _with_resolved_scale_stops(
         table_columns,
         effective_table_ink,

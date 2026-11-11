@@ -19,6 +19,9 @@
 //! Left off the spine: `input_auto_detected`, `authored_fields`, `defined_in_other_file`,
 //! `variable_dependencies` (derived: `BoardIndex`) and `INTERNAL_VARIABLE_FIELDS`
 //! (`reject_internal_variable_keys` dissolves: an authored internal key is an unknown key).
+//!
+//! The field table is checked against `tests/fixtures/variable.json` from
+//! `tests/test_board_model_query_fixtures.py`.
 
 use crate::board::value::SingleRowBoolProbe;
 use crate::facet::DisplayText;
@@ -459,4 +462,138 @@ pub struct Variable {
     /// SQL operator used when generating filter expressions (e.g., '=', 'IN', 'LIKE').
     #[model(absent = "chosen from the input type")]
     pub operator: Option<String>,
+}
+
+/// What `detect_variable_input_type` reads of a declaration, whichever shape holds it (a patch, an
+/// authored board, the built variable).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct InputSignals {
+    pub list_default: bool,
+    pub slider_field: bool,
+    pub bool_default: bool,
+    pub has_options: bool,
+    pub has_column: bool,
+}
+
+impl InputSignals {
+    /// The control `input: auto` settles on: a list default, then a slider field, a bool default,
+    /// options or a column binding, else text.
+    pub fn detect(self) -> InputType {
+        if self.list_default {
+            InputType::Multiselect
+        } else if self.slider_field {
+            InputType::Slider
+        } else if self.bool_default {
+            InputType::Checkbox
+        } else if self.has_options || self.has_column {
+            InputType::Select
+        } else {
+            InputType::Text
+        }
+    }
+}
+
+/// What a choice input's values are (`choice_member_type`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Member {
+    Text,
+    Number,
+    Date,
+    Boolean,
+}
+
+impl Member {
+    /// An explicit `data_type` wins; otherwise static options that are all numbers.
+    pub fn of(data_type: Option<VariableDataType>, statics: Option<&StaticOptions>) -> Self {
+        match (data_type, statics) {
+            (Some(VariableDataType::Number), _) => Self::Number,
+            (Some(VariableDataType::Date), _) => Self::Date,
+            (Some(VariableDataType::Boolean), _) => Self::Boolean,
+            (Some(_), _) => Self::Text,
+            (None, Some(StaticOptions::Numbers(n))) if !n.is_empty() => Self::Number,
+            (None, _) => Self::Text,
+        }
+    }
+}
+
+const SLIDER_MAX_DISTINCT: usize = 200;
+const SLIDER_MAX_RANGE_STEPS: f64 = 1000.0;
+
+/// What `variable_input_refinement.py::refine_input_type_from_data` settles an auto-detected select
+/// to: its input and, for a slider, the `(min, max, step)` its option values give.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Refinement {
+    pub input: InputType,
+    pub slider: Option<(f64, f64, f64)>,
+}
+
+/// The refinement the option values (as Python's `str` spells them) call for; `None` leaves the
+/// input a select. Date over boolean over numeric slider, the one law of the data-aware tier.
+pub fn refine_options(values: &[String]) -> Option<Refinement> {
+    let plain = |input| {
+        Some(Refinement {
+            input,
+            slider: None,
+        })
+    };
+    if values.is_empty() {
+        return None;
+    }
+    if looks_like_dates(values) {
+        return plain(InputType::Datepicker);
+    }
+    if looks_like_booleans(values) {
+        return plain(InputType::Checkbox);
+    }
+    if values.len() > SLIDER_MAX_DISTINCT {
+        return None;
+    }
+    let parsed = try_parse_numbers(values)?;
+    let min = parsed.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = parsed.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let range = max - min;
+    if range <= 0.0 {
+        return None;
+    }
+    let step = match parsed.iter().all(|v| v.fract() == 0.0) {
+        true => 1.0,
+        false => (range / 100.0 * 1e6).round() / 1e6,
+    };
+    (range / step <= SLIDER_MAX_RANGE_STEPS).then_some(Refinement {
+        input: InputType::Slider,
+        slider: Some((min, max, step)),
+    })
+}
+
+fn looks_like_dates(values: &[String]) -> bool {
+    if values.len() < 2 {
+        return false;
+    }
+    let matches = values.iter().filter(|v| is_iso_date_prefix(v)).count();
+    matches as f64 / values.len() as f64 >= 0.8
+}
+
+fn is_iso_date_prefix(v: &str) -> bool {
+    let Some(day) = v.get(..10) else {
+        return false;
+    };
+    d3rs::calendar::parse_ymd(day).is_some()
+        && v.get(10..)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(['T', ' ', '\t']))
+}
+
+fn looks_like_booleans(values: &[String]) -> bool {
+    let [a, b] = values else {
+        return false;
+    };
+    let (a, b) = (a.trim().to_lowercase(), b.trim().to_lowercase());
+    let pair = |x: &str, y: &str| (a == x && b == y) || (a == y && b == x);
+    pair("true", "false") || pair("yes", "no") || pair("0", "1")
+}
+
+fn try_parse_numbers(values: &[String]) -> Option<Vec<f64>> {
+    values
+        .iter()
+        .map(|v| v.trim().parse::<f64>().ok().filter(|n| n.is_finite()))
+        .collect()
 }

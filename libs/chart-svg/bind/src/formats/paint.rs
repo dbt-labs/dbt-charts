@@ -2,6 +2,11 @@
 //! under the board's number locale. The d3 digits, an SI letter respelled at the
 //! format's notation, then the affix with the sign placed against the prefix. Every
 //! painter takes the locale it prints in.
+//!
+//! It is the bind painter, the renderer's `FormatSlot` until the cutover:
+//! `ResolvedFormat::paint`, `paint_tick`, `paint_signed` and `paint_anchored` print the
+//! d3 digits, the SI letter in the locale's words, and the affix and sign placement
+//! under an explicit `NumberLocale`.
 
 use diagnostic::Diagnostic;
 

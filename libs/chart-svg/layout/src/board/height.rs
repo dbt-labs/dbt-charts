@@ -1,6 +1,6 @@
 //! Board heights and boxes: each board's height bottom-up from its charts'
 //! natural heights, then every drawn item's box top-down in the height its
-//! board is given (SL L7–L14, N2–N4, S4, S5).
+//! board is given (SL L7–L14, N2–N4, S4, S5). A chart's natural plan is fallible.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 

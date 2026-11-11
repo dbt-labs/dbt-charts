@@ -3,36 +3,41 @@
 //! (`plot::zero`), the linear domain (`plot::domain`), the axis and tooltip formats (`formats`)
 //! and the zero-rule gate. A row with a null y keeps its place in x order and breaks the path.
 //! What the bind does not model yet refuses by name.
+//!
+//! Binds a date x and one value y to a `Family::Cartesian` of one `Mark::Lines` series on a time x;
+//! a quantitative x is refused by name. A y that production's sampled rule
+//! (`channel_type::y_is_numeric`: the first 20 non-null cells, numeric-looking text counting as
+//! a number, no cell never tripping it) calls non-numeric is the chart's
+//! `ERR-LINE-Y-NOT-NUMERIC` error card (a bar's is `ERR-BAR-Y-NOT-NUMERIC`), named by its public
+//! id. A text-declared y the rule does not call non-numeric is refused by name.
+//! `tests/it/line.rs` replays `line_production.json`, recorded by `record_line_bind.py`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use board_model::board::{Board, BoardBody};
+use board_model::board::Board;
 use board_model::chart::{Columns, LineChart};
 use board_model::ids::ChartId;
 use board_model::primitives::Curve;
 use board_model::style::axis::FillMode;
 use board_model::style::marks::LabelVisible;
-use board_model::style::style::Style;
 use diagnostic::{codes, diag, py_str_repr, refuse, Diagnostic};
 use model_core::Engine;
 
 use crate::channel_type::{classify, y_is_numeric, ChannelType};
 use crate::decode::decode;
 use crate::derived::{DerivedChart, Placed};
-use crate::families::cartesian::{self, axis_format, hex, measure_axis, plain_text, unsupported, value, zero_rule};
+use crate::families::cartesian::{self, axis_format, measure_axis, no_data, plain_text, single_series, unsupported, value, zero_rule, Prelude};
 use crate::formats::locale::active_number_locale;
-use crate::formats::{column_format, AuthoredFormat, Formats, Kind, Tiers};
-use crate::model::{
-    AuthoredLegend, AxisStyles, Baselines, Body, BoundChart, Datum, Failure, GrainDrop, Key, Mark, MarkLayer, MarkStyle, Naming, Orient,
-    Paint, Panels, Plot, PlotParts, Pos, RowRef, Scale, ScaleKind, Series, SeriesKey, Tooltip, TooltipEntry,
+use crate::bound::{self,
+    AuthoredLegend, AxisStyles, Baselines,  Datum, Failure, GrainDrop, Key, Mark, MarkLayer, MarkStyle, Naming, Orient,
+    Panels, Pos, RowRef, Scale, ScaleKind, Series, Tooltip, TooltipEntry,
 };
 use crate::plot::domain;
 use crate::plot::time::{time_domain, TimeInput, TimeUnitSetting};
 use crate::plot::zero::{self, Family};
 use crate::rows::is_year_shaped;
 use crate::run::RunResult;
-use crate::style::axis::{AxisLadder, AxisName};
-use crate::style::{Tier, Tiers as StyleTiers};
+use crate::style::Tiers as StyleTiers;
 use crate::temporal::VegaType;
 use crate::x_type::{resolve_cartesian_x_type, Grain, XAxis};
 
@@ -49,11 +54,14 @@ pub struct Lines {
     /// One per row, in x order. A row with a null y is `defined: false`.
     pub datums: Vec<Datum>,
     pub baselines: Baselines,
+    pub axis_styles: AxisStyles,
     /// The frame, fill and legend the placement derives, after the chart's data has passed its refusals.
     pub derived: DerivedChart,
+    /// The chart's own axis keys the other tiers already answer.
+    pub diagnostics: Vec<Diagnostic>,
 }
 
-fn internal(invalid: crate::model::Invalid) -> Diagnostic {
+fn internal(invalid: crate::bound::Invalid) -> Diagnostic {
     diag::err_internal(format!("line is invalid: {invalid:?}"))
 }
 
@@ -113,42 +121,19 @@ pub fn lines(
     id: &ChartId,
     chart: &LineChart,
     board: &Board,
-    body: &BoardBody,
     run: &RunResult,
     placed: &Placed<'_>,
 ) -> Result<Option<Lines>, Diagnostic> {
-    let style: &Style = body
-        .style
-        .as_deref()
-        .ok_or_else(|| diag::err_internal("a normalized board carries its total style"))?;
-    if !style.formats.is_empty() {
-        return Err(unsupported(refuse!("a line on a board with `style.formats` aliases is not supported")));
-    }
-    let formats = Formats::new(None);
-    let x_field = chart
-        .cartesian
-        .x
-        .as_ref()
-        .ok_or_else(|| diag::err_internal("normalize requires a line's `x:`"))?
-        .as_str();
-    let y_field = match &chart.cartesian.y {
-        Some(Columns::One(y)) => y.as_str(),
-        _ => return Err(diag::err_internal("normalize requires a line's `y:`")),
-    };
-    let tiers = StyleTiers { own: Tier::from(&*placed.own.charts.line), family: Tier::from(&*style.charts.line), charts: &style.charts };
-    let x_ladder = AxisLadder::new(AxisName::X, ChannelType::Temporal, &tiers, None, false)?;
-    let y_ladder = AxisLadder::new(AxisName::Y, ChannelType::Quantitative, &tiers, None, false)?;
-    if let Some(leaf) = x_ladder.unwalked_leaf().or_else(|| y_ladder.unwalked_leaf()) {
-        return Err(unsupported(refuse!("a line axis that sets `{leaf}` is not supported")));
-    }
-    refuse_time_axis_leaves(&tiers)?;
-    if x_ladder.labels_format().is_some() {
+    let p = Prelude::of(&chart.cartesian, ChannelType::Temporal, placed)?;
+    let (x_field, y_field) = (p.x_field, p.y_field);
+    refuse_time_axis_leaves(&p.tiers)?;
+    if p.x_ladder.labels_format().is_some() {
         return Err(unsupported(refuse!("a line time axis with a label format is not supported")));
     }
-    if x_ladder.ticks_count().is_some() {
+    if p.x_ladder.ticks_count().is_some() {
         return Err(unsupported(refuse!("a line time axis with `ticks.count` is not supported")));
     }
-    let y_format = axis_format(&y_ladder, formats)?;
+    let y_format = axis_format(&p.y_ladder, p.formats)?;
     let dataset = cartesian::dataset(id, &chart.cartesian, board, run, &[x_field, y_field])?;
     if dataset.rows.is_empty() {
         return Ok(None);
@@ -180,7 +165,7 @@ pub fn lines(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let authored_none = x_ladder.time_unit_none();
+    let authored_none = p.x_ladder.time_unit_none();
     let law_axis = XAxis {
         time_unit: authored_none.then_some("none"),
         authored_type: None,
@@ -224,24 +209,20 @@ pub fn lines(
         return Err(unsupported(refuse!("a line whose rows hold no value is not supported")));
     }
 
-    let labels: HashMap<String, String> = chart.cartesian.labels.field_labels.clone().into_iter().collect();
-    let x_title = display_text::field_title(x_field, &labels).map_err(diag::err_internal)?;
-    let y_title = display_text::field_title(y_field, &labels).map_err(diag::err_internal)?;
-
-    let y_zero = zero::verdict(Family::Line, None, &drawn);
+    let y_zero = zero::verdict(Family::Line, p.y_ladder.zero_setting(), &drawn);
     // A single series is production's `apply_nice == false` arm: its baked headroom bounds stand
     // unrounded (`resolve_measure_domain`; only a rail or layers re-nice).
-    let y_axis = measure_axis(&y_ladder, y_zero, &drawn, y_format, domain::Mark::Plotted, Some(false))?;
+    let y_axis = measure_axis(&p.y_ladder, y_zero, &drawn, y_format, domain::Mark::Plotted, Some(false))?;
+    let (axis_styles, [x_shown, y_shown]) = cartesian::axes((&p.x_ladder, p.x_title.clone(), false), (&p.y_ladder, p.y_title.clone(), false), &y_axis.domain, placed.scope, "line", false, false)?;
 
-    let board_tooltip = AuthoredFormat::named(style.charts.tooltip.format.as_str());
-    let tooltip_format = column_format(Kind::Number, Tiers { own: Some(&board_tooltip), ..Tiers::default() }, formats, None, None, &drawn)?;
+    let tooltip_format = p.tooltip_format(&drawn)?;
     let locale = active_number_locale();
     let datums = order
         .into_iter()
         .map(|row| {
             let y = y_values[row];
             let entries = match y {
-                Some(y) => vec![TooltipEntry { title: y_title.clone(), value: tooltip_format.paint(&locale, y)? }],
+                Some(y) => vec![TooltipEntry { title: p.y_title.clone(), value: tooltip_format.paint(&locale, y)? }],
                 None => Vec::new(),
             };
             Ok(Datum {
@@ -251,59 +232,53 @@ pub fn lines(
                 series: 0,
                 row: RowRef(row),
                 label: None,
-                tooltip: Tooltip { entries },
+                tooltip: Tooltip { header: None, entries },
                 href: None,
                 defined: y.is_some(),
             })
         })
         .collect::<Result<Vec<_>, Diagnostic>>()?;
 
-    let baselines = Baselines { zero: zero_rule(&y_ladder, y_zero, &drawn)?, unity: false, x_threshold: false };
+    let baselines = Baselines { zero: zero_rule(&p.y_ladder, y_zero, &drawn)?, unity: false, x_threshold: false };
     let derived = placed.derive()?;
-    let stroke = placed.single_series_fill()?;
-    let ink = color::label_ink(&hex(stroke), &hex(derived.frame.canvas)).map_err(diag::err_internal)?;
-    let series = Series {
-        key: SeriesKey::Measure(y_field.to_string()),
-        display: y_title.clone(),
-        paint: Paint::Solid(stroke),
-        ink: color::parse_css_color(&ink).map_err(diag::err_internal)?,
-    };
+    let series = single_series(placed, y_field, &p.y_title, &derived)?;
     Ok(Some(Lines {
-        x: Scale { kind: ScaleKind::Time(domain), title: Some(x_title) },
-        y: Scale { kind: ScaleKind::Linear(y_axis), title: Some(y_title) },
+        x: Scale { kind: ScaleKind::Time(domain), title: x_shown },
+        y: Scale { kind: ScaleKind::Linear(y_axis), title: y_shown },
         series,
         datums,
         baselines,
+        axis_styles,
         derived,
+        diagnostics: crate::restated::axes(&p.tiers, [&p.x_ladder, &p.y_ladder], placed.public_id),
     }))
 }
 
-/// `chart` bound over its run, in the style of `body`, the board body that places it. No rows is
-/// [`Body::Empty`] in the chart's frame, once the chart's own style has passed the refusals.
+/// `chart` bound over its run, in the style of the board body that places it. No rows is
+/// [`bound::Cartesian::NoData`] in the chart's frame, once the chart's own style has passed the refusals.
 pub fn bind(
     id: &ChartId,
     chart: &LineChart,
     board: &Board,
-    body: &BoardBody,
     run: &RunResult,
     placed: &Placed<'_>,
-) -> Result<BoundChart, Diagnostic> {
+) -> Result<bound::Chart, Diagnostic> {
     refuse_unported(chart)?;
     let title = plain_text(chart.cartesian.shared.title.as_ref())?;
     let subtitle = plain_text(chart.cartesian.shared.subtitle.as_ref())?;
-    let lines = match lines(id, chart, board, body, run, placed) {
+    let lines = match lines(id, chart, board, run, placed) {
         Err(error) if error.code == codes::ERR_LINE_Y_NOT_NUMERIC.id => {
-            let body = Body::Failed(Failure { chart: id.clone(), diagnostic: error });
-            return Ok(BoundChart { title: None, subtitle: None, frame: None, body });
+            let family = Err(Failure { chart: id.clone(), diagnostic: error });
+            return Ok(bound::Chart { title: None, subtitle: None, frame: None, family });
         }
         other => other?,
     };
     let Some(lines) = lines else {
         let frame = Some(placed.derive()?.frame);
-        return Ok(BoundChart { title, subtitle, frame, body: Body::Empty });
+        return Ok(bound::Chart { title, subtitle, frame, family: Ok(bound::Family::Cartesian(no_data(placed, "line")?)) });
     };
     let frame = Some(lines.derived.frame.clone());
-    let plot = Plot::new(PlotParts {
+    let plot = bound::Plane::new(bound::PlaneParts {
         orient: Orient::Vertical,
         x: lines.x,
         y: vec![lines.y],
@@ -319,9 +294,10 @@ pub fn bind(
         legends: Vec::new(),
         support: None,
         baselines: lines.baselines,
-        axis_styles: AxisStyles {},
-        mark_style: MarkStyle { points: None },
+        axis_styles: lines.axis_styles,
+        diagnostics: lines.diagnostics,
+        mark_style: MarkStyle { points: None, bins: None },
     })
     .map_err(internal)?;
-    Ok(BoundChart { title, subtitle, frame, body: Body::Plot(Box::new(plot)) })
+    Ok(bound::Chart { title, subtitle, frame, family: Ok(bound::Family::Cartesian(bound::Cartesian::Plane(Box::new(plot)))) })
 }

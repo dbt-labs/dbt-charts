@@ -1,6 +1,8 @@
 //! The time vocabulary of the board being drawn: a d3 `timeFormatLocale`
 //! definition, production's `regional.locale.time` (`active_time_locale()` in
-//! `core/text/format_d3.py`).
+//! `core/text/format_d3.py`). It is `board_style.time_locale`, a
+//! `d3rs::time_format::Locale`: the active-scope month, weekday and period names and
+//! the `%c %x %X` patterns that `d3rs::time_format` and `table_dates::strftime` print.
 //!
 //! [`with_time_locale`] opens the scope for one render; [`active_time_locale`]
 //! refuses when none is open.

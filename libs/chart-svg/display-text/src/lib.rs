@@ -5,6 +5,7 @@
 //! apply to a slot's `font.case`.
 
 pub mod case;
+pub mod font;
 pub mod language;
 pub mod locale;
 pub mod titlecase_first_char;
@@ -135,7 +136,7 @@ pub fn inline_derived_label(label: &str) -> Result<String, String> {
     let plain = chars.next().is_some_and(char::is_uppercase)
         && chars.as_str().chars().any(char::is_lowercase)
         && !chars.as_str().chars().any(char::is_uppercase);
-    if plain && language::text(&language::active_language(), "case.title_style")? == "en_small_words" {
+    if plain && language::text(language::active_language(), "case.title_style")? == "en_small_words" {
         let mut c = label.chars();
         let head = c.next().unwrap().to_lowercase().collect::<String>();
         return Ok(head + c.as_str());

@@ -1,0 +1,3 @@
+kind: Fixes
+body: The chart skill and the query docs now explain that `{{ queries.base.cache }}` runs a shared base once for many charts.
+time: 2026-11-10T10:48:47.329287-08:00

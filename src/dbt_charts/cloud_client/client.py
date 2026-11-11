@@ -60,6 +60,7 @@ from dbt_charts.cloud_client.contract import (
     OrgStatus,
     OrgSummary,
     ProjectList,
+    ProjectSettings,
     ProjectSummary,
     PublicAccess,
     RenderResult,
@@ -479,6 +480,24 @@ class CloudClient:
                 "dbt_root_choice": dbt_root_choice,
                 "git_subdirectory": git_subdirectory,
             },
+        )
+
+    def project_settings(self, org: str, project: str) -> ProjectSettings:
+        return self._request(
+            "GET",
+            f"/orgs/{_seg(org)}/projects/{_seg(project)}/settings",
+            ProjectSettings,
+        )
+
+    def set_project_settings(
+        self, org: str, project: str, changes: dict[str, Any]
+    ) -> ProjectSettings:
+        """Change the named settings; the answer is every setting after it."""
+        return self._request(
+            "POST",
+            f"/orgs/{_seg(org)}/projects/{_seg(project)}/settings",
+            ProjectSettings,
+            changes,
         )
 
     def sync_project(self, org: str, project: str) -> SyncResult:

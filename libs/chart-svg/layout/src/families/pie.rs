@@ -5,10 +5,18 @@
 //! The rules are `chart-renderer/src/families/pie.rs` (`pie_layout_classified`, `candidate`) and
 //! `pie/layout.rs` (`solve_wheel`, `wheel`), cited at each law. A pie the size stage would draw as
 //! a table, or any other shape this slice does not draw, is refused by name.
+//!
+//! The size stage decides the mode at one box (`pie_layout_classified`: the labeled wheel must keep 0.6
+//! of the bare wheel's radius and its hole hold the center total, else the pie is a table and is
+//! refused); `plan` solves the wheel again at the box it draws in. `draw` is the chart's root
+//! `<svg class="marks">` with the wedges under [`crate::knockout`]'s mask, the center total and the
+//! slice labels. The stroke's `theme.background` names the board's background, not the chart's canvas.
+//! Hybrid and full-table modes, legend, title, link and total authoring are refused by name.
 
-use bind::model::Pie;
+use bind::bound::Pie;
 use board_model::style::board::EmojiMode;
 use board_model::style::pie::PieChartStyle;
+use board_model::style::style::Style;
 use d3rs::arc::Arc;
 use d3rs::pie::pie;
 use d3rs::radial_fit::{self, Callout, Ink, SolveError};
@@ -23,6 +31,7 @@ use crate::contract::{aria_attrs, hidden_mark_group, mark_group, ItemRole};
 use crate::knockout::knock_out;
 use crate::scene_path::scene_path;
 use crate::text_ink;
+use crate::title::{chart_title, ChartTitle};
 
 /// `WHEEL_DOMINANCE_MIN_RATIO`: below this fraction of the bare wheel's radius, a labeled mode
 /// starves the wheel badly enough to prefer the table.
@@ -101,6 +110,8 @@ impl PieFace {
 pub struct PieCard<'a> {
     pub pie: &'a Pie,
     pub style: &'a PieChartStyle,
+    /// The placement's total style, which the chart title slot is read from.
+    pub placed: &'a Style,
     pub chart_id: &'a str,
     pub emoji: &'a EmojiMode,
     /// The board scope's background, which the slice stroke's `theme.background` names.
@@ -115,6 +126,10 @@ pub struct Plan {
     r: f64,
     labels: Vec<Placed>,
     center: Option<CenterInk>,
+    /// The title block in the card's padding, which the wheel's box sits under.
+    title: Option<ChartTitle>,
+    /// The title block's top left, the card's padding corner.
+    title_at: (f64, f64),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -247,6 +262,10 @@ fn solve(card: &PieCard, book: &FontBook, (w, h): (f64, f64), pad: (f64, f64, f6
 /// that cannot hold the total, no room at all) is refused.
 pub fn plan(card: &PieCard, book: &FontBook, sized: (f64, f64), (w, h): (f64, f64), pad: (f64, f64, f64, f64)) -> Result<Plan, Diagnostic> {
     let table = || Refused::Table.refusal();
+    // The title takes the top of the card's padding box, in the mode guard's solve as in the drawn one.
+    let title = card.pie.title.as_deref().map(|text| chart_title(card.chart_id, text, card.placed, w, w - pad.0 - pad.1, book)).transpose()?.flatten();
+    let title_h = title.as_ref().map_or(0.0, |t| t.metrics.height());
+    let pad = (pad.0, pad.1, pad.2 + title_h, pad.3);
     let solve = |size, labeled| match solve(card, book, size, pad, labeled) {
         Ok(solved) => Ok(Some(solved)),
         Err(Unsolved::NoRoom) => Ok(None),
@@ -259,7 +278,7 @@ pub fn plan(card: &PieCard, book: &FontBook, sized: (f64, f64), (w, h): (f64, f6
     let Some(drawn) = solve((w, h), true)? else {
         return Err(Refused::NoRoom.refusal());
     };
-    Ok(Plan { cx: drawn.wheel.cx, cy: drawn.wheel.cy, r: drawn.wheel.r, labels: drawn.placed, center: drawn.center })
+    Ok(Plan { cx: drawn.wheel.cx, cy: drawn.wheel.cy, r: drawn.wheel.r, labels: drawn.placed, center: drawn.center, title, title_at: (pad.0, pad.2 - title_h) })
 }
 
 /// The chart's root `<svg class="marks">`: the background, the wheel, the center total and the
@@ -302,6 +321,9 @@ pub fn draw(card: &PieCard, plan: &Plan, (w, h): (f64, f64)) -> Result<Node, Dia
     }
     let knocked = knock_out(wedges, &pie_.canvas, "ko0", &safe_scope(card.chart_id), (-radius, -radius, 2.0 * radius, 2.0 * radius));
     let mut nodes = vec![Node::rect(Role::Chrome, (0.0, 0.0, w, h), Attrs::new().set("fill", pie_.background.as_str()))];
+    if let Some(title) = &plan.title {
+        nodes.push(title_node(card, title, plan.title_at));
+    }
     nodes.push(Node::group(Role::Chrome, Attrs::new(), knocked.marks).translate(plan.cx, plan.cy));
 
     if let Some(center) = &pie_.center {
@@ -341,6 +363,21 @@ pub fn draw(card: &PieCard, plan: &Plan, (w, h): (f64, f64)) -> Result<Node, Dia
         nodes.push(mark_group("text", "layer_3_marks", vec![text]).map_err(internal)?);
     }
     Ok(Node::new(Role::Chrome, Attrs::new().set("class", "marks"), Shape::Svg { extent: Extent { width: w, height: h }, children: nodes }))
+}
+
+/// The title as one `<text>` at the block's left and its baseline, in the face `chart_title` picked
+/// (the chart title slot's ink and slant).
+fn title_node(card: &PieCard, title: &ChartTitle, (x, top): (f64, f64)) -> Node {
+    let font = &card.placed.charts.title.font;
+    let face = PieFace::of(&title.family, title.size, &title.weight, font.style.as_str() == "italic", font.color.as_str(), card.emoji);
+    let attrs = Attrs::new()
+        .vega("font-family", face.family.as_str())
+        .num("font-size", face.size)
+        .set("font-style", if face.italic { "italic" } else { "normal" })
+        .set("font-weight", face.weight.attr())
+        .set("fill", face.color.as_str())
+        .set("data-authored-kind", "title");
+    Node::text(Role::Title, (x, top + title.metrics.ascent), attrs, title.text.as_str())
 }
 
 /// A chart's id for a chart placed once (`contract.rs::scoped_id`): every character outside a

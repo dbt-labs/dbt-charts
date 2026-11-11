@@ -5,7 +5,8 @@
 //! same laws for the old composer; the cutover deletes those copies.
 //!
 //! Compile-time sizing measures prose and titles with this style and render paints with it, so both
-//! ask here. A word the theme sets that mdsvg paints differently from production (a code or
+//! ask here. [`compact_style`], [`font_slots`], the root title's size and weight, [`char_ratio`] and
+//! [`readable_measure`] carry `markdown_style.py`'s laws. A word the theme sets that mdsvg paints differently from production (a code or
 //! blockquote font beyond its family and color, an upper or lower case) is refused by name.
 
 use bind::font_stack::with_emoji;
@@ -14,7 +15,7 @@ use board_model::style::font::LetterCase;
 use board_model::style::style::Style;
 use diagnostic::{diag, refuse, Diagnostic};
 use mdsvg::style::{Style as MdsvgStyle, TextAlign as MdAlign};
-use measure::font_files::{font_path, mono_font_path};
+use measure::font_files::{font_path, italic_font_path, mono_font_path};
 use measure::fonts::{cached_measurer, css_weight_axis, FontSlot, FontSlots};
 use model_core::Engine;
 
@@ -272,7 +273,7 @@ pub fn compact_style(style: &Style, overrides: &Overrides) -> Result<MdsvgStyle,
 }
 
 /// `markdown_font_faces`: the files each run of `style` is measured against, instanced at the weight
-/// it paints at. Italic runs are not modeled (`has_italic` refuses them).
+/// it paints at. A family with no vendored italic file has no italic slot ([`has_italic`]).
 pub fn font_slots(fonts_dir: &str, style: &MdsvgStyle) -> Result<FontSlots, Diagnostic> {
     let slot = |family: &str, weight: &str| {
         Ok::<_, Diagnostic>(FontSlot {
@@ -289,12 +290,24 @@ pub fn font_slots(fonts_dir: &str, style: &MdsvgStyle) -> Result<FontSlots, Diag
     } else {
         &style.heading_font_family
     };
+    // `_face_for(primary, "italic", text_axis)` and, at the bold axis, the bold italic.
+    let italic = |weight: &str| -> Result<Option<FontSlot>, Diagnostic> {
+        let Some(path) = italic_font_path(fonts_dir, &style.font_family) else { return Ok(None) };
+        Ok(Some(FontSlot { weight: css_weight_axis(weight).map_err(diag::err_internal)?, ..FontSlot::new(path) }))
+    };
     Ok(FontSlots {
+        italic: italic(style.font_weight.as_deref().unwrap_or("400"))?,
+        bold_italic: italic(&style.bold_font_weight)?,
         bold: Some(slot(&style.font_family, &style.bold_font_weight)?),
         heading: Some(slot(heading_family, &style.heading_font_weight)?),
         mono: Some(FontSlot::new(mono_font_path(fonts_dir))),
         ..FontSlots::new(regular)
     })
+}
+
+/// Whether runs of `style` can be italic: the family ships an italic file to measure them against.
+pub fn has_italic(fonts_dir: &str, style: &MdsvgStyle) -> bool {
+    italic_font_path(fonts_dir, &style.font_family).is_some()
 }
 
 /// `board_title_spec` for the root title (level 1): the H1 size of the ramp and the title weight.

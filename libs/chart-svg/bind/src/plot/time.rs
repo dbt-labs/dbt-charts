@@ -4,7 +4,7 @@
 use d3rs::calendar::days_from_civil;
 use diagnostic::{py_str_repr, Diagnostic};
 
-use crate::model::{GrainDrop, Month, TimeDomain};
+use crate::bound::{GrainDrop, Month, TimeDomain};
 use crate::temporal::{complete_buckets, detect_time_unit, floor_to_bucket_start, TimeUnit};
 use crate::time_axis::{Dates, Grain, TimeAxis, Unreadable};
 use crate::x_type::parse_date;

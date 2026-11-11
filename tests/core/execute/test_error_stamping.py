@@ -31,6 +31,10 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # query_result.py — an adapter returning a malformed result is an
         # implementer contract breach; no authored input reaches this raise.
         ("query_result.py", "QueryResult.__init__"),
+        # query_plan.py — a QueryPlan version the reader does not know is an
+        # implementer contract breach (engine and reader out of step): no board
+        # YAML, CLI flag, or variable value can produce it.
+        ("query_plan.py", "parse_query_plan"),
         # backends/databricks_connection_manager.py
         (
             "backends/databricks_connection_manager.py",

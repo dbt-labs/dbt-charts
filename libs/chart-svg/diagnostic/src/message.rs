@@ -1,4 +1,5 @@
-//! Renders a code's compiled-in template the way Python's `str.format` does.
+//! Fills a code's compiled-in template (`Diagnostic::message`) the way
+//! Python's `str.format` does.
 //! Supported: `{name}`, `{name!r}`, `{name:.Nf}`, `{name:.N%}`, `{{` and `}}`;
 //! the generator refuses any other field in the data.
 

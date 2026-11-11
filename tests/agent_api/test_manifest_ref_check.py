@@ -302,3 +302,38 @@ def test_target_path_env_var_renders_as_execution_renders_it(
 
     assert [e for e in result.errors if "ERR-DBT" in e.code] == []
     assert [w for w in result.warnings if w.code == "WARN-DBT-MANIFEST-MISSING"] == []
+
+
+def test_ref_only_project_with_no_sources_checks_its_refs(tmp_path: Path) -> None:
+    from dbt_charts.agent_api.validate import validate
+
+    (tmp_path / "charts").mkdir()
+    board = tmp_path / "charts" / "board.yml"
+    board.write_text(
+        "queries:\n  orders:\n    sql: \"SELECT * FROM {{ ref('typo_model') }}\"\n"
+        "rows: []\n"
+    )
+    (tmp_path / "dbt_project.yml").write_text("name: p\nprofile: p\n")
+    (tmp_path / "target").mkdir()
+    (tmp_path / "target" / "manifest.json").write_text(_MANIFEST_CONTENT)
+
+    result = validate(board, project=FilesystemProject(tmp_path))
+
+    assert [e.code for e in result.errors] == ["ERR-DBT-REF-UNKNOWN-NODE"]
+
+
+def test_engine_refusal_is_reported_with_its_coded_diagnostics(
+    tmp_path: Path,
+) -> None:
+    from dbt_charts.agent_api.validate import validate
+
+    (tmp_path / "charts").mkdir()
+    board = tmp_path / "charts" / "board.yml"
+    board.write_text(
+        "queries:\n  orders:\n    sql: \"SELECT * FROM {{ ref('fct_orders') }}\"\nrows: []\n"
+    )
+
+    result = validate(board, project=FilesystemProject(tmp_path))
+
+    assert not result.success
+    assert [e.code for e in result.errors] == ["ERR-SOURCE-REQUIRED"]

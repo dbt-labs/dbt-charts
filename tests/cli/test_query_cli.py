@@ -677,6 +677,37 @@ class TestQueryIgnoresCacheEnv:
         )
         assert result.exit_code == 0, result.output
 
+    def test_query_runs_a_query_composed_over_another_querys_cache(
+        self, board_dir: Path
+    ) -> None:
+        (board_dir / "cached.yaml").write_text(
+            "source: db\n"
+            "queries:\n"
+            "  base:\n"
+            "    sql: select 1 as a, 2 as b\n"
+            "  summary:\n"
+            "    sql: select b * 10 as scaled from {{ queries.base.cache }}\n"
+            "charts:\n"
+            "  c:\n"
+            "    query: summary\n"
+            "    type: table\n"
+            "rows:\n"
+            "  - c\n"
+        )
+        result = runner.invoke(
+            app,
+            [
+                "query",
+                str(board_dir / "cached.yaml"),
+                "summary",
+                "--project-dir",
+                str(board_dir),
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["data"] == [{"scaled": 20}]
+
 
 REF_BOARD = """\
 source: wh

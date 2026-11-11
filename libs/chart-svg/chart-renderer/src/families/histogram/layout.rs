@@ -437,7 +437,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
                 Node::line(Role::Grid, (x1, gy), (x2, gy), ax_y.grid.stroke(gc, gw).num("opacity", go))
             })
             .collect();
-        plot.push(crate::contract::grid_group(lines));
+        plot.push(::layout::contract::grid_group(lines));
     }
 
     // Bars: an empty bin has no segments.

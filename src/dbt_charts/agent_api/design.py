@@ -16,13 +16,10 @@ because of a cost the API's shape created, not anything about fonts.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
-import sqlglot
-import sqlglot.errors
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.errors import CompilationError
@@ -70,15 +67,12 @@ from dbt_charts.core.compile.schema.introspection import (
     SchemaField,
     introspect,
 )
-from dbt_charts.core.compile.sql_guard import (
-    SKELETON_PLACEHOLDER_PREFIX,
-    build_skeleton,
-)
+from dbt_charts.core.compile.sql_analysis import sql_output_columns
 from dbt_charts.core.compile.template.variables import (
     coerce_variable_values,
     variable_value_is_absent,
 )
-from dbt_charts.core.diagnostics.execution import ExecutionError, UnparseableSqlError
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.fonts import offered_font_families
 from dbt_charts.core.project import Project
 from dbt_charts.core.render.variables_layout import traits_of
@@ -1413,48 +1407,6 @@ def _resolve(
     return found
 
 
-# What `build_skeleton` turns a `{{ expr }}` into. A placeholder that survives
-# into the projection is a column whose name only a render would know.
-_JINJA_PLACEHOLDER_RE = re.compile(rf"^{SKELETON_PLACEHOLDER_PREFIX}\d+__$")
-
-
-def _sql_output_columns(sql: str) -> tuple[tuple[str, ...], bool]:
-    """The statically-knowable output columns of one SQL string.
-
-    Jinja is flattened to the same skeleton the SQL guard validates, so
-    `{{ filter(...) }}` in a WHERE clause costs nothing; a projection the
-    skeleton cannot name (`*`, an unaliased aggregate, a Jinja expression)
-    is dropped rather than guessed at. The second return says whether the
-    columns name *every* projection — counted against ``parsed.selects``,
-    which is projection-aligned where ``named_selects`` silently omits
-    unnamed expressions. Dialect-agnostic parse: a dialect-specific string
-    that fails to parse degrades to no offer.
-    """
-    try:
-        parsed = sqlglot.parse_one(build_skeleton(sql, all_branches=False))
-    except (UnparseableSqlError, sqlglot.errors.SqlglotError):
-        return (), False
-    names = getattr(parsed, "named_selects", None) or []
-    columns = tuple(
-        name
-        for name in names
-        if name and name != "*" and not _JINJA_PLACEHOLDER_RE.match(name)
-    )
-    selects = getattr(parsed, "selects", None)
-    complete = (
-        selects is not None
-        and len(columns) == len(selects)
-        # The skeleton is not projection-faithful under Jinja control blocks:
-        # an `{% if %}` emits only its primary branch and a `{% for %}` body
-        # runs once, so the count proves nothing about the other branches —
-        # and a `{{ }}` embedded inside an alias survives as a fabricated
-        # `__dct_jN__` name that counts as named.
-        and "{%" not in sql
-        and not any(SKELETON_PLACEHOLDER_PREFIX in c for c in columns)
-    )
-    return columns, complete
-
-
 def _query_columns(query: Any) -> tuple[tuple[str, ...], bool]:
     """The output columns one authored query declares, where they are static.
 
@@ -1464,7 +1416,7 @@ def _query_columns(query: Any) -> tuple[tuple[str, ...], bool]:
     values rows and unnameable SQL projections make the offer partial.
     """
     if isinstance(query, AuthoredSqlQuery):
-        return _sql_output_columns(query.sql) if query.sql else ((), False)
+        return sql_output_columns(query.sql) if query.sql else ((), False)
     if isinstance(query, AuthoredValuesQuery):
         if not query.rows:
             return (), False
@@ -1632,9 +1584,7 @@ def _channel_columns(
         # `queries.name` is legal chart-ref spelling; the normalizer strips
         # the prefix before its registry lookup, so this lookup does too.
         named = queries.get(query.removeprefix("queries."))
-        return (
-            _query_columns(named) if named is not None else _sql_output_columns(query)
-        )
+        return _query_columns(named) if named is not None else sql_output_columns(query)
     return _query_columns(query)
 
 

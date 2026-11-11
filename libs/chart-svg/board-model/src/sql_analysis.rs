@@ -159,6 +159,30 @@ pub struct ScopeAlias {
     pub relation: Relation,
 }
 
+/// A structural finding about the query's SQL that needs the host's parse tree: the lints of
+/// `core/inspect/query_validator.py`, as plain data. Compile maps each onto its query warning.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueryFinding {
+    pub kind: FindingKind,
+    /// `error`, `warning` or `info`.
+    pub severity: String,
+    pub message: String,
+    pub detail: Option<String>,
+    pub recommendation: Option<String>,
+    pub confidence: Option<f64>,
+    pub evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FindingKind {
+    MissingJoinPredicate,
+    Reaggregation,
+    /// A projection that turns a date into text; reported only when a chart uses `column` as its x.
+    DateAsText {
+        column: String,
+    },
+}
+
 /// What the host says about a `setup_sql`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupAnalysis {
@@ -172,6 +196,9 @@ pub struct Analysis {
     pub skeleton: Skeleton,
     pub select_only: Guard,
     pub lints: Vec<Lint>,
+    /// The structural findings of the query's `sql`, in the order the lints run: join predicates,
+    /// re-aggregation, dates as text. Empty when the SQL has no single SELECT to read.
+    pub findings: Vec<QueryFinding>,
     /// `Some` exactly when the request had a `setup_sql`.
     pub setup: Option<SetupAnalysis>,
     /// The projections the host could name; empty when the query is not a single SELECT-family

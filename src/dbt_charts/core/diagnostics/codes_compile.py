@@ -36,6 +36,17 @@ ERR_DUPLICATE_VARIABLE_NAME = REGISTRY.register(
     )
 )
 
+ERR_RESERVED_VARIABLE_NAME = REGISTRY.register(
+    ErrorCode(
+        code="ERR-RESERVED-VARIABLE-NAME",
+        domain="compile",
+        title="Variable name is reserved",
+        message_template="Variable name '{name}' is reserved. It conflicts with a dbt charts helper or dbt Jinja builtin. Choose a different name.",
+        doc="Fired when a board declares a variable named like a helper the template context provides: filter, filter_date_range, queries, glob_boards or glob_folders.",
+        docs_topic="variables",
+    )
+)
+
 ERR_TAB_DEFAULT_UNKNOWN = REGISTRY.register(
     ErrorCode(
         code="ERR-TAB-DEFAULT-UNKNOWN",
@@ -159,8 +170,8 @@ ERR_RETIRED_FIELD = REGISTRY.register(
         code="ERR-RETIRED-FIELD",
         domain="compile",
         title="Retired field in board YAML",
-        message_template="Field {field_path!r} was retired by a past grammar version. See the hint for its successor.",
-        doc="Fired when the board YAML spells a key a past grammar version renamed, moved, or removed and the file could not be migrated automatically (for example it also uses newer keys, or both spellings are present). The message names the version that retired the key and where it went; the hint says what to change. The facts come from the migration declarations, so every key ever retired stays known.",
+        message_template="{old!r} at {parent} {history}",
+        doc="Fired when the board YAML spells a key a past grammar version renamed, moved, or removed and the file could not be migrated automatically (for example it also uses newer keys, or both spellings are present). The message names the version that retired the key and where it went; the hint says what to change. The params also carry `field_path`, `unknown_field`, `parent_path`, `retired_in` and, unless the key was removed, `successor`. The facts come from the migration declarations, so every key ever retired stays known.",
         docs_topic="board",
     )
 )
@@ -1004,6 +1015,18 @@ ERR_PALETTE_UNUSABLE = REGISTRY.register(
     )
 )
 
+ERR_PALETTE_STYLE_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-PALETTE-STYLE-INVALID",
+        domain="compile",
+        title="A board's categorical palette cannot be used as written",
+        message_template="The categorical palette in `style.charts.color.categorical` cannot be used as written: {reason}",
+        doc="Fired when a board-level `style.charts.color.categorical` palette or single-series palette names a shipped palette in a form it cannot supply, such as more stops than the palette has (`vivid-10:14`). The reason is the palette resolver's own message and names what to change.",
+        summary="Fired when a board style''s categorical palette is requested in a form it cannot supply.",
+        docs_topic="charts",
+    )
+)
+
 ERR_PALETTE_REBIND_UNSATISFIED = REGISTRY.register(
     ErrorCode(
         code="ERR-PALETTE-REBIND-UNSATISFIED",
@@ -1801,5 +1824,275 @@ ERR_MARKDOWN_PARSE = REGISTRY.register(
         message_template="Markdown board cannot be parsed: {detail}",
         doc="Fired when a markdown board's frontmatter or body cannot be turned into a board: the opening `---` has no closing delimiter, the frontmatter is not a YAML mapping, or `board:` is not a mapping. YAML syntax errors inside the frontmatter report ERR-YAML-SYNTAX instead.",
         docs_topic="board",
+    )
+)
+
+ERR_QUERY_REF_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-QUERY-REF-INVALID",
+        domain="compile",
+        title="Query reference is not file#query",
+        message_template="Invalid external query reference: '{ref}'. Expected format: 'path/to/file.yml#query_name'. Write the file path, a `#`, then the name of a query that file declares.",
+        fix_template="Write the reference as the file path, a `#`, then the query name, for example `queries/sales.yml#revenue`.",
+        doc="Fired when a `query:` that reads another file, or a chart ref, names no file or no query around its `#`.",
+        docs_topic="queries",
+    )
+)
+
+ERR_QUERY_NOT_IN_FILE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-QUERY-NOT-IN-FILE",
+        domain="compile",
+        title="Query is not declared in the referenced file",
+        message_template="Query '{name}' not found in '{file}'. Available queries: {available}. Name one of them after the `#`, or declare '{name}' under `queries:` in '{file}'.",
+        fix_template="Name a query the file declares under `queries:`, or declare it there.",
+        doc="Fired when a `file#query` reference names a query that the file's `queries:` section does not declare.",
+        docs_topic="queries",
+    )
+)
+
+ERR_CHART_REF_QUERY_UNDECLARED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CHART-REF-QUERY-UNDECLARED",
+        domain="compile",
+        title="Chart ref needs a query its file does not declare",
+        message_template="Chart ref '{chart_ref}' requires query '{name}', which is not declared in {file}'s queries: section. Declare '{name}' under `queries:` in {file}, or point the chart at a query that file declares.",
+        fix_template="Declare the query under `queries:` in the file the chart ref reads, or point the chart at a query that exists.",
+        doc="Fired when a chart read from another file names a query that file does not declare.",
+        docs_topic="queries",
+    )
+)
+
+ERR_QUERY_REF_CYCLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-QUERY-REF-CYCLE",
+        domain="compile",
+        title="Query references form a cycle",
+        message_template="Circular query reference while resolving chart ref '{chart_ref}': '{name}' in {file} depends on itself. Change '{name}' in {file} so it no longer reads itself, directly or through other file references.",
+        fix_template="Break the cycle so no query reads itself through the file references.",
+        doc="Fired while resolving a chart ref when a query in another file reads, directly or through other file references, the query being resolved.",
+        docs_topic="queries",
+    )
+)
+
+ERR_FILE_SOURCE_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FILE-SOURCE-INVALID",
+        domain="compile",
+        title="Inline file source is invalid",
+        message_template="Query {query!r}: inline file source {source!r} is invalid: {reason}. Name a file whose stem is a valid SQL identifier (letters, digits and underscores), or declare the source under `sources:` in dbt_charts.yml.",
+        fix_template="Name a file whose stem is a valid SQL identifier, or declare the source under `sources:` in dbt_charts.yml.",
+        doc="Fired when a query's inline file source cannot be read as a source, for example because the file's stem is not a valid SQL identifier.",
+        docs_topic="queries",
+    )
+)
+
+ERR_BOARD_SOURCE_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BOARD-SOURCE-INVALID",
+        domain="compile",
+        title="Board-level source is not a name",
+        message_template="Invalid board-level `source:` in {file}: expected a source name string, got {got}. Write `source:` as the name of a source declared under `sources:` in dbt_charts.yml.",
+        fix_template="Write `source:` as the name of a source declared under `sources:` in dbt_charts.yml.",
+        doc="Fired when a board's `source:` is a list, a mapping or another value that is not a source name.",
+        docs_topic="board",
+    )
+)
+
+ERR_EXTENDS_CYCLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-EXTENDS-CYCLE",
+        domain="compile",
+        title="extends chain returns to a file",
+        message_template="Circular extends: {file} is already in the extends chain. Remove the `extends:` entry that leads back to {file}.",
+        fix_template="Remove the `extends:` entry that leads back to a file already in the chain.",
+        doc="Fired when the `extends:` chain of a board reaches a file or theme it is already folding.",
+        docs_topic="board",
+    )
+)
+
+ERR_META_OUTSIDE_BOARDS_ROOT = REGISTRY.register(
+    ErrorCode(
+        code="ERR-META-OUTSIDE-BOARDS-ROOT",
+        domain="compile",
+        title="Board directory is outside the boards root",
+        message_template="directory {dir!r} is not under boards_root {root!r}. Keep the board under the boards root, or set the boards root to a folder that holds it.",
+        fix_template="Keep boards under the boards root, or point the boards root at a folder that holds them.",
+        doc="Fired when a board's directory is not under the boards root that bounds the `meta.yml` walk.",
+        summary="Fired when a board's directory is not under the boards root that bounds the `meta.yml` walk.",
+        docs_topic="board",
+    )
+)
+
+ERR_EXTENDS_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-EXTENDS-INVALID",
+        domain="compile",
+        title="An extends file is not a board patch",
+        message_template="extends: {file} is invalid: {reason}. Fix {file} so it is valid YAML holding only board keys.",
+        fix_template="Fix the named file so it is valid YAML holding board keys only.",
+        doc="Fired when a file a board extends, or a `meta.yml` above it, does not parse as YAML or holds keys a board patch does not accept.",
+        summary="Fired when a file a board extends is not valid YAML or holds keys a board does not accept.",
+        docs_topic="board",
+    )
+)
+
+ERR_TAB_TITLE_EMPTY_SLUG = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TAB-TITLE-EMPTY-SLUG",
+        domain="compile",
+        title="Tab title has no letter or digit",
+        message_template="Tab title '{title}' produces an empty slug. Tab titles must contain at least one alphanumeric character. Give this tab a title with a letter or digit.",
+        fix_template="Give the tab a title with at least one letter or digit.",
+        doc="Fired when a tab's title slugs to nothing, so the tab could not be selected by name.",
+        docs_topic="layout",
+    )
+)
+
+ERR_TAB_TITLE_DUPLICATE_SLUG = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TAB-TITLE-DUPLICATE-SLUG",
+        domain="compile",
+        title="Two tab titles share a slug",
+        message_template="Duplicate tab slug '{slug}'. Tab titles must produce unique slugs (after lowercasing and replacing spaces with _). Retitle one of the tabs that slugs to '{slug}'.",
+        fix_template="Retitle one of the tabs so the slugs differ.",
+        doc="Fired when two tabs of one layout have titles that slug to the same name.",
+        docs_topic="layout",
+    )
+)
+
+ERR_VALUES_ROW_SHAPE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-VALUES-ROW-SHAPE",
+        domain="compile",
+        title="A values row has the wrong number of cells",
+        message_template="query '{query}': values row {row} does not have one cell per column. Rows count from 0; give each row of `values:` exactly one cell per entry of `columns:`.",
+        fix_template="Give each row of `values:` exactly one cell per entry of `columns:`.",
+        doc="Fired when a row of a values query is shorter or longer than its column list.",
+        docs_topic="queries",
+    )
+)
+
+ERR_CARD_GAP_NESTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CARD-GAP-NESTED",
+        domain="compile",
+        title="card_gap is set on a nested board",
+        message_template="card_gap can only be set on the root board, not on nested boards. Remove `card_gap:` from the nested board and set it on the root board instead.",
+        fix_template="Move `card_gap:` to the root board.",
+        doc="Fired when a board nested in another sets `card_gap`; only the root board does.",
+        docs_topic="board",
+    )
+)
+
+ERR_HTML_POLICY_CEILING_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-HTML-POLICY-CEILING-INVALID",
+        domain="compile",
+        title="The project config does not give a usable html_policy_ceiling",
+        message_template="{message}",
+        fix_template="Make dbt_charts.yml a YAML mapping, and set its `html_policy_ceiling:` to one of the html_policy tiers.",
+        doc="Fired when the project's `dbt_charts.yml` cannot be read as a YAML mapping, or its `html_policy_ceiling` is not one of the tiers.",
+        summary="Fired when the project config is not a YAML mapping or its html policy ceiling is not a tier.",
+        docs_topic="board",
+    )
+)
+
+ERR_VARIABLE_CYCLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-VARIABLE-CYCLE",
+        domain="compile",
+        title="Variables depend on each other in a cycle",
+        message_template="Circular variable dependency detected: {cycle}. Variables cannot depend on each other in a cycle. Check the options queries for these variables.",
+        fix_template="Make the options query of one variable stop reading the other.",
+        doc="Fired when the options queries of variables read each other's values in a cycle.",
+        docs_topic="variables",
+    )
+)
+
+ERR_QUERY_NAME_RESERVED_WORD = REGISTRY.register(
+    ErrorCode(
+        code="ERR-QUERY-NAME-RESERVED-WORD",
+        domain="compile",
+        title="A query named like a SQL reserved word is composed as a table alias",
+        message_template="Query '{name}' is referenced via {{{{ queries.{name} }}}}, but '{name}' is a SQL reserved word and cannot be used as a table alias. Rename the query to a non-reserved identifier, and update the references to it.",
+        fix_template="Rename the query to a name that is not a SQL reserved word.",
+        doc="Fired when a query that another query composes through a `queries.NAME` reference is named like a SQL reserved word, because the composed query becomes a table alias.",
+        summary="Fired when a query that another query composes is named like a SQL reserved word.",
+        docs_topic="queries",
+    )
+)
+
+ERR_SETUP_SQL_COMPOSES_QUERY = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SETUP-SQL-COMPOSES-QUERY",
+        domain="compile",
+        title="setup_sql composes another query",
+        message_template="Query '{query}': setup_sql must not contain {{{{ queries.X }}}} references. setup_sql is for non-nestable setup statements (CREATE TEMP FUNCTION, etc.). Move the reference into the query's `sql:`.",
+        fix_template="Move the `queries.X` reference out of `setup_sql:` and into `sql:`.",
+        doc="Fired when a query's `setup_sql` contains a `queries.X` reference; setup statements run untranslated, ahead of every query.",
+        summary="Fired when a query's setup_sql composes another query.",
+        docs_topic="queries",
+    )
+)
+
+ERR_CHART_SOURCES_AMBIGUOUS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CHART-SOURCES-AMBIGUOUS",
+        domain="compile",
+        title="A chart is placed in boards with different sources",
+        message_template="Chart '{chart}' is placed in boards with different sources, so its inline query has no one source. Declare the query by name under `queries:` and point the chart at it, or place the chart in boards that share one source.",
+        fix_template="Declare the chart's query by name under `queries:`, or place the chart in boards that share a source.",
+        doc="Fired when a chart that declares its query inline is placed in boards whose `source:` differ, so the inline query has no single source to run against.",
+        docs_topic="queries",
+    )
+)
+
+ERR_VARIABLE_TABLE_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-VARIABLE-TABLE-INVALID",
+        domain="compile",
+        title="A variable's column binding names a table that is no SQL identifier",
+        message_template="{field_path}: table name {table!r} is not a valid SQL identifier. Use only letters, digits, and underscores, optionally schema-qualified (e.g. 'gis.fact_sales').",
+        fix_template="Write the table half of `table.column` with letters, digits and underscores, optionally schema-qualified.",
+        doc="Fired when the table half of a variable's `column:` or `options` binding is not a bare SQL identifier, or a dotted chain of them, because it is interpolated into the options query.",
+        summary="Fired when the table half of a variable's column binding is not a SQL identifier.",
+        docs_topic="variables",
+    )
+)
+
+ERR_VARIABLE_COLUMN_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-VARIABLE-COLUMN-INVALID",
+        domain="compile",
+        title="A variable's column binding names a column that is no SQL identifier",
+        message_template="{field_path}: column name {column!r} is not a valid SQL identifier. Use only letters, digits, and underscores.",
+        fix_template="Write the column half of `table.column` with letters, digits and underscores.",
+        doc="Fired when the column half of a variable's `column:` or `options` binding is not a bare SQL identifier, because it is interpolated into the options query.",
+        docs_topic="variables",
+    )
+)
+
+ERR_QUERY_SHAPE_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-QUERY-SHAPE-INVALID",
+        domain="compile",
+        title="A query breaks the shape its type allows",
+        message_template="{message}",
+        fix_template="Change the query to the keys its type allows: `sql`, `values` or `schema`, one body only.",
+        doc="Fired when a query sets keys its type does not take, sets keys that exclude each other, or leaves out a key its type requires. The message names the query and the keys.",
+        docs_topic="queries",
+    )
+)
+
+ERR_INCREMENTAL_NOT_SQL = REGISTRY.register(
+    ErrorCode(
+        code="ERR-INCREMENTAL-NOT-SQL",
+        domain="compile",
+        title="Incremental refresh is set on a query that is not SQL",
+        message_template="Query '{query}': incremental refresh is only supported for SQL queries. Remove `incremental:` from this query, or make it a SQL query.",
+        fix_template="Remove `incremental:` from the query, or make it a SQL query.",
+        doc="Fired when a values or schema query names an `incremental:` watermark column; only SQL queries refresh incrementally.",
+        docs_topic="queries",
     )
 )

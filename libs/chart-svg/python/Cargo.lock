@@ -116,6 +116,7 @@ dependencies = [
  "display-text",
  "indexmap",
  "jiff-tzdb",
+ "migrate",
  "model-core",
  "model-derive",
  "project",
@@ -162,6 +163,7 @@ version = "0.0.1"
 dependencies = [
  "base64",
  "bind",
+ "board-model",
  "column-types",
  "d3rs",
  "dbt-charts-color",
@@ -288,6 +290,7 @@ dependencies = [
  "chart-renderer",
  "diagnostic",
  "display-text",
+ "engine",
  "indexmap",
  "measure",
  "migrate",
@@ -393,6 +396,30 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "engine"
+version = "0.0.1"
+dependencies = [
+ "bind",
+ "board-model",
+ "d3rs",
+ "dbt-charts-color",
+ "diagnostic",
+ "display-text",
+ "indexmap",
+ "jiff",
+ "layout",
+ "measure",
+ "model-core",
+ "normalize",
+ "print",
+ "regex",
+ "scene",
+ "serde",
+ "serde_json",
+ "template",
 ]
 
 [[package]]
@@ -666,7 +693,6 @@ dependencies = [
  "mdsvg",
  "measure",
  "model-core",
- "print",
  "regex",
  "scene",
  "serde_json",
@@ -828,13 +854,16 @@ version = "0.0.1"
 dependencies = [
  "board-model",
  "d3rs",
+ "dbt-charts-color",
  "diagnostic",
+ "display-text",
  "indexmap",
  "jiff",
  "mdsvg",
  "migrate",
  "model-core",
  "project",
+ "serde",
  "serde_json",
  "template",
  "unicode-ident",

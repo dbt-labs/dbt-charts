@@ -220,6 +220,31 @@ impl ChartAuthored {
 }
 
 impl ChartAuthored {
+    /// The `type:` the chart was written with.
+    pub fn family(&self) -> &'static str {
+        match self {
+            Self::Scatter(_) => "scatter",
+            Self::Bar(_) => "bar",
+            Self::Histogram(_) => "histogram",
+            Self::Line(_) => "line",
+            Self::Area(_) => "area",
+            Self::Callout(_) => "callout",
+            Self::Heatmap(_) => "heatmap",
+            Self::Kpi(_) => "kpi",
+            Self::Pie(_) => "pie",
+            Self::Donut(_) => "donut",
+            Self::SparkBar(_) => "spark_bar",
+            Self::Table(_) => "table",
+            Self::Geoshape(_) => "geoshape",
+            Self::Map(_) => "map",
+            Self::PointMap(_) => "point_map",
+            Self::BubbleMap(_) => "bubble_map",
+            Self::Custom(_) => "custom",
+        }
+    }
+}
+
+impl ChartAuthored {
     /// The fields every family but a callout takes.
     pub fn base(&self) -> Option<&ChartBaseAuthored> {
         Some(match self {
@@ -237,6 +262,35 @@ impl ChartAuthored {
             Self::Custom(c) => &c.shared.base,
             Self::Callout(_) => return None,
         })
+    }
+}
+
+impl ChartAuthored {
+    /// The column `style.value.format` formats: a KPI's `value` channel.
+    pub fn value_columns(&self) -> Option<columns::SlotColumns<'_>> {
+        match self {
+            Self::Kpi(c) => match &c.value {
+                model_core::Tri::Value(v) => Some(columns::SlotColumns::one(v.as_str())),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The columns `style.axis_y.labels.format` formats: a cartesian chart's `y` channel.
+    pub fn y_columns(&self) -> Option<columns::SlotColumns<'_>> {
+        let y = match self {
+            Self::Scatter(c) => &c.cartesian.y,
+            Self::Bar(c) | Self::Histogram(c) => &c.cartesian.y,
+            Self::Line(c) => &c.cartesian.y,
+            Self::Area(c) => &c.cartesian.y,
+            Self::Heatmap(c) => &c.cartesian.y,
+            _ => return None,
+        };
+        match y {
+            model_core::Tri::Value(y) => Some(y.slot()),
+            _ => None,
+        }
     }
 }
 
@@ -360,6 +414,29 @@ macro_rules! family_slots {
                         Some(layer)
                     })*
                     Self::Custom(_) => None,
+                }
+            }
+
+            /// The name of the `style.charts.<slot>` this chart's own `style:` folds into; `None`
+            /// for a custom chart, which has no slot.
+            pub fn family_slot(&self) -> Option<&'static str> {
+                match self {
+                    $(Self::$variant(_) $(| Self::$alias(_))* => Some(stringify!($slot)),)*
+                    Self::Custom(_) => None,
+                }
+            }
+
+            /// The leaves `scope` sets in this chart's family slot, by path from the slot
+            /// (`pagination.page_rows`); none for a custom chart.
+            pub fn family_leaf_values(
+                &self,
+                scope: &<Style as Leaf>::Patch,
+                f: &mut dyn FnMut(&str, &dyn model_core::Spell),
+            ) {
+                use model_core::LeafValues;
+                match self {
+                    $(Self::$variant(_) $(| Self::$alias(_))* => scope.charts.$slot.leaf_values("", f),)*
+                    Self::Custom(_) => {}
                 }
             }
 

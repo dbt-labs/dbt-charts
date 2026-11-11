@@ -27,7 +27,8 @@ Data files ({{ data_extensions() }}) in the project root and `data/` need no dec
 
 {{ keys('board') }}
 {{ rules('board') }}
-- Quote a text value that holds `: ` or is all digits: `title: "Mix: 2006 vs 2015"`, `label: "2009"`.
+- Quote text that holds `: `, is all digits, or is `yes`/`no`/`on`/`off`/`1:30` (YAML 1.1), keys too: `title: "Mix: 2006 vs 2015"`, `label: "2009"`, `"no": category[4]`.
+- Anchors, aliases and `<<:` merge keys work within one file; anchor on first use (no `anchors:` key).
 
 ## Queries
 
@@ -54,6 +55,8 @@ Every chart needs `type:`, one of those below.
 For a shape no built-in type draws, read the custom-chart-build skill.
 - A table is as tall as its rows and takes no `height`: `style.pagination.page_rows` caps the rows shown; a `height` on the layout row around it caps its slot.
 
+{{ keys('table_hidden_columns') }}
+
 {{ keys('layer') }}
 Layer types: {{ layer_types() }}.
 
@@ -62,7 +65,7 @@ Layer types: {{ layer_types() }}.
 
 Derived series (rolling averages, running totals, YoY) are window functions or extra columns, plotted as another `y` or a `layers:` entry. The delivered page is static: never caption anything as available "on hover".
 
-`annotations:` (bar, line, area, scatter) are `type: rule` (a straight line at `y: 25`, `y: avg()`, `x: <date>`), `band` (`from`/`to`), `note` (at `x` and `y`) or `trend` (`fit: linear()`), each with `text`. One target value is a rule; a target per bar or period is the targets recipe.
+`annotations:` (bar, line, area, scatter) are `type: rule` (a line at `y: 25`, `y: avg()`, `x: <date>`), `band` (`from`/`to`), `note` (at `x` and `y`) or `trend` (`fit: linear()`), each with `text`. One target value is a rule; a target per bar or period is the targets recipe. Peak note: `y: max()`, no `x`; never paste a result.
 
 {{ recipe_names() }}, targets and pacers are recipes, never a `type:`: read them on {{ s('page_recipes') }} first.
 

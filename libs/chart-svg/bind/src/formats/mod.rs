@@ -1,4 +1,5 @@
-//! The formats law: an authored format to a [`ResolvedFormat`] (d3 spec, affix,
+//! The formats law: an authored format (a name or the `FormatConfig` mapping, over the
+//! board's `style.formats` aliases) to a [`ResolvedFormat`] (d3 spec, affix,
 //! notation, and the authored `raw` the house rules key on), the one merge rule that
 //! picks a slot's format from its tiers, and the one painter that prints a value
 //! through it under the board's number locale ([`locale`]). `compile/format.py`'s
@@ -9,6 +10,9 @@
 //! number names, and **literal** otherwise (a d3 spec, or a name the board
 //! redefined): house formats take the engine's rules (narrative register,
 //! sub-unit votes, alignment), a literal spec prints its own characters.
+//!
+//! `paint.rs` is the bind painter, `locale.rs` the number locale and `lanes.rs` the cut of a
+//! KPI headline into lanes. See `docs/laws-shared.md` § Number formatting.
 
 pub mod locale;
 mod lanes;
@@ -20,13 +24,8 @@ use diagnostic::{diag, Diagnostic};
 use indexmap::IndexMap;
 use serde::Deserialize;
 use std::fmt;
-use std::sync::LazyLock;
 
-/// `GRAIN_NAMES`: the engine's own per-grain date axis labels, which a board must
-/// redefine into a strftime spec before a slot can ask for one.
-const GRAIN_NAMES: [&str; 4] = ["date_month", "date_quarter", "date_week", "date_year"];
-/// `PREDEFINED_TEXT_NAMES`: names with no spec, for text a surface may link.
-pub const TEXT_NAMES: [&str; 2] = ["email", "url"];
+pub use d3rs::format_spec::{is_engine_name, is_time_name, GRAIN_NAMES, TEXT_NAMES};
 /// `_ENGINE_FORMATS`: the names that bake the analytic register into themselves.
 const ANALYTIC_NAMES: [&str; 2] = ["compact", "currency_compact"];
 
@@ -184,7 +183,7 @@ pub enum FormatLook {
 impl ResolvedFormat {
     /// `raw` names a predefined number format (house rules apply).
     pub fn is_house(&self) -> bool {
-        self.raw.as_deref().is_some_and(is_predefined_number_name)
+        self.raw.as_deref().is_some_and(d3rs::format_spec::is_number_name)
     }
 
     pub fn look(&self) -> FormatLook {
@@ -203,30 +202,7 @@ impl ResolvedFormat {
     }
 }
 
-fn is_native_name(name: &str) -> bool {
-    d3rs::predefined_formats::PREDEFINED_NATIVE.contains(&name)
-}
-
-fn is_predefined_number_name(name: &str) -> bool {
-    d3rs::format::predefined_spec(name).is_some() || is_native_name(name)
-}
-
-fn is_time_name(name: &str) -> bool {
-    d3rs::format::predefined_time_spec(name).is_some() || GRAIN_NAMES.contains(&name)
-}
-
-/// `ALL_PREDEFINED_NAMES`: every name the engine owns.
-fn is_engine_name(name: &str) -> bool {
-    is_predefined_number_name(name) || is_time_name(name) || TEXT_NAMES.contains(&name)
-}
-
-/// `text/format_d3.py::is_time_format`: a d3-time-format directive (`%<letter>`,
-/// optionally `%-d`/`%_d`/`%0d`) once `%%` escapes are removed.
-pub fn is_time_format(spec: &str) -> bool {
-    static DIRECTIVE: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"%[-_0]?[A-Za-z]").expect("a valid pattern"));
-    DIRECTIVE.is_match(&spec.replace("%%", ""))
-}
+pub use d3rs::format_spec::is_time_format;
 
 /// The predefined name an alias targets, if its target is one.
 fn alias_preset<'a>(name: Option<&str>, formats: Formats<'a>) -> Option<&'a str> {
@@ -234,43 +210,16 @@ fn alias_preset<'a>(name: Option<&str>, formats: Formats<'a>) -> Option<&'a str>
     is_engine_name(target).then_some(target)
 }
 
-/// `compile/format.py::resolve_format`: a format to its d3 spec ("" for none). A
-/// `style.formats` name wins: its preset's spec, else its literal target, so a board
-/// that redefines an engine name replaces the engine's spec. Then a predefined number
-/// name resolves to its house spec (native members pass through as the bare name), a
-/// time name to its strftime spec, and anything else passes through. A grain name the
-/// board did not redefine has no spec: refused.
+/// `compile/format.py::resolve_format`: a format to its d3 spec ("" for none), through the board's
+/// `style.formats` ([`d3rs::format_spec::resolve_spec`]). A grain name the board did not redefine
+/// has no spec: refused.
 pub fn resolve_format(input: &AuthoredFormat, formats: Formats<'_>) -> Result<String, Diagnostic> {
     let Some(name) = input.spec.as_deref() else {
         return Ok(String::new());
     };
-    let preset = alias_preset(Some(name), formats);
-    // Through the board's own table, so `revenue: currency` prints what the board
-    // made of `currency`; a name aliased to itself is the engine's own.
-    if let Some(preset) = preset.filter(|preset| *preset != name) {
-        return resolve_format(&AuthoredFormat::named(preset), formats);
-    }
-    if preset.is_none() {
-        if let Some(alias) = formats.get(name) {
-            return Ok(match alias {
-                Alias::Spec(spec) => spec.to_string(),
-                Alias::Config(config) => config.spec.clone().unwrap_or_default(),
-            });
-        }
-    }
-    if is_predefined_number_name(name) {
-        return Ok(d3rs::format::predefined_spec(name).map_or(name, |spec| spec.d3).to_string());
-    }
-    if GRAIN_NAMES.contains(&name) {
-        return Err(Diagnostic::refused(format!(
-            "ERR-FORMAT-GRAIN-NAME-NOT-REDEFINED: {name} is the engine's own axis labels for its grain: \
-             redefine it in style.formats with a strftime spec, or use a strftime spec"
-        )));
-    }
-    if let Some(spec) = d3rs::format::predefined_time_spec(name) {
-        return Ok(spec.to_string());
-    }
-    Ok(name.to_string())
+    d3rs::format_spec::resolve_spec(name, &|n| formats.get(n).map(Alias::spec)).map_err(|_| {
+        diag::err_format_grain_name_not_redefined(name, d3rs::format_spec::UNPLACED_SLOT, d3rs::format_spec::grain_strftime(name))
+    })
 }
 
 /// `get_format_prefix_suffix`: an explicit affix wins over its alias's.
@@ -576,39 +525,6 @@ pub fn format_value(
     }
     let notation = parts.notation.or(parts.is_house().then_some(Notation::Analytic));
     parts.paint_as(locale, &spec, notation, value)
-}
-
-/// `declared_format`: the format name a query's `formats:` gives every one of
-/// `columns`. `None` when any column has no entry or the entries differ: a destination
-/// painting several columns with one format has no single column to speak for them, so
-/// it keeps its own default rather than guess.
-pub fn declared_format<'a>(declared: &'a IndexMap<String, String>, columns: &[&str]) -> Option<&'a str> {
-    let mut entries = columns.iter().map(|column| declared.get(*column).map(String::as_str));
-    let first = entries.next()??;
-    entries.all(|entry| entry == Some(first)).then_some(first)
-}
-
-/// `declared_column_format`: the format name the chart's query declares for `columns`,
-/// when it is of the asked kind (a time format for `Kind::Time`, else a number format).
-/// A number format on a date axis would paint garbage, and a time format has nothing to
-/// say about a number, so the other kind is no format at all. A text name is of neither
-/// kind: it comes back only for a destination that links text, and is no format at all
-/// to any other.
-pub fn declared_column_format(
-    declared: &IndexMap<String, String>,
-    columns: &[&str],
-    formats: Formats<'_>,
-    kind: Kind,
-    text: bool,
-) -> Result<Option<AuthoredFormat>, Diagnostic> {
-    let Some(name) = declared_format(declared, columns) else {
-        return Ok(None);
-    };
-    let resolved = resolve_format(&AuthoredFormat::named(name), formats)?;
-    if TEXT_NAMES.contains(&resolved.as_str()) {
-        return Ok(text.then(|| AuthoredFormat::named(name)));
-    }
-    Ok((is_time_format(&resolved) == (kind == Kind::Time)).then(|| AuthoredFormat::named(name)))
 }
 
 #[cfg(test)]

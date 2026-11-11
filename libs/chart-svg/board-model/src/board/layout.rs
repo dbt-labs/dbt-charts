@@ -270,7 +270,8 @@ pub struct Placement<'a> {
     pub cell: Option<&'a GridItem>,
 }
 
-/// The items of `body`'s own layout, tab panes' layouts included, in authored order. A nested
+/// The items of `body`'s own layout, tab panes' layouts included, in authored order, one level
+/// of the body's own layout with each item's tab pane and grid cell. A nested
 /// board's items are `items(&nested.body, &placement.id)`; `at` is where `body` sits
 /// ([`ItemId::root`] for the root board), so a caller descends only where it means to.
 pub fn items<'a>(body: &'a BoardBody, at: &ItemId) -> impl Iterator<Item = Placement<'a>> {

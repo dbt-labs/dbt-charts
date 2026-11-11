@@ -492,6 +492,15 @@ class TableChartStyle(
     wrap: bool = Field(
         description="Allow cell text wrapping; false clips to single line."
     )
+    hide_underscore_columns: bool = Field(
+        description=(
+            "Hide query columns whose names start with an underscore, such as a "
+            "`_flag` computed for a conditional rule or `_fivetran_synced`. A "
+            "hidden column's values still feed rules and links, and a column "
+            "with its own `style.columns` entry always shows. Set false to show "
+            "them."
+        )
+    )
     pagination: PaginationConfig = Field(
         description="Client-side pagination defaults for table charts."
     )

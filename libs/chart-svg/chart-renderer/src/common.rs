@@ -4269,16 +4269,15 @@ pub(crate) struct FormatParts<'a> {
 }
 
 /// A table column's shared magnitude as one row sees it
-/// (`ResolvedColumnSharedScale` and `is_anchor`). Production's authored
+/// (`ResolvedColumnSharedScale`). Production's authored
 /// `notation` overrides the scale's register (`format_value.py:319-323`):
 /// `FormatParts.notation` picks the word's register over the mode's.
 pub(crate) struct ScaledColumn<'a> {
     pub exponent: i32,
     pub digit_spec: &'a str,
-    /// `SuffixMode.REPEAT`: the narrative word on every nonzero row; else the
-    /// analytic word on the anchor row alone.
+    /// `SuffixMode.REPEAT` picks the narrative register; else analytic. Every
+    /// nonzero row paints the word either way: a magnitude changes the value.
     pub repeat: bool,
-    pub is_anchor: bool,
 }
 
 /// `format_kpi_parts`' switches.
@@ -4400,7 +4399,7 @@ pub(crate) fn format_kpi_parts(value: f64, f: &FormatParts, o: &PartsOptions) ->
             // The column's one baked magnitude, never the value's own SI
             // letter (format_value.py:300-331).
             number_str = ::bind::formats::locale::d3_format(scale.digit_spec, value / 10_f64.powi(scale.exponent))?;
-            if value != 0.0 && (scale.repeat || scale.is_anchor) {
+            if value != 0.0 {
                 let analytic = match f.notation {
                     None => !scale.repeat,
                     Some("analytic") => true,

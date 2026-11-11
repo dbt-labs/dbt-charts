@@ -24,6 +24,7 @@
   "case.extra_small_words": "",
   "case.small_words": "",
   "case.title_style": "first_word",
+  "chart.no_data": "Veri yok",
   "controls.all": "Tümü",
   "controls.all_dates": "Tüm tarihler",
   "controls.any_date": "Herhangi bir tarih",

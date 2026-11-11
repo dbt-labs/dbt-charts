@@ -1133,10 +1133,10 @@ class TestPaginatorRowRangeLabel:
         assert "21–30 / 50" in svg
 
 
-class TestPooledPagerSitsAtOneY:
-    """A pooled table's pager sits below the tallest page a sort could build,
-    at one y on every page, so a re-sorted page never meets it and the card
-    never resizes between pages.
+class TestPooledPagerFollowsItsPage:
+    """A pooled table's card holds the tallest page a sort could build, so it
+    never resizes between pages; the pager sits under the open page's rows,
+    so a short page leaves its spare height below the pager, not above it.
     """
 
     @pytest.fixture(autouse=True)
@@ -1145,7 +1145,9 @@ class TestPooledPagerSitsAtOneY:
         with interactive_controls(True):
             yield
 
-    def test_pager_sits_at_the_same_y_on_every_page(self, make_chart) -> None:
+    def test_pager_sits_under_each_page_in_a_card_of_one_height(
+        self, make_chart
+    ) -> None:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
@@ -1203,7 +1205,15 @@ class TestPooledPagerSitsAtOneY:
         svg_page1 = _render(1)
         svg_page2 = _render(2)
 
-        assert _prev_text_y(svg_page1) == _prev_text_y(svg_page2)
+        def _rows_end(svg: str) -> float:
+            m = re.search(r'data-dbt-rows-end="([\d.]+)"', svg)
+            assert m, svg
+            return float(m.group(1))
+
+        assert _rows_end(svg_page1) < _rows_end(svg_page2)
+        assert _prev_text_y(svg_page1) - _rows_end(svg_page1) == _prev_text_y(
+            svg_page2
+        ) - _rows_end(svg_page2)
         assert _table_height(svg_page1) == _table_height(svg_page2), (
             "table height must stay constant across pages"
         )

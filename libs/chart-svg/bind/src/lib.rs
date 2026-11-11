@@ -2,13 +2,45 @@
 //! Everything data-derived and size-independent; no text is measured and no
 //! node is built, which is why this crate depends on neither `measure` nor `scene`.
 //!
-//! `bind_board` walks the spine's `board_model::Board`.
+//! `bind_board` walks the spine's `board_model::Board`: the category plan and channels over
+//! its `Board`, with the palette read off the board's total style
+//! (`charts.color.categorical.palette`, already resolved to colors). `seat` is the plan over a
+//! list of encodings; `plan_colors` is the plan over a board's placed charts that
+//! `board::bind` seats once and hands each chart. The datasets are `column-types`'
+//! `{rows, schema}` per query, the engine's payload shape. Data-derived facts only, with no
+//! direct dependency on `measure` or `scene` (the transitive `scene` edge through `d3rs` goes
+//! away with the d3rs task). No `bind` code builds a node.
+//!
+//! Passes and laws: `decode` is the first board-wide pass; `category_colors` the board-wide
+//! value-to-slot plan; `channels` a chart's `color`/`background` series channels;
+//! `channel_type` a field's quantitative/temporal/nominal verdict from its declared column
+//! type; `formats/` the formats law (resolution, tier merge, painter, number locale); `walk` and
+//! `style/` the declared priority-list walk and the slots' lists over `board-model`;
+//! `font_stack` the emoji-family law.
+//!
+//! It also owns the data-only halves of the shared modules `chart-renderer` imports
+//! (`::bind::...`): `time_axis`; `temporal` (the time unit and its date arithmetic, bucket
+//! detection and completion, labeled-bucket normalizing); `x_type` (the x-type law); `rows` (row
+//! readers and the color domain); `wide` (the wide fold); `stack` (the stack grammar); `bound`
+//! (the bound model, spec § 5.2: `Chart.family`, `Family`, `Cartesian`, `Plane`, `Kpi`, `Callout`, its domains and `Key`, the
+//! decoded-cell value; only the engine calls it); `multiples` (the small-multiples partition and
+//! `regroup`); `layers` (a layer's row scope and color grouping); `legend` (`legend.values`
+//! resolution and the symbol-limit fold); `callout`, `pie`, `table`, `kpi`, `variables` and
+//! `failed` (each chart family's or card's data and text); `time_locale`, `time_zone` and
+//! `label_template`. `data/` holds the en-US number-locale JSON; the de-DE locale is a
+//! test-support builder in `formats::locale`.
+//!
+//! `feature = "test-support"` exposes the scope guards and locale builders engine tests use.
+//! Tests replay recorded production answers (`tests/it/*_production.json`) and Python's
+//! recorded style cascade (`tests/oracle/walks.rs`, from `chart_svg_dev/_bind_walks.py`;
+//! `tests/oracle/walks.json` from `tests/test_bind_walks_fixture.py`).
 
 pub mod board;
 pub mod callout;
 pub mod category_colors;
 pub mod channel_type;
 pub mod channels;
+pub mod conditional;
 pub mod column_kind;
 pub mod decode;
 pub mod derived;
@@ -21,10 +53,11 @@ pub mod kpi;
 pub mod label_template;
 pub mod layers;
 pub mod legend;
-pub mod model;
+pub mod bound;
 pub mod multiples;
 pub mod pattern;
 pub mod pie;
+pub mod restated;
 pub mod plot;
 pub mod rows;
 pub mod run;
@@ -58,6 +91,7 @@ use channels::{bind_channels, style_gradient, Channels};
 use column_types::{Dataset, QueryDatasets};
 use diagnostic::{diag, Diagnostic};
 use indexmap::IndexMap;
+use model_core::Tri;
 
 /// What `bind` decided about the whole board.
 #[derive(Debug)]
@@ -90,6 +124,23 @@ pub fn palette_of(style: &Style) -> Result<Vec<String>, Diagnostic> {
         .as_ref()
         .ok_or_else(|| diag::err_internal("the total style carries `charts.color.categorical`"))?;
     colors_of(&categorical.palette)
+}
+
+/// The palette a chart's `color:` series paint from (`_effective_palette`): the chart's own
+/// `color.categorical.palette` when it sets one, else its scope's. `own` is the chart's own
+/// `color.categorical` leaf and `palette` reads the palette off it.
+pub fn effective_palette<T>(
+    own: &Tri<T>,
+    palette: impl FnOnce(&T) -> Option<&PaletteChoice>,
+    style: &Style,
+) -> Result<Vec<String>, Diagnostic> {
+    match own {
+        Tri::Value(own) => match palette(own) {
+            Some(palette) => colors_of(palette),
+            None => palette_of(style),
+        },
+        Tri::Unset | Tri::Null => palette_of(style),
+    }
 }
 
 /// The root board's palette: the plan seats every chart's values from it, and a nested board

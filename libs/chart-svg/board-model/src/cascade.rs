@@ -16495,116 +16495,116 @@ fn fill_1780(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut
 }
 
 #[rustfmt::skip]
-fn fill_1805(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_1806(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     match ::model_core::FillDefault::fill_default(&mut style.charts.table.pagination.enabled, ::model_core::Value::Bool(true)) { Some(true) => filled("charts.table.pagination.enabled"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "charts.table.pagination.enabled", why: "the fill literal is refused by its type".to_string() }) }
 }
 
 #[rustfmt::skip]
-fn fill_1807(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_1808(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     match ::model_core::FillDefault::fill_default(&mut style.charts.table.pagination.mode, ::model_core::Value::Str("pages")) { Some(true) => filled("charts.table.pagination.mode"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "charts.table.pagination.mode", why: "the fill literal is refused by its type".to_string() }) }
 }
 
 #[rustfmt::skip]
-fn fill_1866(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_1867(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     match ::model_core::FillDefault::fill_default(&mut style.charts.table.spark.padding.top, ::model_core::Value::Float(0.0)) { Some(true) => filled("charts.table.spark.padding.top"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "charts.table.spark.padding.top", why: "the fill literal is refused by its type".to_string() }) }
 }
 
 #[rustfmt::skip]
-fn fill_1867(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_1868(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     match ::model_core::FillDefault::fill_default(&mut style.charts.table.spark.padding.right, ::model_core::Value::Float(0.0)) { Some(true) => filled("charts.table.spark.padding.right"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "charts.table.spark.padding.right", why: "the fill literal is refused by its type".to_string() }) }
 }
 
 #[rustfmt::skip]
-fn fill_1868(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_1869(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     match ::model_core::FillDefault::fill_default(&mut style.charts.table.spark.padding.bottom, ::model_core::Value::Float(0.0)) { Some(true) => filled("charts.table.spark.padding.bottom"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "charts.table.spark.padding.bottom", why: "the fill literal is refused by its type".to_string() }) }
 }
 
 #[rustfmt::skip]
-fn fill_1869(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_1870(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     match ::model_core::FillDefault::fill_default(&mut style.charts.table.spark.padding.left, ::model_core::Value::Float(0.0)) { Some(true) => filled("charts.table.spark.padding.left"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "charts.table.spark.padding.left", why: "the fill literal is refused by its type".to_string() }) }
 }
 
 #[rustfmt::skip]
-fn fill_1908(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_1909(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     match ::model_core::FillDefault::fill_default(&mut style.charts.table.transpose, ::model_core::Value::Bool(false)) { Some(true) => filled("charts.table.transpose"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "charts.table.transpose", why: "the fill literal is refused by its type".to_string() }) }
 }
 
 #[rustfmt::skip]
-fn fill_1988(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_1989(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     match ::model_core::FillDefault::fill_default(&mut style.charts.support_table.position, ::model_core::Value::Str("auto")) { Some(true) => filled("charts.support_table.position"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "charts.support_table.position", why: "the fill literal is refused by its type".to_string() }) }
 }
 
 #[rustfmt::skip]
-fn fill_2325(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_2326(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     match ::model_core::FillDefault::fill_default(&mut style.variables.input.padding.top, ::model_core::Value::Float(0.0)) { Some(true) => filled("variables.input.padding.top"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "variables.input.padding.top", why: "the fill literal is refused by its type".to_string() }) }
 }
 
 #[rustfmt::skip]
-fn fill_2326(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_2327(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     match ::model_core::FillDefault::fill_default(&mut style.variables.input.padding.right, ::model_core::Value::Float(0.0)) { Some(true) => filled("variables.input.padding.right"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "variables.input.padding.right", why: "the fill literal is refused by its type".to_string() }) }
 }
 
 #[rustfmt::skip]
-fn fill_2327(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_2328(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     match ::model_core::FillDefault::fill_default(&mut style.variables.input.padding.bottom, ::model_core::Value::Float(0.0)) { Some(true) => filled("variables.input.padding.bottom"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "variables.input.padding.bottom", why: "the fill literal is refused by its type".to_string() }) }
 }
 
 #[rustfmt::skip]
-fn fill_2328(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_2329(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     match ::model_core::FillDefault::fill_default(&mut style.variables.input.padding.left, ::model_core::Value::Float(0.0)) { Some(true) => filled("variables.input.padding.left"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "variables.input.padding.left", why: "the fill literal is refused by its type".to_string() }) }
 }
 
 #[rustfmt::skip]
-fn fill_2390(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_2391(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     if let ::model_core::Tri::Value(t0) = &mut style.padding {
         match ::model_core::FillDefault::fill_default(&mut t0.top, ::model_core::Value::Float(0.0)) { Some(true) => filled("padding.top"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "padding.top", why: "the fill literal is refused by its type".to_string() }) }
     }
 }
 
 #[rustfmt::skip]
-fn fill_2391(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_2392(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     if let ::model_core::Tri::Value(t0) = &mut style.padding {
         match ::model_core::FillDefault::fill_default(&mut t0.right, ::model_core::Value::Float(0.0)) { Some(true) => filled("padding.right"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "padding.right", why: "the fill literal is refused by its type".to_string() }) }
     }
 }
 
 #[rustfmt::skip]
-fn fill_2392(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_2393(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     if let ::model_core::Tri::Value(t0) = &mut style.padding {
         match ::model_core::FillDefault::fill_default(&mut t0.bottom, ::model_core::Value::Float(0.0)) { Some(true) => filled("padding.bottom"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "padding.bottom", why: "the fill literal is refused by its type".to_string() }) }
     }
 }
 
 #[rustfmt::skip]
-fn fill_2393(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_2394(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     if let ::model_core::Tri::Value(t0) = &mut style.padding {
         match ::model_core::FillDefault::fill_default(&mut t0.left, ::model_core::Value::Float(0.0)) { Some(true) => filled("padding.left"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "padding.left", why: "the fill literal is refused by its type".to_string() }) }
     }
 }
 
 #[rustfmt::skip]
-fn fill_2395(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_2396(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     if let ::model_core::Tri::Value(t0) = &mut style.margin {
         match ::model_core::FillDefault::fill_default(&mut t0.top, ::model_core::Value::Float(0.0)) { Some(true) => filled("margin.top"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "margin.top", why: "the fill literal is refused by its type".to_string() }) }
     }
 }
 
 #[rustfmt::skip]
-fn fill_2396(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_2397(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     if let ::model_core::Tri::Value(t0) = &mut style.margin {
         match ::model_core::FillDefault::fill_default(&mut t0.right, ::model_core::Value::Float(0.0)) { Some(true) => filled("margin.right"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "margin.right", why: "the fill literal is refused by its type".to_string() }) }
     }
 }
 
 #[rustfmt::skip]
-fn fill_2397(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_2398(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     if let ::model_core::Tri::Value(t0) = &mut style.margin {
         match ::model_core::FillDefault::fill_default(&mut t0.bottom, ::model_core::Value::Float(0.0)) { Some(true) => filled("margin.bottom"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "margin.bottom", why: "the fill literal is refused by its type".to_string() }) }
     }
 }
 
 #[rustfmt::skip]
-fn fill_2398(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
+fn fill_2399(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(&str), refused: &mut Vec<::model_core::Refused>) {
     if let ::model_core::Tri::Value(t0) = &mut style.margin {
         match ::model_core::FillDefault::fill_default(&mut t0.left, ::model_core::Value::Float(0.0)) { Some(true) => filled("margin.left"), Some(false) => {}, None => refused.push(::model_core::Refused { at: "margin.left", why: "the fill literal is refused by its type".to_string() }) }
     }
@@ -16899,26 +16899,26 @@ pub fn fill(style: &mut crate::style::style::StylePatch, filled: &mut dyn FnMut(
     fill_1778(style, filled, &mut refused);
     fill_1779(style, filled, &mut refused);
     fill_1780(style, filled, &mut refused);
-    fill_1805(style, filled, &mut refused);
-    fill_1807(style, filled, &mut refused);
-    fill_1866(style, filled, &mut refused);
+    fill_1806(style, filled, &mut refused);
+    fill_1808(style, filled, &mut refused);
     fill_1867(style, filled, &mut refused);
     fill_1868(style, filled, &mut refused);
     fill_1869(style, filled, &mut refused);
-    fill_1908(style, filled, &mut refused);
-    fill_1988(style, filled, &mut refused);
-    fill_2325(style, filled, &mut refused);
+    fill_1870(style, filled, &mut refused);
+    fill_1909(style, filled, &mut refused);
+    fill_1989(style, filled, &mut refused);
     fill_2326(style, filled, &mut refused);
     fill_2327(style, filled, &mut refused);
     fill_2328(style, filled, &mut refused);
-    fill_2390(style, filled, &mut refused);
+    fill_2329(style, filled, &mut refused);
     fill_2391(style, filled, &mut refused);
     fill_2392(style, filled, &mut refused);
     fill_2393(style, filled, &mut refused);
-    fill_2395(style, filled, &mut refused);
+    fill_2394(style, filled, &mut refused);
     fill_2396(style, filled, &mut refused);
     fill_2397(style, filled, &mut refused);
     fill_2398(style, filled, &mut refused);
+    fill_2399(style, filled, &mut refused);
     fill_map_0(style, filled, &mut refused);
     fill_map_1(style, filled, &mut refused);
     fill_map_2(style, filled, &mut refused);
@@ -44403,801 +44403,816 @@ fn rebuild_1835(total: &mut crate::style::style::Style, i: &crate::style::style:
 
 #[rustfmt::skip]
 fn copy_1836(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.more_rows = f.charts.table.more_rows.clone();
+    i.charts.table.hide_underscore_columns = f.charts.table.hide_underscore_columns.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1836(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.more_rows)
+    ::model_core::Empty::is_empty(&f.charts.table.hide_underscore_columns)
+}
+
+#[rustfmt::skip]
+fn rebuild_1836(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+    ::model_core::cascade::rebuild_field(&i.charts.table.hide_underscore_columns, "charts.table.hide_underscore_columns", &mut total.charts.table.hide_underscore_columns, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1837(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.more_rows.font = f.charts.table.more_rows.font.clone();
+    i.charts.table.more_rows = f.charts.table.more_rows.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1837(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font)
+    ::model_core::Empty::is_empty(&f.charts.table.more_rows)
 }
 
 #[rustfmt::skip]
 fn copy_1838(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.more_rows.font.case = f.charts.table.more_rows.font.case.clone();
+    i.charts.table.more_rows.font = f.charts.table.more_rows.font.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1838(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.case)
-}
-
-#[rustfmt::skip]
-fn rebuild_1838(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.case, "charts.table.more_rows.font.case", &mut total.charts.table.more_rows.font.case, unset);
+    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font)
 }
 
 #[rustfmt::skip]
 fn copy_1839(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.more_rows.font.color = f.charts.table.more_rows.font.color.clone();
+    i.charts.table.more_rows.font.case = f.charts.table.more_rows.font.case.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1839(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.color)
+    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.case)
 }
 
 #[rustfmt::skip]
 fn rebuild_1839(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.color, "charts.table.more_rows.font.color", &mut total.charts.table.more_rows.font.color, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.case, "charts.table.more_rows.font.case", &mut total.charts.table.more_rows.font.case, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1840(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.more_rows.font.decoration = f.charts.table.more_rows.font.decoration.clone();
+    i.charts.table.more_rows.font.color = f.charts.table.more_rows.font.color.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1840(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.decoration)
+    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.color)
 }
 
 #[rustfmt::skip]
 fn rebuild_1840(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.decoration, "charts.table.more_rows.font.decoration", &mut total.charts.table.more_rows.font.decoration, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.color, "charts.table.more_rows.font.color", &mut total.charts.table.more_rows.font.color, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1841(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.more_rows.font.extends = f.charts.table.more_rows.font.extends.clone();
+    i.charts.table.more_rows.font.decoration = f.charts.table.more_rows.font.decoration.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1841(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.extends)
+    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.decoration)
 }
 
 #[rustfmt::skip]
 fn rebuild_1841(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_nullable(&i.charts.table.more_rows.font.extends, "charts.table.more_rows.font.extends", &mut total.charts.table.more_rows.font.extends, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.decoration, "charts.table.more_rows.font.decoration", &mut total.charts.table.more_rows.font.decoration, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1842(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.more_rows.font.family = f.charts.table.more_rows.font.family.clone();
+    i.charts.table.more_rows.font.extends = f.charts.table.more_rows.font.extends.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1842(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.family)
+    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.extends)
 }
 
 #[rustfmt::skip]
 fn rebuild_1842(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.family, "charts.table.more_rows.font.family", &mut total.charts.table.more_rows.font.family, unset);
+    ::model_core::cascade::rebuild_nullable(&i.charts.table.more_rows.font.extends, "charts.table.more_rows.font.extends", &mut total.charts.table.more_rows.font.extends, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1843(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.more_rows.font.line_height = f.charts.table.more_rows.font.line_height.clone();
+    i.charts.table.more_rows.font.family = f.charts.table.more_rows.font.family.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1843(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.line_height)
+    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.family)
 }
 
 #[rustfmt::skip]
 fn rebuild_1843(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.line_height, "charts.table.more_rows.font.line_height", &mut total.charts.table.more_rows.font.line_height, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.family, "charts.table.more_rows.font.family", &mut total.charts.table.more_rows.font.family, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1844(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.more_rows.font.size = f.charts.table.more_rows.font.size.clone();
+    i.charts.table.more_rows.font.line_height = f.charts.table.more_rows.font.line_height.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1844(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.size)
+    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.line_height)
 }
 
 #[rustfmt::skip]
 fn rebuild_1844(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.size, "charts.table.more_rows.font.size", &mut total.charts.table.more_rows.font.size, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.line_height, "charts.table.more_rows.font.line_height", &mut total.charts.table.more_rows.font.line_height, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1845(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.more_rows.font.style = f.charts.table.more_rows.font.style.clone();
+    i.charts.table.more_rows.font.size = f.charts.table.more_rows.font.size.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1845(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.style)
+    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.size)
 }
 
 #[rustfmt::skip]
 fn rebuild_1845(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.style, "charts.table.more_rows.font.style", &mut total.charts.table.more_rows.font.style, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.size, "charts.table.more_rows.font.size", &mut total.charts.table.more_rows.font.size, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1846(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.more_rows.font.weight = f.charts.table.more_rows.font.weight.clone();
+    i.charts.table.more_rows.font.style = f.charts.table.more_rows.font.style.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1846(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.weight)
+    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.style)
 }
 
 #[rustfmt::skip]
 fn rebuild_1846(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.weight, "charts.table.more_rows.font.weight", &mut total.charts.table.more_rows.font.weight, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.style, "charts.table.more_rows.font.style", &mut total.charts.table.more_rows.font.style, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1847(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.outer_padding = f.charts.table.outer_padding.clone();
+    i.charts.table.more_rows.font.weight = f.charts.table.more_rows.font.weight.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1847(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.outer_padding)
+    ::model_core::Empty::is_empty(&f.charts.table.more_rows.font.weight)
 }
 
 #[rustfmt::skip]
 fn rebuild_1847(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.outer_padding, "charts.table.outer_padding", &mut total.charts.table.outer_padding, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.more_rows.font.weight, "charts.table.more_rows.font.weight", &mut total.charts.table.more_rows.font.weight, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1848(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.padding = f.charts.table.padding.clone();
+    i.charts.table.outer_padding = f.charts.table.outer_padding.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1848(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.padding)
+    ::model_core::Empty::is_empty(&f.charts.table.outer_padding)
+}
+
+#[rustfmt::skip]
+fn rebuild_1848(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+    ::model_core::cascade::rebuild_field(&i.charts.table.outer_padding, "charts.table.outer_padding", &mut total.charts.table.outer_padding, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1849(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.padding.bottom = f.charts.table.padding.bottom.clone();
+    i.charts.table.padding = f.charts.table.padding.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1849(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.padding.bottom)
-}
-
-#[rustfmt::skip]
-fn rebuild_1849(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.padding.bottom, "charts.table.padding.bottom", &mut total.charts.table.padding.bottom, unset);
+    ::model_core::Empty::is_empty(&f.charts.table.padding)
 }
 
 #[rustfmt::skip]
 fn copy_1850(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.padding.left = f.charts.table.padding.left.clone();
+    i.charts.table.padding.bottom = f.charts.table.padding.bottom.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1850(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.padding.left)
+    ::model_core::Empty::is_empty(&f.charts.table.padding.bottom)
 }
 
 #[rustfmt::skip]
 fn rebuild_1850(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.padding.left, "charts.table.padding.left", &mut total.charts.table.padding.left, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.padding.bottom, "charts.table.padding.bottom", &mut total.charts.table.padding.bottom, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1851(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.padding.right = f.charts.table.padding.right.clone();
+    i.charts.table.padding.left = f.charts.table.padding.left.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1851(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.padding.right)
+    ::model_core::Empty::is_empty(&f.charts.table.padding.left)
 }
 
 #[rustfmt::skip]
 fn rebuild_1851(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.padding.right, "charts.table.padding.right", &mut total.charts.table.padding.right, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.padding.left, "charts.table.padding.left", &mut total.charts.table.padding.left, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1852(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.padding.top = f.charts.table.padding.top.clone();
+    i.charts.table.padding.right = f.charts.table.padding.right.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1852(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.padding.top)
+    ::model_core::Empty::is_empty(&f.charts.table.padding.right)
 }
 
 #[rustfmt::skip]
 fn rebuild_1852(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.padding.top, "charts.table.padding.top", &mut total.charts.table.padding.top, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.padding.right, "charts.table.padding.right", &mut total.charts.table.padding.right, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1853(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.pagination = f.charts.table.pagination.clone();
+    i.charts.table.padding.top = f.charts.table.padding.top.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1853(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.pagination)
+    ::model_core::Empty::is_empty(&f.charts.table.padding.top)
+}
+
+#[rustfmt::skip]
+fn rebuild_1853(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+    ::model_core::cascade::rebuild_field(&i.charts.table.padding.top, "charts.table.padding.top", &mut total.charts.table.padding.top, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1854(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.pagination.enabled = f.charts.table.pagination.enabled.clone();
+    i.charts.table.pagination = f.charts.table.pagination.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1854(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.pagination.enabled)
-}
-
-#[rustfmt::skip]
-fn rebuild_1854(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.pagination.enabled, "charts.table.pagination.enabled", &mut total.charts.table.pagination.enabled, unset);
+    ::model_core::Empty::is_empty(&f.charts.table.pagination)
 }
 
 #[rustfmt::skip]
 fn copy_1855(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.pagination.mode = f.charts.table.pagination.mode.clone();
+    i.charts.table.pagination.enabled = f.charts.table.pagination.enabled.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1855(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.pagination.mode)
+    ::model_core::Empty::is_empty(&f.charts.table.pagination.enabled)
 }
 
 #[rustfmt::skip]
 fn rebuild_1855(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.pagination.mode, "charts.table.pagination.mode", &mut total.charts.table.pagination.mode, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.pagination.enabled, "charts.table.pagination.enabled", &mut total.charts.table.pagination.enabled, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1856(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.pagination.page_rows = f.charts.table.pagination.page_rows.clone();
+    i.charts.table.pagination.mode = f.charts.table.pagination.mode.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1856(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.pagination.page_rows)
+    ::model_core::Empty::is_empty(&f.charts.table.pagination.mode)
 }
 
 #[rustfmt::skip]
 fn rebuild_1856(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_nullable(&i.charts.table.pagination.page_rows, "charts.table.pagination.page_rows", &mut total.charts.table.pagination.page_rows, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.pagination.mode, "charts.table.pagination.mode", &mut total.charts.table.pagination.mode, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1857(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.paginator = f.charts.table.paginator.clone();
+    i.charts.table.pagination.page_rows = f.charts.table.pagination.page_rows.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1857(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.paginator)
+    ::model_core::Empty::is_empty(&f.charts.table.pagination.page_rows)
+}
+
+#[rustfmt::skip]
+fn rebuild_1857(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+    ::model_core::cascade::rebuild_nullable(&i.charts.table.pagination.page_rows, "charts.table.pagination.page_rows", &mut total.charts.table.pagination.page_rows, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1858(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.paginator.color_active = f.charts.table.paginator.color_active.clone();
+    i.charts.table.paginator = f.charts.table.paginator.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1858(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.paginator.color_active)
-}
-
-#[rustfmt::skip]
-fn rebuild_1858(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.paginator.color_active, "charts.table.paginator.color_active", &mut total.charts.table.paginator.color_active, unset);
+    ::model_core::Empty::is_empty(&f.charts.table.paginator)
 }
 
 #[rustfmt::skip]
 fn copy_1859(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.paginator.color_disabled = f.charts.table.paginator.color_disabled.clone();
+    i.charts.table.paginator.color_active = f.charts.table.paginator.color_active.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1859(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.paginator.color_disabled)
+    ::model_core::Empty::is_empty(&f.charts.table.paginator.color_active)
 }
 
 #[rustfmt::skip]
 fn rebuild_1859(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.paginator.color_disabled, "charts.table.paginator.color_disabled", &mut total.charts.table.paginator.color_disabled, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.paginator.color_active, "charts.table.paginator.color_active", &mut total.charts.table.paginator.color_active, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1860(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.paginator.color_inactive = f.charts.table.paginator.color_inactive.clone();
+    i.charts.table.paginator.color_disabled = f.charts.table.paginator.color_disabled.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1860(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.paginator.color_inactive)
+    ::model_core::Empty::is_empty(&f.charts.table.paginator.color_disabled)
 }
 
 #[rustfmt::skip]
 fn rebuild_1860(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.paginator.color_inactive, "charts.table.paginator.color_inactive", &mut total.charts.table.paginator.color_inactive, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.paginator.color_disabled, "charts.table.paginator.color_disabled", &mut total.charts.table.paginator.color_disabled, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1861(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.paginator.font = f.charts.table.paginator.font.clone();
+    i.charts.table.paginator.color_inactive = f.charts.table.paginator.color_inactive.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1861(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.paginator.font)
+    ::model_core::Empty::is_empty(&f.charts.table.paginator.color_inactive)
 }
 
 #[rustfmt::skip]
 fn rebuild_1861(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_optional_slot(&i.charts.table.paginator.font, "charts.table.paginator.font", &mut total.charts.table.paginator.font, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.paginator.color_inactive, "charts.table.paginator.color_inactive", &mut total.charts.table.paginator.color_inactive, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1862(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.paginator.item_width = f.charts.table.paginator.item_width.clone();
+    i.charts.table.paginator.font = f.charts.table.paginator.font.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1862(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.paginator.item_width)
+    ::model_core::Empty::is_empty(&f.charts.table.paginator.font)
 }
 
 #[rustfmt::skip]
 fn rebuild_1862(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.paginator.item_width, "charts.table.paginator.item_width", &mut total.charts.table.paginator.item_width, unset);
+    ::model_core::cascade::rebuild_optional_slot(&i.charts.table.paginator.font, "charts.table.paginator.font", &mut total.charts.table.paginator.font, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1863(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.paginator.weight_active = f.charts.table.paginator.weight_active.clone();
+    i.charts.table.paginator.item_width = f.charts.table.paginator.item_width.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1863(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.paginator.weight_active)
+    ::model_core::Empty::is_empty(&f.charts.table.paginator.item_width)
 }
 
 #[rustfmt::skip]
 fn rebuild_1863(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.paginator.weight_active, "charts.table.paginator.weight_active", &mut total.charts.table.paginator.weight_active, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.paginator.item_width, "charts.table.paginator.item_width", &mut total.charts.table.paginator.item_width, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1864(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.paginator.weight_chevron = f.charts.table.paginator.weight_chevron.clone();
+    i.charts.table.paginator.weight_active = f.charts.table.paginator.weight_active.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1864(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.paginator.weight_chevron)
+    ::model_core::Empty::is_empty(&f.charts.table.paginator.weight_active)
 }
 
 #[rustfmt::skip]
 fn rebuild_1864(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.paginator.weight_chevron, "charts.table.paginator.weight_chevron", &mut total.charts.table.paginator.weight_chevron, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.paginator.weight_active, "charts.table.paginator.weight_active", &mut total.charts.table.paginator.weight_active, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1865(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.paginator.weight_inactive = f.charts.table.paginator.weight_inactive.clone();
+    i.charts.table.paginator.weight_chevron = f.charts.table.paginator.weight_chevron.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1865(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.paginator.weight_inactive)
+    ::model_core::Empty::is_empty(&f.charts.table.paginator.weight_chevron)
 }
 
 #[rustfmt::skip]
 fn rebuild_1865(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.paginator.weight_inactive, "charts.table.paginator.weight_inactive", &mut total.charts.table.paginator.weight_inactive, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.paginator.weight_chevron, "charts.table.paginator.weight_chevron", &mut total.charts.table.paginator.weight_chevron, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1866(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.preferred_width = f.charts.table.preferred_width.clone();
+    i.charts.table.paginator.weight_inactive = f.charts.table.paginator.weight_inactive.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1866(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.preferred_width)
+    ::model_core::Empty::is_empty(&f.charts.table.paginator.weight_inactive)
 }
 
 #[rustfmt::skip]
 fn rebuild_1866(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.preferred_width, "charts.table.preferred_width", &mut total.charts.table.preferred_width, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.paginator.weight_inactive, "charts.table.paginator.weight_inactive", &mut total.charts.table.paginator.weight_inactive, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1867(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row = f.charts.table.row.clone();
+    i.charts.table.preferred_width = f.charts.table.preferred_width.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1867(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row)
+    ::model_core::Empty::is_empty(&f.charts.table.preferred_width)
+}
+
+#[rustfmt::skip]
+fn rebuild_1867(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+    ::model_core::cascade::rebuild_field(&i.charts.table.preferred_width, "charts.table.preferred_width", &mut total.charts.table.preferred_width, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1868(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.divider = f.charts.table.row.divider.clone();
+    i.charts.table.row = f.charts.table.row.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1868(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.divider)
+    ::model_core::Empty::is_empty(&f.charts.table.row)
 }
 
 #[rustfmt::skip]
 fn copy_1869(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.divider.divider.color = f.charts.table.row.divider.divider.color.clone();
+    i.charts.table.row.divider = f.charts.table.row.divider.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1869(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.divider.divider.color)
-}
-
-#[rustfmt::skip]
-fn rebuild_1869(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.row.divider.divider.color, "charts.table.row.divider.color", &mut total.charts.table.row.divider.divider.color, unset);
+    ::model_core::Empty::is_empty(&f.charts.table.row.divider)
 }
 
 #[rustfmt::skip]
 fn copy_1870(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.divider.continuous = f.charts.table.row.divider.continuous.clone();
+    i.charts.table.row.divider.divider.color = f.charts.table.row.divider.divider.color.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1870(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.divider.continuous)
+    ::model_core::Empty::is_empty(&f.charts.table.row.divider.divider.color)
 }
 
 #[rustfmt::skip]
 fn rebuild_1870(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.row.divider.continuous, "charts.table.row.divider.continuous", &mut total.charts.table.row.divider.continuous, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.row.divider.divider.color, "charts.table.row.divider.color", &mut total.charts.table.row.divider.divider.color, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1871(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.divider.divider.dasharray = f.charts.table.row.divider.divider.dasharray.clone();
+    i.charts.table.row.divider.continuous = f.charts.table.row.divider.continuous.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1871(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.divider.divider.dasharray)
+    ::model_core::Empty::is_empty(&f.charts.table.row.divider.continuous)
 }
 
 #[rustfmt::skip]
 fn rebuild_1871(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_nullable(&i.charts.table.row.divider.divider.dasharray, "charts.table.row.divider.dasharray", &mut total.charts.table.row.divider.divider.dasharray, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.row.divider.continuous, "charts.table.row.divider.continuous", &mut total.charts.table.row.divider.continuous, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1872(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.divider.divider.visible = f.charts.table.row.divider.divider.visible.clone();
+    i.charts.table.row.divider.divider.dasharray = f.charts.table.row.divider.divider.dasharray.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1872(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.divider.divider.visible)
+    ::model_core::Empty::is_empty(&f.charts.table.row.divider.divider.dasharray)
 }
 
 #[rustfmt::skip]
 fn rebuild_1872(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.row.divider.divider.visible, "charts.table.row.divider.visible", &mut total.charts.table.row.divider.divider.visible, unset);
+    ::model_core::cascade::rebuild_nullable(&i.charts.table.row.divider.divider.dasharray, "charts.table.row.divider.dasharray", &mut total.charts.table.row.divider.divider.dasharray, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1873(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.divider.divider.width = f.charts.table.row.divider.divider.width.clone();
+    i.charts.table.row.divider.divider.visible = f.charts.table.row.divider.divider.visible.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1873(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.divider.divider.width)
+    ::model_core::Empty::is_empty(&f.charts.table.row.divider.divider.visible)
 }
 
 #[rustfmt::skip]
 fn rebuild_1873(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.row.divider.divider.width, "charts.table.row.divider.width", &mut total.charts.table.row.divider.divider.width, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.row.divider.divider.visible, "charts.table.row.divider.visible", &mut total.charts.table.row.divider.divider.visible, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1874(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.height = f.charts.table.row.height.clone();
+    i.charts.table.row.divider.divider.width = f.charts.table.row.divider.divider.width.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1874(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.height)
+    ::model_core::Empty::is_empty(&f.charts.table.row.divider.divider.width)
 }
 
 #[rustfmt::skip]
 fn rebuild_1874(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.row.height, "charts.table.row.height", &mut total.charts.table.row.height, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.row.divider.divider.width, "charts.table.row.divider.width", &mut total.charts.table.row.divider.divider.width, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1875(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles = f.charts.table.row.roles.clone();
+    i.charts.table.row.height = f.charts.table.row.height.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1875(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles)
+    ::model_core::Empty::is_empty(&f.charts.table.row.height)
+}
+
+#[rustfmt::skip]
+fn rebuild_1875(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+    ::model_core::cascade::rebuild_field(&i.charts.table.row.height, "charts.table.row.height", &mut total.charts.table.row.height, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1876(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.summary = f.charts.table.row.roles.summary.clone();
+    i.charts.table.row.roles = f.charts.table.row.roles.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1876(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary)
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles)
 }
 
 #[rustfmt::skip]
 fn copy_1877(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.summary.background = f.charts.table.row.roles.summary.background.clone();
+    i.charts.table.row.roles.summary = f.charts.table.row.roles.summary.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1877(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary.background)
-}
-
-#[rustfmt::skip]
-fn rebuild_1877(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_nullable(&i.charts.table.row.roles.summary.background, "charts.table.row.roles.summary.background", &mut total.charts.table.row.roles.summary.background, unset);
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary)
 }
 
 #[rustfmt::skip]
 fn copy_1878(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.summary.divider = f.charts.table.row.roles.summary.divider.clone();
+    i.charts.table.row.roles.summary.background = f.charts.table.row.roles.summary.background.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1878(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary.divider)
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary.background)
+}
+
+#[rustfmt::skip]
+fn rebuild_1878(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+    ::model_core::cascade::rebuild_nullable(&i.charts.table.row.roles.summary.background, "charts.table.row.roles.summary.background", &mut total.charts.table.row.roles.summary.background, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1879(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.summary.divider.color = f.charts.table.row.roles.summary.divider.color.clone();
+    i.charts.table.row.roles.summary.divider = f.charts.table.row.roles.summary.divider.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1879(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary.divider.color)
-}
-
-#[rustfmt::skip]
-fn rebuild_1879(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.row.roles.summary.divider.color, "charts.table.row.roles.summary.divider.color", &mut total.charts.table.row.roles.summary.divider.color, unset);
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary.divider)
 }
 
 #[rustfmt::skip]
 fn copy_1880(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.summary.divider.dasharray = f.charts.table.row.roles.summary.divider.dasharray.clone();
+    i.charts.table.row.roles.summary.divider.color = f.charts.table.row.roles.summary.divider.color.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1880(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary.divider.dasharray)
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary.divider.color)
 }
 
 #[rustfmt::skip]
 fn rebuild_1880(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_nullable(&i.charts.table.row.roles.summary.divider.dasharray, "charts.table.row.roles.summary.divider.dasharray", &mut total.charts.table.row.roles.summary.divider.dasharray, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.row.roles.summary.divider.color, "charts.table.row.roles.summary.divider.color", &mut total.charts.table.row.roles.summary.divider.color, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1881(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.summary.divider.visible = f.charts.table.row.roles.summary.divider.visible.clone();
+    i.charts.table.row.roles.summary.divider.dasharray = f.charts.table.row.roles.summary.divider.dasharray.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1881(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary.divider.visible)
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary.divider.dasharray)
 }
 
 #[rustfmt::skip]
 fn rebuild_1881(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.row.roles.summary.divider.visible, "charts.table.row.roles.summary.divider.visible", &mut total.charts.table.row.roles.summary.divider.visible, unset);
+    ::model_core::cascade::rebuild_nullable(&i.charts.table.row.roles.summary.divider.dasharray, "charts.table.row.roles.summary.divider.dasharray", &mut total.charts.table.row.roles.summary.divider.dasharray, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1882(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.summary.divider.width = f.charts.table.row.roles.summary.divider.width.clone();
+    i.charts.table.row.roles.summary.divider.visible = f.charts.table.row.roles.summary.divider.visible.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1882(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary.divider.width)
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary.divider.visible)
 }
 
 #[rustfmt::skip]
 fn rebuild_1882(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.row.roles.summary.divider.width, "charts.table.row.roles.summary.divider.width", &mut total.charts.table.row.roles.summary.divider.width, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.row.roles.summary.divider.visible, "charts.table.row.roles.summary.divider.visible", &mut total.charts.table.row.roles.summary.divider.visible, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1883(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.summary.font = f.charts.table.row.roles.summary.font.clone();
+    i.charts.table.row.roles.summary.divider.width = f.charts.table.row.roles.summary.divider.width.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1883(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary.font)
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary.divider.width)
 }
 
 #[rustfmt::skip]
 fn rebuild_1883(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_optional_slot(&i.charts.table.row.roles.summary.font, "charts.table.row.roles.summary.font", &mut total.charts.table.row.roles.summary.font, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.row.roles.summary.divider.width, "charts.table.row.roles.summary.divider.width", &mut total.charts.table.row.roles.summary.divider.width, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1884(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.total = f.charts.table.row.roles.total.clone();
+    i.charts.table.row.roles.summary.font = f.charts.table.row.roles.summary.font.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1884(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total)
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.summary.font)
+}
+
+#[rustfmt::skip]
+fn rebuild_1884(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+    ::model_core::cascade::rebuild_optional_slot(&i.charts.table.row.roles.summary.font, "charts.table.row.roles.summary.font", &mut total.charts.table.row.roles.summary.font, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1885(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.total.background = f.charts.table.row.roles.total.background.clone();
+    i.charts.table.row.roles.total = f.charts.table.row.roles.total.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1885(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total.background)
-}
-
-#[rustfmt::skip]
-fn rebuild_1885(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_nullable(&i.charts.table.row.roles.total.background, "charts.table.row.roles.total.background", &mut total.charts.table.row.roles.total.background, unset);
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total)
 }
 
 #[rustfmt::skip]
 fn copy_1886(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.total.divider = f.charts.table.row.roles.total.divider.clone();
+    i.charts.table.row.roles.total.background = f.charts.table.row.roles.total.background.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1886(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total.divider)
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total.background)
+}
+
+#[rustfmt::skip]
+fn rebuild_1886(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+    ::model_core::cascade::rebuild_nullable(&i.charts.table.row.roles.total.background, "charts.table.row.roles.total.background", &mut total.charts.table.row.roles.total.background, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1887(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.total.divider.color = f.charts.table.row.roles.total.divider.color.clone();
+    i.charts.table.row.roles.total.divider = f.charts.table.row.roles.total.divider.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1887(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total.divider.color)
-}
-
-#[rustfmt::skip]
-fn rebuild_1887(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.row.roles.total.divider.color, "charts.table.row.roles.total.divider.color", &mut total.charts.table.row.roles.total.divider.color, unset);
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total.divider)
 }
 
 #[rustfmt::skip]
 fn copy_1888(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.total.divider.dasharray = f.charts.table.row.roles.total.divider.dasharray.clone();
+    i.charts.table.row.roles.total.divider.color = f.charts.table.row.roles.total.divider.color.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1888(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total.divider.dasharray)
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total.divider.color)
 }
 
 #[rustfmt::skip]
 fn rebuild_1888(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_nullable(&i.charts.table.row.roles.total.divider.dasharray, "charts.table.row.roles.total.divider.dasharray", &mut total.charts.table.row.roles.total.divider.dasharray, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.row.roles.total.divider.color, "charts.table.row.roles.total.divider.color", &mut total.charts.table.row.roles.total.divider.color, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1889(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.total.divider.visible = f.charts.table.row.roles.total.divider.visible.clone();
+    i.charts.table.row.roles.total.divider.dasharray = f.charts.table.row.roles.total.divider.dasharray.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1889(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total.divider.visible)
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total.divider.dasharray)
 }
 
 #[rustfmt::skip]
 fn rebuild_1889(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.row.roles.total.divider.visible, "charts.table.row.roles.total.divider.visible", &mut total.charts.table.row.roles.total.divider.visible, unset);
+    ::model_core::cascade::rebuild_nullable(&i.charts.table.row.roles.total.divider.dasharray, "charts.table.row.roles.total.divider.dasharray", &mut total.charts.table.row.roles.total.divider.dasharray, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1890(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.total.divider.width = f.charts.table.row.roles.total.divider.width.clone();
+    i.charts.table.row.roles.total.divider.visible = f.charts.table.row.roles.total.divider.visible.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1890(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total.divider.width)
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total.divider.visible)
 }
 
 #[rustfmt::skip]
 fn rebuild_1890(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_field(&i.charts.table.row.roles.total.divider.width, "charts.table.row.roles.total.divider.width", &mut total.charts.table.row.roles.total.divider.width, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.row.roles.total.divider.visible, "charts.table.row.roles.total.divider.visible", &mut total.charts.table.row.roles.total.divider.visible, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1891(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.roles.total.font = f.charts.table.row.roles.total.font.clone();
+    i.charts.table.row.roles.total.divider.width = f.charts.table.row.roles.total.divider.width.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1891(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total.font)
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total.divider.width)
 }
 
 #[rustfmt::skip]
 fn rebuild_1891(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_optional_slot(&i.charts.table.row.roles.total.font, "charts.table.row.roles.total.font", &mut total.charts.table.row.roles.total.font, unset);
+    ::model_core::cascade::rebuild_field(&i.charts.table.row.roles.total.divider.width, "charts.table.row.roles.total.divider.width", &mut total.charts.table.row.roles.total.divider.width, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1892(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    i.charts.table.row.stripe = f.charts.table.row.stripe.clone();
+    i.charts.table.row.roles.total.font = f.charts.table.row.roles.total.font.clone();
 }
 
 #[rustfmt::skip]
 fn unset_1892(f: &crate::style::style::StylePatch) -> bool {
-    ::model_core::Empty::is_empty(&f.charts.table.row.stripe)
+    ::model_core::Empty::is_empty(&f.charts.table.row.roles.total.font)
 }
 
 #[rustfmt::skip]
 fn rebuild_1892(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
-    ::model_core::cascade::rebuild_nullable(&i.charts.table.row.stripe, "charts.table.row.stripe", &mut total.charts.table.row.stripe, unset);
+    ::model_core::cascade::rebuild_optional_slot(&i.charts.table.row.roles.total.font, "charts.table.row.roles.total.font", &mut total.charts.table.row.roles.total.font, unset);
 }
 
 #[rustfmt::skip]
 fn copy_1893(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+    i.charts.table.row.stripe = f.charts.table.row.stripe.clone();
+}
+
+#[rustfmt::skip]
+fn unset_1893(f: &crate::style::style::StylePatch) -> bool {
+    ::model_core::Empty::is_empty(&f.charts.table.row.stripe)
+}
+
+#[rustfmt::skip]
+fn rebuild_1893(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+    ::model_core::cascade::rebuild_nullable(&i.charts.table.row.stripe, "charts.table.row.stripe", &mut total.charts.table.row.stripe, unset);
+}
+
+#[rustfmt::skip]
+fn copy_1894(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     if let ::model_core::Tri::Value(ti0) = &mut i.charts.table.row.stripe {
         if let ::model_core::Tri::Value(sf0) = &f.charts.table.row.stripe {
             ti0.color = sf0.color.clone();
@@ -45208,4020 +45223,4020 @@ fn copy_1893(f: &crate::style::style::StylePatch, i: &mut crate::style::style::S
 }
 
 #[rustfmt::skip]
-fn unset_1893(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1894(f: &crate::style::style::StylePatch) -> bool {
     match &f.charts.table.row.stripe { ::model_core::Tri::Value(s0) => ::model_core::Empty::is_empty(&s0.color), _ => true }
 }
 
 #[rustfmt::skip]
-fn copy_1894(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1895(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.row_numbers = f.charts.table.row_numbers.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1894(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1895(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.row_numbers)
 }
 
 #[rustfmt::skip]
-fn copy_1895(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1896(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.row_numbers.align = f.charts.table.row_numbers.align.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1895(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1896(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.row_numbers.align)
 }
 
 #[rustfmt::skip]
-fn rebuild_1895(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1896(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.row_numbers.align, "charts.table.row_numbers.align", &mut total.charts.table.row_numbers.align, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1896(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1897(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.row_numbers.font = f.charts.table.row_numbers.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1896(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1897(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.row_numbers.font)
 }
 
 #[rustfmt::skip]
-fn copy_1897(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1898(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.row_numbers.font.case = f.charts.table.row_numbers.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1897(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1898(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.row_numbers.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_1897(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1898(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.row_numbers.font.case, "charts.table.row_numbers.font.case", &mut total.charts.table.row_numbers.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1898(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1899(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.row_numbers.font.color = f.charts.table.row_numbers.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1898(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1899(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.row_numbers.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_1898(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1899(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.row_numbers.font.color, "charts.table.row_numbers.font.color", &mut total.charts.table.row_numbers.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1899(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1900(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.row_numbers.font.decoration = f.charts.table.row_numbers.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1899(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1900(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.row_numbers.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_1899(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1900(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.row_numbers.font.decoration, "charts.table.row_numbers.font.decoration", &mut total.charts.table.row_numbers.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1900(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1901(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.row_numbers.font.extends = f.charts.table.row_numbers.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1900(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1901(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.row_numbers.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_1900(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1901(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.table.row_numbers.font.extends, "charts.table.row_numbers.font.extends", &mut total.charts.table.row_numbers.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1901(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1902(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.row_numbers.font.family = f.charts.table.row_numbers.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1901(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1902(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.row_numbers.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_1901(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1902(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.row_numbers.font.family, "charts.table.row_numbers.font.family", &mut total.charts.table.row_numbers.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1902(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1903(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.row_numbers.font.line_height = f.charts.table.row_numbers.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1902(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1903(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.row_numbers.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_1902(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1903(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.row_numbers.font.line_height, "charts.table.row_numbers.font.line_height", &mut total.charts.table.row_numbers.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1903(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1904(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.row_numbers.font.size = f.charts.table.row_numbers.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1903(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1904(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.row_numbers.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_1903(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1904(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.row_numbers.font.size, "charts.table.row_numbers.font.size", &mut total.charts.table.row_numbers.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1904(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1905(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.row_numbers.font.style = f.charts.table.row_numbers.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1904(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1905(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.row_numbers.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_1904(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1905(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.row_numbers.font.style, "charts.table.row_numbers.font.style", &mut total.charts.table.row_numbers.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1905(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1906(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.row_numbers.font.weight = f.charts.table.row_numbers.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1905(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1906(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.row_numbers.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_1905(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1906(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.row_numbers.font.weight, "charts.table.row_numbers.font.weight", &mut total.charts.table.row_numbers.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1906(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1907(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.row_numbers.header = f.charts.table.row_numbers.header.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1906(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1907(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.row_numbers.header)
 }
 
 #[rustfmt::skip]
-fn rebuild_1906(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1907(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.row_numbers.header, "charts.table.row_numbers.header", &mut total.charts.table.row_numbers.header, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1907(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1908(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.row_numbers.visible = f.charts.table.row_numbers.visible.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1907(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1908(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.row_numbers.visible)
 }
 
 #[rustfmt::skip]
-fn rebuild_1907(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1908(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.row_numbers.visible, "charts.table.row_numbers.visible", &mut total.charts.table.row_numbers.visible, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1908(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1909(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.scrollbar = f.charts.table.scrollbar.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1908(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1909(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.scrollbar)
 }
 
 #[rustfmt::skip]
-fn copy_1909(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1910(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.scrollbar.edge_color = f.charts.table.scrollbar.edge_color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1909(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1910(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.scrollbar.edge_color)
 }
 
 #[rustfmt::skip]
-fn rebuild_1909(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1910(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.scrollbar.edge_color, "charts.table.scrollbar.edge_color", &mut total.charts.table.scrollbar.edge_color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1910(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1911(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.scrollbar.inset = f.charts.table.scrollbar.inset.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1910(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1911(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.scrollbar.inset)
 }
 
 #[rustfmt::skip]
-fn rebuild_1910(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1911(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.scrollbar.inset, "charts.table.scrollbar.inset", &mut total.charts.table.scrollbar.inset, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1911(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1912(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.scrollbar.size = f.charts.table.scrollbar.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1911(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1912(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.scrollbar.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_1911(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1912(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.scrollbar.size, "charts.table.scrollbar.size", &mut total.charts.table.scrollbar.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1912(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1913(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.scrollbar.thumb_color = f.charts.table.scrollbar.thumb_color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1912(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1913(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.scrollbar.thumb_color)
 }
 
 #[rustfmt::skip]
-fn rebuild_1912(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1913(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.scrollbar.thumb_color, "charts.table.scrollbar.thumb_color", &mut total.charts.table.scrollbar.thumb_color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1913(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1914(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.scrollbar.track_color = f.charts.table.scrollbar.track_color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1913(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1914(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.scrollbar.track_color)
 }
 
 #[rustfmt::skip]
-fn rebuild_1913(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1914(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.table.scrollbar.track_color, "charts.table.scrollbar.track_color", &mut total.charts.table.scrollbar.track_color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1914(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1915(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark = f.charts.table.spark.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1914(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1915(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark)
 }
 
 #[rustfmt::skip]
-fn copy_1915(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1916(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.area = f.charts.table.spark.area.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1915(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1916(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.area)
 }
 
 #[rustfmt::skip]
-fn copy_1916(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1917(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.area.fill_opacity = f.charts.table.spark.area.fill_opacity.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1916(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1917(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.area.fill_opacity)
 }
 
 #[rustfmt::skip]
-fn rebuild_1916(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1917(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.area.fill_opacity, "charts.table.spark.area.fill_opacity", &mut total.charts.table.spark.area.fill_opacity, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1917(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1918(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar = f.charts.table.spark.bar.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1917(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1918(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar)
 }
 
 #[rustfmt::skip]
-fn copy_1918(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1919(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar.background = f.charts.table.spark.bar.background.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1918(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1919(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar.background)
 }
 
 #[rustfmt::skip]
-fn rebuild_1918(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1919(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.bar.background, "charts.table.spark.bar.background", &mut total.charts.table.spark.bar.background, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1919(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1920(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar.border = f.charts.table.spark.bar.border.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1919(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1920(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar.border)
 }
 
 #[rustfmt::skip]
-fn copy_1920(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1921(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar.border.radius = f.charts.table.spark.bar.border.radius.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1920(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1921(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar.border.radius)
 }
 
 #[rustfmt::skip]
-fn rebuild_1920(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1921(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.bar.border.radius, "charts.table.spark.bar.border.radius", &mut total.charts.table.spark.bar.border.radius, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1921(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1922(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar.color = f.charts.table.spark.bar.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1921(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1922(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_1921(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1922(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.table.spark.bar.color, "charts.table.spark.bar.color", &mut total.charts.table.spark.bar.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1922(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1923(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar.default_max = f.charts.table.spark.bar.default_max.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1922(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1923(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar.default_max)
 }
 
 #[rustfmt::skip]
-fn rebuild_1922(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1923(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.bar.default_max, "charts.table.spark.bar.default_max", &mut total.charts.table.spark.bar.default_max, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1923(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1924(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar.font = f.charts.table.spark.bar.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1923(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1924(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar.font)
 }
 
 #[rustfmt::skip]
-fn copy_1924(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1925(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar.font.case = f.charts.table.spark.bar.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1924(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1925(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_1924(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1925(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.bar.font.case, "charts.table.spark.bar.font.case", &mut total.charts.table.spark.bar.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1925(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1926(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar.font.color = f.charts.table.spark.bar.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1925(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1926(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_1925(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1926(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.bar.font.color, "charts.table.spark.bar.font.color", &mut total.charts.table.spark.bar.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1926(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1927(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar.font.decoration = f.charts.table.spark.bar.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1926(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1927(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_1926(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1927(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.bar.font.decoration, "charts.table.spark.bar.font.decoration", &mut total.charts.table.spark.bar.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1927(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1928(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar.font.extends = f.charts.table.spark.bar.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1927(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1928(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_1927(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1928(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.table.spark.bar.font.extends, "charts.table.spark.bar.font.extends", &mut total.charts.table.spark.bar.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1928(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1929(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar.font.family = f.charts.table.spark.bar.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1928(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1929(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_1928(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1929(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.bar.font.family, "charts.table.spark.bar.font.family", &mut total.charts.table.spark.bar.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1929(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1930(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar.font.line_height = f.charts.table.spark.bar.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1929(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1930(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_1929(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1930(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.bar.font.line_height, "charts.table.spark.bar.font.line_height", &mut total.charts.table.spark.bar.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1930(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1931(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar.font.size = f.charts.table.spark.bar.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1930(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1931(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_1930(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1931(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.bar.font.size, "charts.table.spark.bar.font.size", &mut total.charts.table.spark.bar.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1931(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1932(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar.font.style = f.charts.table.spark.bar.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1931(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1932(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_1931(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1932(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.bar.font.style, "charts.table.spark.bar.font.style", &mut total.charts.table.spark.bar.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1932(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1933(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.bar.font.weight = f.charts.table.spark.bar.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1932(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1933(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.bar.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_1932(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1933(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.bar.font.weight, "charts.table.spark.bar.font.weight", &mut total.charts.table.spark.bar.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1933(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1934(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.color = f.charts.table.spark.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1933(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1934(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_1933(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1934(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.table.spark.color, "charts.table.spark.color", &mut total.charts.table.spark.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1934(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1935(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.column = f.charts.table.spark.column.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1934(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1935(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.column)
 }
 
 #[rustfmt::skip]
-fn copy_1935(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1936(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.column.height = f.charts.table.spark.column.height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1935(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1936(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.column.height)
 }
 
 #[rustfmt::skip]
-fn rebuild_1935(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1936(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.column.height, "charts.table.spark.column.height", &mut total.charts.table.spark.column.height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1936(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1937(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.column.width = f.charts.table.spark.column.width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1936(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1937(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.column.width)
 }
 
 #[rustfmt::skip]
-fn rebuild_1936(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1937(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.column.width, "charts.table.spark.column.width", &mut total.charts.table.spark.column.width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1937(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1938(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.columns = f.charts.table.spark.columns.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1937(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1938(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.columns)
 }
 
 #[rustfmt::skip]
-fn copy_1938(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1939(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.columns.border = f.charts.table.spark.columns.border.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1938(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1939(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.columns.border)
 }
 
 #[rustfmt::skip]
-fn copy_1939(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1940(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.columns.border.radius = f.charts.table.spark.columns.border.radius.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1939(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1940(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.columns.border.radius)
 }
 
 #[rustfmt::skip]
-fn rebuild_1939(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1940(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.columns.border.radius, "charts.table.spark.columns.border.radius", &mut total.charts.table.spark.columns.border.radius, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1940(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1941(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.columns.gap = f.charts.table.spark.columns.gap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1940(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1941(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.columns.gap)
 }
 
 #[rustfmt::skip]
-fn rebuild_1940(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1941(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.columns.gap, "charts.table.spark.columns.gap", &mut total.charts.table.spark.columns.gap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1941(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1942(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.columns.min_bar_height = f.charts.table.spark.columns.min_bar_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1941(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1942(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.columns.min_bar_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_1941(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1942(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.columns.min_bar_height, "charts.table.spark.columns.min_bar_height", &mut total.charts.table.spark.columns.min_bar_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1942(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1943(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.columns.padding = f.charts.table.spark.columns.padding.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1942(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1943(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.columns.padding)
 }
 
 #[rustfmt::skip]
-fn rebuild_1942(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1943(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.columns.padding, "charts.table.spark.columns.padding", &mut total.charts.table.spark.columns.padding, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1943(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1944(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.empty = f.charts.table.spark.empty.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1943(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1944(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.empty)
 }
 
 #[rustfmt::skip]
-fn copy_1944(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1945(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.empty.inset_x = f.charts.table.spark.empty.inset_x.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1944(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1945(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.empty.inset_x)
 }
 
 #[rustfmt::skip]
-fn rebuild_1944(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1945(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.empty.inset_x, "charts.table.spark.empty.inset_x", &mut total.charts.table.spark.empty.inset_x, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1945(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1946(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.empty.stroke = f.charts.table.spark.empty.stroke.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1945(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1946(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.empty.stroke)
 }
 
 #[rustfmt::skip]
-fn copy_1946(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1947(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.empty.stroke.cap = f.charts.table.spark.empty.stroke.cap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1946(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1947(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.empty.stroke.cap)
 }
 
 #[rustfmt::skip]
-fn rebuild_1946(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1947(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.table.spark.empty.stroke.cap, "charts.table.spark.empty.stroke.cap", &mut total.charts.table.spark.empty.stroke.cap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1947(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1948(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.empty.stroke.color = f.charts.table.spark.empty.stroke.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1947(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1948(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.empty.stroke.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_1947(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1948(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.empty.stroke.color, "charts.table.spark.empty.stroke.color", &mut total.charts.table.spark.empty.stroke.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1948(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1949(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.empty.stroke.dasharray = f.charts.table.spark.empty.stroke.dasharray.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1948(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1949(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.empty.stroke.dasharray)
 }
 
 #[rustfmt::skip]
-fn rebuild_1948(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1949(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.table.spark.empty.stroke.dasharray, "charts.table.spark.empty.stroke.dasharray", &mut total.charts.table.spark.empty.stroke.dasharray, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1949(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1950(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.empty.stroke.join = f.charts.table.spark.empty.stroke.join.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1949(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1950(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.empty.stroke.join)
 }
 
 #[rustfmt::skip]
-fn rebuild_1949(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1950(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.table.spark.empty.stroke.join, "charts.table.spark.empty.stroke.join", &mut total.charts.table.spark.empty.stroke.join, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1950(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1951(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.empty.stroke.width = f.charts.table.spark.empty.stroke.width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1950(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1951(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.empty.stroke.width)
 }
 
 #[rustfmt::skip]
-fn rebuild_1950(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1951(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.empty.stroke.width, "charts.table.spark.empty.stroke.width", &mut total.charts.table.spark.empty.stroke.width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1951(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1952(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.padding = f.charts.table.spark.padding.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1951(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1952(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.padding)
 }
 
 #[rustfmt::skip]
-fn copy_1952(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1953(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.padding.bottom = f.charts.table.spark.padding.bottom.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1952(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1953(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.padding.bottom)
 }
 
 #[rustfmt::skip]
-fn rebuild_1952(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1953(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.padding.bottom, "charts.table.spark.padding.bottom", &mut total.charts.table.spark.padding.bottom, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1953(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1954(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.padding.left = f.charts.table.spark.padding.left.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1953(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1954(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.padding.left)
 }
 
 #[rustfmt::skip]
-fn rebuild_1953(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1954(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.padding.left, "charts.table.spark.padding.left", &mut total.charts.table.spark.padding.left, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1954(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1955(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.padding.right = f.charts.table.spark.padding.right.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1954(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1955(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.padding.right)
 }
 
 #[rustfmt::skip]
-fn rebuild_1954(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1955(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.padding.right, "charts.table.spark.padding.right", &mut total.charts.table.spark.padding.right, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1955(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1956(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.padding.top = f.charts.table.spark.padding.top.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1955(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1956(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.padding.top)
 }
 
 #[rustfmt::skip]
-fn rebuild_1955(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1956(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.padding.top, "charts.table.spark.padding.top", &mut total.charts.table.spark.padding.top, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1956(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1957(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.single_value = f.charts.table.spark.single_value.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1956(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1957(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.single_value)
 }
 
 #[rustfmt::skip]
-fn copy_1957(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1958(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.single_value.inset_x = f.charts.table.spark.single_value.inset_x.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1957(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1958(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.single_value.inset_x)
 }
 
 #[rustfmt::skip]
-fn rebuild_1957(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1958(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.single_value.inset_x, "charts.table.spark.single_value.inset_x", &mut total.charts.table.spark.single_value.inset_x, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1958(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1959(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.spark.single_value.marker_radius = f.charts.table.spark.single_value.marker_radius.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1958(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1959(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.spark.single_value.marker_radius)
 }
 
 #[rustfmt::skip]
-fn rebuild_1958(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1959(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.spark.single_value.marker_radius, "charts.table.spark.single_value.marker_radius", &mut total.charts.table.spark.single_value.marker_radius, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1959(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1960(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.symbol_mode = f.charts.table.symbol_mode.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1959(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1960(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.symbol_mode)
 }
 
 #[rustfmt::skip]
-fn rebuild_1959(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1960(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.symbol_mode, "charts.table.symbol_mode", &mut total.charts.table.symbol_mode, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1960(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1961(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.text_baseline_offset = f.charts.table.text_baseline_offset.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1960(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1961(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.text_baseline_offset)
 }
 
 #[rustfmt::skip]
-fn rebuild_1960(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1961(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.text_baseline_offset, "charts.table.text_baseline_offset", &mut total.charts.table.text_baseline_offset, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1961(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1962(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.titled.title = f.charts.table.titled.title.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1961(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1962(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.titled.title)
 }
 
 #[rustfmt::skip]
-fn rebuild_1961(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1962(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_optional_slot(&i.charts.table.titled.title, "charts.table.title", &mut total.charts.table.titled.title, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1962(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1963(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.title_row = f.charts.table.title_row.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1962(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1963(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.title_row)
 }
 
 #[rustfmt::skip]
-fn copy_1963(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1964(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.title_row.font = f.charts.table.title_row.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1963(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1964(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.title_row.font)
 }
 
 #[rustfmt::skip]
-fn copy_1964(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1965(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.title_row.font.case = f.charts.table.title_row.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1964(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1965(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.title_row.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_1964(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1965(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.title_row.font.case, "charts.table.title_row.font.case", &mut total.charts.table.title_row.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1965(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1966(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.title_row.font.color = f.charts.table.title_row.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1965(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1966(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.title_row.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_1965(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1966(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.title_row.font.color, "charts.table.title_row.font.color", &mut total.charts.table.title_row.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1966(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1967(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.title_row.font.decoration = f.charts.table.title_row.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1966(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1967(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.title_row.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_1966(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1967(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.title_row.font.decoration, "charts.table.title_row.font.decoration", &mut total.charts.table.title_row.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1967(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1968(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.title_row.font.extends = f.charts.table.title_row.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1967(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1968(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.title_row.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_1967(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1968(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.table.title_row.font.extends, "charts.table.title_row.font.extends", &mut total.charts.table.title_row.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1968(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1969(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.title_row.font.family = f.charts.table.title_row.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1968(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1969(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.title_row.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_1968(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1969(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.title_row.font.family, "charts.table.title_row.font.family", &mut total.charts.table.title_row.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1969(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1970(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.title_row.font.line_height = f.charts.table.title_row.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1969(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1970(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.title_row.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_1969(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1970(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.title_row.font.line_height, "charts.table.title_row.font.line_height", &mut total.charts.table.title_row.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1970(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1971(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.title_row.font.size = f.charts.table.title_row.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1970(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1971(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.title_row.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_1970(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1971(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.title_row.font.size, "charts.table.title_row.font.size", &mut total.charts.table.title_row.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1971(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1972(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.title_row.font.style = f.charts.table.title_row.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1971(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1972(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.title_row.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_1971(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1972(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.title_row.font.style, "charts.table.title_row.font.style", &mut total.charts.table.title_row.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1972(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1973(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.title_row.font.weight = f.charts.table.title_row.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1972(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1973(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.title_row.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_1972(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1973(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.title_row.font.weight, "charts.table.title_row.font.weight", &mut total.charts.table.title_row.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1973(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1974(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.title_row.height = f.charts.table.title_row.height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1973(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1974(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.title_row.height)
 }
 
 #[rustfmt::skip]
-fn rebuild_1973(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1974(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.title_row.height, "charts.table.title_row.height", &mut total.charts.table.title_row.height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1974(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1975(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.title_subtitle_gap = f.charts.table.title_subtitle_gap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1974(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1975(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.title_subtitle_gap)
 }
 
 #[rustfmt::skip]
-fn rebuild_1974(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1975(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.title_subtitle_gap, "charts.table.title_subtitle_gap", &mut total.charts.table.title_subtitle_gap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1975(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1976(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.transpose = f.charts.table.transpose.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1975(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1976(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.transpose)
 }
 
 #[rustfmt::skip]
-fn rebuild_1975(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1976(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.transpose, "charts.table.transpose", &mut total.charts.table.transpose, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1976(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1977(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.table.wrap = f.charts.table.wrap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1976(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1977(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.table.wrap)
 }
 
 #[rustfmt::skip]
-fn rebuild_1976(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1977(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.table.wrap, "charts.table.wrap", &mut total.charts.table.wrap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1977(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1978(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title = f.charts.title.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1977(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1978(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title)
 }
 
 #[rustfmt::skip]
-fn copy_1978(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1979(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.compact_weight = f.charts.title.base.compact_weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1978(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1979(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.compact_weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_1978(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1979(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.compact_weight, "charts.title.compact_weight", &mut total.charts.title.base.compact_weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1979(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1980(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.font = f.charts.title.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1979(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1980(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.font)
 }
 
 #[rustfmt::skip]
-fn copy_1980(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1981(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.font.case = f.charts.title.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1980(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1981(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_1980(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1981(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.font.case, "charts.title.font.case", &mut total.charts.title.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1981(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1982(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.font.color = f.charts.title.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1981(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1982(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_1981(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1982(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.font.color, "charts.title.font.color", &mut total.charts.title.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1982(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1983(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.font.decoration = f.charts.title.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1982(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1983(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_1982(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1983(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.font.decoration, "charts.title.font.decoration", &mut total.charts.title.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1983(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1984(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.font.extends = f.charts.title.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1983(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1984(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_1983(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1984(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.title.font.extends, "charts.title.font.extends", &mut total.charts.title.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1984(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1985(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.font.family = f.charts.title.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1984(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1985(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_1984(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1985(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.font.family, "charts.title.font.family", &mut total.charts.title.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1985(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1986(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.font.line_height = f.charts.title.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1985(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1986(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_1985(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1986(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.font.line_height, "charts.title.font.line_height", &mut total.charts.title.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1986(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1987(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.font.size = f.charts.title.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1986(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1987(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_1986(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1987(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.font.size, "charts.title.font.size", &mut total.charts.title.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1987(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1988(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.font.style = f.charts.title.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1987(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1988(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_1987(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1988(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.font.style, "charts.title.font.style", &mut total.charts.title.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1988(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1989(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.font.weight = f.charts.title.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1988(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1989(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_1988(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1989(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.font.weight, "charts.title.font.weight", &mut total.charts.title.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1989(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1990(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.level = f.charts.title.base.level.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1989(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1990(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.level)
 }
 
 #[rustfmt::skip]
-fn rebuild_1989(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1990(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.level, "charts.title.level", &mut total.charts.title.base.level, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1990(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1991(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.min_height = f.charts.title.base.min_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1990(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1991(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.min_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_1990(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1991(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.min_height, "charts.title.min_height", &mut total.charts.title.base.min_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1991(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1992(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.overflow = f.charts.title.base.overflow.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1991(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1992(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.overflow)
 }
 
 #[rustfmt::skip]
-fn rebuild_1991(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1992(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.overflow, "charts.title.overflow", &mut total.charts.title.base.overflow, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1992(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1993(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.position = f.charts.title.base.position.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1992(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1993(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.position)
 }
 
 #[rustfmt::skip]
-fn copy_1993(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1994(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.position.anchor = f.charts.title.base.position.anchor.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1993(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1994(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.position.anchor)
 }
 
 #[rustfmt::skip]
-fn rebuild_1993(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1994(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.position.anchor, "charts.title.position.anchor", &mut total.charts.title.base.position.anchor, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1994(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1995(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.position.angle = f.charts.title.base.position.angle.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1994(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1995(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.position.angle)
 }
 
 #[rustfmt::skip]
-fn rebuild_1994(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1995(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.position.angle, "charts.title.position.angle", &mut total.charts.title.base.position.angle, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1995(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1996(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.position.baseline = f.charts.title.base.position.baseline.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1995(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1996(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.position.baseline)
 }
 
 #[rustfmt::skip]
-fn rebuild_1995(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1996(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.position.baseline, "charts.title.position.baseline", &mut total.charts.title.base.position.baseline, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1996(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1997(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.position.offset = f.charts.title.base.position.offset.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1996(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1997(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.position.offset)
 }
 
 #[rustfmt::skip]
-fn rebuild_1996(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_1997(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.title.base.position.offset, "charts.title.position.offset", &mut total.charts.title.base.position.offset, unset);
 }
 
 #[rustfmt::skip]
-fn copy_1997(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1998(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.subtitle = f.charts.title.base.subtitle.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1997(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1998(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.subtitle)
 }
 
 #[rustfmt::skip]
-fn copy_1998(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_1999(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.subtitle.font = f.charts.title.base.subtitle.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1998(f: &crate::style::style::StylePatch) -> bool {
+fn unset_1999(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.subtitle.font)
 }
 
 #[rustfmt::skip]
-fn copy_1999(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2000(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.subtitle.font.case = f.charts.title.base.subtitle.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_1999(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2000(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.subtitle.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_1999(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2000(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.subtitle.font.case, "charts.title.subtitle.font.case", &mut total.charts.title.base.subtitle.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2000(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2001(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.subtitle.font.color = f.charts.title.base.subtitle.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2000(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2001(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.subtitle.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2000(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2001(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.subtitle.font.color, "charts.title.subtitle.font.color", &mut total.charts.title.base.subtitle.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2001(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2002(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.subtitle.font.decoration = f.charts.title.base.subtitle.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2001(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2002(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.subtitle.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2001(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2002(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.subtitle.font.decoration, "charts.title.subtitle.font.decoration", &mut total.charts.title.base.subtitle.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2002(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2003(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.subtitle.font.extends = f.charts.title.base.subtitle.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2002(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2003(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.subtitle.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2002(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2003(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.title.base.subtitle.font.extends, "charts.title.subtitle.font.extends", &mut total.charts.title.base.subtitle.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2003(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2004(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.subtitle.font.family = f.charts.title.base.subtitle.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2003(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2004(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.subtitle.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2003(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2004(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.subtitle.font.family, "charts.title.subtitle.font.family", &mut total.charts.title.base.subtitle.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2004(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2005(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.subtitle.font.line_height = f.charts.title.base.subtitle.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2004(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2005(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.subtitle.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2004(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2005(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.subtitle.font.line_height, "charts.title.subtitle.font.line_height", &mut total.charts.title.base.subtitle.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2005(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2006(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.subtitle.font.size = f.charts.title.base.subtitle.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2005(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2006(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.subtitle.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2005(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2006(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.subtitle.font.size, "charts.title.subtitle.font.size", &mut total.charts.title.base.subtitle.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2006(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2007(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.subtitle.font.style = f.charts.title.base.subtitle.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2006(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2007(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.subtitle.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2006(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2007(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.subtitle.font.style, "charts.title.subtitle.font.style", &mut total.charts.title.base.subtitle.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2007(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2008(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.subtitle.font.weight = f.charts.title.base.subtitle.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2007(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2008(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.subtitle.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2007(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2008(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.subtitle.font.weight, "charts.title.subtitle.font.weight", &mut total.charts.title.base.subtitle.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2008(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2009(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.subtitle.overflow = f.charts.title.base.subtitle.overflow.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2008(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2009(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.subtitle.overflow)
 }
 
 #[rustfmt::skip]
-fn rebuild_2008(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2009(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.subtitle.overflow, "charts.title.subtitle.overflow", &mut total.charts.title.base.subtitle.overflow, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2009(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2010(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.width_offsets = f.charts.title.base.width_offsets.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2009(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2010(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.width_offsets)
 }
 
 #[rustfmt::skip]
-fn copy_2010(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2011(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.width_offsets.medium = f.charts.title.base.width_offsets.medium.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2010(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2011(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.width_offsets.medium)
 }
 
 #[rustfmt::skip]
-fn rebuild_2010(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2011(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.width_offsets.medium, "charts.title.width_offsets.medium", &mut total.charts.title.base.width_offsets.medium, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2011(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2012(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.width_offsets.narrow = f.charts.title.base.width_offsets.narrow.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2011(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2012(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.width_offsets.narrow)
 }
 
 #[rustfmt::skip]
-fn rebuild_2011(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2012(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.width_offsets.narrow, "charts.title.width_offsets.narrow", &mut total.charts.title.base.width_offsets.narrow, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2012(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2013(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.width_offsets.tiny = f.charts.title.base.width_offsets.tiny.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2012(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2013(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.width_offsets.tiny)
 }
 
 #[rustfmt::skip]
-fn rebuild_2012(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2013(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.width_offsets.tiny, "charts.title.width_offsets.tiny", &mut total.charts.title.base.width_offsets.tiny, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2013(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2014(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.title.base.width_offsets.wide = f.charts.title.base.width_offsets.wide.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2013(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2014(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.title.base.width_offsets.wide)
 }
 
 #[rustfmt::skip]
-fn rebuild_2013(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2014(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.title.base.width_offsets.wide, "charts.title.width_offsets.wide", &mut total.charts.title.base.width_offsets.wide, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2014(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2015(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip = f.charts.tooltip.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2014(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2015(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip)
 }
 
 #[rustfmt::skip]
-fn copy_2015(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2016(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.active_marker = f.charts.tooltip.active_marker.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2015(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2016(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.active_marker)
 }
 
 #[rustfmt::skip]
-fn rebuild_2015(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2016(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.active_marker, "charts.tooltip.active_marker", &mut total.charts.tooltip.active_marker, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2016(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2017(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.background = f.charts.tooltip.background.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2016(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2017(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.background)
 }
 
 #[rustfmt::skip]
-fn rebuild_2016(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2017(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.background, "charts.tooltip.background", &mut total.charts.tooltip.background, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2017(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2018(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.border = f.charts.tooltip.border.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2017(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2018(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.border)
 }
 
 #[rustfmt::skip]
-fn copy_2018(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2019(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.border.color = f.charts.tooltip.border.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2018(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2019(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.border.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2018(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2019(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.border.color, "charts.tooltip.border.color", &mut total.charts.tooltip.border.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2019(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2020(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.border.radius = f.charts.tooltip.border.radius.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2019(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2020(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.border.radius)
 }
 
 #[rustfmt::skip]
-fn rebuild_2019(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2020(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.border.radius, "charts.tooltip.border.radius", &mut total.charts.tooltip.border.radius, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2020(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2021(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.border.width = f.charts.tooltip.border.width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2020(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2021(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.border.width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2020(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2021(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.border.width, "charts.tooltip.border.width", &mut total.charts.tooltip.border.width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2021(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2022(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.font = f.charts.tooltip.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2021(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2022(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.font)
 }
 
 #[rustfmt::skip]
-fn copy_2022(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2023(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.font.case = f.charts.tooltip.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2022(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2023(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2022(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2023(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.font.case, "charts.tooltip.font.case", &mut total.charts.tooltip.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2023(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2024(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.font.color = f.charts.tooltip.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2023(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2024(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2023(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2024(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.font.color, "charts.tooltip.font.color", &mut total.charts.tooltip.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2024(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2025(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.font.decoration = f.charts.tooltip.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2024(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2025(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2024(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2025(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.font.decoration, "charts.tooltip.font.decoration", &mut total.charts.tooltip.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2025(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2026(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.font.extends = f.charts.tooltip.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2025(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2026(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2025(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2026(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.tooltip.font.extends, "charts.tooltip.font.extends", &mut total.charts.tooltip.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2026(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2027(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.font.family = f.charts.tooltip.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2026(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2027(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2026(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2027(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.font.family, "charts.tooltip.font.family", &mut total.charts.tooltip.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2027(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2028(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.font.line_height = f.charts.tooltip.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2027(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2028(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2027(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2028(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.font.line_height, "charts.tooltip.font.line_height", &mut total.charts.tooltip.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2028(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2029(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.font.size = f.charts.tooltip.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2028(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2029(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2028(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2029(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.font.size, "charts.tooltip.font.size", &mut total.charts.tooltip.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2029(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2030(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.font.style = f.charts.tooltip.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2029(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2030(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2029(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2030(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.font.style, "charts.tooltip.font.style", &mut total.charts.tooltip.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2030(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2031(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.font.weight = f.charts.tooltip.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2030(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2031(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2030(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2031(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.font.weight, "charts.tooltip.font.weight", &mut total.charts.tooltip.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2031(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2032(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.format = f.charts.tooltip.format.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2031(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2032(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.format)
 }
 
 #[rustfmt::skip]
-fn rebuild_2031(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2032(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.format, "charts.tooltip.format", &mut total.charts.tooltip.format, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2032(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2033(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.gap = f.charts.tooltip.gap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2032(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2033(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.gap)
 }
 
 #[rustfmt::skip]
-fn rebuild_2032(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2033(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.gap, "charts.tooltip.gap", &mut total.charts.tooltip.gap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2033(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2034(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.group_limit = f.charts.tooltip.group_limit.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2033(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2034(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.group_limit)
 }
 
 #[rustfmt::skip]
-fn rebuild_2033(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2034(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.group_limit, "charts.tooltip.group_limit", &mut total.charts.tooltip.group_limit, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2034(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2035(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.label = f.charts.tooltip.label.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2034(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2035(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.label)
 }
 
 #[rustfmt::skip]
-fn copy_2035(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2036(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.label.font = f.charts.tooltip.label.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2035(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2036(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.label.font)
 }
 
 #[rustfmt::skip]
-fn copy_2036(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2037(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.label.font.case = f.charts.tooltip.label.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2036(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2037(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.label.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2036(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2037(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.label.font.case, "charts.tooltip.label.font.case", &mut total.charts.tooltip.label.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2037(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2038(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.label.font.color = f.charts.tooltip.label.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2037(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2038(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.label.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2037(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2038(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.label.font.color, "charts.tooltip.label.font.color", &mut total.charts.tooltip.label.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2038(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2039(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.label.font.decoration = f.charts.tooltip.label.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2038(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2039(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.label.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2038(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2039(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.label.font.decoration, "charts.tooltip.label.font.decoration", &mut total.charts.tooltip.label.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2039(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2040(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.label.font.extends = f.charts.tooltip.label.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2039(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2040(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.label.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2039(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2040(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.tooltip.label.font.extends, "charts.tooltip.label.font.extends", &mut total.charts.tooltip.label.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2040(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2041(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.label.font.family = f.charts.tooltip.label.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2040(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2041(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.label.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2040(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2041(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.label.font.family, "charts.tooltip.label.font.family", &mut total.charts.tooltip.label.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2041(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2042(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.label.font.line_height = f.charts.tooltip.label.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2041(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2042(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.label.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2041(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2042(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.label.font.line_height, "charts.tooltip.label.font.line_height", &mut total.charts.tooltip.label.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2042(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2043(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.label.font.size = f.charts.tooltip.label.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2042(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2043(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.label.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2042(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2043(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.label.font.size, "charts.tooltip.label.font.size", &mut total.charts.tooltip.label.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2043(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2044(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.label.font.style = f.charts.tooltip.label.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2043(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2044(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.label.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2043(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2044(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.label.font.style, "charts.tooltip.label.font.style", &mut total.charts.tooltip.label.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2044(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2045(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.label.font.weight = f.charts.tooltip.label.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2044(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2045(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.label.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2044(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2045(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.label.font.weight, "charts.tooltip.label.font.weight", &mut total.charts.tooltip.label.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2045(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2046(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.line_height = f.charts.tooltip.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2045(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2046(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2045(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2046(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.line_height, "charts.tooltip.line_height", &mut total.charts.tooltip.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2046(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2047(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.max_rows = f.charts.tooltip.max_rows.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2046(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2047(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.max_rows)
 }
 
 #[rustfmt::skip]
-fn rebuild_2046(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2047(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.max_rows, "charts.tooltip.max_rows", &mut total.charts.tooltip.max_rows, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2047(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2048(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.max_width = f.charts.tooltip.max_width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2047(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2048(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.max_width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2047(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2048(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.max_width, "charts.tooltip.max_width", &mut total.charts.tooltip.max_width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2048(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2049(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.padding = f.charts.tooltip.padding.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2048(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2049(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.padding)
 }
 
 #[rustfmt::skip]
-fn copy_2049(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2050(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.padding.bottom = f.charts.tooltip.padding.bottom.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2049(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2050(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.padding.bottom)
 }
 
 #[rustfmt::skip]
-fn rebuild_2049(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2050(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.padding.bottom, "charts.tooltip.padding.bottom", &mut total.charts.tooltip.padding.bottom, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2050(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2051(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.padding.left = f.charts.tooltip.padding.left.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2050(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2051(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.padding.left)
 }
 
 #[rustfmt::skip]
-fn rebuild_2050(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2051(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.padding.left, "charts.tooltip.padding.left", &mut total.charts.tooltip.padding.left, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2051(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2052(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.padding.right = f.charts.tooltip.padding.right.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2051(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2052(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.padding.right)
 }
 
 #[rustfmt::skip]
-fn rebuild_2051(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2052(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.padding.right, "charts.tooltip.padding.right", &mut total.charts.tooltip.padding.right, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2052(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2053(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.padding.top = f.charts.tooltip.padding.top.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2052(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2053(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.padding.top)
 }
 
 #[rustfmt::skip]
-fn rebuild_2052(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2053(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.padding.top, "charts.tooltip.padding.top", &mut total.charts.tooltip.padding.top, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2053(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2054(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.shadow = f.charts.tooltip.shadow.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2053(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2054(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.shadow)
 }
 
 #[rustfmt::skip]
-fn copy_2054(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2055(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.shadow.visible = f.charts.tooltip.shadow.visible.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2054(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2055(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.shadow.visible)
 }
 
 #[rustfmt::skip]
-fn rebuild_2054(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2055(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.shadow.visible, "charts.tooltip.shadow.visible", &mut total.charts.tooltip.shadow.visible, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2055(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2056(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.swatch = f.charts.tooltip.swatch.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2055(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2056(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.swatch)
 }
 
 #[rustfmt::skip]
-fn copy_2056(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2057(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.swatch.radius = f.charts.tooltip.swatch.radius.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2056(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2057(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.swatch.radius)
 }
 
 #[rustfmt::skip]
-fn rebuild_2056(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2057(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.swatch.radius, "charts.tooltip.swatch.radius", &mut total.charts.tooltip.swatch.radius, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2057(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2058(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.swatch.size = f.charts.tooltip.swatch.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2057(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2058(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.swatch.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2057(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2058(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.swatch.size, "charts.tooltip.swatch.size", &mut total.charts.tooltip.swatch.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2058(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2059(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.value = f.charts.tooltip.value.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2058(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2059(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.value)
 }
 
 #[rustfmt::skip]
-fn copy_2059(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2060(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.value.font = f.charts.tooltip.value.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2059(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2060(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.value.font)
 }
 
 #[rustfmt::skip]
-fn copy_2060(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2061(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.value.font.case = f.charts.tooltip.value.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2060(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2061(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.value.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2060(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2061(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.value.font.case, "charts.tooltip.value.font.case", &mut total.charts.tooltip.value.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2061(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2062(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.value.font.color = f.charts.tooltip.value.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2061(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2062(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.value.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2061(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2062(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.value.font.color, "charts.tooltip.value.font.color", &mut total.charts.tooltip.value.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2062(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2063(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.value.font.decoration = f.charts.tooltip.value.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2062(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2063(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.value.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2062(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2063(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.value.font.decoration, "charts.tooltip.value.font.decoration", &mut total.charts.tooltip.value.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2063(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2064(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.value.font.extends = f.charts.tooltip.value.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2063(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2064(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.value.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2063(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2064(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.tooltip.value.font.extends, "charts.tooltip.value.font.extends", &mut total.charts.tooltip.value.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2064(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2065(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.value.font.family = f.charts.tooltip.value.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2064(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2065(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.value.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2064(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2065(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.value.font.family, "charts.tooltip.value.font.family", &mut total.charts.tooltip.value.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2065(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2066(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.value.font.line_height = f.charts.tooltip.value.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2065(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2066(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.value.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2065(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2066(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.value.font.line_height, "charts.tooltip.value.font.line_height", &mut total.charts.tooltip.value.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2066(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2067(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.value.font.size = f.charts.tooltip.value.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2066(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2067(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.value.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2066(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2067(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.value.font.size, "charts.tooltip.value.font.size", &mut total.charts.tooltip.value.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2067(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2068(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.value.font.style = f.charts.tooltip.value.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2067(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2068(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.value.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2067(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2068(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.value.font.style, "charts.tooltip.value.font.style", &mut total.charts.tooltip.value.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2068(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2069(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.tooltip.value.font.weight = f.charts.tooltip.value.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2068(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2069(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.tooltip.value.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2068(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2069(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.tooltip.value.font.weight, "charts.tooltip.value.font.weight", &mut total.charts.tooltip.value.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2069(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2070(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.view = f.charts.view.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2069(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2070(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.view)
 }
 
 #[rustfmt::skip]
-fn copy_2070(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2071(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.view.continuous_height = f.charts.view.continuous_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2070(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2071(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.view.continuous_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2070(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2071(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.view.continuous_height, "charts.view.continuous_height", &mut total.charts.view.continuous_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2071(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2072(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.view.continuous_width = f.charts.view.continuous_width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2071(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2072(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.view.continuous_width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2071(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2072(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.charts.view.continuous_width, "charts.view.continuous_width", &mut total.charts.view.continuous_width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2072(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2073(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.view.discrete_height = f.charts.view.discrete_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2072(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2073(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.view.discrete_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2072(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2073(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.view.discrete_height, "charts.view.discrete_height", &mut total.charts.view.discrete_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2073(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2074(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.view.discrete_width = f.charts.view.discrete_width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2073(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2074(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.view.discrete_width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2073(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2074(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.view.discrete_width, "charts.view.discrete_width", &mut total.charts.view.discrete_width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2074(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2075(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.charts.view.stroke = f.charts.view.stroke.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2074(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2075(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.charts.view.stroke)
 }
 
 #[rustfmt::skip]
-fn rebuild_2074(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2075(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.charts.view.stroke, "charts.view.stroke", &mut total.charts.view.stroke, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2075(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2076(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.font = f.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2075(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2076(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.font)
 }
 
 #[rustfmt::skip]
-fn copy_2076(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2077(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.font.case = f.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2076(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2077(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2076(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2077(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.font.case, "font.case", &mut total.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2077(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2078(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.font.color = f.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2077(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2078(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2077(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2078(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.font.color, "font.color", &mut total.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2078(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2079(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.font.decoration = f.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2078(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2079(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2078(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2079(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.font.decoration, "font.decoration", &mut total.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2079(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2080(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.font.emoji = f.font.emoji.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2079(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2080(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.font.emoji)
 }
 
 #[rustfmt::skip]
-fn rebuild_2079(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2080(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.font.emoji, "font.emoji", &mut total.font.emoji, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2080(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2081(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.font.family = f.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2080(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2081(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2080(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2081(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.font.family, "font.family", &mut total.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2081(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2082(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.font.line_height = f.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2081(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2082(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2081(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2082(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.font.line_height, "font.line_height", &mut total.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2082(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2083(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.font.size = f.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2082(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2083(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2082(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2083(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.font.size, "font.size", &mut total.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2083(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2084(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.font.style = f.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2083(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2084(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2083(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2084(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.font.style, "font.style", &mut total.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2084(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2085(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.font.weight = f.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2084(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2085(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2084(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2085(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.font.weight, "font.weight", &mut total.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2085(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2086(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.fonts = f.fonts.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2085(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2086(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.fonts)
 }
 
 #[rustfmt::skip]
-fn rebuild_2085(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2086(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_defaulted(&i.fonts, "fonts", &mut total.fonts, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2086(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2087(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer = f.footer.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2086(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2087(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer)
 }
 
 #[rustfmt::skip]
-fn copy_2087(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2088(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.brand_weight = f.footer.brand_weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2087(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2088(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.brand_weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2087(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2088(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.brand_weight, "footer.brand_weight", &mut total.footer.brand_weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2088(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2089(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.divider = f.footer.divider.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2088(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2089(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.divider)
 }
 
 #[rustfmt::skip]
-fn copy_2089(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2090(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.divider.divider.color = f.footer.divider.divider.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2089(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2090(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.divider.divider.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2089(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2090(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.divider.divider.color, "footer.divider.color", &mut total.footer.divider.divider.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2090(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2091(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.divider.divider.dasharray = f.footer.divider.divider.dasharray.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2090(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2091(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.divider.divider.dasharray)
 }
 
 #[rustfmt::skip]
-fn rebuild_2090(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2091(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.footer.divider.divider.dasharray, "footer.divider.dasharray", &mut total.footer.divider.divider.dasharray, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2091(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2092(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.divider.gap = f.footer.divider.gap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2091(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2092(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.divider.gap)
 }
 
 #[rustfmt::skip]
-fn rebuild_2091(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2092(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.divider.gap, "footer.divider.gap", &mut total.footer.divider.gap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2092(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2093(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.divider.divider.visible = f.footer.divider.divider.visible.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2092(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2093(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.divider.divider.visible)
 }
 
 #[rustfmt::skip]
-fn rebuild_2092(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2093(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.divider.divider.visible, "footer.divider.visible", &mut total.footer.divider.divider.visible, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2093(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2094(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.divider.divider.width = f.footer.divider.divider.width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2093(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2094(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.divider.divider.width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2093(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2094(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.divider.divider.width, "footer.divider.width", &mut total.footer.divider.divider.width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2094(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2095(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.font = f.footer.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2094(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2095(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.font)
 }
 
 #[rustfmt::skip]
-fn copy_2095(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2096(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.font.case = f.footer.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2095(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2096(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2095(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2096(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.font.case, "footer.font.case", &mut total.footer.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2096(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2097(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.font.color = f.footer.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2096(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2097(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2096(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2097(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.font.color, "footer.font.color", &mut total.footer.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2097(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2098(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.font.decoration = f.footer.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2097(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2098(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2097(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2098(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.font.decoration, "footer.font.decoration", &mut total.footer.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2098(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2099(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.font.extends = f.footer.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2098(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2099(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2098(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2099(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.footer.font.extends, "footer.font.extends", &mut total.footer.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2099(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2100(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.font.family = f.footer.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2099(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2100(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2099(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2100(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.font.family, "footer.font.family", &mut total.footer.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2100(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2101(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.font.line_height = f.footer.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2100(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2101(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2100(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2101(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.font.line_height, "footer.font.line_height", &mut total.footer.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2101(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2102(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.font.size = f.footer.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2101(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2102(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2101(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2102(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.font.size, "footer.font.size", &mut total.footer.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2102(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2103(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.font.style = f.footer.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2102(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2103(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2102(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2103(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.font.style, "footer.font.style", &mut total.footer.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2103(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2104(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.font.weight = f.footer.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2103(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2104(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2103(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2104(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.font.weight, "footer.font.weight", &mut total.footer.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2104(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2105(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.link = f.footer.link.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2104(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2105(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.link)
 }
 
 #[rustfmt::skip]
-fn rebuild_2104(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2105(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.footer.link, "footer.link", &mut total.footer.link, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2105(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2106(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.text = f.footer.text.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2105(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2106(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.text)
 }
 
 #[rustfmt::skip]
-fn rebuild_2105(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2106(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.text, "footer.text", &mut total.footer.text, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2106(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2107(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.visible = f.footer.visible.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2106(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2107(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.visible)
 }
 
 #[rustfmt::skip]
-fn rebuild_2106(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2107(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.visible, "footer.visible", &mut total.footer.visible, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2107(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2108(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.footer.y_offset = f.footer.y_offset.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2107(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2108(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.footer.y_offset)
 }
 
 #[rustfmt::skip]
-fn rebuild_2107(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2108(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.footer.y_offset, "footer.y_offset", &mut total.footer.y_offset, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2108(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2109(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.formats = f.formats.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2108(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2109(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.formats)
 }
 
 #[rustfmt::skip]
-fn rebuild_2108(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2109(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.formats, "formats", &mut total.formats, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2109(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2110(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.frame = f.frame.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2109(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2110(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.frame)
 }
 
 #[rustfmt::skip]
-fn copy_2110(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2111(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.frame.card_gap = f.frame.card_gap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2110(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2111(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.frame.card_gap)
 }
 
 #[rustfmt::skip]
-fn rebuild_2110(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2111(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.frame.card_gap, "frame.card_gap", &mut total.frame.card_gap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2111(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2112(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.frame.card_padding = f.frame.card_padding.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2111(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2112(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.frame.card_padding)
 }
 
 #[rustfmt::skip]
-fn rebuild_2111(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2112(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.frame.card_padding, "frame.card_padding", &mut total.frame.card_padding, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2112(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2113(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.frame.margin = f.frame.margin.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2112(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2113(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.frame.margin)
 }
 
 #[rustfmt::skip]
-fn rebuild_2112(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2113(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.frame.margin, "frame.margin", &mut total.frame.margin, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2113(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2114(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.frame.max_width = f.frame.max_width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2113(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2114(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.frame.max_width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2113(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2114(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.frame.max_width, "frame.max_width", &mut total.frame.max_width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2114(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2115(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.frame.min_height = f.frame.min_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2114(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2115(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.frame.min_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2114(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2115(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.frame.min_height, "frame.min_height", &mut total.frame.min_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2115(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2116(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.gap = f.gap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2115(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2116(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.gap)
 }
 
 #[rustfmt::skip]
-fn rebuild_2115(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2116(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.gap, "gap", &mut total.gap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2116(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2117(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout = f.layout.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2116(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2117(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout)
 }
 
 #[rustfmt::skip]
-fn copy_2117(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2118(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.cols = f.layout.cols.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2117(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2118(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.cols)
 }
 
 #[rustfmt::skip]
-fn copy_2118(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2119(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.cols.gap = f.layout.cols.gap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2118(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2119(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.cols.gap)
 }
 
 #[rustfmt::skip]
-fn rebuild_2118(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2119(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.cols.gap, "layout.cols.gap", &mut total.layout.cols.gap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2119(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2120(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details = f.layout.details.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2119(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2120(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details)
 }
 
 #[rustfmt::skip]
-fn copy_2120(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2121(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.arrow = f.layout.details.arrow.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2120(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2121(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.arrow)
 }
 
 #[rustfmt::skip]
-fn copy_2121(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2122(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.arrow.font = f.layout.details.arrow.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2121(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2122(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.arrow.font)
 }
 
 #[rustfmt::skip]
-fn copy_2122(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2123(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.arrow.font.size = f.layout.details.arrow.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2122(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2123(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.arrow.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2122(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2123(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.arrow.font.size, "layout.details.arrow.font.size", &mut total.layout.details.arrow.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2123(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2124(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.arrow.x = f.layout.details.arrow.x.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2123(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2124(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.arrow.x)
 }
 
 #[rustfmt::skip]
-fn rebuild_2123(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2124(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.arrow.x, "layout.details.arrow.x", &mut total.layout.details.arrow.x, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2124(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2125(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.border = f.layout.details.border.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2124(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2125(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.border)
 }
 
 #[rustfmt::skip]
-fn copy_2125(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2126(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.border.color = f.layout.details.border.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2125(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2126(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.border.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2125(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2126(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.border.color, "layout.details.border.color", &mut total.layout.details.border.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2126(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2127(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.border.dash_array = f.layout.details.border.dash_array.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2126(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2127(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.border.dash_array)
 }
 
 #[rustfmt::skip]
-fn rebuild_2126(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2127(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.layout.details.border.dash_array, "layout.details.border.dash_array", &mut total.layout.details.border.dash_array, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2127(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2128(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.border.dash_offset = f.layout.details.border.dash_offset.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2127(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2128(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.border.dash_offset)
 }
 
 #[rustfmt::skip]
-fn rebuild_2127(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2128(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.layout.details.border.dash_offset, "layout.details.border.dash_offset", &mut total.layout.details.border.dash_offset, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2128(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2129(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.border.line_cap = f.layout.details.border.line_cap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2128(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2129(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.border.line_cap)
 }
 
 #[rustfmt::skip]
-fn rebuild_2128(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2129(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.layout.details.border.line_cap, "layout.details.border.line_cap", &mut total.layout.details.border.line_cap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2129(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2130(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.border.radius = f.layout.details.border.radius.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2129(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2130(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.border.radius)
 }
 
 #[rustfmt::skip]
-fn rebuild_2129(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2130(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.border.radius, "layout.details.border.radius", &mut total.layout.details.border.radius, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2130(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2131(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.border.width = f.layout.details.border.width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2130(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2131(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.border.width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2130(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2131(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.border.width, "layout.details.border.width", &mut total.layout.details.border.width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2131(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2132(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.content_y_offset = f.layout.details.content_y_offset.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2131(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2132(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.content_y_offset)
 }
 
 #[rustfmt::skip]
-fn rebuild_2131(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2132(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.content_y_offset, "layout.details.content_y_offset", &mut total.layout.details.content_y_offset, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2132(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2133(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.font = f.layout.details.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2132(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2133(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.font)
 }
 
 #[rustfmt::skip]
-fn copy_2133(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2134(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.font.case = f.layout.details.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2133(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2134(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2133(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2134(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.font.case, "layout.details.font.case", &mut total.layout.details.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2134(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2135(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.font.color = f.layout.details.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2134(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2135(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2134(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2135(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.font.color, "layout.details.font.color", &mut total.layout.details.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2135(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2136(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.font.decoration = f.layout.details.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2135(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2136(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2135(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2136(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.font.decoration, "layout.details.font.decoration", &mut total.layout.details.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2136(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2137(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.font.extends = f.layout.details.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2136(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2137(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2136(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2137(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.layout.details.font.extends, "layout.details.font.extends", &mut total.layout.details.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2137(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2138(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.font.family = f.layout.details.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2137(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2138(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2137(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2138(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.font.family, "layout.details.font.family", &mut total.layout.details.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2138(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2139(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.font.line_height = f.layout.details.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2138(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2139(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2138(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2139(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.font.line_height, "layout.details.font.line_height", &mut total.layout.details.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2139(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2140(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.font.size = f.layout.details.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2139(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2140(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2139(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2140(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.font.size, "layout.details.font.size", &mut total.layout.details.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2140(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2141(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.font.style = f.layout.details.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2140(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2141(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2140(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2141(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.font.style, "layout.details.font.style", &mut total.layout.details.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2141(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2142(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.font.weight = f.layout.details.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2141(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2142(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2141(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2142(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.font.weight, "layout.details.font.weight", &mut total.layout.details.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2142(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2143(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.label_x = f.layout.details.label_x.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2142(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2143(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.label_x)
 }
 
 #[rustfmt::skip]
-fn rebuild_2142(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2143(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.label_x, "layout.details.label_x", &mut total.layout.details.label_x, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2143(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2144(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.summary_height = f.layout.details.summary_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2143(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2144(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.summary_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2143(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2144(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.summary_height, "layout.details.summary_height", &mut total.layout.details.summary_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2144(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2145(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.details.text_baseline_offset = f.layout.details.text_baseline_offset.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2144(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2145(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.details.text_baseline_offset)
 }
 
 #[rustfmt::skip]
-fn rebuild_2144(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2145(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.details.text_baseline_offset, "layout.details.text_baseline_offset", &mut total.layout.details.text_baseline_offset, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2145(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2146(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.grid = f.layout.grid.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2145(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2146(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.grid)
 }
 
 #[rustfmt::skip]
-fn copy_2146(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2147(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.grid.columns = f.layout.grid.columns.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2146(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2147(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.grid.columns)
 }
 
 #[rustfmt::skip]
-fn rebuild_2146(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2147(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.grid.columns, "layout.grid.columns", &mut total.layout.grid.columns, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2147(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2148(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.grid.gap = f.layout.grid.gap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2147(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2148(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.grid.gap)
 }
 
 #[rustfmt::skip]
-fn rebuild_2147(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2148(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.grid.gap, "layout.grid.gap", &mut total.layout.grid.gap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2148(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2149(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.rows = f.layout.rows.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2148(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2149(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.rows)
 }
 
 #[rustfmt::skip]
-fn copy_2149(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2150(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.rows.gap = f.layout.rows.gap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2149(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2150(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.rows.gap)
 }
 
 #[rustfmt::skip]
-fn rebuild_2149(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2150(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.rows.gap, "layout.rows.gap", &mut total.layout.rows.gap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2150(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2151(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs = f.layout.tabs.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2150(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2151(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs)
 }
 
 #[rustfmt::skip]
-fn copy_2151(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2152(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.active_weight = f.layout.tabs.active_weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2151(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2152(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.active_weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2151(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2152(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.active_weight, "layout.tabs.active_weight", &mut total.layout.tabs.active_weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2152(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2153(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.bar_height = f.layout.tabs.bar_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2152(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2153(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.bar_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2152(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2153(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.bar_height, "layout.tabs.bar_height", &mut total.layout.tabs.bar_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2153(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2154(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.border = f.layout.tabs.border.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2153(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2154(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.border)
 }
 
 #[rustfmt::skip]
-fn copy_2154(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2155(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.border.color = f.layout.tabs.border.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2154(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2155(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.border.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2154(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2155(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.border.color, "layout.tabs.border.color", &mut total.layout.tabs.border.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2155(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2156(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.border.dash_array = f.layout.tabs.border.dash_array.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2155(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2156(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.border.dash_array)
 }
 
 #[rustfmt::skip]
-fn rebuild_2155(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2156(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.layout.tabs.border.dash_array, "layout.tabs.border.dash_array", &mut total.layout.tabs.border.dash_array, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2156(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2157(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.border.dash_offset = f.layout.tabs.border.dash_offset.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2156(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2157(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.border.dash_offset)
 }
 
 #[rustfmt::skip]
-fn rebuild_2156(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2157(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.layout.tabs.border.dash_offset, "layout.tabs.border.dash_offset", &mut total.layout.tabs.border.dash_offset, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2157(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2158(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.border.line_cap = f.layout.tabs.border.line_cap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2157(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2158(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.border.line_cap)
 }
 
 #[rustfmt::skip]
-fn rebuild_2157(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2158(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.layout.tabs.border.line_cap, "layout.tabs.border.line_cap", &mut total.layout.tabs.border.line_cap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2158(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2159(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.border.radius = f.layout.tabs.border.radius.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2158(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2159(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.border.radius)
 }
 
 #[rustfmt::skip]
-fn rebuild_2158(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2159(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.border.radius, "layout.tabs.border.radius", &mut total.layout.tabs.border.radius, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2159(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2160(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.border.width = f.layout.tabs.border.width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2159(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2160(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.border.width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2159(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2160(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.border.width, "layout.tabs.border.width", &mut total.layout.tabs.border.width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2160(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2161(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.font = f.layout.tabs.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2160(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2161(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.font)
 }
 
 #[rustfmt::skip]
-fn copy_2161(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2162(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.font.case = f.layout.tabs.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2161(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2162(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2161(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2162(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.font.case, "layout.tabs.font.case", &mut total.layout.tabs.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2162(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2163(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.font.color = f.layout.tabs.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2162(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2163(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2162(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2163(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.font.color, "layout.tabs.font.color", &mut total.layout.tabs.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2163(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2164(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.font.decoration = f.layout.tabs.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2163(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2164(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2163(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2164(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.font.decoration, "layout.tabs.font.decoration", &mut total.layout.tabs.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2164(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2165(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.font.extends = f.layout.tabs.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2164(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2165(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2164(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2165(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.layout.tabs.font.extends, "layout.tabs.font.extends", &mut total.layout.tabs.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2165(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2166(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.font.family = f.layout.tabs.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2165(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2166(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2165(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2166(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.font.family, "layout.tabs.font.family", &mut total.layout.tabs.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2166(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2167(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.font.line_height = f.layout.tabs.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2166(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2167(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2166(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2167(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.font.line_height, "layout.tabs.font.line_height", &mut total.layout.tabs.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2167(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2168(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.font.size = f.layout.tabs.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2167(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2168(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2167(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2168(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.font.size, "layout.tabs.font.size", &mut total.layout.tabs.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2168(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2169(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.font.style = f.layout.tabs.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2168(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2169(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2168(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2169(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.font.style, "layout.tabs.font.style", &mut total.layout.tabs.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2169(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2170(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.font.weight = f.layout.tabs.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2169(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2170(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2169(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2170(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.font.weight, "layout.tabs.font.weight", &mut total.layout.tabs.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2170(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2171(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.inactive_weight = f.layout.tabs.inactive_weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2170(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2171(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.inactive_weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2170(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2171(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.inactive_weight, "layout.tabs.inactive_weight", &mut total.layout.tabs.inactive_weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2171(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2172(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.max_width = f.layout.tabs.max_width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2171(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2172(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.max_width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2171(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2172(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.max_width, "layout.tabs.max_width", &mut total.layout.tabs.max_width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2172(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2173(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.min_width = f.layout.tabs.min_width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2172(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2173(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.min_width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2172(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2173(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.min_width, "layout.tabs.min_width", &mut total.layout.tabs.min_width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2173(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2174(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.padding_x = f.layout.tabs.padding_x.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2173(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2174(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.padding_x)
 }
 
 #[rustfmt::skip]
-fn rebuild_2173(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2174(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.padding_x, "layout.tabs.padding_x", &mut total.layout.tabs.padding_x, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2174(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2175(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.rail_max_lines = f.layout.tabs.rail_max_lines.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2174(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2175(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.rail_max_lines)
 }
 
 #[rustfmt::skip]
-fn rebuild_2174(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2175(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.rail_max_lines, "layout.tabs.rail_max_lines", &mut total.layout.tabs.rail_max_lines, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2175(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2176(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.layout.tabs.title_baseline_offset = f.layout.tabs.title_baseline_offset.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2175(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2176(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.layout.tabs.title_baseline_offset)
 }
 
 #[rustfmt::skip]
-fn rebuild_2175(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2176(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.layout.tabs.title_baseline_offset, "layout.tabs.title_baseline_offset", &mut total.layout.tabs.title_baseline_offset, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2176(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2177(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.margin = f.margin.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2176(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2177(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.margin)
 }
 
 #[rustfmt::skip]
-fn rebuild_2176(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2177(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.margin, "margin", &mut total.margin, unset);
-}
-
-#[rustfmt::skip]
-fn copy_2177(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
-    if let ::model_core::Tri::Value(ti0) = &mut i.margin {
-        if let ::model_core::Tri::Value(sf0) = &f.margin {
-            ti0.bottom = sf0.bottom.clone();
-        } else {
-            ti0.bottom = Default::default();
-        }
-    }
-}
-
-#[rustfmt::skip]
-fn unset_2177(f: &crate::style::style::StylePatch) -> bool {
-    match &f.margin { ::model_core::Tri::Value(s0) => ::model_core::Empty::is_empty(&s0.bottom), _ => true }
 }
 
 #[rustfmt::skip]
 fn copy_2178(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     if let ::model_core::Tri::Value(ti0) = &mut i.margin {
         if let ::model_core::Tri::Value(sf0) = &f.margin {
+            ti0.bottom = sf0.bottom.clone();
+        } else {
+            ti0.bottom = Default::default();
+        }
+    }
+}
+
+#[rustfmt::skip]
+fn unset_2178(f: &crate::style::style::StylePatch) -> bool {
+    match &f.margin { ::model_core::Tri::Value(s0) => ::model_core::Empty::is_empty(&s0.bottom), _ => true }
+}
+
+#[rustfmt::skip]
+fn copy_2179(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+    if let ::model_core::Tri::Value(ti0) = &mut i.margin {
+        if let ::model_core::Tri::Value(sf0) = &f.margin {
             ti0.left = sf0.left.clone();
         } else {
             ti0.left = Default::default();
@@ -49230,12 +49245,12 @@ fn copy_2178(f: &crate::style::style::StylePatch, i: &mut crate::style::style::S
 }
 
 #[rustfmt::skip]
-fn unset_2178(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2179(f: &crate::style::style::StylePatch) -> bool {
     match &f.margin { ::model_core::Tri::Value(s0) => ::model_core::Empty::is_empty(&s0.left), _ => true }
 }
 
 #[rustfmt::skip]
-fn copy_2179(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2180(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     if let ::model_core::Tri::Value(ti0) = &mut i.margin {
         if let ::model_core::Tri::Value(sf0) = &f.margin {
             ti0.right = sf0.right.clone();
@@ -49246,12 +49261,12 @@ fn copy_2179(f: &crate::style::style::StylePatch, i: &mut crate::style::style::S
 }
 
 #[rustfmt::skip]
-fn unset_2179(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2180(f: &crate::style::style::StylePatch) -> bool {
     match &f.margin { ::model_core::Tri::Value(s0) => ::model_core::Empty::is_empty(&s0.right), _ => true }
 }
 
 #[rustfmt::skip]
-fn copy_2180(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2181(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     if let ::model_core::Tri::Value(ti0) = &mut i.margin {
         if let ::model_core::Tri::Value(sf0) = &f.margin {
             ti0.top = sf0.top.clone();
@@ -49262,42 +49277,42 @@ fn copy_2180(f: &crate::style::style::StylePatch, i: &mut crate::style::style::S
 }
 
 #[rustfmt::skip]
-fn unset_2180(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2181(f: &crate::style::style::StylePatch) -> bool {
     match &f.margin { ::model_core::Tri::Value(s0) => ::model_core::Empty::is_empty(&s0.top), _ => true }
 }
 
 #[rustfmt::skip]
-fn copy_2181(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2182(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.opacity = f.opacity.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2181(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2182(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.opacity)
 }
 
 #[rustfmt::skip]
-fn rebuild_2181(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2182(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.opacity, "opacity", &mut total.opacity, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2182(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2183(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.padding = f.padding.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2182(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2183(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.padding)
 }
 
 #[rustfmt::skip]
-fn rebuild_2182(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2183(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.padding, "padding", &mut total.padding, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2183(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2184(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     if let ::model_core::Tri::Value(ti0) = &mut i.padding {
         if let ::model_core::Tri::Value(sf0) = &f.padding {
             ti0.bottom = sf0.bottom.clone();
@@ -49308,12 +49323,12 @@ fn copy_2183(f: &crate::style::style::StylePatch, i: &mut crate::style::style::S
 }
 
 #[rustfmt::skip]
-fn unset_2183(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2184(f: &crate::style::style::StylePatch) -> bool {
     match &f.padding { ::model_core::Tri::Value(s0) => ::model_core::Empty::is_empty(&s0.bottom), _ => true }
 }
 
 #[rustfmt::skip]
-fn copy_2184(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2185(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     if let ::model_core::Tri::Value(ti0) = &mut i.padding {
         if let ::model_core::Tri::Value(sf0) = &f.padding {
             ti0.left = sf0.left.clone();
@@ -49324,12 +49339,12 @@ fn copy_2184(f: &crate::style::style::StylePatch, i: &mut crate::style::style::S
 }
 
 #[rustfmt::skip]
-fn unset_2184(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2185(f: &crate::style::style::StylePatch) -> bool {
     match &f.padding { ::model_core::Tri::Value(s0) => ::model_core::Empty::is_empty(&s0.left), _ => true }
 }
 
 #[rustfmt::skip]
-fn copy_2185(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2186(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     if let ::model_core::Tri::Value(ti0) = &mut i.padding {
         if let ::model_core::Tri::Value(sf0) = &f.padding {
             ti0.right = sf0.right.clone();
@@ -49340,12 +49355,12 @@ fn copy_2185(f: &crate::style::style::StylePatch, i: &mut crate::style::style::S
 }
 
 #[rustfmt::skip]
-fn unset_2185(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2186(f: &crate::style::style::StylePatch) -> bool {
     match &f.padding { ::model_core::Tri::Value(s0) => ::model_core::Empty::is_empty(&s0.right), _ => true }
 }
 
 #[rustfmt::skip]
-fn copy_2186(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2187(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     if let ::model_core::Tri::Value(ti0) = &mut i.padding {
         if let ::model_core::Tri::Value(sf0) = &f.padding {
             ti0.top = sf0.top.clone();
@@ -49356,3016 +49371,3016 @@ fn copy_2186(f: &crate::style::style::StylePatch, i: &mut crate::style::style::S
 }
 
 #[rustfmt::skip]
-fn unset_2186(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2187(f: &crate::style::style::StylePatch) -> bool {
     match &f.padding { ::model_core::Tri::Value(s0) => ::model_core::Empty::is_empty(&s0.top), _ => true }
 }
 
 #[rustfmt::skip]
-fn copy_2187(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2188(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.palettes = f.palettes.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2187(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2188(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.palettes)
 }
 
 #[rustfmt::skip]
-fn rebuild_2187(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2188(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_defaulted(&i.palettes, "palettes", &mut total.palettes, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2188(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2189(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.placeholder = f.placeholder.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2188(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2189(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.placeholder)
 }
 
 #[rustfmt::skip]
-fn copy_2189(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2190(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.placeholder.opacity = f.placeholder.opacity.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2189(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2190(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.placeholder.opacity)
 }
 
 #[rustfmt::skip]
-fn rebuild_2189(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2190(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.placeholder.opacity, "placeholder.opacity", &mut total.placeholder.opacity, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2190(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2191(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.placeholder.overlay = f.placeholder.overlay.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2190(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2191(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.placeholder.overlay)
 }
 
 #[rustfmt::skip]
-fn copy_2191(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2192(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.placeholder.overlay.background = f.placeholder.overlay.background.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2191(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2192(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.placeholder.overlay.background)
 }
 
 #[rustfmt::skip]
-fn rebuild_2191(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2192(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.placeholder.overlay.background, "placeholder.overlay.background", &mut total.placeholder.overlay.background, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2192(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2193(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.placeholder.overlay.font = f.placeholder.overlay.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2192(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2193(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.placeholder.overlay.font)
 }
 
 #[rustfmt::skip]
-fn copy_2193(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2194(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.placeholder.overlay.font.case = f.placeholder.overlay.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2193(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2194(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.placeholder.overlay.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2193(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2194(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.placeholder.overlay.font.case, "placeholder.overlay.font.case", &mut total.placeholder.overlay.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2194(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2195(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.placeholder.overlay.font.color = f.placeholder.overlay.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2194(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2195(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.placeholder.overlay.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2194(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2195(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.placeholder.overlay.font.color, "placeholder.overlay.font.color", &mut total.placeholder.overlay.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2195(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2196(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.placeholder.overlay.font.decoration = f.placeholder.overlay.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2195(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2196(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.placeholder.overlay.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2195(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2196(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.placeholder.overlay.font.decoration, "placeholder.overlay.font.decoration", &mut total.placeholder.overlay.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2196(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2197(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.placeholder.overlay.font.extends = f.placeholder.overlay.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2196(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2197(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.placeholder.overlay.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2196(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2197(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.placeholder.overlay.font.extends, "placeholder.overlay.font.extends", &mut total.placeholder.overlay.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2197(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2198(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.placeholder.overlay.font.family = f.placeholder.overlay.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2197(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2198(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.placeholder.overlay.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2197(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2198(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.placeholder.overlay.font.family, "placeholder.overlay.font.family", &mut total.placeholder.overlay.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2198(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2199(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.placeholder.overlay.font.line_height = f.placeholder.overlay.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2198(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2199(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.placeholder.overlay.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2198(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2199(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.placeholder.overlay.font.line_height, "placeholder.overlay.font.line_height", &mut total.placeholder.overlay.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2199(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2200(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.placeholder.overlay.font.size = f.placeholder.overlay.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2199(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2200(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.placeholder.overlay.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2199(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2200(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.placeholder.overlay.font.size, "placeholder.overlay.font.size", &mut total.placeholder.overlay.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2200(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2201(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.placeholder.overlay.font.style = f.placeholder.overlay.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2200(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2201(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.placeholder.overlay.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2200(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2201(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.placeholder.overlay.font.style, "placeholder.overlay.font.style", &mut total.placeholder.overlay.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2201(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2202(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.placeholder.overlay.font.weight = f.placeholder.overlay.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2201(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2202(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.placeholder.overlay.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2201(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2202(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.placeholder.overlay.font.weight, "placeholder.overlay.font.weight", &mut total.placeholder.overlay.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2202(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2203(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.placeholder.overlay.text = f.placeholder.overlay.text.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2202(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2203(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.placeholder.overlay.text)
 }
 
 #[rustfmt::skip]
-fn rebuild_2202(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2203(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.placeholder.overlay.text, "placeholder.overlay.text", &mut total.placeholder.overlay.text, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2203(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2204(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.roles = f.roles.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2203(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2204(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.roles)
 }
 
 #[rustfmt::skip]
-fn rebuild_2203(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2204(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_defaulted(&i.roles, "roles", &mut total.roles, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2204(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2205(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text = f.text.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2204(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2205(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text)
 }
 
 #[rustfmt::skip]
-fn copy_2205(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2206(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.align = f.text.align.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2205(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2206(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.align)
 }
 
 #[rustfmt::skip]
-fn rebuild_2205(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2206(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.align, "text.align", &mut total.text.align, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2206(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2207(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.blockquote = f.text.blockquote.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2206(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2207(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.blockquote)
 }
 
 #[rustfmt::skip]
-fn copy_2207(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2208(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.blockquote.boxed.background = f.text.blockquote.boxed.background.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2207(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2208(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.blockquote.boxed.background)
 }
 
 #[rustfmt::skip]
-fn rebuild_2207(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2208(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.blockquote.boxed.background, "text.blockquote.background", &mut total.text.blockquote.boxed.background, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2208(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2209(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.blockquote.boxed.border = f.text.blockquote.boxed.border.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2208(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2209(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.blockquote.boxed.border)
 }
 
 #[rustfmt::skip]
-fn copy_2209(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2210(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.blockquote.boxed.border.color = f.text.blockquote.boxed.border.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2209(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2210(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.blockquote.boxed.border.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2209(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2210(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.blockquote.boxed.border.color, "text.blockquote.border.color", &mut total.text.blockquote.boxed.border.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2210(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2211(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.blockquote.boxed.border.dash_array = f.text.blockquote.boxed.border.dash_array.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2210(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2211(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.blockquote.boxed.border.dash_array)
 }
 
 #[rustfmt::skip]
-fn rebuild_2210(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2211(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.text.blockquote.boxed.border.dash_array, "text.blockquote.border.dash_array", &mut total.text.blockquote.boxed.border.dash_array, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2211(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2212(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.blockquote.boxed.border.dash_offset = f.text.blockquote.boxed.border.dash_offset.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2211(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2212(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.blockquote.boxed.border.dash_offset)
 }
 
 #[rustfmt::skip]
-fn rebuild_2211(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2212(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.text.blockquote.boxed.border.dash_offset, "text.blockquote.border.dash_offset", &mut total.text.blockquote.boxed.border.dash_offset, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2212(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2213(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.blockquote.boxed.border.line_cap = f.text.blockquote.boxed.border.line_cap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2212(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2213(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.blockquote.boxed.border.line_cap)
 }
 
 #[rustfmt::skip]
-fn rebuild_2212(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2213(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.text.blockquote.boxed.border.line_cap, "text.blockquote.border.line_cap", &mut total.text.blockquote.boxed.border.line_cap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2213(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2214(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.blockquote.boxed.border.radius = f.text.blockquote.boxed.border.radius.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2213(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2214(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.blockquote.boxed.border.radius)
 }
 
 #[rustfmt::skip]
-fn rebuild_2213(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2214(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.blockquote.boxed.border.radius, "text.blockquote.border.radius", &mut total.text.blockquote.boxed.border.radius, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2214(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2215(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.blockquote.boxed.border.width = f.text.blockquote.boxed.border.width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2214(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2215(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.blockquote.boxed.border.width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2214(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2215(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.blockquote.boxed.border.width, "text.blockquote.border.width", &mut total.text.blockquote.boxed.border.width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2215(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2216(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.blockquote.boxed.font = f.text.blockquote.boxed.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2215(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2216(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.blockquote.boxed.font)
 }
 
 #[rustfmt::skip]
-fn rebuild_2215(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2216(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_optional_slot(&i.text.blockquote.boxed.font, "text.blockquote.font", &mut total.text.blockquote.boxed.font, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2216(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2217(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.bold = f.text.bold.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2216(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2217(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.bold)
 }
 
 #[rustfmt::skip]
-fn copy_2217(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2218(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.bold.weight = f.text.bold.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2217(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2218(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.bold.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2217(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2218(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.bold.weight, "text.bold.weight", &mut total.text.bold.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2218(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2219(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.code = f.text.code.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2218(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2219(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.code)
 }
 
 #[rustfmt::skip]
-fn copy_2219(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2220(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.code.boxed.background = f.text.code.boxed.background.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2219(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2220(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.code.boxed.background)
 }
 
 #[rustfmt::skip]
-fn rebuild_2219(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2220(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.code.boxed.background, "text.code.background", &mut total.text.code.boxed.background, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2220(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2221(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.code.boxed.border = f.text.code.boxed.border.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2220(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2221(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.code.boxed.border)
 }
 
 #[rustfmt::skip]
-fn copy_2221(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2222(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.code.boxed.border.color = f.text.code.boxed.border.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2221(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2222(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.code.boxed.border.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2221(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2222(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.code.boxed.border.color, "text.code.border.color", &mut total.text.code.boxed.border.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2222(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2223(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.code.boxed.border.dash_array = f.text.code.boxed.border.dash_array.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2222(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2223(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.code.boxed.border.dash_array)
 }
 
 #[rustfmt::skip]
-fn rebuild_2222(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2223(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.text.code.boxed.border.dash_array, "text.code.border.dash_array", &mut total.text.code.boxed.border.dash_array, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2223(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2224(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.code.boxed.border.dash_offset = f.text.code.boxed.border.dash_offset.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2223(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2224(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.code.boxed.border.dash_offset)
 }
 
 #[rustfmt::skip]
-fn rebuild_2223(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2224(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.text.code.boxed.border.dash_offset, "text.code.border.dash_offset", &mut total.text.code.boxed.border.dash_offset, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2224(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2225(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.code.boxed.border.line_cap = f.text.code.boxed.border.line_cap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2224(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2225(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.code.boxed.border.line_cap)
 }
 
 #[rustfmt::skip]
-fn rebuild_2224(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2225(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.text.code.boxed.border.line_cap, "text.code.border.line_cap", &mut total.text.code.boxed.border.line_cap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2225(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2226(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.code.boxed.border.radius = f.text.code.boxed.border.radius.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2225(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2226(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.code.boxed.border.radius)
 }
 
 #[rustfmt::skip]
-fn rebuild_2225(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2226(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.code.boxed.border.radius, "text.code.border.radius", &mut total.text.code.boxed.border.radius, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2226(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2227(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.code.boxed.border.width = f.text.code.boxed.border.width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2226(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2227(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.code.boxed.border.width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2226(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2227(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.code.boxed.border.width, "text.code.border.width", &mut total.text.code.boxed.border.width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2227(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2228(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.code.boxed.font = f.text.code.boxed.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2227(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2228(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.code.boxed.font)
 }
 
 #[rustfmt::skip]
-fn rebuild_2227(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2228(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_optional_slot(&i.text.code.boxed.font, "text.code.font", &mut total.text.code.boxed.font, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2228(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2229(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.code.highlight = f.text.code.highlight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2228(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2229(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.code.highlight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2228(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2229(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.code.highlight, "text.code.highlight", &mut total.text.code.highlight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2229(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2230(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.code.theme = f.text.code.theme.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2229(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2230(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.code.theme)
 }
 
 #[rustfmt::skip]
-fn rebuild_2229(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2230(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.code.theme, "text.code.theme", &mut total.text.code.theme, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2230(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2231(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.column = f.text.column.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2230(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2231(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.column)
 }
 
 #[rustfmt::skip]
-fn copy_2231(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2232(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.column.divider = f.text.column.divider.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2231(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2232(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.column.divider)
 }
 
 #[rustfmt::skip]
-fn copy_2232(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2233(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.column.divider.color = f.text.column.divider.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2232(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2233(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.column.divider.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2232(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2233(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.column.divider.color, "text.column.divider.color", &mut total.text.column.divider.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2233(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2234(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.column.divider.dasharray = f.text.column.divider.dasharray.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2233(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2234(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.column.divider.dasharray)
 }
 
 #[rustfmt::skip]
-fn rebuild_2233(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2234(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.text.column.divider.dasharray, "text.column.divider.dasharray", &mut total.text.column.divider.dasharray, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2234(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2235(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.column.divider.visible = f.text.column.divider.visible.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2234(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2235(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.column.divider.visible)
 }
 
 #[rustfmt::skip]
-fn rebuild_2234(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2235(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.column.divider.visible, "text.column.divider.visible", &mut total.text.column.divider.visible, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2235(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2236(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.column.divider.width = f.text.column.divider.width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2235(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2236(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.column.divider.width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2235(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2236(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.column.divider.width, "text.column.divider.width", &mut total.text.column.divider.width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2236(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2237(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.column.max_chars = f.text.column.max_chars.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2236(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2237(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.column.max_chars)
 }
 
 #[rustfmt::skip]
-fn rebuild_2236(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2237(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.text.column.max_chars, "text.column.max_chars", &mut total.text.column.max_chars, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2237(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2238(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.column.max_number = f.text.column.max_number.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2237(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2238(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.column.max_number)
 }
 
 #[rustfmt::skip]
-fn rebuild_2237(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2238(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.text.column.max_number, "text.column.max_number", &mut total.text.column.max_number, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2238(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2239(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.divider = f.text.divider.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2238(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2239(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.divider)
 }
 
 #[rustfmt::skip]
-fn copy_2239(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2240(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.divider.color = f.text.divider.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2239(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2240(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.divider.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2239(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2240(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.divider.color, "text.divider.color", &mut total.text.divider.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2240(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2241(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.divider.dasharray = f.text.divider.dasharray.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2240(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2241(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.divider.dasharray)
 }
 
 #[rustfmt::skip]
-fn rebuild_2240(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2241(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.text.divider.dasharray, "text.divider.dasharray", &mut total.text.divider.dasharray, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2241(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2242(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.divider.visible = f.text.divider.visible.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2241(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2242(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.divider.visible)
 }
 
 #[rustfmt::skip]
-fn rebuild_2241(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2242(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.divider.visible, "text.divider.visible", &mut total.text.divider.visible, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2242(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2243(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.divider.width = f.text.divider.width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2242(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2243(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.divider.width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2242(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2243(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.divider.width, "text.divider.width", &mut total.text.divider.width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2243(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2244(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.font = f.text.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2243(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2244(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.font)
 }
 
 #[rustfmt::skip]
-fn copy_2244(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2245(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.font.case = f.text.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2244(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2245(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2244(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2245(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.font.case, "text.font.case", &mut total.text.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2245(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2246(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.font.color = f.text.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2245(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2246(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2245(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2246(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.font.color, "text.font.color", &mut total.text.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2246(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2247(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.font.decoration = f.text.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2246(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2247(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2246(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2247(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.font.decoration, "text.font.decoration", &mut total.text.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2247(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2248(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.font.extends = f.text.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2247(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2248(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2247(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2248(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.text.font.extends, "text.font.extends", &mut total.text.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2248(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2249(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.font.family = f.text.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2248(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2249(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2248(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2249(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.font.family, "text.font.family", &mut total.text.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2249(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2250(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.font.line_height = f.text.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2249(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2250(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2249(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2250(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.font.line_height, "text.font.line_height", &mut total.text.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2250(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2251(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.font.size = f.text.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2250(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2251(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2250(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2251(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.font.size, "text.font.size", &mut total.text.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2251(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2252(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.font.style = f.text.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2251(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2252(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2251(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2252(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.font.style, "text.font.style", &mut total.text.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2252(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2253(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.font.weight = f.text.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2252(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2253(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2252(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2253(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.font.weight, "text.font.weight", &mut total.text.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2253(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2254(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.heading = f.text.heading.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2253(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2254(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.heading)
 }
 
 #[rustfmt::skip]
-fn copy_2254(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2255(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.heading.margin_bottom = f.text.heading.margin_bottom.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2254(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2255(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.heading.margin_bottom)
 }
 
 #[rustfmt::skip]
-fn rebuild_2254(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2255(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.heading.margin_bottom, "text.heading.margin_bottom", &mut total.text.heading.margin_bottom, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2255(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2256(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.heading.margin_top = f.text.heading.margin_top.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2255(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2256(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.heading.margin_top)
 }
 
 #[rustfmt::skip]
-fn rebuild_2255(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2256(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.heading.margin_top, "text.heading.margin_top", &mut total.text.heading.margin_top, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2256(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2257(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.paragraph = f.text.paragraph.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2256(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2257(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.paragraph)
 }
 
 #[rustfmt::skip]
-fn copy_2257(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2258(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.paragraph.margin_bottom = f.text.paragraph.margin_bottom.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2257(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2258(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.paragraph.margin_bottom)
 }
 
 #[rustfmt::skip]
-fn rebuild_2257(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2258(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.paragraph.margin_bottom, "text.paragraph.margin_bottom", &mut total.text.paragraph.margin_bottom, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2258(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2259(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.text.paragraph.margin_top = f.text.paragraph.margin_top.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2258(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2259(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.text.paragraph.margin_top)
 }
 
 #[rustfmt::skip]
-fn rebuild_2258(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2259(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.text.paragraph.margin_top, "text.paragraph.margin_top", &mut total.text.paragraph.margin_top, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2259(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2260(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp = f.timestamp.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2259(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2260(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp)
 }
 
 #[rustfmt::skip]
-fn copy_2260(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2261(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.align = f.timestamp.align.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2260(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2261(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.align)
 }
 
 #[rustfmt::skip]
-fn rebuild_2260(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2261(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.timestamp.align, "timestamp.align", &mut total.timestamp.align, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2261(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2262(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.font = f.timestamp.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2261(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2262(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.font)
 }
 
 #[rustfmt::skip]
-fn copy_2262(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2263(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.font.case = f.timestamp.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2262(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2263(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2262(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2263(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.timestamp.font.case, "timestamp.font.case", &mut total.timestamp.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2263(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2264(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.font.color = f.timestamp.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2263(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2264(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2263(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2264(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.timestamp.font.color, "timestamp.font.color", &mut total.timestamp.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2264(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2265(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.font.decoration = f.timestamp.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2264(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2265(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2264(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2265(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.timestamp.font.decoration, "timestamp.font.decoration", &mut total.timestamp.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2265(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2266(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.font.extends = f.timestamp.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2265(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2266(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2265(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2266(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.timestamp.font.extends, "timestamp.font.extends", &mut total.timestamp.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2266(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2267(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.font.family = f.timestamp.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2266(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2267(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2266(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2267(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.timestamp.font.family, "timestamp.font.family", &mut total.timestamp.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2267(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2268(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.font.line_height = f.timestamp.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2267(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2268(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2267(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2268(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.timestamp.font.line_height, "timestamp.font.line_height", &mut total.timestamp.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2268(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2269(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.font.size = f.timestamp.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2268(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2269(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2268(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2269(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.timestamp.font.size, "timestamp.font.size", &mut total.timestamp.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2269(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2270(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.font.style = f.timestamp.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2269(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2270(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2269(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2270(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.timestamp.font.style, "timestamp.font.style", &mut total.timestamp.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2270(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2271(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.font.weight = f.timestamp.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2270(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2271(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2270(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2271(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.timestamp.font.weight, "timestamp.font.weight", &mut total.timestamp.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2271(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2272(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.format = f.timestamp.format.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2271(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2272(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.format)
 }
 
 #[rustfmt::skip]
-fn rebuild_2271(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2272(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.timestamp.format, "timestamp.format", &mut total.timestamp.format, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2272(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2273(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.gap = f.timestamp.gap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2272(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2273(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.gap)
 }
 
 #[rustfmt::skip]
-fn rebuild_2272(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2273(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.timestamp.gap, "timestamp.gap", &mut total.timestamp.gap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2273(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2274(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.position = f.timestamp.position.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2273(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2274(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.position)
 }
 
 #[rustfmt::skip]
-fn rebuild_2273(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2274(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.timestamp.position, "timestamp.position", &mut total.timestamp.position, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2274(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2275(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.visible = f.timestamp.visible.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2274(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2275(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.visible)
 }
 
 #[rustfmt::skip]
-fn rebuild_2274(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2275(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.timestamp.visible, "timestamp.visible", &mut total.timestamp.visible, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2275(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2276(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.timestamp.y = f.timestamp.y.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2275(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2276(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.timestamp.y)
 }
 
 #[rustfmt::skip]
-fn rebuild_2275(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2276(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.timestamp.y, "timestamp.y", &mut total.timestamp.y, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2276(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2277(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title = f.title.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2276(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2277(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title)
 }
 
 #[rustfmt::skip]
-fn copy_2277(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2278(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.compact_weight = f.title.base.compact_weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2277(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2278(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.compact_weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2277(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2278(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.compact_weight, "title.compact_weight", &mut total.title.base.compact_weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2278(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2279(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.font = f.title.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2278(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2279(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.font)
 }
 
 #[rustfmt::skip]
-fn copy_2279(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2280(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.font.case = f.title.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2279(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2280(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2279(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2280(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.font.case, "title.font.case", &mut total.title.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2280(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2281(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.font.color = f.title.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2280(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2281(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2280(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2281(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.font.color, "title.font.color", &mut total.title.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2281(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2282(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.font.decoration = f.title.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2281(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2282(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2281(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2282(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.font.decoration, "title.font.decoration", &mut total.title.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2282(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2283(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.font.extends = f.title.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2282(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2283(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2282(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2283(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.title.font.extends, "title.font.extends", &mut total.title.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2283(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2284(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.font.family = f.title.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2283(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2284(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2283(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2284(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.font.family, "title.font.family", &mut total.title.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2284(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2285(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.font.line_height = f.title.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2284(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2285(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2284(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2285(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.font.line_height, "title.font.line_height", &mut total.title.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2285(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2286(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.font.size = f.title.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2285(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2286(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2285(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2286(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.font.size, "title.font.size", &mut total.title.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2286(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2287(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.font.style = f.title.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2286(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2287(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2286(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2287(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.font.style, "title.font.style", &mut total.title.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2287(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2288(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.font.weight = f.title.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2287(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2288(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2287(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2288(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.font.weight, "title.font.weight", &mut total.title.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2288(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2289(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.level = f.title.base.level.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2288(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2289(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.level)
 }
 
 #[rustfmt::skip]
-fn rebuild_2288(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2289(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.level, "title.level", &mut total.title.base.level, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2289(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2290(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.min_height = f.title.base.min_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2289(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2290(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.min_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2289(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2290(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.min_height, "title.min_height", &mut total.title.base.min_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2290(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2291(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.overflow = f.title.base.overflow.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2290(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2291(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.overflow)
 }
 
 #[rustfmt::skip]
-fn rebuild_2290(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2291(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.overflow, "title.overflow", &mut total.title.base.overflow, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2291(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2292(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.position = f.title.base.position.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2291(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2292(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.position)
 }
 
 #[rustfmt::skip]
-fn copy_2292(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2293(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.position.anchor = f.title.base.position.anchor.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2292(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2293(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.position.anchor)
 }
 
 #[rustfmt::skip]
-fn rebuild_2292(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2293(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.position.anchor, "title.position.anchor", &mut total.title.base.position.anchor, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2293(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2294(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.position.angle = f.title.base.position.angle.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2293(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2294(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.position.angle)
 }
 
 #[rustfmt::skip]
-fn rebuild_2293(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2294(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.position.angle, "title.position.angle", &mut total.title.base.position.angle, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2294(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2295(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.position.baseline = f.title.base.position.baseline.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2294(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2295(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.position.baseline)
 }
 
 #[rustfmt::skip]
-fn rebuild_2294(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2295(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.position.baseline, "title.position.baseline", &mut total.title.base.position.baseline, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2295(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2296(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.position.offset = f.title.base.position.offset.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2295(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2296(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.position.offset)
 }
 
 #[rustfmt::skip]
-fn rebuild_2295(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2296(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.title.base.position.offset, "title.position.offset", &mut total.title.base.position.offset, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2296(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2297(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.subtitle = f.title.base.subtitle.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2296(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2297(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.subtitle)
 }
 
 #[rustfmt::skip]
-fn copy_2297(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2298(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.subtitle.font = f.title.base.subtitle.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2297(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2298(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.subtitle.font)
 }
 
 #[rustfmt::skip]
-fn copy_2298(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2299(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.subtitle.font.case = f.title.base.subtitle.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2298(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2299(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.subtitle.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2298(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2299(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.subtitle.font.case, "title.subtitle.font.case", &mut total.title.base.subtitle.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2299(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2300(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.subtitle.font.color = f.title.base.subtitle.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2299(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2300(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.subtitle.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2299(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2300(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.subtitle.font.color, "title.subtitle.font.color", &mut total.title.base.subtitle.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2300(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2301(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.subtitle.font.decoration = f.title.base.subtitle.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2300(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2301(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.subtitle.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2300(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2301(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.subtitle.font.decoration, "title.subtitle.font.decoration", &mut total.title.base.subtitle.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2301(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2302(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.subtitle.font.extends = f.title.base.subtitle.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2301(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2302(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.subtitle.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2301(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2302(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.title.base.subtitle.font.extends, "title.subtitle.font.extends", &mut total.title.base.subtitle.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2302(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2303(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.subtitle.font.family = f.title.base.subtitle.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2302(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2303(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.subtitle.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2302(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2303(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.subtitle.font.family, "title.subtitle.font.family", &mut total.title.base.subtitle.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2303(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2304(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.subtitle.font.line_height = f.title.base.subtitle.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2303(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2304(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.subtitle.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2303(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2304(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.subtitle.font.line_height, "title.subtitle.font.line_height", &mut total.title.base.subtitle.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2304(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2305(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.subtitle.font.size = f.title.base.subtitle.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2304(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2305(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.subtitle.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2304(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2305(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.subtitle.font.size, "title.subtitle.font.size", &mut total.title.base.subtitle.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2305(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2306(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.subtitle.font.style = f.title.base.subtitle.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2305(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2306(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.subtitle.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2305(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2306(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.subtitle.font.style, "title.subtitle.font.style", &mut total.title.base.subtitle.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2306(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2307(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.subtitle.font.weight = f.title.base.subtitle.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2306(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2307(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.subtitle.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2306(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2307(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.subtitle.font.weight, "title.subtitle.font.weight", &mut total.title.base.subtitle.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2307(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2308(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.subtitle.overflow = f.title.base.subtitle.overflow.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2307(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2308(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.subtitle.overflow)
 }
 
 #[rustfmt::skip]
-fn rebuild_2307(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2308(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.subtitle.overflow, "title.subtitle.overflow", &mut total.title.base.subtitle.overflow, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2308(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2309(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.width_offsets = f.title.base.width_offsets.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2308(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2309(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.width_offsets)
 }
 
 #[rustfmt::skip]
-fn copy_2309(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2310(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.width_offsets.medium = f.title.base.width_offsets.medium.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2309(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2310(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.width_offsets.medium)
 }
 
 #[rustfmt::skip]
-fn rebuild_2309(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2310(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.width_offsets.medium, "title.width_offsets.medium", &mut total.title.base.width_offsets.medium, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2310(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2311(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.width_offsets.narrow = f.title.base.width_offsets.narrow.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2310(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2311(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.width_offsets.narrow)
 }
 
 #[rustfmt::skip]
-fn rebuild_2310(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2311(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.width_offsets.narrow, "title.width_offsets.narrow", &mut total.title.base.width_offsets.narrow, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2311(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2312(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.width_offsets.tiny = f.title.base.width_offsets.tiny.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2311(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2312(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.width_offsets.tiny)
 }
 
 #[rustfmt::skip]
-fn rebuild_2311(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2312(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.width_offsets.tiny, "title.width_offsets.tiny", &mut total.title.base.width_offsets.tiny, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2312(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2313(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.title.base.width_offsets.wide = f.title.base.width_offsets.wide.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2312(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2313(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.title.base.width_offsets.wide)
 }
 
 #[rustfmt::skip]
-fn rebuild_2312(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2313(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.title.base.width_offsets.wide, "title.width_offsets.wide", &mut total.title.base.width_offsets.wide, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2313(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2314(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.tones = f.tones.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2313(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2314(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.tones)
 }
 
 #[rustfmt::skip]
-fn copy_2314(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2315(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.tones.info = f.tones.info.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2314(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2315(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.tones.info)
 }
 
 #[rustfmt::skip]
-fn rebuild_2314(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2315(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.tones.info, "tones.info", &mut total.tones.info, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2315(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2316(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.tones.negative = f.tones.negative.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2315(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2316(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.tones.negative)
 }
 
 #[rustfmt::skip]
-fn rebuild_2315(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2316(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.tones.negative, "tones.negative", &mut total.tones.negative, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2316(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2317(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.tones.positive = f.tones.positive.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2316(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2317(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.tones.positive)
 }
 
 #[rustfmt::skip]
-fn rebuild_2316(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2317(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.tones.positive, "tones.positive", &mut total.tones.positive, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2317(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2318(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.tones.warning = f.tones.warning.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2317(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2318(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.tones.warning)
 }
 
 #[rustfmt::skip]
-fn rebuild_2317(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2318(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.tones.warning, "tones.warning", &mut total.tones.warning, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2318(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2319(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables = f.variables.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2318(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2319(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables)
 }
 
 #[rustfmt::skip]
-fn copy_2319(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2320(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.border = f.variables.border.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2319(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2320(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.border)
 }
 
 #[rustfmt::skip]
-fn copy_2320(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2321(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.border.color = f.variables.border.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2320(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2321(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.border.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2320(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2321(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.border.color, "variables.border.color", &mut total.variables.border.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2321(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2322(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.border.dash_array = f.variables.border.dash_array.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2321(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2322(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.border.dash_array)
 }
 
 #[rustfmt::skip]
-fn rebuild_2321(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2322(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.variables.border.dash_array, "variables.border.dash_array", &mut total.variables.border.dash_array, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2322(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2323(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.border.dash_offset = f.variables.border.dash_offset.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2322(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2323(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.border.dash_offset)
 }
 
 #[rustfmt::skip]
-fn rebuild_2322(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2323(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.variables.border.dash_offset, "variables.border.dash_offset", &mut total.variables.border.dash_offset, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2323(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2324(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.border.line_cap = f.variables.border.line_cap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2323(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2324(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.border.line_cap)
 }
 
 #[rustfmt::skip]
-fn rebuild_2323(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2324(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.variables.border.line_cap, "variables.border.line_cap", &mut total.variables.border.line_cap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2324(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2325(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.border.radius = f.variables.border.radius.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2324(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2325(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.border.radius)
 }
 
 #[rustfmt::skip]
-fn rebuild_2324(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2325(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.border.radius, "variables.border.radius", &mut total.variables.border.radius, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2325(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2326(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.border.width = f.variables.border.width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2325(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2326(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.border.width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2325(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2326(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.border.width, "variables.border.width", &mut total.variables.border.width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2326(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2327(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.container_height = f.variables.container_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2326(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2327(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.container_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2326(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2327(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.container_height, "variables.container_height", &mut total.variables.container_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2327(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2328(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.control_gap = f.variables.control_gap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2327(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2328(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.control_gap)
 }
 
 #[rustfmt::skip]
-fn rebuild_2327(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2328(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.control_gap, "variables.control_gap", &mut total.variables.control_gap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2328(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2329(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.font = f.variables.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2328(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2329(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.font)
 }
 
 #[rustfmt::skip]
-fn copy_2329(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2330(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.font.case = f.variables.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2329(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2330(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2329(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2330(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.font.case, "variables.font.case", &mut total.variables.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2330(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2331(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.font.color = f.variables.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2330(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2331(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2330(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2331(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.font.color, "variables.font.color", &mut total.variables.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2331(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2332(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.font.decoration = f.variables.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2331(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2332(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2331(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2332(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.font.decoration, "variables.font.decoration", &mut total.variables.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2332(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2333(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.font.extends = f.variables.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2332(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2333(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2332(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2333(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.variables.font.extends, "variables.font.extends", &mut total.variables.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2333(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2334(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.font.family = f.variables.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2333(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2334(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2333(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2334(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.font.family, "variables.font.family", &mut total.variables.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2334(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2335(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.font.line_height = f.variables.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2334(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2335(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2334(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2335(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.font.line_height, "variables.font.line_height", &mut total.variables.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2335(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2336(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.font.size = f.variables.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2335(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2336(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2335(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2336(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.font.size, "variables.font.size", &mut total.variables.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2336(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2337(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.font.style = f.variables.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2336(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2337(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2336(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2337(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.font.style, "variables.font.style", &mut total.variables.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2337(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2338(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.font.weight = f.variables.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2337(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2338(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2337(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2338(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.font.weight, "variables.font.weight", &mut total.variables.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2338(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2339(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.gap = f.variables.gap.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2338(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2339(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.gap)
 }
 
 #[rustfmt::skip]
-fn rebuild_2338(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2339(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.gap, "variables.gap", &mut total.variables.gap, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2339(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2340(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input = f.variables.input.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2339(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2340(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input)
 }
 
 #[rustfmt::skip]
-fn copy_2340(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2341(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.background = f.variables.input.background.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2340(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2341(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.background)
 }
 
 #[rustfmt::skip]
-fn rebuild_2340(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2341(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.background, "variables.input.background", &mut total.variables.input.background, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2341(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2342(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.border = f.variables.input.border.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2341(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2342(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.border)
 }
 
 #[rustfmt::skip]
-fn copy_2342(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2343(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.border.radius = f.variables.input.border.radius.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2342(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2343(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.border.radius)
 }
 
 #[rustfmt::skip]
-fn rebuild_2342(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2343(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.border.radius, "variables.input.border.radius", &mut total.variables.input.border.radius, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2343(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2344(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.focus_color = f.variables.input.focus_color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2343(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2344(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.focus_color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2343(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2344(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.focus_color, "variables.input.focus_color", &mut total.variables.input.focus_color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2344(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2345(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.height = f.variables.input.height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2344(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2345(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2344(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2345(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.height, "variables.input.height", &mut total.variables.input.height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2345(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2346(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.padding = f.variables.input.padding.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2345(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2346(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.padding)
 }
 
 #[rustfmt::skip]
-fn copy_2346(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2347(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.padding.bottom = f.variables.input.padding.bottom.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2346(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2347(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.padding.bottom)
 }
 
 #[rustfmt::skip]
-fn rebuild_2346(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2347(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.padding.bottom, "variables.input.padding.bottom", &mut total.variables.input.padding.bottom, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2347(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2348(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.padding.left = f.variables.input.padding.left.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2347(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2348(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.padding.left)
 }
 
 #[rustfmt::skip]
-fn rebuild_2347(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2348(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.padding.left, "variables.input.padding.left", &mut total.variables.input.padding.left, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2348(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2349(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.padding.right = f.variables.input.padding.right.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2348(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2349(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.padding.right)
 }
 
 #[rustfmt::skip]
-fn rebuild_2348(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2349(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.padding.right, "variables.input.padding.right", &mut total.variables.input.padding.right, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2349(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2350(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.padding.top = f.variables.input.padding.top.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2349(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2350(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.padding.top)
 }
 
 #[rustfmt::skip]
-fn rebuild_2349(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2350(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.padding.top, "variables.input.padding.top", &mut total.variables.input.padding.top, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2350(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2351(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.range = f.variables.input.range.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2350(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2351(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.range)
 }
 
 #[rustfmt::skip]
-fn copy_2351(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2352(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.range.default_max = f.variables.input.range.default_max.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2351(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2352(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.range.default_max)
 }
 
 #[rustfmt::skip]
-fn rebuild_2351(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2352(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.range.default_max, "variables.input.range.default_max", &mut total.variables.input.range.default_max, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2352(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2353(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.range.default_min = f.variables.input.range.default_min.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2352(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2353(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.range.default_min)
 }
 
 #[rustfmt::skip]
-fn rebuild_2352(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2353(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.range.default_min, "variables.input.range.default_min", &mut total.variables.input.range.default_min, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2353(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2354(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.range.default_step = f.variables.input.range.default_step.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2353(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2354(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.range.default_step)
 }
 
 #[rustfmt::skip]
-fn rebuild_2353(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2354(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.range.default_step, "variables.input.range.default_step", &mut total.variables.input.range.default_step, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2354(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2355(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.widths = f.variables.input.widths.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2354(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2355(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.widths)
 }
 
 #[rustfmt::skip]
-fn copy_2355(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2356(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.widths.checkbox = f.variables.input.widths.checkbox.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2355(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2356(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.widths.checkbox)
 }
 
 #[rustfmt::skip]
-fn rebuild_2355(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2356(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.widths.checkbox, "variables.input.widths.checkbox", &mut total.variables.input.widths.checkbox, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2356(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2357(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.widths.daterange = f.variables.input.widths.daterange.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2356(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2357(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.widths.daterange)
 }
 
 #[rustfmt::skip]
-fn rebuild_2356(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2357(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.widths.daterange, "variables.input.widths.daterange", &mut total.variables.input.widths.daterange, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2357(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2358(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.widths.number = f.variables.input.widths.number.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2357(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2358(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.widths.number)
 }
 
 #[rustfmt::skip]
-fn rebuild_2357(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2358(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.widths.number, "variables.input.widths.number", &mut total.variables.input.widths.number, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2358(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2359(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.widths.range = f.variables.input.widths.range.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2358(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2359(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.widths.range)
 }
 
 #[rustfmt::skip]
-fn rebuild_2358(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2359(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.widths.range, "variables.input.widths.range", &mut total.variables.input.widths.range, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2359(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2360(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.widths.slider_value_min = f.variables.input.widths.slider_value_min.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2359(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2360(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.widths.slider_value_min)
 }
 
 #[rustfmt::skip]
-fn rebuild_2359(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2360(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.widths.slider_value_min, "variables.input.widths.slider_value_min", &mut total.variables.input.widths.slider_value_min, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2360(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2361(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.input.widths.text = f.variables.input.widths.text.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2360(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2361(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.input.widths.text)
 }
 
 #[rustfmt::skip]
-fn rebuild_2360(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2361(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.input.widths.text, "variables.input.widths.text", &mut total.variables.input.widths.text, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2361(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2362(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.label = f.variables.label.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2361(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2362(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.label)
 }
 
 #[rustfmt::skip]
-fn copy_2362(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2363(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.label.font = f.variables.label.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2362(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2363(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.label.font)
 }
 
 #[rustfmt::skip]
-fn copy_2363(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2364(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.label.font.case = f.variables.label.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2363(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2364(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.label.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2363(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2364(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.label.font.case, "variables.label.font.case", &mut total.variables.label.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2364(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2365(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.label.font.color = f.variables.label.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2364(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2365(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.label.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2364(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2365(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.label.font.color, "variables.label.font.color", &mut total.variables.label.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2365(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2366(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.label.font.decoration = f.variables.label.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2365(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2366(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.label.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2365(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2366(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.label.font.decoration, "variables.label.font.decoration", &mut total.variables.label.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2366(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2367(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.label.font.extends = f.variables.label.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2366(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2367(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.label.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2366(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2367(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.variables.label.font.extends, "variables.label.font.extends", &mut total.variables.label.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2367(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2368(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.label.font.family = f.variables.label.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2367(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2368(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.label.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2367(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2368(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.label.font.family, "variables.label.font.family", &mut total.variables.label.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2368(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2369(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.label.font.line_height = f.variables.label.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2368(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2369(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.label.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2368(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2369(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.label.font.line_height, "variables.label.font.line_height", &mut total.variables.label.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2369(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2370(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.label.font.size = f.variables.label.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2369(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2370(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.label.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2369(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2370(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.label.font.size, "variables.label.font.size", &mut total.variables.label.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2370(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2371(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.label.font.style = f.variables.label.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2370(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2371(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.label.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2370(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2371(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.label.font.style, "variables.label.font.style", &mut total.variables.label.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2371(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2372(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.label.font.weight = f.variables.label.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2371(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2372(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.label.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2371(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2372(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.label.font.weight, "variables.label.font.weight", &mut total.variables.label.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2372(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2373(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.label_position = f.variables.label_position.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2372(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2373(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.label_position)
 }
 
 #[rustfmt::skip]
-fn rebuild_2372(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2373(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.label_position, "variables.label_position", &mut total.variables.label_position, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2373(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2374(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.placeholder = f.variables.placeholder.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2373(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2374(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.placeholder)
 }
 
 #[rustfmt::skip]
-fn copy_2374(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2375(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.placeholder.font = f.variables.placeholder.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2374(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2375(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.placeholder.font)
 }
 
 #[rustfmt::skip]
-fn copy_2375(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2376(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.placeholder.font.case = f.variables.placeholder.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2375(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2376(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.placeholder.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2375(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2376(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.placeholder.font.case, "variables.placeholder.font.case", &mut total.variables.placeholder.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2376(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2377(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.placeholder.font.color = f.variables.placeholder.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2376(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2377(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.placeholder.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2376(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2377(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.placeholder.font.color, "variables.placeholder.font.color", &mut total.variables.placeholder.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2377(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2378(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.placeholder.font.decoration = f.variables.placeholder.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2377(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2378(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.placeholder.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2377(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2378(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.placeholder.font.decoration, "variables.placeholder.font.decoration", &mut total.variables.placeholder.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2378(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2379(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.placeholder.font.extends = f.variables.placeholder.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2378(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2379(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.placeholder.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2378(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2379(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.variables.placeholder.font.extends, "variables.placeholder.font.extends", &mut total.variables.placeholder.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2379(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2380(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.placeholder.font.family = f.variables.placeholder.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2379(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2380(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.placeholder.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2379(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2380(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.placeholder.font.family, "variables.placeholder.font.family", &mut total.variables.placeholder.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2380(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2381(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.placeholder.font.line_height = f.variables.placeholder.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2380(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2381(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.placeholder.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2380(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2381(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.placeholder.font.line_height, "variables.placeholder.font.line_height", &mut total.variables.placeholder.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2381(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2382(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.placeholder.font.size = f.variables.placeholder.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2381(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2382(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.placeholder.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2381(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2382(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.placeholder.font.size, "variables.placeholder.font.size", &mut total.variables.placeholder.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2382(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2383(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.placeholder.font.style = f.variables.placeholder.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2382(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2383(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.placeholder.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2382(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2383(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.placeholder.font.style, "variables.placeholder.font.style", &mut total.variables.placeholder.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2383(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2384(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.placeholder.font.weight = f.variables.placeholder.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2383(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2384(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.placeholder.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2383(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2384(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.placeholder.font.weight, "variables.placeholder.font.weight", &mut total.variables.placeholder.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2384(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2385(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.position = f.variables.position.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2384(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2385(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.position)
 }
 
 #[rustfmt::skip]
-fn rebuild_2384(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2385(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.position, "variables.position", &mut total.variables.position, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2385(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2386(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.presets = f.variables.presets.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2385(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2386(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.presets)
 }
 
 #[rustfmt::skip]
-fn rebuild_2385(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2386(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.presets, "variables.presets", &mut total.variables.presets, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2386(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2387(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.title_inline_band_bottom_pad = f.variables.title_inline_band_bottom_pad.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2386(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2387(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.title_inline_band_bottom_pad)
 }
 
 #[rustfmt::skip]
-fn rebuild_2386(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2387(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.title_inline_band_bottom_pad, "variables.title_inline_band_bottom_pad", &mut total.variables.title_inline_band_bottom_pad, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2387(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2388(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.title_inline_title_max_width = f.variables.title_inline_title_max_width.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2387(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2388(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.title_inline_title_max_width)
 }
 
 #[rustfmt::skip]
-fn rebuild_2387(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2388(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.title_inline_title_max_width, "variables.title_inline_title_max_width", &mut total.variables.title_inline_title_max_width, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2388(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2389(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.value = f.variables.value.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2388(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2389(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.value)
 }
 
 #[rustfmt::skip]
-fn copy_2389(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2390(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.value.font = f.variables.value.font.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2389(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2390(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.value.font)
 }
 
 #[rustfmt::skip]
-fn copy_2390(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2391(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.value.font.case = f.variables.value.font.case.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2390(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2391(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.value.font.case)
 }
 
 #[rustfmt::skip]
-fn rebuild_2390(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2391(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.value.font.case, "variables.value.font.case", &mut total.variables.value.font.case, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2391(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2392(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.value.font.color = f.variables.value.font.color.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2391(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2392(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.value.font.color)
 }
 
 #[rustfmt::skip]
-fn rebuild_2391(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2392(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.value.font.color, "variables.value.font.color", &mut total.variables.value.font.color, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2392(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2393(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.value.font.decoration = f.variables.value.font.decoration.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2392(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2393(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.value.font.decoration)
 }
 
 #[rustfmt::skip]
-fn rebuild_2392(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2393(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.value.font.decoration, "variables.value.font.decoration", &mut total.variables.value.font.decoration, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2393(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2394(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.value.font.extends = f.variables.value.font.extends.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2393(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2394(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.value.font.extends)
 }
 
 #[rustfmt::skip]
-fn rebuild_2393(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2394(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_nullable(&i.variables.value.font.extends, "variables.value.font.extends", &mut total.variables.value.font.extends, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2394(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2395(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.value.font.family = f.variables.value.font.family.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2394(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2395(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.value.font.family)
 }
 
 #[rustfmt::skip]
-fn rebuild_2394(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2395(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.value.font.family, "variables.value.font.family", &mut total.variables.value.font.family, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2395(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2396(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.value.font.line_height = f.variables.value.font.line_height.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2395(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2396(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.value.font.line_height)
 }
 
 #[rustfmt::skip]
-fn rebuild_2395(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2396(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.value.font.line_height, "variables.value.font.line_height", &mut total.variables.value.font.line_height, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2396(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2397(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.value.font.size = f.variables.value.font.size.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2396(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2397(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.value.font.size)
 }
 
 #[rustfmt::skip]
-fn rebuild_2396(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2397(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.value.font.size, "variables.value.font.size", &mut total.variables.value.font.size, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2397(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2398(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.value.font.style = f.variables.value.font.style.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2397(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2398(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.value.font.style)
 }
 
 #[rustfmt::skip]
-fn rebuild_2397(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2398(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.value.font.style, "variables.value.font.style", &mut total.variables.value.font.style, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2398(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2399(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.value.font.weight = f.variables.value.font.weight.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2398(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2399(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.value.font.weight)
 }
 
 #[rustfmt::skip]
-fn rebuild_2398(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2399(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.value.font.weight, "variables.value.font.weight", &mut total.variables.value.font.weight, unset);
 }
 
 #[rustfmt::skip]
-fn copy_2399(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
+fn copy_2400(f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
     i.variables.visible = f.variables.visible.clone();
 }
 
 #[rustfmt::skip]
-fn unset_2399(f: &crate::style::style::StylePatch) -> bool {
+fn unset_2400(f: &crate::style::style::StylePatch) -> bool {
     ::model_core::Empty::is_empty(&f.variables.visible)
 }
 
 #[rustfmt::skip]
-fn rebuild_2399(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
+fn rebuild_2400(total: &mut crate::style::style::Style, i: &crate::style::style::StylePatch, unset: &mut Vec<String>) {
     ::model_core::cascade::rebuild_field(&i.variables.visible, "variables.visible", &mut total.variables.visible, unset);
 }
 
-static PATHS: [&str; 2400] = [
+static PATHS: [&str; 2401] = [
     "accent",
     "annotations",
     "annotations.band",
@@ -54202,6 +54217,7 @@ static PATHS: [&str; 2400] = [
     "charts.table.header.overflow",
     "charts.table.header.visible",
     "charts.table.header_overflow",
+    "charts.table.hide_underscore_columns",
     "charts.table.more_rows",
     "charts.table.more_rows.font",
     "charts.table.more_rows.font.case",
@@ -54768,7 +54784,7 @@ static PATHS: [&str; 2400] = [
     "variables.visible",
 ];
 
-static PARENT: [u16; 2400] = [
+static PARENT: [u16; 2401] = [
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
     1,
@@ -56606,572 +56622,573 @@ static PARENT: [u16; 2400] = [
     1813,
     1748,
     1748,
-    1836,
+    1748,
     1837,
-    1837,
-    1837,
-    1837,
-    1837,
-    1837,
-    1837,
-    1837,
-    1837,
+    1838,
+    1838,
+    1838,
+    1838,
+    1838,
+    1838,
+    1838,
+    1838,
+    1838,
     1748,
     1748,
-    1848,
-    1848,
-    1848,
-    1848,
+    1849,
+    1849,
+    1849,
+    1849,
     1748,
-    1853,
-    1853,
-    1853,
+    1854,
+    1854,
+    1854,
     1748,
-    1857,
-    1857,
-    1857,
-    1857,
-    1857,
-    1857,
-    1857,
-    1857,
+    1858,
+    1858,
+    1858,
+    1858,
+    1858,
+    1858,
+    1858,
+    1858,
     1748,
     1748,
-    1867,
+    1868,
+    1869,
+    1869,
+    1869,
+    1869,
+    1869,
     1868,
     1868,
-    1868,
-    1868,
-    1868,
-    1867,
-    1867,
-    1875,
     1876,
+    1877,
+    1877,
+    1879,
+    1879,
+    1879,
+    1879,
+    1877,
     1876,
-    1878,
-    1878,
-    1878,
-    1878,
-    1876,
-    1875,
-    1884,
-    1884,
-    1886,
-    1886,
-    1886,
-    1886,
-    1884,
-    1867,
-    1892,
+    1885,
+    1885,
+    1887,
+    1887,
+    1887,
+    1887,
+    1885,
+    1868,
+    1893,
     1748,
-    1894,
-    1894,
-    1896,
-    1896,
-    1896,
-    1896,
-    1896,
-    1896,
-    1896,
-    1896,
-    1896,
-    1894,
-    1894,
+    1895,
+    1895,
+    1897,
+    1897,
+    1897,
+    1897,
+    1897,
+    1897,
+    1897,
+    1897,
+    1897,
+    1895,
+    1895,
     1748,
-    1908,
-    1908,
-    1908,
-    1908,
-    1908,
+    1909,
+    1909,
+    1909,
+    1909,
+    1909,
     1748,
-    1914,
     1915,
-    1914,
-    1917,
-    1917,
-    1919,
-    1917,
-    1917,
-    1917,
-    1923,
-    1923,
-    1923,
-    1923,
-    1923,
-    1923,
-    1923,
-    1923,
-    1923,
-    1914,
-    1914,
-    1934,
-    1934,
-    1914,
-    1937,
+    1916,
+    1915,
+    1918,
+    1918,
+    1920,
+    1918,
+    1918,
+    1918,
+    1924,
+    1924,
+    1924,
+    1924,
+    1924,
+    1924,
+    1924,
+    1924,
+    1924,
+    1915,
+    1915,
+    1935,
+    1935,
+    1915,
     1938,
-    1937,
-    1937,
-    1937,
-    1914,
-    1943,
-    1943,
-    1945,
-    1945,
-    1945,
-    1945,
-    1945,
-    1914,
-    1951,
-    1951,
-    1951,
-    1951,
-    1914,
-    1956,
-    1956,
+    1939,
+    1938,
+    1938,
+    1938,
+    1915,
+    1944,
+    1944,
+    1946,
+    1946,
+    1946,
+    1946,
+    1946,
+    1915,
+    1952,
+    1952,
+    1952,
+    1952,
+    1915,
+    1957,
+    1957,
     1748,
     1748,
     1748,
     1748,
-    1962,
     1963,
+    1964,
+    1964,
+    1964,
+    1964,
+    1964,
+    1964,
+    1964,
+    1964,
+    1964,
     1963,
-    1963,
-    1963,
-    1963,
-    1963,
-    1963,
-    1963,
-    1963,
-    1962,
     1748,
     1748,
     1748,
     179,
-    1977,
-    1977,
-    1979,
-    1979,
-    1979,
-    1979,
-    1979,
-    1979,
-    1979,
-    1979,
-    1979,
-    1977,
-    1977,
-    1977,
-    1977,
-    1992,
-    1992,
-    1992,
-    1992,
-    1977,
-    1997,
+    1978,
+    1978,
+    1980,
+    1980,
+    1980,
+    1980,
+    1980,
+    1980,
+    1980,
+    1980,
+    1980,
+    1978,
+    1978,
+    1978,
+    1978,
+    1993,
+    1993,
+    1993,
+    1993,
+    1978,
     1998,
+    1999,
+    1999,
+    1999,
+    1999,
+    1999,
+    1999,
+    1999,
+    1999,
+    1999,
     1998,
-    1998,
-    1998,
-    1998,
-    1998,
-    1998,
-    1998,
-    1998,
-    1997,
-    1977,
-    2009,
-    2009,
-    2009,
-    2009,
+    1978,
+    2010,
+    2010,
+    2010,
+    2010,
     179,
-    2014,
-    2014,
-    2014,
-    2017,
-    2017,
-    2017,
-    2014,
-    2021,
-    2021,
-    2021,
-    2021,
-    2021,
-    2021,
-    2021,
-    2021,
-    2021,
-    2014,
-    2014,
-    2014,
-    2014,
-    2034,
+    2015,
+    2015,
+    2015,
+    2018,
+    2018,
+    2018,
+    2015,
+    2022,
+    2022,
+    2022,
+    2022,
+    2022,
+    2022,
+    2022,
+    2022,
+    2022,
+    2015,
+    2015,
+    2015,
+    2015,
     2035,
-    2035,
-    2035,
-    2035,
-    2035,
-    2035,
-    2035,
-    2035,
-    2035,
-    2014,
-    2014,
-    2014,
-    2014,
-    2048,
-    2048,
-    2048,
-    2048,
-    2014,
-    2053,
-    2014,
-    2055,
-    2055,
-    2014,
-    2058,
+    2036,
+    2036,
+    2036,
+    2036,
+    2036,
+    2036,
+    2036,
+    2036,
+    2036,
+    2015,
+    2015,
+    2015,
+    2015,
+    2049,
+    2049,
+    2049,
+    2049,
+    2015,
+    2054,
+    2015,
+    2056,
+    2056,
+    2015,
     2059,
-    2059,
-    2059,
-    2059,
-    2059,
-    2059,
-    2059,
-    2059,
-    2059,
+    2060,
+    2060,
+    2060,
+    2060,
+    2060,
+    2060,
+    2060,
+    2060,
+    2060,
     179,
-    2069,
-    2069,
-    2069,
-    2069,
-    2069,
+    2070,
+    2070,
+    2070,
+    2070,
+    2070,
     ::model_core::cascade::NONE,
-    2075,
-    2075,
-    2075,
-    2075,
-    2075,
-    2075,
-    2075,
-    2075,
-    2075,
-    ::model_core::cascade::NONE,
-    ::model_core::cascade::NONE,
-    2086,
-    2086,
-    2088,
-    2088,
-    2088,
-    2088,
-    2088,
-    2086,
-    2094,
-    2094,
-    2094,
-    2094,
-    2094,
-    2094,
-    2094,
-    2094,
-    2094,
-    2086,
-    2086,
-    2086,
-    2086,
+    2076,
+    2076,
+    2076,
+    2076,
+    2076,
+    2076,
+    2076,
+    2076,
+    2076,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    2109,
-    2109,
-    2109,
-    2109,
-    2109,
+    2087,
+    2087,
+    2089,
+    2089,
+    2089,
+    2089,
+    2089,
+    2087,
+    2095,
+    2095,
+    2095,
+    2095,
+    2095,
+    2095,
+    2095,
+    2095,
+    2095,
+    2087,
+    2087,
+    2087,
+    2087,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    2116,
+    2110,
+    2110,
+    2110,
+    2110,
+    2110,
+    ::model_core::cascade::NONE,
+    ::model_core::cascade::NONE,
     2117,
-    2116,
-    2119,
+    2118,
+    2117,
     2120,
     2121,
+    2122,
+    2121,
     2120,
-    2119,
-    2124,
-    2124,
-    2124,
-    2124,
-    2124,
-    2124,
-    2119,
-    2119,
-    2132,
-    2132,
-    2132,
-    2132,
-    2132,
-    2132,
-    2132,
-    2132,
-    2132,
-    2119,
-    2119,
-    2119,
-    2116,
-    2145,
-    2145,
-    2116,
-    2148,
-    2116,
-    2150,
-    2150,
-    2150,
-    2153,
-    2153,
-    2153,
-    2153,
-    2153,
-    2153,
-    2150,
-    2160,
-    2160,
-    2160,
-    2160,
-    2160,
-    2160,
-    2160,
-    2160,
-    2160,
-    2150,
-    2150,
-    2150,
-    2150,
-    2150,
-    2150,
+    2125,
+    2125,
+    2125,
+    2125,
+    2125,
+    2125,
+    2120,
+    2120,
+    2133,
+    2133,
+    2133,
+    2133,
+    2133,
+    2133,
+    2133,
+    2133,
+    2133,
+    2120,
+    2120,
+    2120,
+    2117,
+    2146,
+    2146,
+    2117,
+    2149,
+    2117,
+    2151,
+    2151,
+    2151,
+    2154,
+    2154,
+    2154,
+    2154,
+    2154,
+    2154,
+    2151,
+    2161,
+    2161,
+    2161,
+    2161,
+    2161,
+    2161,
+    2161,
+    2161,
+    2161,
+    2151,
+    2151,
+    2151,
+    2151,
+    2151,
+    2151,
     ::model_core::cascade::NONE,
-    2176,
-    2176,
-    2176,
-    2176,
-    ::model_core::cascade::NONE,
-    ::model_core::cascade::NONE,
-    2182,
-    2182,
-    2182,
-    2182,
+    2177,
+    2177,
+    2177,
+    2177,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    2188,
-    2188,
-    2190,
-    2190,
-    2192,
-    2192,
-    2192,
-    2192,
-    2192,
-    2192,
-    2192,
-    2192,
-    2192,
-    2190,
+    2183,
+    2183,
+    2183,
+    2183,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    2204,
-    2204,
-    2206,
-    2206,
-    2208,
-    2208,
-    2208,
-    2208,
-    2208,
-    2208,
-    2206,
-    2204,
-    2216,
-    2204,
-    2218,
-    2218,
-    2220,
-    2220,
-    2220,
-    2220,
-    2220,
-    2220,
-    2218,
-    2218,
-    2218,
-    2204,
-    2230,
+    2189,
+    2189,
+    2191,
+    2191,
+    2193,
+    2193,
+    2193,
+    2193,
+    2193,
+    2193,
+    2193,
+    2193,
+    2193,
+    2191,
+    ::model_core::cascade::NONE,
+    ::model_core::cascade::NONE,
+    2205,
+    2205,
+    2207,
+    2207,
+    2209,
+    2209,
+    2209,
+    2209,
+    2209,
+    2209,
+    2207,
+    2205,
+    2217,
+    2205,
+    2219,
+    2219,
+    2221,
+    2221,
+    2221,
+    2221,
+    2221,
+    2221,
+    2219,
+    2219,
+    2219,
+    2205,
+    2231,
+    2232,
+    2232,
+    2232,
+    2232,
     2231,
     2231,
-    2231,
-    2231,
-    2230,
-    2230,
-    2204,
-    2238,
-    2238,
-    2238,
-    2238,
-    2204,
-    2243,
-    2243,
-    2243,
-    2243,
-    2243,
-    2243,
-    2243,
-    2243,
-    2243,
-    2204,
-    2253,
-    2253,
-    2204,
-    2256,
-    2256,
+    2205,
+    2239,
+    2239,
+    2239,
+    2239,
+    2205,
+    2244,
+    2244,
+    2244,
+    2244,
+    2244,
+    2244,
+    2244,
+    2244,
+    2244,
+    2205,
+    2254,
+    2254,
+    2205,
+    2257,
+    2257,
     ::model_core::cascade::NONE,
-    2259,
-    2259,
-    2261,
-    2261,
-    2261,
-    2261,
-    2261,
-    2261,
-    2261,
-    2261,
-    2261,
-    2259,
-    2259,
-    2259,
-    2259,
-    2259,
+    2260,
+    2260,
+    2262,
+    2262,
+    2262,
+    2262,
+    2262,
+    2262,
+    2262,
+    2262,
+    2262,
+    2260,
+    2260,
+    2260,
+    2260,
+    2260,
     ::model_core::cascade::NONE,
-    2276,
-    2276,
-    2278,
-    2278,
-    2278,
-    2278,
-    2278,
-    2278,
-    2278,
-    2278,
-    2278,
-    2276,
-    2276,
-    2276,
-    2276,
-    2291,
-    2291,
-    2291,
-    2291,
-    2276,
-    2296,
+    2277,
+    2277,
+    2279,
+    2279,
+    2279,
+    2279,
+    2279,
+    2279,
+    2279,
+    2279,
+    2279,
+    2277,
+    2277,
+    2277,
+    2277,
+    2292,
+    2292,
+    2292,
+    2292,
+    2277,
     2297,
+    2298,
+    2298,
+    2298,
+    2298,
+    2298,
+    2298,
+    2298,
+    2298,
+    2298,
     2297,
-    2297,
-    2297,
-    2297,
-    2297,
-    2297,
-    2297,
-    2297,
-    2296,
-    2276,
-    2308,
-    2308,
-    2308,
-    2308,
+    2277,
+    2309,
+    2309,
+    2309,
+    2309,
     ::model_core::cascade::NONE,
-    2313,
-    2313,
-    2313,
-    2313,
+    2314,
+    2314,
+    2314,
+    2314,
     ::model_core::cascade::NONE,
-    2318,
+    2319,
+    2320,
+    2320,
+    2320,
+    2320,
+    2320,
+    2320,
+    2319,
+    2319,
+    2319,
+    2329,
+    2329,
+    2329,
+    2329,
+    2329,
+    2329,
+    2329,
+    2329,
+    2329,
+    2319,
+    2319,
+    2340,
+    2340,
+    2342,
+    2340,
+    2340,
+    2340,
+    2346,
+    2346,
+    2346,
+    2346,
+    2340,
+    2351,
+    2351,
+    2351,
+    2340,
+    2355,
+    2355,
+    2355,
+    2355,
+    2355,
+    2355,
+    2319,
+    2362,
+    2363,
+    2363,
+    2363,
+    2363,
+    2363,
+    2363,
+    2363,
+    2363,
+    2363,
+    2319,
+    2319,
+    2374,
+    2375,
+    2375,
+    2375,
+    2375,
+    2375,
+    2375,
+    2375,
+    2375,
+    2375,
     2319,
     2319,
     2319,
     2319,
     2319,
+    2389,
+    2390,
+    2390,
+    2390,
+    2390,
+    2390,
+    2390,
+    2390,
+    2390,
+    2390,
     2319,
-    2318,
-    2318,
-    2318,
-    2328,
-    2328,
-    2328,
-    2328,
-    2328,
-    2328,
-    2328,
-    2328,
-    2328,
-    2318,
-    2318,
-    2339,
-    2339,
-    2341,
-    2339,
-    2339,
-    2339,
-    2345,
-    2345,
-    2345,
-    2345,
-    2339,
-    2350,
-    2350,
-    2350,
-    2339,
-    2354,
-    2354,
-    2354,
-    2354,
-    2354,
-    2354,
-    2318,
-    2361,
-    2362,
-    2362,
-    2362,
-    2362,
-    2362,
-    2362,
-    2362,
-    2362,
-    2362,
-    2318,
-    2318,
-    2373,
-    2374,
-    2374,
-    2374,
-    2374,
-    2374,
-    2374,
-    2374,
-    2374,
-    2374,
-    2318,
-    2318,
-    2318,
-    2318,
-    2318,
-    2388,
-    2389,
-    2389,
-    2389,
-    2389,
-    2389,
-    2389,
-    2389,
-    2389,
-    2389,
-    2318,
 ];
 
-static OWNER: [u16; 2400] = [
+static OWNER: [u16; 2401] = [
     0,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
@@ -59008,9 +59025,9 @@ static OWNER: [u16; 2400] = [
     1833,
     1834,
     1835,
+    1836,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    1838,
     1839,
     1840,
     1841,
@@ -59020,17 +59037,17 @@ static OWNER: [u16; 2400] = [
     1845,
     1846,
     1847,
+    1848,
     ::model_core::cascade::NONE,
-    1849,
     1850,
     1851,
     1852,
+    1853,
     ::model_core::cascade::NONE,
-    1854,
     1855,
     1856,
+    1857,
     ::model_core::cascade::NONE,
-    1858,
     1859,
     1860,
     1861,
@@ -59039,37 +59056,37 @@ static OWNER: [u16; 2400] = [
     1864,
     1865,
     1866,
+    1867,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    1869,
     1870,
     1871,
     1872,
     1873,
     1874,
+    1875,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    1877,
+    1878,
     ::model_core::cascade::NONE,
-    1879,
     1880,
     1881,
     1882,
     1883,
+    1884,
     ::model_core::cascade::NONE,
-    1885,
+    1886,
     ::model_core::cascade::NONE,
-    1887,
     1888,
     1889,
     1890,
     1891,
     1892,
-    1892,
+    1893,
+    1893,
     ::model_core::cascade::NONE,
-    1895,
+    1896,
     ::model_core::cascade::NONE,
-    1897,
     1898,
     1899,
     1900,
@@ -59080,23 +59097,23 @@ static OWNER: [u16; 2400] = [
     1905,
     1906,
     1907,
+    1908,
     ::model_core::cascade::NONE,
-    1909,
     1910,
     1911,
     1912,
     1913,
+    1914,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    1916,
+    1917,
     ::model_core::cascade::NONE,
-    1918,
+    1919,
     ::model_core::cascade::NONE,
-    1920,
     1921,
     1922,
+    1923,
     ::model_core::cascade::NONE,
-    1924,
     1925,
     1926,
     1927,
@@ -59106,37 +59123,37 @@ static OWNER: [u16; 2400] = [
     1931,
     1932,
     1933,
+    1934,
     ::model_core::cascade::NONE,
-    1935,
     1936,
+    1937,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    1939,
     1940,
     1941,
     1942,
+    1943,
     ::model_core::cascade::NONE,
-    1944,
+    1945,
     ::model_core::cascade::NONE,
-    1946,
     1947,
     1948,
     1949,
     1950,
+    1951,
     ::model_core::cascade::NONE,
-    1952,
     1953,
     1954,
     1955,
+    1956,
     ::model_core::cascade::NONE,
-    1957,
     1958,
     1959,
     1960,
     1961,
+    1962,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    1964,
     1965,
     1966,
     1967,
@@ -59149,10 +59166,10 @@ static OWNER: [u16; 2400] = [
     1974,
     1975,
     1976,
+    1977,
     ::model_core::cascade::NONE,
-    1978,
+    1979,
     ::model_core::cascade::NONE,
-    1980,
     1981,
     1982,
     1983,
@@ -59164,14 +59181,14 @@ static OWNER: [u16; 2400] = [
     1989,
     1990,
     1991,
+    1992,
     ::model_core::cascade::NONE,
-    1993,
     1994,
     1995,
     1996,
+    1997,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    1999,
     2000,
     2001,
     2002,
@@ -59181,20 +59198,20 @@ static OWNER: [u16; 2400] = [
     2006,
     2007,
     2008,
+    2009,
     ::model_core::cascade::NONE,
-    2010,
     2011,
     2012,
     2013,
+    2014,
     ::model_core::cascade::NONE,
-    2015,
     2016,
+    2017,
     ::model_core::cascade::NONE,
-    2018,
     2019,
     2020,
+    2021,
     ::model_core::cascade::NONE,
-    2022,
     2023,
     2024,
     2025,
@@ -59206,9 +59223,9 @@ static OWNER: [u16; 2400] = [
     2031,
     2032,
     2033,
+    2034,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    2036,
     2037,
     2038,
     2039,
@@ -59220,19 +59237,19 @@ static OWNER: [u16; 2400] = [
     2045,
     2046,
     2047,
+    2048,
     ::model_core::cascade::NONE,
-    2049,
     2050,
     2051,
     2052,
+    2053,
     ::model_core::cascade::NONE,
-    2054,
+    2055,
     ::model_core::cascade::NONE,
-    2056,
     2057,
+    2058,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    2060,
     2061,
     2062,
     2063,
@@ -59241,14 +59258,14 @@ static OWNER: [u16; 2400] = [
     2066,
     2067,
     2068,
+    2069,
     ::model_core::cascade::NONE,
-    2070,
     2071,
     2072,
     2073,
     2074,
+    2075,
     ::model_core::cascade::NONE,
-    2076,
     2077,
     2078,
     2079,
@@ -59258,16 +59275,16 @@ static OWNER: [u16; 2400] = [
     2083,
     2084,
     2085,
+    2086,
     ::model_core::cascade::NONE,
-    2087,
+    2088,
     ::model_core::cascade::NONE,
-    2089,
     2090,
     2091,
     2092,
     2093,
+    2094,
     ::model_core::cascade::NONE,
-    2095,
     2096,
     2097,
     2098,
@@ -59281,31 +59298,31 @@ static OWNER: [u16; 2400] = [
     2106,
     2107,
     2108,
+    2109,
     ::model_core::cascade::NONE,
-    2110,
     2111,
     2112,
     2113,
     2114,
     2115,
+    2116,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    2118,
+    2119,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    2122,
     2123,
+    2124,
     ::model_core::cascade::NONE,
-    2125,
     2126,
     2127,
     2128,
     2129,
     2130,
     2131,
+    2132,
     ::model_core::cascade::NONE,
-    2133,
     2134,
     2135,
     2136,
@@ -59317,23 +59334,23 @@ static OWNER: [u16; 2400] = [
     2142,
     2143,
     2144,
+    2145,
     ::model_core::cascade::NONE,
-    2146,
     2147,
+    2148,
     ::model_core::cascade::NONE,
-    2149,
+    2150,
     ::model_core::cascade::NONE,
-    2151,
     2152,
+    2153,
     ::model_core::cascade::NONE,
-    2154,
     2155,
     2156,
     2157,
     2158,
     2159,
+    2160,
     ::model_core::cascade::NONE,
-    2161,
     2162,
     2163,
     2164,
@@ -59349,23 +59366,23 @@ static OWNER: [u16; 2400] = [
     2174,
     2175,
     2176,
-    2176,
-    2176,
-    2176,
-    2176,
-    2181,
+    2177,
+    2177,
+    2177,
+    2177,
+    2177,
     2182,
-    2182,
-    2182,
-    2182,
-    2182,
-    2187,
+    2183,
+    2183,
+    2183,
+    2183,
+    2183,
+    2188,
     ::model_core::cascade::NONE,
-    2189,
+    2190,
     ::model_core::cascade::NONE,
-    2191,
+    2192,
     ::model_core::cascade::NONE,
-    2193,
     2194,
     2195,
     2196,
@@ -59376,24 +59393,24 @@ static OWNER: [u16; 2400] = [
     2201,
     2202,
     2203,
+    2204,
     ::model_core::cascade::NONE,
-    2205,
+    2206,
     ::model_core::cascade::NONE,
-    2207,
+    2208,
     ::model_core::cascade::NONE,
-    2209,
     2210,
     2211,
     2212,
     2213,
     2214,
     2215,
+    2216,
     ::model_core::cascade::NONE,
-    2217,
+    2218,
     ::model_core::cascade::NONE,
-    2219,
+    2220,
     ::model_core::cascade::NONE,
-    2221,
     2222,
     2223,
     2224,
@@ -59402,21 +59419,21 @@ static OWNER: [u16; 2400] = [
     2227,
     2228,
     2229,
+    2230,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    2232,
     2233,
     2234,
     2235,
     2236,
     2237,
+    2238,
     ::model_core::cascade::NONE,
-    2239,
     2240,
     2241,
     2242,
+    2243,
     ::model_core::cascade::NONE,
-    2244,
     2245,
     2246,
     2247,
@@ -59425,16 +59442,16 @@ static OWNER: [u16; 2400] = [
     2250,
     2251,
     2252,
+    2253,
     ::model_core::cascade::NONE,
-    2254,
     2255,
+    2256,
     ::model_core::cascade::NONE,
-    2257,
     2258,
+    2259,
     ::model_core::cascade::NONE,
-    2260,
+    2261,
     ::model_core::cascade::NONE,
-    2262,
     2263,
     2264,
     2265,
@@ -59448,10 +59465,10 @@ static OWNER: [u16; 2400] = [
     2273,
     2274,
     2275,
+    2276,
     ::model_core::cascade::NONE,
-    2277,
+    2278,
     ::model_core::cascade::NONE,
-    2279,
     2280,
     2281,
     2282,
@@ -59463,14 +59480,14 @@ static OWNER: [u16; 2400] = [
     2288,
     2289,
     2290,
+    2291,
     ::model_core::cascade::NONE,
-    2292,
     2293,
     2294,
     2295,
+    2296,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    2298,
     2299,
     2300,
     2301,
@@ -59480,19 +59497,19 @@ static OWNER: [u16; 2400] = [
     2305,
     2306,
     2307,
+    2308,
     ::model_core::cascade::NONE,
-    2309,
     2310,
     2311,
     2312,
+    2313,
     ::model_core::cascade::NONE,
-    2314,
     2315,
     2316,
     2317,
+    2318,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    2320,
     2321,
     2322,
     2323,
@@ -59500,8 +59517,8 @@ static OWNER: [u16; 2400] = [
     2325,
     2326,
     2327,
+    2328,
     ::model_core::cascade::NONE,
-    2329,
     2330,
     2331,
     2332,
@@ -59511,31 +59528,31 @@ static OWNER: [u16; 2400] = [
     2336,
     2337,
     2338,
+    2339,
     ::model_core::cascade::NONE,
-    2340,
+    2341,
     ::model_core::cascade::NONE,
-    2342,
     2343,
     2344,
+    2345,
     ::model_core::cascade::NONE,
-    2346,
     2347,
     2348,
     2349,
+    2350,
     ::model_core::cascade::NONE,
-    2351,
     2352,
     2353,
+    2354,
     ::model_core::cascade::NONE,
-    2355,
     2356,
     2357,
     2358,
     2359,
     2360,
+    2361,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    2363,
     2364,
     2365,
     2366,
@@ -59545,9 +59562,9 @@ static OWNER: [u16; 2400] = [
     2370,
     2371,
     2372,
+    2373,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    2375,
     2376,
     2377,
     2378,
@@ -59560,9 +59577,9 @@ static OWNER: [u16; 2400] = [
     2385,
     2386,
     2387,
+    2388,
     ::model_core::cascade::NONE,
     ::model_core::cascade::NONE,
-    2390,
     2391,
     2392,
     2393,
@@ -59572,60 +59589,61 @@ static OWNER: [u16; 2400] = [
     2397,
     2398,
     2399,
+    2400,
 ];
 
 #[rustfmt::skip]
 type Link = (u16, u16, fn(&mut crate::style::style::StylePatch, &mut Vec<::model_core::Refused>));
 
 static LINKS: [Link; 1120] = [
-    (2080, 2302, link_0),
-    (2077, 2299, link_1),
-    (2082, 2304, link_2),
-    (2084, 2306, link_3),
-    (2083, 2305, link_4),
-    (2078, 2300, link_5),
-    (2076, 2298, link_6),
-    (2081, 2303, link_7),
-    (2080, 2283, link_8),
-    (2077, 2280, link_9),
-    (2082, 2285, link_10),
-    (2084, 2287, link_11),
-    (2083, 2286, link_12),
-    (2078, 2281, link_13),
-    (2076, 2279, link_14),
-    (2081, 2284, link_15),
-    (2080, 2248, link_16),
-    (2077, 2245, link_17),
-    (2082, 2250, link_18),
-    (2084, 2252, link_19),
-    (2083, 2251, link_20),
-    (2078, 2246, link_21),
-    (2076, 2244, link_22),
-    (2081, 2249, link_23),
-    (2080, 2197, link_24),
-    (2077, 2194, link_25),
-    (2082, 2199, link_26),
-    (2084, 2201, link_27),
-    (2083, 2200, link_28),
-    (2078, 2195, link_29),
-    (2076, 2193, link_30),
-    (2081, 2198, link_31),
+    (2081, 2303, link_0),
+    (2078, 2300, link_1),
+    (2083, 2305, link_2),
+    (2085, 2307, link_3),
+    (2084, 2306, link_4),
+    (2079, 2301, link_5),
+    (2077, 2299, link_6),
+    (2082, 2304, link_7),
+    (2081, 2284, link_8),
+    (2078, 2281, link_9),
+    (2083, 2286, link_10),
+    (2085, 2288, link_11),
+    (2084, 2287, link_12),
+    (2079, 2282, link_13),
+    (2077, 2280, link_14),
+    (2082, 2285, link_15),
+    (2081, 2249, link_16),
+    (2078, 2246, link_17),
+    (2083, 2251, link_18),
+    (2085, 2253, link_19),
+    (2084, 2252, link_20),
+    (2079, 2247, link_21),
+    (2077, 2245, link_22),
+    (2082, 2250, link_23),
+    (2081, 2198, link_24),
+    (2078, 2195, link_25),
+    (2083, 2200, link_26),
+    (2085, 2202, link_27),
+    (2084, 2201, link_28),
+    (2079, 2196, link_29),
+    (2077, 2194, link_30),
+    (2082, 2199, link_31),
     (626, 1048, link_32),
-    (2080, 627, link_33),
+    (2081, 627, link_33),
     (627, 1049, link_34),
-    (2077, 624, link_35),
+    (2078, 624, link_35),
     (624, 1046, link_36),
-    (2082, 629, link_37),
+    (2083, 629, link_37),
     (629, 1051, link_38),
-    (2084, 631, link_39),
+    (2085, 631, link_39),
     (631, 1053, link_40),
-    (2083, 630, link_41),
+    (2084, 630, link_41),
     (630, 1052, link_42),
-    (2078, 625, link_43),
+    (2079, 625, link_43),
     (625, 1047, link_44),
-    (2076, 623, link_45),
+    (2077, 623, link_45),
     (623, 1045, link_46),
-    (2081, 628, link_47),
+    (2082, 628, link_47),
     (628, 1050, link_48),
     (626, 1071, link_49),
     (627, 1072, link_50),
@@ -59637,64 +59655,64 @@ static LINKS: [Link; 1120] = [
     (623, 1068, link_56),
     (628, 1073, link_57),
     (170, 402, link_58),
-    (2277, 1978, link_59),
-    (2311, 2012, link_60),
-    (2310, 2011, link_61),
-    (2309, 2010, link_62),
-    (2312, 2013, link_63),
-    (2289, 1990, link_64),
-    (2290, 1991, link_65),
-    (2292, 1993, link_66),
-    (2293, 1994, link_67),
-    (2295, 1996, link_68),
-    (2294, 1995, link_69),
-    (2288, 1989, link_70),
-    (2301, 2002, link_71),
-    (2302, 2003, link_72),
-    (2299, 2000, link_73),
-    (2304, 2005, link_74),
-    (2306, 2007, link_75),
-    (2305, 2006, link_76),
-    (2300, 2001, link_77),
-    (2298, 1999, link_78),
-    (2303, 2004, link_79),
-    (2307, 2008, link_80),
-    (2282, 1983, link_81),
-    (2283, 1984, link_82),
-    (2280, 1981, link_83),
-    (2285, 1986, link_84),
-    (2287, 1988, link_85),
-    (2286, 1987, link_86),
-    (2281, 1982, link_87),
-    (2279, 1980, link_88),
-    (2284, 1985, link_89),
-    (626, 2025, link_90),
-    (627, 2026, link_91),
-    (624, 2023, link_92),
-    (629, 2028, link_93),
-    (631, 2030, link_94),
-    (630, 2029, link_95),
-    (625, 2024, link_96),
-    (623, 2022, link_97),
-    (628, 2027, link_98),
-    (626, 2039, link_99),
-    (627, 2040, link_100),
-    (624, 2037, link_101),
-    (629, 2042, link_102),
-    (631, 2044, link_103),
-    (630, 2043, link_104),
-    (625, 2038, link_105),
-    (623, 2036, link_106),
-    (628, 2041, link_107),
-    (626, 2063, link_108),
-    (627, 2064, link_109),
-    (624, 2061, link_110),
-    (629, 2066, link_111),
-    (631, 2068, link_112),
-    (630, 2067, link_113),
-    (625, 2062, link_114),
-    (623, 2060, link_115),
-    (628, 2065, link_116),
+    (2278, 1979, link_59),
+    (2312, 2013, link_60),
+    (2311, 2012, link_61),
+    (2310, 2011, link_62),
+    (2313, 2014, link_63),
+    (2290, 1991, link_64),
+    (2291, 1992, link_65),
+    (2293, 1994, link_66),
+    (2294, 1995, link_67),
+    (2296, 1997, link_68),
+    (2295, 1996, link_69),
+    (2289, 1990, link_70),
+    (2302, 2003, link_71),
+    (2303, 2004, link_72),
+    (2300, 2001, link_73),
+    (2305, 2006, link_74),
+    (2307, 2008, link_75),
+    (2306, 2007, link_76),
+    (2301, 2002, link_77),
+    (2299, 2000, link_78),
+    (2304, 2005, link_79),
+    (2308, 2009, link_80),
+    (2283, 1984, link_81),
+    (2284, 1985, link_82),
+    (2281, 1982, link_83),
+    (2286, 1987, link_84),
+    (2288, 1989, link_85),
+    (2287, 1988, link_86),
+    (2282, 1983, link_87),
+    (2280, 1981, link_88),
+    (2285, 1986, link_89),
+    (626, 2026, link_90),
+    (627, 2027, link_91),
+    (624, 2024, link_92),
+    (629, 2029, link_93),
+    (631, 2031, link_94),
+    (630, 2030, link_95),
+    (625, 2025, link_96),
+    (623, 2023, link_97),
+    (628, 2028, link_98),
+    (626, 2040, link_99),
+    (627, 2041, link_100),
+    (624, 2038, link_101),
+    (629, 2043, link_102),
+    (631, 2045, link_103),
+    (630, 2044, link_104),
+    (625, 2039, link_105),
+    (623, 2037, link_106),
+    (628, 2042, link_107),
+    (626, 2064, link_108),
+    (627, 2065, link_109),
+    (624, 2062, link_110),
+    (629, 2067, link_111),
+    (631, 2069, link_112),
+    (630, 2068, link_113),
+    (625, 2063, link_114),
+    (623, 2061, link_115),
+    (628, 2066, link_116),
     (626, 339, link_117),
     (627, 340, link_118),
     (624, 337, link_119),
@@ -59740,7 +59758,7 @@ static LINKS: [Link; 1120] = [
     (625, 1379, link_159),
     (623, 1377, link_160),
     (628, 1382, link_161),
-    (2077, 1342, link_162),
+    (2078, 1342, link_162),
     (1552, 509, link_163),
     (1390, 500, link_164),
     (1391, 501, link_165),
@@ -60450,7 +60468,7 @@ static LINKS: [Link; 1120] = [
     (945, 955, link_869),
     (941, 951, link_870),
     (939, 949, link_871),
-    (1991, 957, link_872),
+    (1992, 957, link_872),
     (942, 970, link_873),
     (943, 971, link_874),
     (940, 968, link_875),
@@ -60473,11 +60491,11 @@ static LINKS: [Link; 1120] = [
     (557, 927, link_892),
     (559, 929, link_893),
     (558, 928, link_894),
-    (1552, 1866, link_895),
-    (1390, 1850, link_896),
-    (1391, 1851, link_897),
-    (1392, 1852, link_898),
-    (1389, 1849, link_899),
+    (1552, 1867, link_895),
+    (1390, 1851, link_896),
+    (1391, 1852, link_897),
+    (1392, 1853, link_898),
+    (1389, 1850, link_899),
     (626, 1807, link_900),
     (627, 1808, link_901),
     (624, 1805, link_902),
@@ -60502,33 +60520,33 @@ static LINKS: [Link; 1120] = [
     (1806, 1824, link_921),
     (1804, 1822, link_922),
     (1809, 1827, link_923),
-    (1807, 1900, link_924),
-    (1808, 1901, link_925),
-    (1805, 1898, link_926),
-    (1810, 1903, link_927),
-    (1812, 1905, link_928),
-    (1811, 1904, link_929),
-    (1806, 1899, link_930),
-    (1804, 1897, link_931),
-    (1809, 1902, link_932),
-    (1807, 1967, link_933),
-    (1808, 1968, link_934),
-    (1805, 1965, link_935),
-    (1810, 1970, link_936),
-    (1812, 1972, link_937),
-    (1811, 1971, link_938),
-    (1806, 1966, link_939),
-    (1804, 1964, link_940),
-    (1809, 1969, link_941),
-    (1807, 1841, link_942),
-    (1808, 1842, link_943),
-    (1805, 1839, link_944),
-    (1810, 1844, link_945),
-    (1812, 1846, link_946),
-    (1811, 1845, link_947),
-    (1806, 1840, link_948),
-    (1804, 1838, link_949),
-    (1809, 1843, link_950),
+    (1807, 1901, link_924),
+    (1808, 1902, link_925),
+    (1805, 1899, link_926),
+    (1810, 1904, link_927),
+    (1812, 1906, link_928),
+    (1811, 1905, link_929),
+    (1806, 1900, link_930),
+    (1804, 1898, link_931),
+    (1809, 1903, link_932),
+    (1807, 1968, link_933),
+    (1808, 1969, link_934),
+    (1805, 1966, link_935),
+    (1810, 1971, link_936),
+    (1812, 1973, link_937),
+    (1811, 1972, link_938),
+    (1806, 1967, link_939),
+    (1804, 1965, link_940),
+    (1809, 1970, link_941),
+    (1807, 1842, link_942),
+    (1808, 1843, link_943),
+    (1805, 1840, link_944),
+    (1810, 1845, link_945),
+    (1812, 1847, link_946),
+    (1811, 1846, link_947),
+    (1806, 1841, link_948),
+    (1804, 1839, link_949),
+    (1809, 1844, link_950),
     (1807, 1797, link_951),
     (1808, 1798, link_952),
     (1805, 1795, link_953),
@@ -60538,15 +60556,15 @@ static LINKS: [Link; 1120] = [
     (1806, 1796, link_957),
     (1804, 1794, link_958),
     (1809, 1799, link_959),
-    (626, 1927, link_960),
-    (627, 1928, link_961),
-    (624, 1925, link_962),
-    (629, 1930, link_963),
-    (631, 1932, link_964),
-    (630, 1931, link_965),
-    (625, 1926, link_966),
-    (623, 1924, link_967),
-    (628, 1929, link_968),
+    (626, 1928, link_960),
+    (627, 1929, link_961),
+    (624, 1926, link_962),
+    (629, 1931, link_963),
+    (631, 1933, link_964),
+    (630, 1932, link_965),
+    (625, 1927, link_966),
+    (623, 1925, link_967),
+    (628, 1930, link_968),
     (1390, 1700, link_969),
     (1391, 1701, link_970),
     (1392, 1702, link_971),
@@ -60630,90 +60648,90 @@ static LINKS: [Link; 1120] = [
     (1384, 161, link_1049),
     (1382, 159, link_1050),
     (1378, 156, link_1051),
-    (2080, 2165, link_1052),
-    (2077, 2162, link_1053),
-    (2082, 2167, link_1054),
-    (2084, 2169, link_1055),
-    (2083, 2168, link_1056),
-    (2078, 2163, link_1057),
-    (2076, 2161, link_1058),
-    (2081, 2166, link_1059),
-    (2080, 2137, link_1060),
-    (2077, 2134, link_1061),
-    (2082, 2139, link_1062),
-    (2084, 2141, link_1063),
-    (2083, 2140, link_1064),
-    (2078, 2135, link_1065),
-    (2076, 2133, link_1066),
-    (2081, 2138, link_1067),
-    (2080, 2333, link_1068),
-    (2077, 2330, link_1069),
-    (2082, 2335, link_1070),
-    (2084, 2337, link_1071),
-    (2083, 2336, link_1072),
-    (2078, 2331, link_1073),
-    (2076, 2329, link_1074),
-    (2081, 2334, link_1075),
-    (2332, 2366, link_1076),
-    (2333, 2367, link_1077),
-    (2330, 2364, link_1078),
-    (2335, 2369, link_1079),
-    (2337, 2371, link_1080),
-    (2336, 2370, link_1081),
-    (2331, 2365, link_1082),
-    (2329, 2363, link_1083),
-    (2334, 2368, link_1084),
-    (2332, 2393, link_1085),
-    (2333, 2394, link_1086),
-    (2330, 2391, link_1087),
-    (2335, 2396, link_1088),
-    (2337, 2398, link_1089),
-    (2336, 2397, link_1090),
-    (2331, 2392, link_1091),
-    (2329, 2390, link_1092),
-    (2334, 2395, link_1093),
-    (2332, 2378, link_1094),
-    (2333, 2379, link_1095),
-    (2330, 2376, link_1096),
-    (2335, 2381, link_1097),
-    (2337, 2383, link_1098),
-    (2336, 2382, link_1099),
-    (2331, 2377, link_1100),
-    (2329, 2375, link_1101),
-    (2334, 2380, link_1102),
-    (0, 2343, link_1103),
-    (2080, 2099, link_1104),
-    (2077, 2096, link_1105),
-    (2082, 2101, link_1106),
-    (2084, 2103, link_1107),
-    (2083, 2102, link_1108),
-    (2078, 2097, link_1109),
-    (2076, 2095, link_1110),
-    (2081, 2100, link_1111),
-    (2080, 2266, link_1112),
-    (2077, 2263, link_1113),
-    (2082, 2268, link_1114),
-    (2084, 2270, link_1115),
-    (2083, 2269, link_1116),
-    (2078, 2264, link_1117),
-    (2076, 2262, link_1118),
-    (2081, 2267, link_1119),
+    (2081, 2166, link_1052),
+    (2078, 2163, link_1053),
+    (2083, 2168, link_1054),
+    (2085, 2170, link_1055),
+    (2084, 2169, link_1056),
+    (2079, 2164, link_1057),
+    (2077, 2162, link_1058),
+    (2082, 2167, link_1059),
+    (2081, 2138, link_1060),
+    (2078, 2135, link_1061),
+    (2083, 2140, link_1062),
+    (2085, 2142, link_1063),
+    (2084, 2141, link_1064),
+    (2079, 2136, link_1065),
+    (2077, 2134, link_1066),
+    (2082, 2139, link_1067),
+    (2081, 2334, link_1068),
+    (2078, 2331, link_1069),
+    (2083, 2336, link_1070),
+    (2085, 2338, link_1071),
+    (2084, 2337, link_1072),
+    (2079, 2332, link_1073),
+    (2077, 2330, link_1074),
+    (2082, 2335, link_1075),
+    (2333, 2367, link_1076),
+    (2334, 2368, link_1077),
+    (2331, 2365, link_1078),
+    (2336, 2370, link_1079),
+    (2338, 2372, link_1080),
+    (2337, 2371, link_1081),
+    (2332, 2366, link_1082),
+    (2330, 2364, link_1083),
+    (2335, 2369, link_1084),
+    (2333, 2394, link_1085),
+    (2334, 2395, link_1086),
+    (2331, 2392, link_1087),
+    (2336, 2397, link_1088),
+    (2338, 2399, link_1089),
+    (2337, 2398, link_1090),
+    (2332, 2393, link_1091),
+    (2330, 2391, link_1092),
+    (2335, 2396, link_1093),
+    (2333, 2379, link_1094),
+    (2334, 2380, link_1095),
+    (2331, 2377, link_1096),
+    (2336, 2382, link_1097),
+    (2338, 2384, link_1098),
+    (2337, 2383, link_1099),
+    (2332, 2378, link_1100),
+    (2330, 2376, link_1101),
+    (2335, 2381, link_1102),
+    (0, 2344, link_1103),
+    (2081, 2100, link_1104),
+    (2078, 2097, link_1105),
+    (2083, 2102, link_1106),
+    (2085, 2104, link_1107),
+    (2084, 2103, link_1108),
+    (2079, 2098, link_1109),
+    (2077, 2096, link_1110),
+    (2082, 2101, link_1111),
+    (2081, 2267, link_1112),
+    (2078, 2264, link_1113),
+    (2083, 2269, link_1114),
+    (2085, 2271, link_1115),
+    (2084, 2270, link_1116),
+    (2079, 2265, link_1117),
+    (2077, 2263, link_1118),
+    (2082, 2268, link_1119),
 ];
 
 #[rustfmt::skip]
-static BY_FROM_START: [u32; 2401] = [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 41, 41, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 70, 93, 115, 137, 159, 180, 202, 224, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 252, 255, 261, 267, 273, 279, 285, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 292, 293, 294, 295, 296, 297, 298, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 303, 304, 305, 305, 306, 307, 307, 308, 309, 310, 311, 312, 312, 314, 314, 316, 318, 320, 322, 324, 326, 328, 328, 330, 332, 334, 336, 338, 340, 342, 344, 346, 348, 350, 352, 354, 356, 358, 360, 362, 364, 366, 368, 370, 372, 372, 374, 376, 376, 378, 380, 382, 384, 386, 388, 390, 392, 394, 396, 398, 398, 398, 398, 398, 399, 400, 400, 401, 401, 402, 403, 404, 405, 406, 407, 408, 408, 409, 410, 411, 412, 414, 414, 416, 418, 420, 422, 424, 426, 428, 428, 430, 434, 438, 440, 444, 444, 448, 452, 456, 456, 460, 464, 468, 472, 476, 480, 484, 488, 492, 496, 500, 500, 501, 504, 505, 508, 511, 512, 515, 515, 517, 517, 519, 522, 525, 527, 530, 530, 531, 532, 532, 532, 533, 534, 534, 535, 536, 537, 538, 539, 540, 541, 542, 543, 544, 545, 546, 547, 548, 548, 549, 550, 551, 552, 553, 553, 558, 559, 565, 575, 581, 591, 601, 611, 621, 631, 641, 650, 659, 659, 672, 685, 698, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 728, 734, 740, 746, 752, 752, 759, 766, 773, 780, 787, 794, 801, 808, 815, 815, 815, 821, 827, 833, 839, 845, 851, 857, 863, 869, 875, 881, 887, 893, 899, 899, 899, 905, 911, 917, 923, 923, 929, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 940, 945, 950, 955, 960, 965, 970, 975, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 991, 1002, 1012, 1012, 1022, 1032, 1042, 1052, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1063, 1063, 1064, 1065, 1066, 1067, 1068, 1069, 1070, 1071, 1072, 1073, 1074, 1075, 1075, 1076, 1077, 1078, 1079, 1079, 1079, 1080, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1089, 1089, 1090, 1091, 1092, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1096, 1099, 1102, 1105, 1108, 1111, 1114, 1117, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120];
+static BY_FROM_START: [u32; 2402] = [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 41, 41, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 70, 93, 115, 137, 159, 180, 202, 224, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 246, 252, 255, 261, 267, 273, 279, 285, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 291, 292, 293, 294, 295, 296, 297, 298, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 299, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 302, 303, 304, 305, 305, 306, 307, 307, 308, 309, 310, 311, 312, 312, 314, 314, 316, 318, 320, 322, 324, 326, 328, 328, 330, 332, 334, 336, 338, 340, 342, 344, 346, 348, 350, 352, 354, 356, 358, 360, 362, 364, 366, 368, 370, 372, 372, 374, 376, 376, 378, 380, 382, 384, 386, 388, 390, 392, 394, 396, 398, 398, 398, 398, 398, 399, 400, 400, 401, 401, 402, 403, 404, 405, 406, 407, 408, 408, 409, 410, 411, 412, 414, 414, 416, 418, 420, 422, 424, 426, 428, 428, 430, 434, 438, 440, 444, 444, 448, 452, 456, 456, 460, 464, 468, 472, 476, 480, 484, 488, 492, 496, 500, 500, 501, 504, 505, 508, 511, 512, 515, 515, 517, 517, 519, 522, 525, 527, 530, 530, 531, 532, 532, 532, 533, 534, 534, 535, 536, 537, 538, 539, 540, 541, 542, 543, 544, 545, 546, 547, 548, 548, 549, 550, 551, 552, 553, 553, 558, 559, 565, 575, 581, 591, 601, 611, 621, 631, 641, 650, 659, 659, 672, 685, 698, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 711, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 722, 728, 734, 740, 746, 752, 752, 759, 766, 773, 780, 787, 794, 801, 808, 815, 815, 815, 821, 827, 833, 839, 845, 851, 857, 863, 869, 875, 881, 887, 893, 899, 899, 899, 905, 911, 917, 923, 923, 929, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 940, 945, 950, 955, 960, 965, 970, 975, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 980, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 981, 991, 1002, 1012, 1012, 1022, 1032, 1042, 1052, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1062, 1063, 1063, 1064, 1065, 1066, 1067, 1068, 1069, 1070, 1071, 1072, 1073, 1074, 1075, 1075, 1076, 1077, 1078, 1079, 1079, 1079, 1080, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1089, 1089, 1090, 1091, 1092, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1096, 1099, 1102, 1105, 1108, 1111, 1114, 1117, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120, 1120];
 #[rustfmt::skip]
 static BY_FROM_ITEMS: [u16; 1120] = [1103, 58, 168, 294, 385, 466, 534, 627, 688, 718, 701, 731, 890, 910, 703, 733, 892, 912, 705, 735, 894, 914, 704, 734, 893, 913, 702, 732, 891, 911, 700, 730, 889, 909, 171, 297, 388, 469, 537, 630, 757, 172, 298, 389, 470, 538, 631, 758, 46, 56, 97, 106, 115, 124, 133, 142, 151, 160, 187, 698, 728, 766, 775, 817, 831, 907, 967, 980, 993, 1002, 36, 51, 92, 101, 110, 119, 128, 137, 146, 155, 177, 191, 693, 723, 761, 770, 812, 826, 902, 962, 975, 988, 997, 44, 55, 96, 105, 114, 123, 132, 141, 150, 159, 185, 697, 727, 765, 774, 816, 830, 906, 966, 979, 992, 1001, 32, 49, 90, 99, 108, 117, 126, 135, 144, 153, 173, 691, 721, 759, 768, 810, 824, 900, 960, 973, 986, 995, 34, 50, 91, 100, 109, 118, 127, 136, 145, 154, 175, 692, 722, 760, 769, 811, 825, 901, 961, 974, 987, 996, 48, 57, 98, 107, 116, 125, 134, 143, 152, 161, 189, 699, 729, 767, 776, 818, 908, 968, 981, 994, 1003, 38, 52, 93, 102, 111, 120, 129, 138, 147, 156, 179, 694, 724, 762, 771, 813, 827, 903, 963, 976, 989, 998, 42, 54, 95, 104, 113, 122, 131, 140, 149, 158, 183, 696, 726, 764, 773, 815, 829, 905, 965, 978, 991, 1000, 40, 53, 94, 103, 112, 121, 130, 139, 148, 157, 181, 695, 725, 763, 772, 814, 828, 904, 964, 977, 990, 999, 839, 847, 855, 863, 871, 880, 834, 866, 875, 838, 846, 854, 862, 870, 879, 832, 840, 848, 856, 864, 873, 833, 841, 849, 857, 865, 874, 835, 843, 851, 859, 867, 876, 837, 845, 853, 861, 869, 878, 836, 844, 852, 860, 868, 877, 888, 883, 887, 881, 882, 884, 886, 885, 842, 850, 858, 426, 425, 424, 433, 427, 430, 428, 432, 431, 429, 234, 581, 227, 574, 229, 576, 231, 578, 230, 577, 228, 575, 226, 573, 235, 582, 242, 589, 243, 590, 240, 587, 245, 591, 261, 599, 251, 594, 259, 598, 247, 592, 249, 593, 263, 600, 253, 595, 257, 597, 255, 596, 241, 588, 264, 601, 265, 602, 239, 586, 237, 584, 236, 583, 238, 585, 232, 579, 233, 580, 268, 605, 269, 606, 277, 614, 272, 609, 276, 613, 270, 607, 271, 608, 278, 615, 273, 610, 275, 612, 274, 611, 267, 604, 266, 603, 1035, 1037, 1036, 706, 707, 710, 708, 712, 711, 709, 339, 338, 340, 341, 342, 439, 346, 443, 347, 444, 344, 441, 348, 445, 345, 442, 349, 446, 343, 440, 335, 436, 333, 434, 1032, 1042, 337, 438, 1034, 1044, 336, 437, 334, 435, 1033, 1043, 351, 448, 506, 737, 355, 452, 510, 741, 354, 451, 509, 740, 360, 457, 515, 746, 361, 458, 516, 747, 358, 455, 513, 744, 362, 459, 517, 748, 359, 456, 514, 745, 363, 460, 518, 749, 357, 454, 512, 743, 353, 450, 508, 739, 352, 449, 507, 738, 350, 447, 505, 736, 356, 453, 511, 742, 666, 667, 1014, 1038, 670, 668, 1015, 1039, 672, 1017, 1041, 671, 669, 1016, 1040, 374, 616, 377, 619, 375, 617, 1004, 379, 621, 1006, 378, 620, 376, 618, 1005, 779, 778, 797, 796, 794, 789, 793, 787, 788, 795, 790, 792, 791, 786, 785, 798, 799, 777, 782, 780, 784, 783, 781, 288, 373, 528, 682, 809, 244, 260, 286, 371, 526, 680, 807, 250, 281, 366, 521, 675, 802, 1013, 1024, 1031, 1051, 258, 285, 370, 525, 679, 806, 246, 279, 364, 519, 673, 800, 1007, 1018, 1025, 1045, 248, 280, 365, 520, 674, 801, 1008, 1019, 1026, 1046, 262, 287, 372, 527, 681, 808, 1012, 1023, 1030, 1050, 252, 282, 367, 522, 676, 803, 1009, 1020, 1027, 1047, 256, 284, 369, 524, 678, 805, 1011, 1022, 1029, 1049, 254, 283, 368, 523, 677, 804, 1010, 1021, 1028, 1048, 170, 296, 387, 468, 536, 629, 690, 720, 756, 169, 295, 386, 467, 535, 628, 689, 719, 755, 167, 293, 384, 465, 533, 626, 687, 717, 754, 823, 899, 972, 985, 164, 290, 381, 462, 530, 623, 684, 714, 751, 820, 896, 969, 982, 165, 291, 382, 463, 531, 624, 685, 715, 752, 821, 897, 970, 983, 166, 292, 383, 464, 532, 625, 686, 716, 753, 822, 898, 971, 984, 163, 289, 380, 461, 529, 622, 683, 713, 750, 819, 895, 194, 310, 401, 482, 550, 643, 196, 312, 403, 484, 552, 645, 197, 313, 404, 485, 553, 646, 193, 309, 400, 481, 549, 642, 195, 311, 402, 483, 551, 644, 188, 218, 306, 397, 478, 546, 639, 178, 208, 301, 392, 473, 541, 634, 186, 216, 305, 396, 477, 545, 638, 174, 204, 299, 390, 471, 539, 632, 176, 206, 300, 391, 472, 540, 633, 190, 220, 307, 398, 479, 547, 640, 180, 210, 302, 393, 474, 542, 635, 184, 214, 304, 395, 476, 544, 637, 182, 212, 303, 394, 475, 543, 636, 219, 327, 418, 499, 567, 660, 209, 322, 413, 494, 562, 655, 217, 326, 417, 498, 566, 659, 205, 320, 411, 492, 560, 653, 207, 321, 412, 493, 561, 654, 221, 328, 419, 500, 568, 661, 211, 323, 414, 495, 563, 656, 215, 325, 416, 497, 565, 658, 213, 324, 415, 496, 564, 657, 224, 331, 422, 503, 571, 664, 192, 308, 399, 480, 548, 641, 223, 330, 421, 502, 570, 663, 222, 329, 420, 501, 569, 662, 225, 332, 423, 504, 572, 665, 201, 317, 408, 489, 557, 650, 203, 319, 410, 491, 559, 652, 200, 316, 407, 488, 556, 649, 202, 318, 409, 490, 558, 651, 199, 315, 406, 487, 555, 648, 198, 314, 405, 486, 554, 647, 922, 931, 940, 949, 958, 917, 926, 935, 944, 953, 921, 930, 939, 948, 957, 915, 924, 933, 942, 951, 916, 925, 934, 943, 952, 923, 932, 941, 950, 959, 918, 927, 936, 945, 954, 920, 929, 938, 947, 956, 919, 928, 937, 946, 955, 872, 6, 14, 22, 30, 45, 1058, 1066, 1074, 1110, 1118, 1, 9, 17, 25, 35, 162, 1053, 1061, 1069, 1105, 1113, 5, 13, 21, 29, 43, 1057, 1065, 1073, 1109, 1117, 0, 8, 16, 24, 33, 1052, 1060, 1068, 1104, 1112, 7, 15, 23, 31, 47, 1059, 1067, 1075, 1111, 1119, 2, 10, 18, 26, 37, 1054, 1062, 1070, 1106, 1114, 4, 12, 20, 28, 41, 1056, 1064, 1072, 1108, 1116, 3, 11, 19, 27, 39, 1055, 1063, 1071, 1107, 1115, 59, 88, 83, 87, 81, 82, 89, 84, 86, 85, 70, 64, 65, 66, 67, 69, 68, 78, 73, 77, 71, 72, 79, 74, 76, 75, 80, 62, 61, 60, 63, 1083, 1092, 1101, 1078, 1087, 1096, 1082, 1091, 1100, 1076, 1085, 1094, 1077, 1086, 1095, 1084, 1093, 1102, 1079, 1088, 1097, 1081, 1090, 1099, 1080, 1089, 1098];
 
 #[rustfmt::skip]
-static BY_TO_START: [u32; 2401] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 6, 7, 8, 9, 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 12, 13, 14, 14, 14, 14, 14, 14, 15, 16, 17, 17, 17, 17, 17, 18, 19, 20, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 22, 23, 24, 25, 26, 27, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 29, 30, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 32, 33, 34, 35, 36, 37, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 39, 40, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 42, 43, 44, 45, 46, 47, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 49, 49, 49, 49, 49, 49, 49, 49, 50, 50, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 52, 53, 54, 54, 55, 56, 56, 57, 58, 59, 60, 61, 61, 62, 62, 63, 64, 65, 66, 67, 68, 69, 69, 70, 71, 72, 73, 74, 74, 75, 76, 77, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 90, 91, 92, 93, 94, 94, 94, 94, 94, 94, 94, 95, 95, 95, 95, 95, 96, 97, 98, 99, 100, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 109, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 123, 123, 124, 125, 126, 127, 127, 128, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 147, 147, 147, 147, 147, 147, 148, 148, 148, 149, 149, 149, 149, 149, 149, 149, 149, 150, 150, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 152, 152, 153, 154, 155, 156, 157, 158, 159, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 181, 182, 183, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 194, 195, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 206, 206, 206, 207, 208, 209, 210, 210, 210, 210, 210, 210, 210, 211, 211, 211, 211, 211, 212, 213, 214, 215, 216, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 225, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 239, 239, 240, 241, 242, 243, 243, 244, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 254, 254, 255, 256, 257, 258, 258, 258, 258, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 268, 269, 270, 270, 271, 272, 273, 274, 275, 275, 276, 276, 276, 276, 276, 277, 278, 279, 280, 281, 282, 282, 282, 282, 282, 282, 282, 282, 282, 282, 282, 282, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 291, 291, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 300, 301, 302, 303, 304, 305, 305, 305, 306, 306, 306, 306, 306, 306, 306, 306, 307, 307, 308, 308, 308, 308, 308, 308, 308, 308, 308, 308, 308, 308, 308, 308, 309, 310, 311, 312, 313, 314, 315, 315, 316, 316, 317, 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 327, 328, 329, 330, 331, 331, 331, 331, 331, 331, 331, 332, 332, 332, 333, 334, 335, 336, 337, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 346, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356, 357, 358, 359, 360, 360, 360, 361, 362, 363, 364, 364, 365, 366, 366, 366, 367, 367, 367, 367, 367, 367, 367, 367, 367, 368, 368, 369, 369, 369, 369, 369, 369, 369, 369, 369, 369, 369, 369, 369, 369, 370, 370, 371, 372, 373, 374, 375, 376, 377, 377, 378, 379, 380, 381, 382, 383, 384, 385, 386, 387, 388, 389, 390, 391, 392, 393, 394, 395, 396, 397, 398, 399, 399, 400, 401, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 412, 413, 413, 414, 415, 416, 417, 418, 419, 420, 420, 421, 422, 423, 424, 425, 425, 425, 426, 427, 428, 429, 430, 430, 431, 432, 433, 434, 435, 436, 437, 438, 439, 439, 439, 440, 441, 442, 443, 444, 445, 446, 447, 448, 449, 450, 451, 452, 453, 453, 453, 454, 455, 456, 457, 457, 458, 459, 459, 459, 459, 459, 459, 459, 459, 459, 459, 459, 460, 461, 462, 463, 464, 465, 465, 465, 465, 465, 465, 465, 465, 466, 467, 468, 469, 470, 471, 472, 473, 473, 473, 474, 475, 476, 477, 478, 479, 480, 481, 482, 482, 482, 483, 484, 485, 486, 487, 487, 487, 488, 489, 490, 491, 492, 493, 494, 495, 495, 495, 495, 495, 496, 497, 498, 499, 500, 501, 502, 503, 503, 503, 503, 503, 503, 503, 504, 505, 506, 507, 508, 509, 510, 511, 511, 511, 511, 511, 512, 513, 514, 515, 516, 517, 518, 519, 519, 519, 519, 519, 520, 521, 522, 523, 524, 525, 526, 527, 527, 527, 528, 529, 530, 531, 532, 533, 534, 535, 535, 535, 535, 535, 535, 535, 535, 535, 535, 535, 536, 537, 538, 539, 540, 541, 542, 543, 544, 544, 544, 544, 544, 544, 544, 544, 544, 544, 544, 544, 544, 544, 544, 545, 546, 547, 548, 549, 550, 551, 552, 553, 553, 553, 553, 553, 553, 553, 554, 554, 554, 554, 554, 554, 554, 554, 555, 555, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 557, 558, 559, 560, 561, 561, 562, 563, 564, 565, 566, 567, 568, 568, 569, 570, 571, 572, 573, 573, 574, 575, 576, 576, 577, 578, 579, 580, 581, 582, 583, 584, 585, 586, 587, 587, 588, 588, 589, 590, 591, 592, 593, 593, 594, 594, 595, 596, 597, 598, 599, 600, 601, 602, 603, 604, 605, 605, 606, 607, 608, 609, 610, 610, 610, 611, 612, 613, 614, 615, 615, 616, 617, 618, 619, 620, 621, 622, 623, 624, 624, 624, 625, 626, 627, 628, 629, 630, 631, 632, 633, 634, 635, 636, 637, 638, 638, 638, 639, 640, 641, 642, 642, 643, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 645, 646, 647, 648, 649, 650, 651, 652, 653, 654, 654, 654, 654, 654, 654, 654, 654, 654, 654, 654, 654, 654, 654, 655, 656, 657, 658, 659, 660, 661, 662, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 664, 664, 664, 664, 664, 664, 664, 664, 664, 664, 664, 664, 665, 666, 667, 668, 669, 670, 671, 672, 673, 673, 673, 673, 673, 673, 673, 673, 673, 673, 673, 673, 673, 673, 673, 674, 675, 676, 677, 678, 679, 680, 681, 682, 682, 682, 682, 682, 682, 682, 682, 682, 682, 682, 682, 683, 683, 684, 684, 684, 684, 684, 684, 684, 684, 684, 684, 684, 684, 684, 684, 684, 685, 686, 686, 686, 687, 688, 688, 689, 690, 691, 692, 693, 694, 695, 696, 697, 698, 699, 700, 701, 702, 702, 703, 704, 705, 706, 707, 707, 708, 708, 709, 710, 711, 712, 713, 714, 715, 716, 717, 718, 719, 719, 720, 721, 722, 723, 723, 723, 723, 723, 723, 723, 724, 724, 724, 724, 724, 725, 726, 727, 728, 729, 730, 731, 732, 733, 733, 733, 734, 735, 736, 737, 738, 739, 740, 741, 742, 742, 742, 743, 743, 743, 743, 743, 744, 745, 746, 747, 748, 749, 749, 749, 749, 749, 749, 749, 749, 749, 749, 749, 749, 749, 750, 751, 752, 753, 754, 755, 756, 757, 758, 758, 758, 758, 759, 760, 761, 761, 762, 763, 764, 765, 766, 767, 768, 769, 770, 771, 772, 773, 774, 774, 775, 776, 777, 778, 779, 779, 779, 779, 779, 780, 780, 780, 780, 780, 780, 780, 780, 781, 781, 782, 782, 782, 782, 782, 782, 782, 782, 782, 782, 782, 782, 782, 782, 783, 784, 785, 785, 786, 787, 788, 789, 790, 791, 792, 793, 794, 795, 796, 796, 797, 797, 798, 799, 800, 801, 802, 803, 804, 805, 806, 807, 808, 808, 809, 810, 811, 812, 813, 813, 813, 814, 815, 816, 817, 818, 818, 819, 820, 821, 822, 823, 824, 825, 826, 827, 827, 827, 828, 829, 830, 831, 832, 833, 834, 835, 836, 837, 838, 839, 840, 841, 841, 841, 842, 843, 844, 845, 845, 846, 847, 847, 847, 847, 848, 849, 849, 849, 850, 851, 852, 853, 854, 855, 856, 856, 856, 856, 856, 856, 856, 856, 856, 856, 856, 856, 856, 857, 858, 859, 860, 861, 862, 863, 864, 865, 865, 865, 865, 865, 865, 865, 865, 865, 866, 867, 868, 869, 869, 869, 869, 869, 869, 869, 869, 869, 869, 869, 869, 870, 871, 872, 873, 874, 875, 876, 877, 878, 878, 878, 879, 880, 881, 882, 883, 884, 885, 886, 887, 887, 888, 888, 888, 888, 888, 888, 888, 888, 888, 888, 888, 888, 888, 888, 888, 888, 889, 890, 891, 892, 893, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 895, 896, 897, 898, 899, 900, 901, 902, 903, 903, 904, 905, 906, 907, 908, 909, 910, 911, 912, 912, 912, 912, 912, 912, 912, 912, 912, 912, 913, 914, 915, 916, 917, 918, 919, 920, 921, 921, 921, 921, 921, 921, 921, 921, 922, 923, 924, 925, 926, 927, 928, 929, 930, 930, 930, 931, 932, 933, 934, 934, 934, 934, 934, 934, 934, 934, 934, 934, 934, 934, 934, 934, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 936, 937, 938, 939, 940, 941, 942, 943, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 945, 946, 947, 948, 949, 950, 951, 952, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 954, 955, 956, 957, 958, 959, 960, 961, 962, 962, 962, 962, 962, 962, 963, 963, 964, 965, 966, 967, 968, 969, 970, 971, 972, 973, 974, 975, 975, 976, 977, 978, 979, 979, 979, 980, 981, 982, 983, 984, 985, 986, 987, 988, 989, 989, 990, 991, 992, 993, 993, 993, 993, 993, 993, 993, 993, 993, 994, 995, 996, 997, 998, 999, 1000, 1001, 1002, 1002, 1002, 1002, 1002, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1012, 1013, 1014, 1015, 1016, 1017, 1018, 1019, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1021, 1022, 1023, 1023, 1024, 1025, 1026, 1027, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1029, 1030, 1031, 1031, 1032, 1033, 1034, 1035, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1037, 1038, 1039, 1039, 1040, 1041, 1042, 1043, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1045, 1046, 1047, 1047, 1048, 1049, 1050, 1051, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1053, 1054, 1055, 1055, 1056, 1057, 1058, 1059, 1060, 1060, 1060, 1060, 1060, 1060, 1060, 1060, 1060, 1060, 1061, 1062, 1063, 1063, 1064, 1065, 1066, 1067, 1068, 1068, 1068, 1068, 1068, 1068, 1068, 1068, 1068, 1069, 1070, 1071, 1071, 1072, 1073, 1074, 1075, 1076, 1076, 1076, 1076, 1076, 1076, 1076, 1076, 1076, 1076, 1076, 1077, 1078, 1079, 1079, 1080, 1081, 1082, 1083, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1085, 1086, 1087, 1087, 1088, 1089, 1090, 1091, 1092, 1092, 1092, 1092, 1092, 1092, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1094, 1095, 1096, 1097, 1098, 1099, 1100, 1101, 1102, 1102, 1102, 1102, 1103, 1104, 1105, 1106, 1107, 1108, 1109, 1110, 1111, 1111, 1111, 1111, 1111, 1111, 1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1119, 1120, 1120];
+static BY_TO_START: [u32; 2402] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 6, 7, 8, 9, 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 12, 13, 14, 14, 14, 14, 14, 14, 15, 16, 17, 17, 17, 17, 17, 18, 19, 20, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 22, 23, 24, 25, 26, 27, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 29, 30, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 32, 33, 34, 35, 36, 37, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 39, 40, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 42, 43, 44, 45, 46, 47, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 49, 49, 49, 49, 49, 49, 49, 49, 50, 50, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 52, 53, 54, 54, 55, 56, 56, 57, 58, 59, 60, 61, 61, 62, 62, 63, 64, 65, 66, 67, 68, 69, 69, 70, 71, 72, 73, 74, 74, 75, 76, 77, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 90, 91, 92, 93, 94, 94, 94, 94, 94, 94, 94, 95, 95, 95, 95, 95, 96, 97, 98, 99, 100, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 109, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 123, 123, 124, 125, 126, 127, 127, 128, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 147, 147, 147, 147, 147, 147, 148, 148, 148, 149, 149, 149, 149, 149, 149, 149, 149, 150, 150, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 151, 152, 152, 153, 154, 155, 156, 157, 158, 159, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 181, 182, 183, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 194, 195, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 206, 206, 206, 207, 208, 209, 210, 210, 210, 210, 210, 210, 210, 211, 211, 211, 211, 211, 212, 213, 214, 215, 216, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 225, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 239, 239, 240, 241, 242, 243, 243, 244, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 254, 254, 255, 256, 257, 258, 258, 258, 258, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 267, 268, 269, 270, 270, 271, 272, 273, 274, 275, 275, 276, 276, 276, 276, 276, 277, 278, 279, 280, 281, 282, 282, 282, 282, 282, 282, 282, 282, 282, 282, 282, 282, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 291, 291, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 300, 301, 302, 303, 304, 305, 305, 305, 306, 306, 306, 306, 306, 306, 306, 306, 307, 307, 308, 308, 308, 308, 308, 308, 308, 308, 308, 308, 308, 308, 308, 308, 309, 310, 311, 312, 313, 314, 315, 315, 316, 316, 317, 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 327, 328, 329, 330, 331, 331, 331, 331, 331, 331, 331, 332, 332, 332, 333, 334, 335, 336, 337, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 346, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356, 357, 358, 359, 360, 360, 360, 361, 362, 363, 364, 364, 365, 366, 366, 366, 367, 367, 367, 367, 367, 367, 367, 367, 367, 368, 368, 369, 369, 369, 369, 369, 369, 369, 369, 369, 369, 369, 369, 369, 369, 370, 370, 371, 372, 373, 374, 375, 376, 377, 377, 378, 379, 380, 381, 382, 383, 384, 385, 386, 387, 388, 389, 390, 391, 392, 393, 394, 395, 396, 397, 398, 399, 399, 400, 401, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 412, 413, 413, 414, 415, 416, 417, 418, 419, 420, 420, 421, 422, 423, 424, 425, 425, 425, 426, 427, 428, 429, 430, 430, 431, 432, 433, 434, 435, 436, 437, 438, 439, 439, 439, 440, 441, 442, 443, 444, 445, 446, 447, 448, 449, 450, 451, 452, 453, 453, 453, 454, 455, 456, 457, 457, 458, 459, 459, 459, 459, 459, 459, 459, 459, 459, 459, 459, 460, 461, 462, 463, 464, 465, 465, 465, 465, 465, 465, 465, 465, 466, 467, 468, 469, 470, 471, 472, 473, 473, 473, 474, 475, 476, 477, 478, 479, 480, 481, 482, 482, 482, 483, 484, 485, 486, 487, 487, 487, 488, 489, 490, 491, 492, 493, 494, 495, 495, 495, 495, 495, 496, 497, 498, 499, 500, 501, 502, 503, 503, 503, 503, 503, 503, 503, 504, 505, 506, 507, 508, 509, 510, 511, 511, 511, 511, 511, 512, 513, 514, 515, 516, 517, 518, 519, 519, 519, 519, 519, 520, 521, 522, 523, 524, 525, 526, 527, 527, 527, 528, 529, 530, 531, 532, 533, 534, 535, 535, 535, 535, 535, 535, 535, 535, 535, 535, 535, 536, 537, 538, 539, 540, 541, 542, 543, 544, 544, 544, 544, 544, 544, 544, 544, 544, 544, 544, 544, 544, 544, 544, 545, 546, 547, 548, 549, 550, 551, 552, 553, 553, 553, 553, 553, 553, 553, 554, 554, 554, 554, 554, 554, 554, 554, 555, 555, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 557, 558, 559, 560, 561, 561, 562, 563, 564, 565, 566, 567, 568, 568, 569, 570, 571, 572, 573, 573, 574, 575, 576, 576, 577, 578, 579, 580, 581, 582, 583, 584, 585, 586, 587, 587, 588, 588, 589, 590, 591, 592, 593, 593, 594, 594, 595, 596, 597, 598, 599, 600, 601, 602, 603, 604, 605, 605, 606, 607, 608, 609, 610, 610, 610, 611, 612, 613, 614, 615, 615, 616, 617, 618, 619, 620, 621, 622, 623, 624, 624, 624, 625, 626, 627, 628, 629, 630, 631, 632, 633, 634, 635, 636, 637, 638, 638, 638, 639, 640, 641, 642, 642, 643, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 644, 645, 646, 647, 648, 649, 650, 651, 652, 653, 654, 654, 654, 654, 654, 654, 654, 654, 654, 654, 654, 654, 654, 654, 655, 656, 657, 658, 659, 660, 661, 662, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 663, 664, 664, 664, 664, 664, 664, 664, 664, 664, 664, 664, 664, 665, 666, 667, 668, 669, 670, 671, 672, 673, 673, 673, 673, 673, 673, 673, 673, 673, 673, 673, 673, 673, 673, 673, 674, 675, 676, 677, 678, 679, 680, 681, 682, 682, 682, 682, 682, 682, 682, 682, 682, 682, 682, 682, 683, 683, 684, 684, 684, 684, 684, 684, 684, 684, 684, 684, 684, 684, 684, 684, 684, 685, 686, 686, 686, 687, 688, 688, 689, 690, 691, 692, 693, 694, 695, 696, 697, 698, 699, 700, 701, 702, 702, 703, 704, 705, 706, 707, 707, 708, 708, 709, 710, 711, 712, 713, 714, 715, 716, 717, 718, 719, 719, 720, 721, 722, 723, 723, 723, 723, 723, 723, 723, 724, 724, 724, 724, 724, 725, 726, 727, 728, 729, 730, 731, 732, 733, 733, 733, 734, 735, 736, 737, 738, 739, 740, 741, 742, 742, 742, 743, 743, 743, 743, 743, 744, 745, 746, 747, 748, 749, 749, 749, 749, 749, 749, 749, 749, 749, 749, 749, 749, 749, 750, 751, 752, 753, 754, 755, 756, 757, 758, 758, 758, 758, 759, 760, 761, 761, 762, 763, 764, 765, 766, 767, 768, 769, 770, 771, 772, 773, 774, 774, 775, 776, 777, 778, 779, 779, 779, 779, 779, 780, 780, 780, 780, 780, 780, 780, 780, 781, 781, 782, 782, 782, 782, 782, 782, 782, 782, 782, 782, 782, 782, 782, 782, 783, 784, 785, 785, 786, 787, 788, 789, 790, 791, 792, 793, 794, 795, 796, 796, 797, 797, 798, 799, 800, 801, 802, 803, 804, 805, 806, 807, 808, 808, 809, 810, 811, 812, 813, 813, 813, 814, 815, 816, 817, 818, 818, 819, 820, 821, 822, 823, 824, 825, 826, 827, 827, 827, 828, 829, 830, 831, 832, 833, 834, 835, 836, 837, 838, 839, 840, 841, 841, 841, 842, 843, 844, 845, 845, 846, 847, 847, 847, 847, 848, 849, 849, 849, 850, 851, 852, 853, 854, 855, 856, 856, 856, 856, 856, 856, 856, 856, 856, 856, 856, 856, 856, 857, 858, 859, 860, 861, 862, 863, 864, 865, 865, 865, 865, 865, 865, 865, 865, 865, 866, 867, 868, 869, 869, 869, 869, 869, 869, 869, 869, 869, 869, 869, 869, 870, 871, 872, 873, 874, 875, 876, 877, 878, 878, 878, 879, 880, 881, 882, 883, 884, 885, 886, 887, 887, 888, 888, 888, 888, 888, 888, 888, 888, 888, 888, 888, 888, 888, 888, 888, 888, 889, 890, 891, 892, 893, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 894, 895, 896, 897, 898, 899, 900, 901, 902, 903, 903, 904, 905, 906, 907, 908, 909, 910, 911, 912, 912, 912, 912, 912, 912, 912, 912, 912, 912, 913, 914, 915, 916, 917, 918, 919, 920, 921, 921, 921, 921, 921, 921, 921, 921, 921, 922, 923, 924, 925, 926, 927, 928, 929, 930, 930, 930, 931, 932, 933, 934, 934, 934, 934, 934, 934, 934, 934, 934, 934, 934, 934, 934, 934, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 935, 936, 937, 938, 939, 940, 941, 942, 943, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 944, 945, 946, 947, 948, 949, 950, 951, 952, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 953, 954, 955, 956, 957, 958, 959, 960, 961, 962, 962, 962, 962, 962, 962, 963, 963, 964, 965, 966, 967, 968, 969, 970, 971, 972, 973, 974, 975, 975, 976, 977, 978, 979, 979, 979, 980, 981, 982, 983, 984, 985, 986, 987, 988, 989, 989, 990, 991, 992, 993, 993, 993, 993, 993, 993, 993, 993, 993, 994, 995, 996, 997, 998, 999, 1000, 1001, 1002, 1002, 1002, 1002, 1002, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1011, 1012, 1013, 1014, 1015, 1016, 1017, 1018, 1019, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1020, 1021, 1022, 1023, 1023, 1024, 1025, 1026, 1027, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1029, 1030, 1031, 1031, 1032, 1033, 1034, 1035, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1036, 1037, 1038, 1039, 1039, 1040, 1041, 1042, 1043, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1044, 1045, 1046, 1047, 1047, 1048, 1049, 1050, 1051, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1052, 1053, 1054, 1055, 1055, 1056, 1057, 1058, 1059, 1060, 1060, 1060, 1060, 1060, 1060, 1060, 1060, 1060, 1060, 1061, 1062, 1063, 1063, 1064, 1065, 1066, 1067, 1068, 1068, 1068, 1068, 1068, 1068, 1068, 1068, 1068, 1069, 1070, 1071, 1071, 1072, 1073, 1074, 1075, 1076, 1076, 1076, 1076, 1076, 1076, 1076, 1076, 1076, 1076, 1076, 1077, 1078, 1079, 1079, 1080, 1081, 1082, 1083, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1084, 1085, 1086, 1087, 1087, 1088, 1089, 1090, 1091, 1092, 1092, 1092, 1092, 1092, 1092, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1093, 1094, 1095, 1096, 1097, 1098, 1099, 1100, 1101, 1102, 1102, 1102, 1102, 1103, 1104, 1105, 1106, 1107, 1108, 1109, 1110, 1111, 1111, 1111, 1111, 1111, 1111, 1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1119, 1120, 1120];
 #[rustfmt::skip]
 static BY_TO_ITEMS: [u16; 1120] = [1014, 1015, 1017, 1016, 1024, 1018, 1019, 1023, 1020, 1022, 1021, 1035, 1037, 1036, 1032, 1034, 1033, 1038, 1039, 1041, 1040, 1031, 1025, 1026, 1030, 1027, 1029, 1028, 1004, 1006, 1005, 1013, 1007, 1008, 1012, 1009, 1011, 1010, 1042, 1044, 1043, 1051, 1045, 1046, 1050, 1047, 1049, 1048, 385, 388, 389, 426, 425, 424, 433, 427, 430, 428, 432, 431, 429, 439, 443, 444, 441, 445, 442, 446, 440, 436, 434, 438, 437, 435, 448, 452, 451, 457, 458, 455, 459, 456, 460, 454, 450, 449, 447, 453, 387, 386, 384, 381, 382, 383, 380, 401, 403, 404, 400, 402, 397, 392, 396, 390, 391, 398, 393, 395, 394, 418, 413, 417, 411, 412, 419, 414, 416, 415, 422, 399, 421, 420, 423, 408, 410, 407, 409, 406, 405, 124, 119, 123, 117, 118, 125, 120, 122, 121, 133, 128, 132, 126, 127, 134, 129, 131, 130, 58, 168, 171, 172, 234, 227, 229, 231, 230, 228, 226, 235, 242, 243, 240, 245, 261, 251, 259, 247, 249, 263, 253, 257, 255, 241, 264, 265, 239, 237, 236, 238, 232, 233, 268, 269, 277, 272, 276, 270, 271, 278, 273, 275, 274, 267, 266, 288, 286, 281, 285, 279, 280, 287, 282, 284, 283, 170, 169, 167, 164, 165, 166, 163, 194, 196, 197, 193, 195, 188, 178, 186, 174, 176, 190, 180, 184, 182, 219, 209, 217, 205, 207, 221, 211, 215, 213, 224, 192, 223, 222, 225, 201, 203, 200, 202, 199, 198, 1002, 997, 1001, 995, 996, 1003, 998, 1000, 999, 985, 982, 983, 984, 993, 988, 992, 986, 987, 994, 989, 991, 990, 45, 35, 43, 33, 47, 37, 41, 39, 688, 701, 703, 705, 704, 702, 700, 698, 693, 697, 691, 692, 699, 694, 696, 695, 706, 707, 710, 708, 712, 711, 709, 690, 689, 687, 684, 685, 686, 683, 627, 630, 631, 666, 667, 670, 668, 672, 671, 669, 682, 680, 675, 679, 673, 674, 681, 676, 678, 677, 629, 628, 626, 623, 624, 625, 622, 643, 645, 646, 642, 644, 639, 634, 638, 632, 633, 640, 635, 637, 636, 660, 655, 659, 653, 654, 661, 656, 658, 657, 664, 641, 663, 662, 665, 650, 652, 649, 651, 648, 647, 534, 537, 538, 581, 574, 576, 578, 577, 575, 573, 582, 589, 590, 587, 591, 599, 594, 598, 592, 593, 600, 595, 597, 596, 588, 601, 602, 586, 584, 583, 585, 579, 580, 605, 606, 614, 609, 613, 607, 608, 615, 610, 612, 611, 604, 603, 616, 619, 617, 621, 620, 618, 536, 535, 533, 530, 531, 532, 529, 550, 552, 553, 549, 551, 546, 541, 545, 539, 540, 547, 542, 544, 543, 567, 562, 566, 560, 561, 568, 563, 565, 564, 571, 548, 570, 569, 572, 557, 559, 556, 558, 555, 554, 890, 892, 894, 893, 891, 889, 831, 826, 830, 824, 825, 827, 829, 828, 871, 866, 870, 864, 865, 867, 869, 868, 872, 823, 820, 821, 822, 819, 880, 875, 879, 873, 874, 876, 878, 877, 888, 883, 887, 881, 882, 884, 886, 885, 847, 842, 846, 840, 841, 843, 845, 844, 839, 834, 838, 832, 833, 835, 837, 836, 863, 858, 862, 856, 857, 859, 861, 860, 855, 850, 854, 848, 849, 851, 853, 852, 46, 36, 44, 32, 34, 48, 38, 42, 40, 56, 51, 55, 49, 50, 57, 52, 54, 53, 294, 297, 298, 339, 338, 340, 341, 342, 346, 347, 344, 348, 345, 349, 343, 335, 333, 337, 336, 334, 351, 355, 354, 360, 361, 358, 362, 359, 363, 357, 353, 352, 350, 356, 374, 377, 375, 379, 378, 376, 373, 371, 366, 370, 364, 365, 372, 367, 369, 368, 296, 295, 293, 290, 291, 292, 289, 310, 312, 313, 309, 311, 306, 301, 305, 299, 300, 307, 302, 304, 303, 327, 322, 326, 320, 321, 328, 323, 325, 324, 331, 308, 330, 329, 332, 317, 319, 316, 318, 315, 314, 244, 260, 250, 258, 246, 248, 262, 252, 256, 254, 142, 137, 141, 135, 136, 143, 138, 140, 139, 162, 151, 146, 150, 144, 145, 152, 147, 149, 148, 160, 155, 159, 153, 154, 161, 156, 158, 157, 757, 758, 779, 778, 797, 796, 794, 789, 793, 787, 788, 795, 790, 792, 791, 786, 785, 798, 799, 777, 782, 780, 784, 783, 781, 809, 807, 802, 806, 800, 801, 808, 803, 805, 804, 756, 755, 754, 751, 752, 753, 750, 775, 770, 774, 768, 769, 776, 771, 773, 772, 766, 761, 765, 759, 760, 767, 762, 764, 763, 718, 731, 733, 735, 734, 732, 730, 728, 723, 727, 721, 722, 729, 724, 726, 725, 737, 741, 740, 746, 747, 744, 748, 745, 749, 743, 739, 738, 736, 742, 720, 719, 717, 714, 715, 716, 713, 466, 469, 470, 506, 510, 509, 515, 516, 513, 517, 514, 518, 512, 508, 507, 505, 511, 528, 526, 521, 525, 519, 520, 527, 522, 524, 523, 468, 467, 465, 462, 463, 464, 461, 482, 484, 485, 481, 483, 478, 473, 477, 471, 472, 479, 474, 476, 475, 499, 494, 498, 492, 493, 500, 495, 497, 496, 503, 480, 502, 501, 504, 489, 491, 488, 490, 487, 486, 817, 812, 816, 810, 811, 818, 813, 815, 814, 980, 975, 979, 973, 974, 981, 976, 978, 977, 972, 969, 970, 971, 187, 177, 185, 173, 175, 189, 179, 183, 181, 218, 208, 216, 204, 206, 220, 210, 214, 212, 191, 910, 912, 914, 913, 911, 909, 958, 953, 957, 951, 952, 959, 954, 956, 955, 907, 902, 906, 900, 901, 908, 903, 905, 904, 922, 917, 921, 915, 916, 923, 918, 920, 919, 949, 944, 948, 942, 943, 950, 945, 947, 946, 899, 896, 897, 898, 895, 931, 926, 930, 924, 925, 932, 927, 929, 928, 967, 962, 966, 960, 961, 968, 963, 965, 964, 940, 935, 939, 933, 934, 941, 936, 938, 937, 59, 88, 83, 87, 81, 82, 89, 84, 86, 85, 70, 64, 65, 66, 67, 69, 68, 78, 73, 77, 71, 72, 79, 74, 76, 75, 80, 62, 61, 60, 63, 97, 92, 96, 90, 91, 98, 93, 95, 94, 106, 101, 105, 99, 100, 107, 102, 104, 103, 115, 110, 114, 108, 109, 116, 111, 113, 112, 1110, 1105, 1109, 1104, 1111, 1106, 1108, 1107, 1066, 1061, 1065, 1060, 1067, 1062, 1064, 1063, 1058, 1053, 1057, 1052, 1059, 1054, 1056, 1055, 30, 25, 29, 24, 31, 26, 28, 27, 22, 17, 21, 16, 23, 18, 20, 19, 1118, 1113, 1117, 1112, 1119, 1114, 1116, 1115, 14, 9, 13, 8, 15, 10, 12, 11, 6, 1, 5, 0, 7, 2, 4, 3, 1074, 1069, 1073, 1068, 1075, 1070, 1072, 1071, 1103, 1083, 1078, 1082, 1076, 1077, 1084, 1079, 1081, 1080, 1101, 1096, 1100, 1094, 1095, 1102, 1097, 1099, 1098, 1092, 1087, 1091, 1085, 1086, 1093, 1088, 1090, 1089];
 
 #[rustfmt::skip]
-static CHILDREN_START: [u32; 2401] = [0, 0, 4, 5, 7, 10, 10, 10, 13, 13, 13, 13, 20, 26, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 35, 35, 35, 35, 35, 35, 35, 35, 35, 35, 38, 38, 38, 38, 40, 41, 42, 45, 45, 45, 45, 49, 52, 52, 52, 55, 55, 55, 55, 59, 59, 59, 59, 62, 62, 62, 62, 66, 66, 66, 66, 69, 69, 69, 69, 77, 83, 83, 83, 83, 83, 85, 85, 85, 85, 85, 85, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 95, 95, 95, 95, 96, 98, 100, 100, 103, 103, 103, 103, 110, 116, 116, 116, 116, 116, 118, 118, 118, 118, 118, 118, 125, 125, 125, 125, 125, 125, 125, 125, 125, 125, 128, 128, 128, 128, 130, 131, 131, 134, 136, 136, 136, 139, 139, 139, 142, 142, 142, 142, 150, 156, 156, 156, 156, 156, 158, 158, 158, 158, 158, 158, 165, 165, 165, 165, 165, 165, 165, 165, 165, 165, 165, 168, 168, 168, 168, 168, 174, 174, 174, 174, 174, 174, 174, 174, 215, 236, 236, 236, 236, 236, 236, 236, 236, 236, 239, 241, 241, 241, 249, 249, 249, 249, 249, 249, 249, 249, 249, 249, 251, 251, 251, 251, 254, 258, 258, 258, 258, 261, 261, 261, 266, 266, 266, 266, 266, 266, 269, 269, 276, 276, 276, 276, 276, 276, 276, 276, 281, 281, 281, 281, 281, 281, 289, 289, 289, 289, 296, 296, 296, 296, 296, 296, 296, 296, 296, 296, 296, 296, 296, 296, 300, 300, 300, 300, 300, 305, 305, 305, 305, 305, 305, 305, 305, 305, 314, 319, 319, 319, 319, 319, 319, 328, 328, 328, 328, 328, 328, 328, 328, 328, 328, 329, 338, 338, 338, 338, 338, 338, 338, 338, 338, 338, 338, 338, 338, 338, 338, 340, 344, 344, 344, 344, 344, 346, 346, 346, 346, 346, 352, 359, 359, 359, 359, 362, 362, 362, 362, 366, 366, 366, 366, 366, 366, 366, 379, 379, 379, 379, 379, 379, 388, 388, 388, 388, 388, 388, 388, 388, 388, 388, 388, 388, 388, 388, 390, 390, 390, 390, 390, 393, 393, 393, 393, 400, 400, 406, 406, 407, 407, 408, 408, 409, 409, 409, 409, 409, 409, 409, 409, 409, 416, 416, 416, 416, 416, 416, 416, 416, 421, 421, 421, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 454, 454, 454, 454, 454, 454, 454, 454, 454, 457, 459, 459, 459, 467, 467, 467, 467, 467, 467, 467, 467, 467, 467, 469, 469, 469, 471, 471, 471, 471, 473, 483, 483, 489, 489, 489, 489, 489, 489, 489, 489, 497, 497, 497, 497, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 511, 511, 511, 520, 520, 520, 520, 520, 520, 520, 520, 520, 520, 520, 520, 522, 522, 531, 531, 531, 531, 531, 531, 531, 531, 531, 531, 531, 531, 531, 531, 535, 535, 535, 535, 535, 540, 540, 540, 540, 540, 540, 540, 540, 540, 549, 554, 554, 554, 554, 554, 554, 563, 563, 563, 563, 563, 563, 563, 563, 563, 563, 564, 573, 573, 573, 573, 573, 573, 573, 573, 573, 573, 573, 573, 573, 573, 573, 575, 579, 579, 579, 579, 579, 581, 581, 581, 581, 587, 587, 587, 587, 587, 587, 587, 595, 595, 601, 601, 601, 601, 601, 601, 601, 603, 612, 612, 612, 612, 612, 612, 612, 612, 612, 612, 612, 616, 616, 616, 616, 616, 616, 616, 618, 627, 627, 627, 627, 627, 627, 627, 627, 627, 627, 627, 627, 627, 630, 632, 632, 632, 640, 640, 640, 640, 640, 640, 640, 640, 640, 640, 640, 640, 640, 640, 649, 649, 649, 649, 649, 649, 649, 649, 649, 649, 662, 662, 662, 663, 663, 669, 669, 669, 669, 669, 669, 669, 671, 679, 679, 679, 679, 679, 679, 679, 679, 679, 679, 688, 688, 688, 688, 688, 688, 688, 688, 688, 688, 688, 689, 691, 691, 696, 696, 696, 696, 696, 696, 696, 696, 700, 700, 700, 700, 700, 700, 700, 717, 717, 717, 717, 717, 717, 717, 717, 720, 722, 722, 722, 730, 730, 730, 730, 730, 730, 730, 730, 730, 730, 730, 732, 734, 734, 739, 739, 739, 739, 739, 739, 741, 741, 750, 750, 750, 750, 750, 750, 750, 750, 750, 750, 750, 750, 754, 754, 754, 754, 754, 759, 759, 759, 759, 759, 759, 759, 768, 773, 773, 773, 773, 773, 773, 782, 782, 782, 782, 782, 782, 782, 782, 782, 782, 783, 792, 792, 792, 792, 792, 792, 792, 792, 792, 792, 792, 792, 792, 792, 792, 794, 798, 798, 798, 798, 798, 800, 800, 800, 800, 817, 817, 817, 817, 817, 817, 817, 817, 817, 820, 822, 822, 822, 830, 830, 830, 830, 830, 830, 830, 830, 830, 830, 830, 832, 842, 842, 848, 848, 848, 848, 848, 848, 848, 848, 856, 856, 856, 856, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 870, 870, 870, 879, 879, 879, 879, 879, 879, 879, 879, 879, 879, 879, 879, 881, 881, 886, 886, 886, 886, 886, 886, 886, 886, 890, 890, 890, 890, 890, 890, 899, 904, 904, 904, 904, 904, 904, 913, 913, 913, 913, 913, 913, 913, 913, 913, 913, 914, 923, 923, 923, 923, 923, 923, 923, 923, 923, 923, 923, 923, 923, 923, 923, 925, 929, 929, 929, 929, 929, 931, 931, 931, 931, 935, 935, 935, 935, 935, 948, 948, 948, 954, 954, 954, 954, 954, 954, 954, 958, 958, 958, 958, 958, 958, 966, 966, 966, 966, 966, 966, 966, 966, 966, 968, 976, 976, 976, 976, 976, 976, 976, 976, 976, 976, 976, 980, 980, 980, 980, 980, 980, 984, 992, 992, 992, 992, 992, 992, 992, 992, 992, 992, 996, 996, 1004, 1004, 1004, 1004, 1004, 1004, 1004, 1004, 1004, 1004, 1004, 1004, 1009, 1010, 1018, 1018, 1018, 1018, 1018, 1018, 1018, 1018, 1018, 1020, 1020, 1020, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1033, 1034, 1042, 1042, 1042, 1042, 1042, 1042, 1042, 1042, 1042, 1042, 1050, 1050, 1050, 1050, 1050, 1050, 1050, 1050, 1050, 1050, 1050, 1050, 1050, 1062, 1062, 1062, 1062, 1065, 1074, 1074, 1074, 1074, 1074, 1074, 1074, 1074, 1074, 1074, 1074, 1074, 1077, 1077, 1077, 1077, 1079, 1079, 1079, 1079, 1079, 1079, 1082, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1109, 1109, 1109, 1109, 1109, 1109, 1109, 1109, 1109, 1112, 1114, 1114, 1114, 1122, 1122, 1122, 1122, 1122, 1122, 1122, 1122, 1122, 1122, 1124, 1124, 1124, 1124, 1128, 1135, 1135, 1135, 1135, 1135, 1135, 1142, 1142, 1142, 1142, 1142, 1142, 1142, 1142, 1147, 1147, 1147, 1147, 1147, 1147, 1155, 1155, 1155, 1155, 1162, 1162, 1162, 1162, 1162, 1162, 1162, 1162, 1162, 1162, 1162, 1162, 1164, 1164, 1169, 1169, 1169, 1169, 1169, 1169, 1171, 1171, 1180, 1180, 1180, 1180, 1180, 1180, 1180, 1180, 1180, 1180, 1180, 1180, 1184, 1184, 1184, 1184, 1184, 1184, 1193, 1198, 1198, 1198, 1198, 1198, 1198, 1207, 1207, 1207, 1207, 1207, 1207, 1207, 1207, 1207, 1207, 1208, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1219, 1223, 1223, 1223, 1223, 1223, 1225, 1225, 1225, 1225, 1235, 1239, 1239, 1239, 1239, 1242, 1242, 1242, 1247, 1247, 1247, 1247, 1247, 1247, 1257, 1257, 1263, 1263, 1263, 1263, 1263, 1263, 1263, 1263, 1271, 1271, 1271, 1271, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1285, 1285, 1285, 1294, 1294, 1294, 1294, 1294, 1294, 1294, 1294, 1294, 1294, 1294, 1294, 1296, 1296, 1301, 1301, 1301, 1301, 1301, 1301, 1303, 1303, 1308, 1308, 1308, 1308, 1308, 1308, 1315, 1315, 1315, 1315, 1315, 1315, 1322, 1322, 1322, 1322, 1322, 1322, 1322, 1322, 1327, 1327, 1327, 1327, 1327, 1327, 1335, 1335, 1335, 1335, 1342, 1342, 1342, 1342, 1342, 1342, 1342, 1342, 1342, 1342, 1342, 1342, 1344, 1344, 1349, 1349, 1349, 1349, 1349, 1349, 1351, 1351, 1356, 1356, 1356, 1356, 1356, 1356, 1361, 1361, 1361, 1367, 1369, 1369, 1369, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1383, 1383, 1383, 1383, 1383, 1383, 1385, 1385, 1394, 1394, 1394, 1394, 1394, 1394, 1394, 1394, 1394, 1394, 1394, 1394, 1398, 1398, 1398, 1398, 1398, 1411, 1411, 1411, 1414, 1416, 1416, 1416, 1424, 1424, 1424, 1424, 1424, 1424, 1424, 1424, 1424, 1424, 1424, 1424, 1426, 1431, 1431, 1431, 1437, 1439, 1439, 1439, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1453, 1453, 1453, 1453, 1453, 1453, 1455, 1455, 1464, 1464, 1464, 1464, 1464, 1464, 1464, 1464, 1464, 1464, 1464, 1464, 1468, 1468, 1468, 1468, 1468, 1473, 1473, 1473, 1473, 1473, 1473, 1473, 1473, 1475, 1476, 1485, 1485, 1485, 1485, 1485, 1485, 1485, 1485, 1485, 1485, 1487, 1496, 1496, 1496, 1496, 1496, 1496, 1496, 1496, 1496, 1496, 1496, 1509, 1509, 1509, 1510, 1510, 1516, 1516, 1516, 1516, 1516, 1516, 1516, 1518, 1526, 1526, 1526, 1526, 1526, 1526, 1526, 1526, 1526, 1526, 1535, 1535, 1535, 1535, 1535, 1535, 1535, 1535, 1535, 1535, 1535, 1536, 1544, 1544, 1544, 1544, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1555, 1555, 1555, 1555, 1555, 1555, 1555, 1555, 1572, 1572, 1572, 1572, 1572, 1572, 1572, 1572, 1572, 1575, 1577, 1577, 1577, 1585, 1585, 1585, 1585, 1585, 1585, 1585, 1585, 1585, 1585, 1585, 1587, 1595, 1595, 1595, 1595, 1602, 1602, 1602, 1602, 1602, 1602, 1602, 1602, 1602, 1602, 1602, 1602, 1604, 1604, 1613, 1613, 1613, 1613, 1613, 1613, 1613, 1613, 1613, 1613, 1613, 1613, 1617, 1617, 1617, 1617, 1617, 1617, 1626, 1631, 1631, 1631, 1631, 1631, 1631, 1640, 1640, 1640, 1640, 1640, 1640, 1640, 1640, 1640, 1640, 1641, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1652, 1656, 1656, 1656, 1656, 1656, 1658, 1658, 1658, 1658, 1659, 1670, 1670, 1670, 1670, 1670, 1670, 1670, 1670, 1670, 1670, 1670, 1670, 1681, 1685, 1685, 1685, 1685, 1685, 1686, 1686, 1688, 1688, 1688, 1697, 1697, 1697, 1697, 1697, 1697, 1697, 1697, 1697, 1697, 1699, 1699, 1699, 1699, 1699, 1700, 1700, 1704, 1704, 1704, 1704, 1704, 1704, 1705, 1705, 1714, 1719, 1719, 1719, 1719, 1719, 1719, 1728, 1728, 1728, 1728, 1728, 1728, 1728, 1728, 1728, 1728, 1729, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1740, 1744, 1744, 1744, 1744, 1744, 1746, 1746, 1746, 1774, 1774, 1780, 1780, 1780, 1780, 1780, 1780, 1780, 1780, 1782, 1790, 1790, 1790, 1790, 1790, 1790, 1790, 1790, 1790, 1790, 1795, 1795, 1795, 1804, 1804, 1804, 1804, 1804, 1804, 1804, 1804, 1804, 1804, 1804, 1804, 1810, 1810, 1810, 1810, 1810, 1810, 1810, 1810, 1811, 1820, 1820, 1820, 1820, 1820, 1820, 1820, 1820, 1820, 1820, 1829, 1829, 1829, 1829, 1829, 1829, 1829, 1829, 1829, 1829, 1836, 1836, 1841, 1841, 1841, 1841, 1841, 1841, 1850, 1850, 1850, 1850, 1850, 1850, 1850, 1850, 1850, 1850, 1850, 1850, 1850, 1850, 1850, 1851, 1860, 1860, 1860, 1860, 1860, 1860, 1860, 1860, 1860, 1860, 1860, 1864, 1864, 1864, 1864, 1864, 1867, 1867, 1867, 1867, 1875, 1875, 1875, 1875, 1875, 1875, 1875, 1875, 1875, 1875, 1879, 1884, 1884, 1884, 1884, 1884, 1884, 1884, 1886, 1889, 1889, 1893, 1893, 1893, 1893, 1893, 1893, 1896, 1896, 1900, 1900, 1900, 1900, 1900, 1900, 1901, 1901, 1905, 1905, 1914, 1914, 1914, 1914, 1914, 1914, 1914, 1914, 1914, 1914, 1914, 1914, 1919, 1919, 1919, 1919, 1919, 1919, 1927, 1928, 1928, 1933, 1933, 1934, 1934, 1934, 1934, 1943, 1943, 1943, 1943, 1943, 1943, 1943, 1943, 1943, 1943, 1943, 1945, 1945, 1945, 1949, 1950, 1950, 1950, 1950, 1950, 1952, 1952, 1957, 1957, 1957, 1957, 1957, 1957, 1961, 1961, 1961, 1961, 1961, 1963, 1963, 1963, 1963, 1963, 1963, 1965, 1974, 1974, 1974, 1974, 1974, 1974, 1974, 1974, 1974, 1974, 1974, 1974, 1974, 1974, 1982, 1982, 1991, 1991, 1991, 1991, 1991, 1991, 1991, 1991, 1991, 1991, 1991, 1991, 1991, 1995, 1995, 1995, 1995, 1995, 1997, 2006, 2006, 2006, 2006, 2006, 2006, 2006, 2006, 2006, 2006, 2006, 2010, 2010, 2010, 2010, 2010, 2025, 2025, 2025, 2028, 2028, 2028, 2028, 2037, 2037, 2037, 2037, 2037, 2037, 2037, 2037, 2037, 2037, 2037, 2037, 2037, 2038, 2047, 2047, 2047, 2047, 2047, 2047, 2047, 2047, 2047, 2047, 2047, 2047, 2047, 2051, 2051, 2051, 2051, 2051, 2052, 2052, 2054, 2054, 2054, 2055, 2064, 2064, 2064, 2064, 2064, 2064, 2064, 2064, 2064, 2064, 2069, 2069, 2069, 2069, 2069, 2069, 2078, 2078, 2078, 2078, 2078, 2078, 2078, 2078, 2078, 2078, 2078, 2085, 2085, 2090, 2090, 2090, 2090, 2090, 2090, 2099, 2099, 2099, 2099, 2099, 2099, 2099, 2099, 2099, 2099, 2099, 2099, 2099, 2099, 2099, 2104, 2104, 2104, 2104, 2104, 2104, 2104, 2109, 2110, 2110, 2117, 2119, 2120, 2120, 2120, 2126, 2126, 2126, 2126, 2126, 2126, 2126, 2126, 2135, 2135, 2135, 2135, 2135, 2135, 2135, 2135, 2135, 2135, 2135, 2135, 2135, 2137, 2137, 2137, 2138, 2138, 2148, 2148, 2148, 2154, 2154, 2154, 2154, 2154, 2154, 2154, 2163, 2163, 2163, 2163, 2163, 2163, 2163, 2163, 2163, 2163, 2163, 2163, 2163, 2163, 2163, 2163, 2167, 2167, 2167, 2167, 2167, 2167, 2171, 2171, 2171, 2171, 2171, 2171, 2173, 2173, 2176, 2176, 2185, 2185, 2185, 2185, 2185, 2185, 2185, 2185, 2185, 2185, 2185, 2185, 2194, 2194, 2197, 2197, 2203, 2203, 2203, 2203, 2203, 2203, 2203, 2203, 2204, 2204, 2209, 2209, 2215, 2215, 2215, 2215, 2215, 2215, 2215, 2215, 2215, 2215, 2218, 2222, 2222, 2222, 2222, 2222, 2222, 2222, 2226, 2226, 2226, 2226, 2226, 2235, 2235, 2235, 2235, 2235, 2235, 2235, 2235, 2235, 2235, 2237, 2237, 2237, 2239, 2239, 2239, 2246, 2246, 2255, 2255, 2255, 2255, 2255, 2255, 2255, 2255, 2255, 2255, 2255, 2255, 2255, 2255, 2255, 2263, 2263, 2272, 2272, 2272, 2272, 2272, 2272, 2272, 2272, 2272, 2272, 2272, 2272, 2272, 2276, 2276, 2276, 2276, 2276, 2278, 2287, 2287, 2287, 2287, 2287, 2287, 2287, 2287, 2287, 2287, 2287, 2291, 2291, 2291, 2291, 2291, 2295, 2295, 2295, 2295, 2295, 2310, 2316, 2316, 2316, 2316, 2316, 2316, 2316, 2316, 2316, 2325, 2325, 2325, 2325, 2325, 2325, 2325, 2325, 2325, 2325, 2325, 2332, 2332, 2333, 2333, 2333, 2333, 2337, 2337, 2337, 2337, 2337, 2340, 2340, 2340, 2340, 2346, 2346, 2346, 2346, 2346, 2346, 2346, 2347, 2356, 2356, 2356, 2356, 2356, 2356, 2356, 2356, 2356, 2356, 2356, 2357, 2366, 2366, 2366, 2366, 2366, 2366, 2366, 2366, 2366, 2366, 2366, 2366, 2366, 2366, 2367, 2376, 2376, 2376, 2376, 2376, 2376, 2376, 2376, 2376, 2376, 2376];
+static CHILDREN_START: [u32; 2402] = [0, 0, 4, 5, 7, 10, 10, 10, 13, 13, 13, 13, 20, 26, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 35, 35, 35, 35, 35, 35, 35, 35, 35, 35, 38, 38, 38, 38, 40, 41, 42, 45, 45, 45, 45, 49, 52, 52, 52, 55, 55, 55, 55, 59, 59, 59, 59, 62, 62, 62, 62, 66, 66, 66, 66, 69, 69, 69, 69, 77, 83, 83, 83, 83, 83, 85, 85, 85, 85, 85, 85, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 95, 95, 95, 95, 96, 98, 100, 100, 103, 103, 103, 103, 110, 116, 116, 116, 116, 116, 118, 118, 118, 118, 118, 118, 125, 125, 125, 125, 125, 125, 125, 125, 125, 125, 128, 128, 128, 128, 130, 131, 131, 134, 136, 136, 136, 139, 139, 139, 142, 142, 142, 142, 150, 156, 156, 156, 156, 156, 158, 158, 158, 158, 158, 158, 165, 165, 165, 165, 165, 165, 165, 165, 165, 165, 165, 168, 168, 168, 168, 168, 174, 174, 174, 174, 174, 174, 174, 174, 215, 236, 236, 236, 236, 236, 236, 236, 236, 236, 239, 241, 241, 241, 249, 249, 249, 249, 249, 249, 249, 249, 249, 249, 251, 251, 251, 251, 254, 258, 258, 258, 258, 261, 261, 261, 266, 266, 266, 266, 266, 266, 269, 269, 276, 276, 276, 276, 276, 276, 276, 276, 281, 281, 281, 281, 281, 281, 289, 289, 289, 289, 296, 296, 296, 296, 296, 296, 296, 296, 296, 296, 296, 296, 296, 296, 300, 300, 300, 300, 300, 305, 305, 305, 305, 305, 305, 305, 305, 305, 314, 319, 319, 319, 319, 319, 319, 328, 328, 328, 328, 328, 328, 328, 328, 328, 328, 329, 338, 338, 338, 338, 338, 338, 338, 338, 338, 338, 338, 338, 338, 338, 338, 340, 344, 344, 344, 344, 344, 346, 346, 346, 346, 346, 352, 359, 359, 359, 359, 362, 362, 362, 362, 366, 366, 366, 366, 366, 366, 366, 379, 379, 379, 379, 379, 379, 388, 388, 388, 388, 388, 388, 388, 388, 388, 388, 388, 388, 388, 388, 390, 390, 390, 390, 390, 393, 393, 393, 393, 400, 400, 406, 406, 407, 407, 408, 408, 409, 409, 409, 409, 409, 409, 409, 409, 409, 416, 416, 416, 416, 416, 416, 416, 416, 421, 421, 421, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 430, 454, 454, 454, 454, 454, 454, 454, 454, 454, 457, 459, 459, 459, 467, 467, 467, 467, 467, 467, 467, 467, 467, 467, 469, 469, 469, 471, 471, 471, 471, 473, 483, 483, 489, 489, 489, 489, 489, 489, 489, 489, 497, 497, 497, 497, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 506, 511, 511, 511, 520, 520, 520, 520, 520, 520, 520, 520, 520, 520, 520, 520, 522, 522, 531, 531, 531, 531, 531, 531, 531, 531, 531, 531, 531, 531, 531, 531, 535, 535, 535, 535, 535, 540, 540, 540, 540, 540, 540, 540, 540, 540, 549, 554, 554, 554, 554, 554, 554, 563, 563, 563, 563, 563, 563, 563, 563, 563, 563, 564, 573, 573, 573, 573, 573, 573, 573, 573, 573, 573, 573, 573, 573, 573, 573, 575, 579, 579, 579, 579, 579, 581, 581, 581, 581, 587, 587, 587, 587, 587, 587, 587, 595, 595, 601, 601, 601, 601, 601, 601, 601, 603, 612, 612, 612, 612, 612, 612, 612, 612, 612, 612, 612, 616, 616, 616, 616, 616, 616, 616, 618, 627, 627, 627, 627, 627, 627, 627, 627, 627, 627, 627, 627, 627, 630, 632, 632, 632, 640, 640, 640, 640, 640, 640, 640, 640, 640, 640, 640, 640, 640, 640, 649, 649, 649, 649, 649, 649, 649, 649, 649, 649, 662, 662, 662, 663, 663, 669, 669, 669, 669, 669, 669, 669, 671, 679, 679, 679, 679, 679, 679, 679, 679, 679, 679, 688, 688, 688, 688, 688, 688, 688, 688, 688, 688, 688, 689, 691, 691, 696, 696, 696, 696, 696, 696, 696, 696, 700, 700, 700, 700, 700, 700, 700, 717, 717, 717, 717, 717, 717, 717, 717, 720, 722, 722, 722, 730, 730, 730, 730, 730, 730, 730, 730, 730, 730, 730, 732, 734, 734, 739, 739, 739, 739, 739, 739, 741, 741, 750, 750, 750, 750, 750, 750, 750, 750, 750, 750, 750, 750, 754, 754, 754, 754, 754, 759, 759, 759, 759, 759, 759, 759, 768, 773, 773, 773, 773, 773, 773, 782, 782, 782, 782, 782, 782, 782, 782, 782, 782, 783, 792, 792, 792, 792, 792, 792, 792, 792, 792, 792, 792, 792, 792, 792, 792, 794, 798, 798, 798, 798, 798, 800, 800, 800, 800, 817, 817, 817, 817, 817, 817, 817, 817, 817, 820, 822, 822, 822, 830, 830, 830, 830, 830, 830, 830, 830, 830, 830, 830, 832, 842, 842, 848, 848, 848, 848, 848, 848, 848, 848, 856, 856, 856, 856, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 865, 870, 870, 870, 879, 879, 879, 879, 879, 879, 879, 879, 879, 879, 879, 879, 881, 881, 886, 886, 886, 886, 886, 886, 886, 886, 890, 890, 890, 890, 890, 890, 899, 904, 904, 904, 904, 904, 904, 913, 913, 913, 913, 913, 913, 913, 913, 913, 913, 914, 923, 923, 923, 923, 923, 923, 923, 923, 923, 923, 923, 923, 923, 923, 923, 925, 929, 929, 929, 929, 929, 931, 931, 931, 931, 935, 935, 935, 935, 935, 948, 948, 948, 954, 954, 954, 954, 954, 954, 954, 958, 958, 958, 958, 958, 958, 966, 966, 966, 966, 966, 966, 966, 966, 966, 968, 976, 976, 976, 976, 976, 976, 976, 976, 976, 976, 976, 980, 980, 980, 980, 980, 980, 984, 992, 992, 992, 992, 992, 992, 992, 992, 992, 992, 996, 996, 1004, 1004, 1004, 1004, 1004, 1004, 1004, 1004, 1004, 1004, 1004, 1004, 1009, 1010, 1018, 1018, 1018, 1018, 1018, 1018, 1018, 1018, 1018, 1020, 1020, 1020, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1028, 1033, 1034, 1042, 1042, 1042, 1042, 1042, 1042, 1042, 1042, 1042, 1042, 1050, 1050, 1050, 1050, 1050, 1050, 1050, 1050, 1050, 1050, 1050, 1050, 1050, 1062, 1062, 1062, 1062, 1065, 1074, 1074, 1074, 1074, 1074, 1074, 1074, 1074, 1074, 1074, 1074, 1074, 1077, 1077, 1077, 1077, 1079, 1079, 1079, 1079, 1079, 1079, 1082, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1091, 1109, 1109, 1109, 1109, 1109, 1109, 1109, 1109, 1109, 1112, 1114, 1114, 1114, 1122, 1122, 1122, 1122, 1122, 1122, 1122, 1122, 1122, 1122, 1124, 1124, 1124, 1124, 1128, 1135, 1135, 1135, 1135, 1135, 1135, 1142, 1142, 1142, 1142, 1142, 1142, 1142, 1142, 1147, 1147, 1147, 1147, 1147, 1147, 1155, 1155, 1155, 1155, 1162, 1162, 1162, 1162, 1162, 1162, 1162, 1162, 1162, 1162, 1162, 1162, 1164, 1164, 1169, 1169, 1169, 1169, 1169, 1169, 1171, 1171, 1180, 1180, 1180, 1180, 1180, 1180, 1180, 1180, 1180, 1180, 1180, 1180, 1184, 1184, 1184, 1184, 1184, 1184, 1193, 1198, 1198, 1198, 1198, 1198, 1198, 1207, 1207, 1207, 1207, 1207, 1207, 1207, 1207, 1207, 1207, 1208, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1217, 1219, 1223, 1223, 1223, 1223, 1223, 1225, 1225, 1225, 1225, 1235, 1239, 1239, 1239, 1239, 1242, 1242, 1242, 1247, 1247, 1247, 1247, 1247, 1247, 1257, 1257, 1263, 1263, 1263, 1263, 1263, 1263, 1263, 1263, 1271, 1271, 1271, 1271, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1280, 1285, 1285, 1285, 1294, 1294, 1294, 1294, 1294, 1294, 1294, 1294, 1294, 1294, 1294, 1294, 1296, 1296, 1301, 1301, 1301, 1301, 1301, 1301, 1303, 1303, 1308, 1308, 1308, 1308, 1308, 1308, 1315, 1315, 1315, 1315, 1315, 1315, 1322, 1322, 1322, 1322, 1322, 1322, 1322, 1322, 1327, 1327, 1327, 1327, 1327, 1327, 1335, 1335, 1335, 1335, 1342, 1342, 1342, 1342, 1342, 1342, 1342, 1342, 1342, 1342, 1342, 1342, 1344, 1344, 1349, 1349, 1349, 1349, 1349, 1349, 1351, 1351, 1356, 1356, 1356, 1356, 1356, 1356, 1361, 1361, 1361, 1367, 1369, 1369, 1369, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1378, 1383, 1383, 1383, 1383, 1383, 1383, 1385, 1385, 1394, 1394, 1394, 1394, 1394, 1394, 1394, 1394, 1394, 1394, 1394, 1394, 1398, 1398, 1398, 1398, 1398, 1411, 1411, 1411, 1414, 1416, 1416, 1416, 1424, 1424, 1424, 1424, 1424, 1424, 1424, 1424, 1424, 1424, 1424, 1424, 1426, 1431, 1431, 1431, 1437, 1439, 1439, 1439, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1448, 1453, 1453, 1453, 1453, 1453, 1453, 1455, 1455, 1464, 1464, 1464, 1464, 1464, 1464, 1464, 1464, 1464, 1464, 1464, 1464, 1468, 1468, 1468, 1468, 1468, 1473, 1473, 1473, 1473, 1473, 1473, 1473, 1473, 1475, 1476, 1485, 1485, 1485, 1485, 1485, 1485, 1485, 1485, 1485, 1485, 1487, 1496, 1496, 1496, 1496, 1496, 1496, 1496, 1496, 1496, 1496, 1496, 1509, 1509, 1509, 1510, 1510, 1516, 1516, 1516, 1516, 1516, 1516, 1516, 1518, 1526, 1526, 1526, 1526, 1526, 1526, 1526, 1526, 1526, 1526, 1535, 1535, 1535, 1535, 1535, 1535, 1535, 1535, 1535, 1535, 1535, 1536, 1544, 1544, 1544, 1544, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1551, 1555, 1555, 1555, 1555, 1555, 1555, 1555, 1555, 1572, 1572, 1572, 1572, 1572, 1572, 1572, 1572, 1572, 1575, 1577, 1577, 1577, 1585, 1585, 1585, 1585, 1585, 1585, 1585, 1585, 1585, 1585, 1585, 1587, 1595, 1595, 1595, 1595, 1602, 1602, 1602, 1602, 1602, 1602, 1602, 1602, 1602, 1602, 1602, 1602, 1604, 1604, 1613, 1613, 1613, 1613, 1613, 1613, 1613, 1613, 1613, 1613, 1613, 1613, 1617, 1617, 1617, 1617, 1617, 1617, 1626, 1631, 1631, 1631, 1631, 1631, 1631, 1640, 1640, 1640, 1640, 1640, 1640, 1640, 1640, 1640, 1640, 1641, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1650, 1652, 1656, 1656, 1656, 1656, 1656, 1658, 1658, 1658, 1658, 1659, 1670, 1670, 1670, 1670, 1670, 1670, 1670, 1670, 1670, 1670, 1670, 1670, 1681, 1685, 1685, 1685, 1685, 1685, 1686, 1686, 1688, 1688, 1688, 1697, 1697, 1697, 1697, 1697, 1697, 1697, 1697, 1697, 1697, 1699, 1699, 1699, 1699, 1699, 1700, 1700, 1704, 1704, 1704, 1704, 1704, 1704, 1705, 1705, 1714, 1719, 1719, 1719, 1719, 1719, 1719, 1728, 1728, 1728, 1728, 1728, 1728, 1728, 1728, 1728, 1728, 1729, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1738, 1740, 1744, 1744, 1744, 1744, 1744, 1746, 1746, 1746, 1775, 1775, 1781, 1781, 1781, 1781, 1781, 1781, 1781, 1781, 1783, 1791, 1791, 1791, 1791, 1791, 1791, 1791, 1791, 1791, 1791, 1796, 1796, 1796, 1805, 1805, 1805, 1805, 1805, 1805, 1805, 1805, 1805, 1805, 1805, 1805, 1811, 1811, 1811, 1811, 1811, 1811, 1811, 1811, 1812, 1821, 1821, 1821, 1821, 1821, 1821, 1821, 1821, 1821, 1821, 1830, 1830, 1830, 1830, 1830, 1830, 1830, 1830, 1830, 1830, 1837, 1837, 1842, 1842, 1842, 1842, 1842, 1842, 1851, 1851, 1851, 1851, 1851, 1851, 1851, 1851, 1851, 1851, 1851, 1851, 1851, 1851, 1851, 1851, 1852, 1861, 1861, 1861, 1861, 1861, 1861, 1861, 1861, 1861, 1861, 1861, 1865, 1865, 1865, 1865, 1865, 1868, 1868, 1868, 1868, 1876, 1876, 1876, 1876, 1876, 1876, 1876, 1876, 1876, 1876, 1880, 1885, 1885, 1885, 1885, 1885, 1885, 1885, 1887, 1890, 1890, 1894, 1894, 1894, 1894, 1894, 1894, 1897, 1897, 1901, 1901, 1901, 1901, 1901, 1901, 1902, 1902, 1906, 1906, 1915, 1915, 1915, 1915, 1915, 1915, 1915, 1915, 1915, 1915, 1915, 1915, 1920, 1920, 1920, 1920, 1920, 1920, 1928, 1929, 1929, 1934, 1934, 1935, 1935, 1935, 1935, 1944, 1944, 1944, 1944, 1944, 1944, 1944, 1944, 1944, 1944, 1944, 1946, 1946, 1946, 1950, 1951, 1951, 1951, 1951, 1951, 1953, 1953, 1958, 1958, 1958, 1958, 1958, 1958, 1962, 1962, 1962, 1962, 1962, 1964, 1964, 1964, 1964, 1964, 1964, 1966, 1975, 1975, 1975, 1975, 1975, 1975, 1975, 1975, 1975, 1975, 1975, 1975, 1975, 1975, 1983, 1983, 1992, 1992, 1992, 1992, 1992, 1992, 1992, 1992, 1992, 1992, 1992, 1992, 1992, 1996, 1996, 1996, 1996, 1996, 1998, 2007, 2007, 2007, 2007, 2007, 2007, 2007, 2007, 2007, 2007, 2007, 2011, 2011, 2011, 2011, 2011, 2026, 2026, 2026, 2029, 2029, 2029, 2029, 2038, 2038, 2038, 2038, 2038, 2038, 2038, 2038, 2038, 2038, 2038, 2038, 2038, 2039, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2052, 2052, 2052, 2052, 2052, 2053, 2053, 2055, 2055, 2055, 2056, 2065, 2065, 2065, 2065, 2065, 2065, 2065, 2065, 2065, 2065, 2070, 2070, 2070, 2070, 2070, 2070, 2079, 2079, 2079, 2079, 2079, 2079, 2079, 2079, 2079, 2079, 2079, 2086, 2086, 2091, 2091, 2091, 2091, 2091, 2091, 2100, 2100, 2100, 2100, 2100, 2100, 2100, 2100, 2100, 2100, 2100, 2100, 2100, 2100, 2100, 2105, 2105, 2105, 2105, 2105, 2105, 2105, 2110, 2111, 2111, 2118, 2120, 2121, 2121, 2121, 2127, 2127, 2127, 2127, 2127, 2127, 2127, 2127, 2136, 2136, 2136, 2136, 2136, 2136, 2136, 2136, 2136, 2136, 2136, 2136, 2136, 2138, 2138, 2138, 2139, 2139, 2149, 2149, 2149, 2155, 2155, 2155, 2155, 2155, 2155, 2155, 2164, 2164, 2164, 2164, 2164, 2164, 2164, 2164, 2164, 2164, 2164, 2164, 2164, 2164, 2164, 2164, 2168, 2168, 2168, 2168, 2168, 2168, 2172, 2172, 2172, 2172, 2172, 2172, 2174, 2174, 2177, 2177, 2186, 2186, 2186, 2186, 2186, 2186, 2186, 2186, 2186, 2186, 2186, 2186, 2195, 2195, 2198, 2198, 2204, 2204, 2204, 2204, 2204, 2204, 2204, 2204, 2205, 2205, 2210, 2210, 2216, 2216, 2216, 2216, 2216, 2216, 2216, 2216, 2216, 2216, 2219, 2223, 2223, 2223, 2223, 2223, 2223, 2223, 2227, 2227, 2227, 2227, 2227, 2236, 2236, 2236, 2236, 2236, 2236, 2236, 2236, 2236, 2236, 2238, 2238, 2238, 2240, 2240, 2240, 2247, 2247, 2256, 2256, 2256, 2256, 2256, 2256, 2256, 2256, 2256, 2256, 2256, 2256, 2256, 2256, 2256, 2264, 2264, 2273, 2273, 2273, 2273, 2273, 2273, 2273, 2273, 2273, 2273, 2273, 2273, 2273, 2277, 2277, 2277, 2277, 2277, 2279, 2288, 2288, 2288, 2288, 2288, 2288, 2288, 2288, 2288, 2288, 2288, 2292, 2292, 2292, 2292, 2292, 2296, 2296, 2296, 2296, 2296, 2311, 2317, 2317, 2317, 2317, 2317, 2317, 2317, 2317, 2317, 2326, 2326, 2326, 2326, 2326, 2326, 2326, 2326, 2326, 2326, 2326, 2333, 2333, 2334, 2334, 2334, 2334, 2338, 2338, 2338, 2338, 2338, 2341, 2341, 2341, 2341, 2347, 2347, 2347, 2347, 2347, 2347, 2347, 2348, 2357, 2357, 2357, 2357, 2357, 2357, 2357, 2357, 2357, 2357, 2357, 2358, 2367, 2367, 2367, 2367, 2367, 2367, 2367, 2367, 2367, 2367, 2367, 2367, 2367, 2367, 2368, 2377, 2377, 2377, 2377, 2377, 2377, 2377, 2377, 2377, 2377, 2377];
 #[rustfmt::skip]
-static CHILDREN_ITEMS: [u16; 2376] = [2, 37, 95, 129, 3, 4, 11, 5, 6, 7, 8, 9, 10, 12, 21, 22, 23, 31, 32, 33, 13, 14, 15, 16, 17, 20, 18, 19, 24, 25, 26, 27, 28, 29, 30, 34, 35, 36, 38, 44, 39, 40, 41, 42, 43, 45, 52, 60, 68, 46, 47, 48, 49, 50, 51, 53, 54, 55, 56, 57, 58, 59, 61, 62, 63, 64, 65, 66, 67, 69, 78, 79, 80, 88, 89, 90, 91, 70, 71, 72, 73, 74, 77, 75, 76, 81, 82, 83, 84, 85, 86, 87, 92, 93, 94, 96, 97, 103, 98, 99, 100, 101, 102, 104, 113, 114, 115, 123, 124, 125, 105, 106, 107, 108, 109, 112, 110, 111, 116, 117, 118, 119, 120, 121, 122, 126, 127, 128, 130, 132, 131, 133, 136, 143, 134, 135, 137, 138, 139, 140, 141, 142, 144, 153, 154, 155, 163, 164, 165, 166, 145, 146, 147, 148, 149, 152, 150, 151, 156, 157, 158, 159, 160, 161, 162, 167, 168, 169, 172, 173, 174, 175, 176, 177, 180, 312, 313, 398, 399, 400, 401, 402, 403, 555, 562, 603, 604, 618, 619, 620, 621, 622, 632, 684, 785, 917, 922, 1038, 1039, 1081, 1216, 1386, 1387, 1388, 1393, 1492, 1552, 1553, 1657, 1670, 1706, 1748, 1977, 2014, 2069, 181, 182, 183, 184, 185, 186, 187, 188, 189, 203, 206, 207, 253, 254, 255, 260, 266, 267, 268, 269, 311, 190, 193, 202, 191, 192, 194, 195, 196, 197, 198, 199, 200, 201, 204, 205, 208, 221, 237, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 222, 223, 231, 224, 225, 226, 227, 228, 229, 230, 232, 233, 234, 235, 236, 238, 239, 240, 241, 249, 250, 251, 252, 242, 243, 244, 245, 246, 247, 248, 256, 257, 258, 259, 261, 262, 263, 264, 265, 270, 276, 286, 297, 298, 299, 300, 301, 302, 271, 272, 273, 274, 275, 277, 278, 279, 280, 281, 282, 283, 284, 285, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 303, 308, 304, 305, 306, 307, 309, 310, 314, 329, 354, 358, 375, 383, 315, 316, 317, 318, 322, 327, 328, 319, 320, 321, 323, 324, 325, 326, 330, 331, 332, 333, 334, 335, 345, 346, 347, 348, 349, 352, 353, 336, 337, 338, 339, 340, 341, 342, 343, 344, 350, 351, 355, 356, 357, 359, 360, 370, 371, 372, 373, 374, 361, 362, 364, 366, 368, 369, 363, 365, 367, 376, 377, 378, 379, 380, 381, 382, 384, 385, 386, 396, 397, 387, 388, 389, 390, 391, 392, 393, 394, 395, 404, 405, 406, 407, 408, 409, 410, 411, 412, 426, 429, 432, 433, 494, 495, 496, 497, 498, 503, 509, 510, 511, 512, 554, 413, 416, 425, 414, 415, 417, 418, 419, 420, 421, 422, 423, 424, 427, 428, 430, 431, 434, 482, 435, 436, 443, 444, 462, 463, 464, 465, 466, 467, 437, 438, 439, 440, 441, 442, 445, 446, 447, 448, 458, 459, 460, 461, 449, 450, 451, 452, 453, 454, 455, 456, 457, 468, 469, 470, 480, 481, 471, 472, 473, 474, 475, 476, 477, 478, 479, 483, 484, 485, 486, 487, 488, 489, 490, 491, 492, 493, 499, 500, 501, 502, 504, 505, 506, 507, 508, 513, 519, 529, 540, 541, 542, 543, 544, 545, 514, 515, 516, 517, 518, 520, 521, 522, 523, 524, 525, 526, 527, 528, 530, 531, 532, 533, 534, 535, 536, 537, 538, 539, 546, 551, 547, 548, 549, 550, 552, 553, 556, 557, 558, 559, 560, 561, 563, 564, 571, 583, 588, 589, 590, 602, 565, 566, 567, 568, 569, 570, 572, 582, 573, 574, 575, 576, 577, 578, 579, 580, 581, 584, 585, 586, 587, 591, 601, 592, 593, 594, 595, 596, 597, 598, 599, 600, 605, 608, 617, 606, 607, 609, 610, 611, 612, 613, 614, 615, 616, 623, 624, 625, 626, 627, 628, 629, 630, 631, 633, 634, 635, 637, 644, 655, 665, 666, 675, 676, 677, 682, 683, 636, 638, 639, 640, 641, 642, 643, 645, 654, 646, 647, 648, 649, 650, 651, 652, 653, 656, 657, 658, 659, 660, 661, 662, 663, 664, 667, 668, 669, 670, 671, 672, 673, 674, 678, 679, 680, 681, 685, 686, 687, 688, 689, 690, 691, 692, 706, 707, 728, 729, 730, 735, 741, 742, 784, 693, 696, 705, 694, 695, 697, 698, 699, 700, 701, 702, 703, 704, 708, 716, 709, 710, 711, 712, 713, 714, 715, 717, 718, 719, 720, 721, 722, 723, 724, 725, 726, 727, 731, 732, 733, 734, 736, 737, 738, 739, 740, 743, 749, 759, 770, 771, 772, 773, 774, 775, 744, 745, 746, 747, 748, 750, 751, 752, 753, 754, 755, 756, 757, 758, 760, 761, 762, 763, 764, 765, 766, 767, 768, 769, 776, 781, 777, 778, 779, 780, 782, 783, 786, 787, 788, 789, 790, 791, 792, 793, 794, 808, 809, 866, 867, 868, 873, 874, 916, 795, 798, 807, 796, 797, 799, 800, 801, 802, 803, 804, 805, 806, 810, 858, 811, 812, 819, 820, 838, 839, 840, 841, 842, 843, 813, 814, 815, 816, 817, 818, 821, 822, 823, 824, 834, 835, 836, 837, 825, 826, 827, 828, 829, 830, 831, 832, 833, 844, 845, 846, 856, 857, 847, 848, 849, 850, 851, 852, 853, 854, 855, 859, 860, 861, 862, 863, 864, 865, 869, 870, 871, 872, 875, 881, 891, 902, 903, 904, 905, 906, 907, 876, 877, 878, 879, 880, 882, 883, 884, 885, 886, 887, 888, 889, 890, 892, 893, 894, 895, 896, 897, 898, 899, 900, 901, 908, 913, 909, 910, 911, 912, 914, 915, 918, 919, 920, 921, 923, 924, 925, 932, 937, 938, 947, 958, 959, 964, 965, 990, 1037, 926, 927, 928, 929, 930, 931, 933, 934, 935, 936, 939, 940, 941, 942, 943, 944, 945, 946, 948, 957, 949, 950, 951, 952, 953, 954, 955, 956, 960, 961, 962, 963, 966, 975, 976, 989, 967, 968, 969, 970, 971, 972, 973, 974, 977, 978, 987, 988, 979, 980, 981, 982, 983, 984, 985, 986, 991, 1001, 1004, 1013, 1014, 992, 993, 994, 995, 996, 997, 998, 999, 1000, 1002, 1003, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1015, 1025, 1026, 1035, 1036, 1016, 1017, 1018, 1019, 1020, 1021, 1022, 1023, 1024, 1027, 1028, 1029, 1030, 1031, 1032, 1033, 1034, 1040, 1041, 1042, 1043, 1056, 1060, 1063, 1064, 1065, 1066, 1079, 1080, 1044, 1054, 1055, 1045, 1046, 1047, 1048, 1049, 1050, 1051, 1052, 1053, 1057, 1058, 1059, 1061, 1062, 1067, 1077, 1078, 1068, 1069, 1070, 1071, 1072, 1073, 1074, 1075, 1076, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1089, 1090, 1104, 1107, 1108, 1165, 1166, 1167, 1172, 1173, 1215, 1091, 1094, 1103, 1092, 1093, 1095, 1096, 1097, 1098, 1099, 1100, 1101, 1102, 1105, 1106, 1109, 1129, 1145, 1153, 1110, 1111, 1112, 1113, 1114, 1115, 1123, 1116, 1117, 1118, 1119, 1120, 1121, 1122, 1124, 1125, 1126, 1127, 1128, 1130, 1131, 1132, 1133, 1141, 1142, 1143, 1144, 1134, 1135, 1136, 1137, 1138, 1139, 1140, 1146, 1147, 1148, 1149, 1150, 1151, 1152, 1154, 1155, 1156, 1157, 1158, 1159, 1160, 1161, 1162, 1163, 1164, 1168, 1169, 1170, 1171, 1174, 1180, 1190, 1201, 1202, 1203, 1204, 1205, 1206, 1175, 1176, 1177, 1178, 1179, 1181, 1182, 1183, 1184, 1185, 1186, 1187, 1188, 1189, 1191, 1192, 1193, 1194, 1195, 1196, 1197, 1198, 1199, 1200, 1207, 1212, 1208, 1209, 1210, 1211, 1213, 1214, 1217, 1230, 1278, 1286, 1294, 1314, 1330, 1338, 1346, 1374, 1218, 1219, 1220, 1221, 1222, 1223, 1224, 1225, 1226, 1227, 1228, 1229, 1231, 1232, 1239, 1240, 1258, 1259, 1260, 1261, 1262, 1263, 1233, 1234, 1235, 1236, 1237, 1238, 1241, 1242, 1243, 1244, 1254, 1255, 1256, 1257, 1245, 1246, 1247, 1248, 1249, 1250, 1251, 1252, 1253, 1264, 1265, 1266, 1276, 1277, 1267, 1268, 1269, 1270, 1271, 1272, 1273, 1274, 1275, 1279, 1280, 1281, 1282, 1283, 1284, 1285, 1287, 1288, 1289, 1290, 1291, 1292, 1293, 1295, 1296, 1297, 1298, 1299, 1300, 1308, 1301, 1302, 1303, 1304, 1305, 1306, 1307, 1309, 1310, 1311, 1312, 1313, 1315, 1316, 1317, 1318, 1326, 1327, 1328, 1329, 1319, 1320, 1321, 1322, 1323, 1324, 1325, 1331, 1332, 1333, 1334, 1335, 1336, 1337, 1339, 1340, 1341, 1342, 1343, 1344, 1345, 1347, 1348, 1349, 1367, 1368, 1350, 1353, 1363, 1364, 1365, 1366, 1351, 1352, 1354, 1355, 1356, 1357, 1358, 1359, 1360, 1361, 1362, 1369, 1370, 1371, 1372, 1373, 1375, 1376, 1377, 1378, 1379, 1380, 1381, 1382, 1383, 1384, 1385, 1389, 1390, 1391, 1392, 1394, 1395, 1396, 1410, 1411, 1412, 1453, 1454, 1455, 1460, 1466, 1467, 1468, 1397, 1400, 1409, 1398, 1399, 1401, 1402, 1403, 1404, 1405, 1406, 1407, 1408, 1413, 1441, 1414, 1415, 1416, 1434, 1435, 1417, 1420, 1430, 1431, 1432, 1433, 1418, 1419, 1421, 1422, 1423, 1424, 1425, 1426, 1427, 1428, 1429, 1436, 1437, 1438, 1439, 1440, 1442, 1443, 1444, 1445, 1446, 1447, 1448, 1449, 1450, 1451, 1452, 1456, 1457, 1458, 1459, 1461, 1462, 1463, 1464, 1465, 1469, 1480, 1470, 1471, 1472, 1473, 1474, 1475, 1476, 1477, 1478, 1479, 1481, 1491, 1482, 1483, 1484, 1485, 1486, 1487, 1488, 1489, 1490, 1493, 1494, 1495, 1497, 1504, 1515, 1525, 1526, 1543, 1544, 1545, 1550, 1551, 1496, 1498, 1499, 1500, 1501, 1502, 1503, 1505, 1514, 1506, 1507, 1508, 1509, 1510, 1511, 1512, 1513, 1516, 1517, 1518, 1519, 1520, 1521, 1522, 1523, 1524, 1527, 1528, 1529, 1530, 1531, 1539, 1540, 1541, 1542, 1532, 1533, 1534, 1535, 1536, 1537, 1538, 1546, 1547, 1548, 1549, 1554, 1555, 1556, 1557, 1558, 1559, 1560, 1561, 1562, 1576, 1577, 1606, 1607, 1608, 1613, 1614, 1656, 1563, 1566, 1575, 1564, 1565, 1567, 1568, 1569, 1570, 1571, 1572, 1573, 1574, 1578, 1594, 1579, 1580, 1581, 1582, 1590, 1591, 1592, 1593, 1583, 1584, 1585, 1586, 1587, 1588, 1589, 1595, 1596, 1597, 1598, 1599, 1600, 1601, 1602, 1603, 1604, 1605, 1609, 1610, 1611, 1612, 1615, 1621, 1631, 1642, 1643, 1644, 1645, 1646, 1647, 1616, 1617, 1618, 1619, 1620, 1622, 1623, 1624, 1625, 1626, 1627, 1628, 1629, 1630, 1632, 1633, 1634, 1635, 1636, 1637, 1638, 1639, 1640, 1641, 1648, 1653, 1649, 1650, 1651, 1652, 1654, 1655, 1658, 1659, 1660, 1661, 1662, 1663, 1664, 1665, 1666, 1667, 1668, 1669, 1671, 1676, 1678, 1681, 1691, 1694, 1695, 1696, 1698, 1703, 1704, 1672, 1673, 1674, 1675, 1677, 1679, 1680, 1682, 1683, 1684, 1685, 1686, 1687, 1688, 1689, 1690, 1692, 1693, 1697, 1699, 1700, 1701, 1702, 1705, 1707, 1713, 1723, 1734, 1735, 1736, 1737, 1738, 1739, 1708, 1709, 1710, 1711, 1712, 1714, 1715, 1716, 1717, 1718, 1719, 1720, 1721, 1722, 1724, 1725, 1726, 1727, 1728, 1729, 1730, 1731, 1732, 1733, 1740, 1745, 1741, 1742, 1743, 1744, 1746, 1747, 1749, 1750, 1757, 1758, 1769, 1784, 1791, 1792, 1803, 1813, 1835, 1836, 1847, 1848, 1853, 1857, 1866, 1867, 1894, 1908, 1914, 1959, 1960, 1961, 1962, 1974, 1975, 1976, 1751, 1752, 1753, 1754, 1755, 1756, 1759, 1768, 1760, 1761, 1762, 1763, 1764, 1765, 1766, 1767, 1770, 1771, 1772, 1782, 1783, 1773, 1774, 1775, 1776, 1777, 1778, 1779, 1780, 1781, 1785, 1786, 1787, 1788, 1789, 1790, 1793, 1794, 1795, 1796, 1797, 1798, 1799, 1800, 1801, 1802, 1804, 1805, 1806, 1807, 1808, 1809, 1810, 1811, 1812, 1814, 1815, 1821, 1831, 1832, 1833, 1834, 1816, 1817, 1818, 1819, 1820, 1822, 1823, 1824, 1825, 1826, 1827, 1828, 1829, 1830, 1837, 1838, 1839, 1840, 1841, 1842, 1843, 1844, 1845, 1846, 1849, 1850, 1851, 1852, 1854, 1855, 1856, 1858, 1859, 1860, 1861, 1862, 1863, 1864, 1865, 1868, 1874, 1875, 1892, 1869, 1870, 1871, 1872, 1873, 1876, 1884, 1877, 1878, 1883, 1879, 1880, 1881, 1882, 1885, 1886, 1891, 1887, 1888, 1889, 1890, 1893, 1895, 1896, 1906, 1907, 1897, 1898, 1899, 1900, 1901, 1902, 1903, 1904, 1905, 1909, 1910, 1911, 1912, 1913, 1915, 1917, 1933, 1934, 1937, 1943, 1951, 1956, 1916, 1918, 1919, 1921, 1922, 1923, 1920, 1924, 1925, 1926, 1927, 1928, 1929, 1930, 1931, 1932, 1935, 1936, 1938, 1940, 1941, 1942, 1939, 1944, 1945, 1946, 1947, 1948, 1949, 1950, 1952, 1953, 1954, 1955, 1957, 1958, 1963, 1973, 1964, 1965, 1966, 1967, 1968, 1969, 1970, 1971, 1972, 1978, 1979, 1989, 1990, 1991, 1992, 1997, 2009, 1980, 1981, 1982, 1983, 1984, 1985, 1986, 1987, 1988, 1993, 1994, 1995, 1996, 1998, 2008, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2010, 2011, 2012, 2013, 2015, 2016, 2017, 2021, 2031, 2032, 2033, 2034, 2045, 2046, 2047, 2048, 2053, 2055, 2058, 2018, 2019, 2020, 2022, 2023, 2024, 2025, 2026, 2027, 2028, 2029, 2030, 2035, 2036, 2037, 2038, 2039, 2040, 2041, 2042, 2043, 2044, 2049, 2050, 2051, 2052, 2054, 2056, 2057, 2059, 2060, 2061, 2062, 2063, 2064, 2065, 2066, 2067, 2068, 2070, 2071, 2072, 2073, 2074, 2076, 2077, 2078, 2079, 2080, 2081, 2082, 2083, 2084, 2087, 2088, 2094, 2104, 2105, 2106, 2107, 2089, 2090, 2091, 2092, 2093, 2095, 2096, 2097, 2098, 2099, 2100, 2101, 2102, 2103, 2110, 2111, 2112, 2113, 2114, 2117, 2119, 2145, 2148, 2150, 2118, 2120, 2124, 2131, 2132, 2142, 2143, 2144, 2121, 2123, 2122, 2125, 2126, 2127, 2128, 2129, 2130, 2133, 2134, 2135, 2136, 2137, 2138, 2139, 2140, 2141, 2146, 2147, 2149, 2151, 2152, 2153, 2160, 2170, 2171, 2172, 2173, 2174, 2175, 2154, 2155, 2156, 2157, 2158, 2159, 2161, 2162, 2163, 2164, 2165, 2166, 2167, 2168, 2169, 2177, 2178, 2179, 2180, 2183, 2184, 2185, 2186, 2189, 2190, 2191, 2192, 2202, 2193, 2194, 2195, 2196, 2197, 2198, 2199, 2200, 2201, 2205, 2206, 2216, 2218, 2230, 2238, 2243, 2253, 2256, 2207, 2208, 2215, 2209, 2210, 2211, 2212, 2213, 2214, 2217, 2219, 2220, 2227, 2228, 2229, 2221, 2222, 2223, 2224, 2225, 2226, 2231, 2236, 2237, 2232, 2233, 2234, 2235, 2239, 2240, 2241, 2242, 2244, 2245, 2246, 2247, 2248, 2249, 2250, 2251, 2252, 2254, 2255, 2257, 2258, 2260, 2261, 2271, 2272, 2273, 2274, 2275, 2262, 2263, 2264, 2265, 2266, 2267, 2268, 2269, 2270, 2277, 2278, 2288, 2289, 2290, 2291, 2296, 2308, 2279, 2280, 2281, 2282, 2283, 2284, 2285, 2286, 2287, 2292, 2293, 2294, 2295, 2297, 2307, 2298, 2299, 2300, 2301, 2302, 2303, 2304, 2305, 2306, 2309, 2310, 2311, 2312, 2314, 2315, 2316, 2317, 2319, 2326, 2327, 2328, 2338, 2339, 2361, 2372, 2373, 2384, 2385, 2386, 2387, 2388, 2399, 2320, 2321, 2322, 2323, 2324, 2325, 2329, 2330, 2331, 2332, 2333, 2334, 2335, 2336, 2337, 2340, 2341, 2343, 2344, 2345, 2350, 2354, 2342, 2346, 2347, 2348, 2349, 2351, 2352, 2353, 2355, 2356, 2357, 2358, 2359, 2360, 2362, 2363, 2364, 2365, 2366, 2367, 2368, 2369, 2370, 2371, 2374, 2375, 2376, 2377, 2378, 2379, 2380, 2381, 2382, 2383, 2389, 2390, 2391, 2392, 2393, 2394, 2395, 2396, 2397, 2398];
+static CHILDREN_ITEMS: [u16; 2377] = [2, 37, 95, 129, 3, 4, 11, 5, 6, 7, 8, 9, 10, 12, 21, 22, 23, 31, 32, 33, 13, 14, 15, 16, 17, 20, 18, 19, 24, 25, 26, 27, 28, 29, 30, 34, 35, 36, 38, 44, 39, 40, 41, 42, 43, 45, 52, 60, 68, 46, 47, 48, 49, 50, 51, 53, 54, 55, 56, 57, 58, 59, 61, 62, 63, 64, 65, 66, 67, 69, 78, 79, 80, 88, 89, 90, 91, 70, 71, 72, 73, 74, 77, 75, 76, 81, 82, 83, 84, 85, 86, 87, 92, 93, 94, 96, 97, 103, 98, 99, 100, 101, 102, 104, 113, 114, 115, 123, 124, 125, 105, 106, 107, 108, 109, 112, 110, 111, 116, 117, 118, 119, 120, 121, 122, 126, 127, 128, 130, 132, 131, 133, 136, 143, 134, 135, 137, 138, 139, 140, 141, 142, 144, 153, 154, 155, 163, 164, 165, 166, 145, 146, 147, 148, 149, 152, 150, 151, 156, 157, 158, 159, 160, 161, 162, 167, 168, 169, 172, 173, 174, 175, 176, 177, 180, 312, 313, 398, 399, 400, 401, 402, 403, 555, 562, 603, 604, 618, 619, 620, 621, 622, 632, 684, 785, 917, 922, 1038, 1039, 1081, 1216, 1386, 1387, 1388, 1393, 1492, 1552, 1553, 1657, 1670, 1706, 1748, 1978, 2015, 2070, 181, 182, 183, 184, 185, 186, 187, 188, 189, 203, 206, 207, 253, 254, 255, 260, 266, 267, 268, 269, 311, 190, 193, 202, 191, 192, 194, 195, 196, 197, 198, 199, 200, 201, 204, 205, 208, 221, 237, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 222, 223, 231, 224, 225, 226, 227, 228, 229, 230, 232, 233, 234, 235, 236, 238, 239, 240, 241, 249, 250, 251, 252, 242, 243, 244, 245, 246, 247, 248, 256, 257, 258, 259, 261, 262, 263, 264, 265, 270, 276, 286, 297, 298, 299, 300, 301, 302, 271, 272, 273, 274, 275, 277, 278, 279, 280, 281, 282, 283, 284, 285, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 303, 308, 304, 305, 306, 307, 309, 310, 314, 329, 354, 358, 375, 383, 315, 316, 317, 318, 322, 327, 328, 319, 320, 321, 323, 324, 325, 326, 330, 331, 332, 333, 334, 335, 345, 346, 347, 348, 349, 352, 353, 336, 337, 338, 339, 340, 341, 342, 343, 344, 350, 351, 355, 356, 357, 359, 360, 370, 371, 372, 373, 374, 361, 362, 364, 366, 368, 369, 363, 365, 367, 376, 377, 378, 379, 380, 381, 382, 384, 385, 386, 396, 397, 387, 388, 389, 390, 391, 392, 393, 394, 395, 404, 405, 406, 407, 408, 409, 410, 411, 412, 426, 429, 432, 433, 494, 495, 496, 497, 498, 503, 509, 510, 511, 512, 554, 413, 416, 425, 414, 415, 417, 418, 419, 420, 421, 422, 423, 424, 427, 428, 430, 431, 434, 482, 435, 436, 443, 444, 462, 463, 464, 465, 466, 467, 437, 438, 439, 440, 441, 442, 445, 446, 447, 448, 458, 459, 460, 461, 449, 450, 451, 452, 453, 454, 455, 456, 457, 468, 469, 470, 480, 481, 471, 472, 473, 474, 475, 476, 477, 478, 479, 483, 484, 485, 486, 487, 488, 489, 490, 491, 492, 493, 499, 500, 501, 502, 504, 505, 506, 507, 508, 513, 519, 529, 540, 541, 542, 543, 544, 545, 514, 515, 516, 517, 518, 520, 521, 522, 523, 524, 525, 526, 527, 528, 530, 531, 532, 533, 534, 535, 536, 537, 538, 539, 546, 551, 547, 548, 549, 550, 552, 553, 556, 557, 558, 559, 560, 561, 563, 564, 571, 583, 588, 589, 590, 602, 565, 566, 567, 568, 569, 570, 572, 582, 573, 574, 575, 576, 577, 578, 579, 580, 581, 584, 585, 586, 587, 591, 601, 592, 593, 594, 595, 596, 597, 598, 599, 600, 605, 608, 617, 606, 607, 609, 610, 611, 612, 613, 614, 615, 616, 623, 624, 625, 626, 627, 628, 629, 630, 631, 633, 634, 635, 637, 644, 655, 665, 666, 675, 676, 677, 682, 683, 636, 638, 639, 640, 641, 642, 643, 645, 654, 646, 647, 648, 649, 650, 651, 652, 653, 656, 657, 658, 659, 660, 661, 662, 663, 664, 667, 668, 669, 670, 671, 672, 673, 674, 678, 679, 680, 681, 685, 686, 687, 688, 689, 690, 691, 692, 706, 707, 728, 729, 730, 735, 741, 742, 784, 693, 696, 705, 694, 695, 697, 698, 699, 700, 701, 702, 703, 704, 708, 716, 709, 710, 711, 712, 713, 714, 715, 717, 718, 719, 720, 721, 722, 723, 724, 725, 726, 727, 731, 732, 733, 734, 736, 737, 738, 739, 740, 743, 749, 759, 770, 771, 772, 773, 774, 775, 744, 745, 746, 747, 748, 750, 751, 752, 753, 754, 755, 756, 757, 758, 760, 761, 762, 763, 764, 765, 766, 767, 768, 769, 776, 781, 777, 778, 779, 780, 782, 783, 786, 787, 788, 789, 790, 791, 792, 793, 794, 808, 809, 866, 867, 868, 873, 874, 916, 795, 798, 807, 796, 797, 799, 800, 801, 802, 803, 804, 805, 806, 810, 858, 811, 812, 819, 820, 838, 839, 840, 841, 842, 843, 813, 814, 815, 816, 817, 818, 821, 822, 823, 824, 834, 835, 836, 837, 825, 826, 827, 828, 829, 830, 831, 832, 833, 844, 845, 846, 856, 857, 847, 848, 849, 850, 851, 852, 853, 854, 855, 859, 860, 861, 862, 863, 864, 865, 869, 870, 871, 872, 875, 881, 891, 902, 903, 904, 905, 906, 907, 876, 877, 878, 879, 880, 882, 883, 884, 885, 886, 887, 888, 889, 890, 892, 893, 894, 895, 896, 897, 898, 899, 900, 901, 908, 913, 909, 910, 911, 912, 914, 915, 918, 919, 920, 921, 923, 924, 925, 932, 937, 938, 947, 958, 959, 964, 965, 990, 1037, 926, 927, 928, 929, 930, 931, 933, 934, 935, 936, 939, 940, 941, 942, 943, 944, 945, 946, 948, 957, 949, 950, 951, 952, 953, 954, 955, 956, 960, 961, 962, 963, 966, 975, 976, 989, 967, 968, 969, 970, 971, 972, 973, 974, 977, 978, 987, 988, 979, 980, 981, 982, 983, 984, 985, 986, 991, 1001, 1004, 1013, 1014, 992, 993, 994, 995, 996, 997, 998, 999, 1000, 1002, 1003, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1015, 1025, 1026, 1035, 1036, 1016, 1017, 1018, 1019, 1020, 1021, 1022, 1023, 1024, 1027, 1028, 1029, 1030, 1031, 1032, 1033, 1034, 1040, 1041, 1042, 1043, 1056, 1060, 1063, 1064, 1065, 1066, 1079, 1080, 1044, 1054, 1055, 1045, 1046, 1047, 1048, 1049, 1050, 1051, 1052, 1053, 1057, 1058, 1059, 1061, 1062, 1067, 1077, 1078, 1068, 1069, 1070, 1071, 1072, 1073, 1074, 1075, 1076, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1089, 1090, 1104, 1107, 1108, 1165, 1166, 1167, 1172, 1173, 1215, 1091, 1094, 1103, 1092, 1093, 1095, 1096, 1097, 1098, 1099, 1100, 1101, 1102, 1105, 1106, 1109, 1129, 1145, 1153, 1110, 1111, 1112, 1113, 1114, 1115, 1123, 1116, 1117, 1118, 1119, 1120, 1121, 1122, 1124, 1125, 1126, 1127, 1128, 1130, 1131, 1132, 1133, 1141, 1142, 1143, 1144, 1134, 1135, 1136, 1137, 1138, 1139, 1140, 1146, 1147, 1148, 1149, 1150, 1151, 1152, 1154, 1155, 1156, 1157, 1158, 1159, 1160, 1161, 1162, 1163, 1164, 1168, 1169, 1170, 1171, 1174, 1180, 1190, 1201, 1202, 1203, 1204, 1205, 1206, 1175, 1176, 1177, 1178, 1179, 1181, 1182, 1183, 1184, 1185, 1186, 1187, 1188, 1189, 1191, 1192, 1193, 1194, 1195, 1196, 1197, 1198, 1199, 1200, 1207, 1212, 1208, 1209, 1210, 1211, 1213, 1214, 1217, 1230, 1278, 1286, 1294, 1314, 1330, 1338, 1346, 1374, 1218, 1219, 1220, 1221, 1222, 1223, 1224, 1225, 1226, 1227, 1228, 1229, 1231, 1232, 1239, 1240, 1258, 1259, 1260, 1261, 1262, 1263, 1233, 1234, 1235, 1236, 1237, 1238, 1241, 1242, 1243, 1244, 1254, 1255, 1256, 1257, 1245, 1246, 1247, 1248, 1249, 1250, 1251, 1252, 1253, 1264, 1265, 1266, 1276, 1277, 1267, 1268, 1269, 1270, 1271, 1272, 1273, 1274, 1275, 1279, 1280, 1281, 1282, 1283, 1284, 1285, 1287, 1288, 1289, 1290, 1291, 1292, 1293, 1295, 1296, 1297, 1298, 1299, 1300, 1308, 1301, 1302, 1303, 1304, 1305, 1306, 1307, 1309, 1310, 1311, 1312, 1313, 1315, 1316, 1317, 1318, 1326, 1327, 1328, 1329, 1319, 1320, 1321, 1322, 1323, 1324, 1325, 1331, 1332, 1333, 1334, 1335, 1336, 1337, 1339, 1340, 1341, 1342, 1343, 1344, 1345, 1347, 1348, 1349, 1367, 1368, 1350, 1353, 1363, 1364, 1365, 1366, 1351, 1352, 1354, 1355, 1356, 1357, 1358, 1359, 1360, 1361, 1362, 1369, 1370, 1371, 1372, 1373, 1375, 1376, 1377, 1378, 1379, 1380, 1381, 1382, 1383, 1384, 1385, 1389, 1390, 1391, 1392, 1394, 1395, 1396, 1410, 1411, 1412, 1453, 1454, 1455, 1460, 1466, 1467, 1468, 1397, 1400, 1409, 1398, 1399, 1401, 1402, 1403, 1404, 1405, 1406, 1407, 1408, 1413, 1441, 1414, 1415, 1416, 1434, 1435, 1417, 1420, 1430, 1431, 1432, 1433, 1418, 1419, 1421, 1422, 1423, 1424, 1425, 1426, 1427, 1428, 1429, 1436, 1437, 1438, 1439, 1440, 1442, 1443, 1444, 1445, 1446, 1447, 1448, 1449, 1450, 1451, 1452, 1456, 1457, 1458, 1459, 1461, 1462, 1463, 1464, 1465, 1469, 1480, 1470, 1471, 1472, 1473, 1474, 1475, 1476, 1477, 1478, 1479, 1481, 1491, 1482, 1483, 1484, 1485, 1486, 1487, 1488, 1489, 1490, 1493, 1494, 1495, 1497, 1504, 1515, 1525, 1526, 1543, 1544, 1545, 1550, 1551, 1496, 1498, 1499, 1500, 1501, 1502, 1503, 1505, 1514, 1506, 1507, 1508, 1509, 1510, 1511, 1512, 1513, 1516, 1517, 1518, 1519, 1520, 1521, 1522, 1523, 1524, 1527, 1528, 1529, 1530, 1531, 1539, 1540, 1541, 1542, 1532, 1533, 1534, 1535, 1536, 1537, 1538, 1546, 1547, 1548, 1549, 1554, 1555, 1556, 1557, 1558, 1559, 1560, 1561, 1562, 1576, 1577, 1606, 1607, 1608, 1613, 1614, 1656, 1563, 1566, 1575, 1564, 1565, 1567, 1568, 1569, 1570, 1571, 1572, 1573, 1574, 1578, 1594, 1579, 1580, 1581, 1582, 1590, 1591, 1592, 1593, 1583, 1584, 1585, 1586, 1587, 1588, 1589, 1595, 1596, 1597, 1598, 1599, 1600, 1601, 1602, 1603, 1604, 1605, 1609, 1610, 1611, 1612, 1615, 1621, 1631, 1642, 1643, 1644, 1645, 1646, 1647, 1616, 1617, 1618, 1619, 1620, 1622, 1623, 1624, 1625, 1626, 1627, 1628, 1629, 1630, 1632, 1633, 1634, 1635, 1636, 1637, 1638, 1639, 1640, 1641, 1648, 1653, 1649, 1650, 1651, 1652, 1654, 1655, 1658, 1659, 1660, 1661, 1662, 1663, 1664, 1665, 1666, 1667, 1668, 1669, 1671, 1676, 1678, 1681, 1691, 1694, 1695, 1696, 1698, 1703, 1704, 1672, 1673, 1674, 1675, 1677, 1679, 1680, 1682, 1683, 1684, 1685, 1686, 1687, 1688, 1689, 1690, 1692, 1693, 1697, 1699, 1700, 1701, 1702, 1705, 1707, 1713, 1723, 1734, 1735, 1736, 1737, 1738, 1739, 1708, 1709, 1710, 1711, 1712, 1714, 1715, 1716, 1717, 1718, 1719, 1720, 1721, 1722, 1724, 1725, 1726, 1727, 1728, 1729, 1730, 1731, 1732, 1733, 1740, 1745, 1741, 1742, 1743, 1744, 1746, 1747, 1749, 1750, 1757, 1758, 1769, 1784, 1791, 1792, 1803, 1813, 1835, 1836, 1837, 1848, 1849, 1854, 1858, 1867, 1868, 1895, 1909, 1915, 1960, 1961, 1962, 1963, 1975, 1976, 1977, 1751, 1752, 1753, 1754, 1755, 1756, 1759, 1768, 1760, 1761, 1762, 1763, 1764, 1765, 1766, 1767, 1770, 1771, 1772, 1782, 1783, 1773, 1774, 1775, 1776, 1777, 1778, 1779, 1780, 1781, 1785, 1786, 1787, 1788, 1789, 1790, 1793, 1794, 1795, 1796, 1797, 1798, 1799, 1800, 1801, 1802, 1804, 1805, 1806, 1807, 1808, 1809, 1810, 1811, 1812, 1814, 1815, 1821, 1831, 1832, 1833, 1834, 1816, 1817, 1818, 1819, 1820, 1822, 1823, 1824, 1825, 1826, 1827, 1828, 1829, 1830, 1838, 1839, 1840, 1841, 1842, 1843, 1844, 1845, 1846, 1847, 1850, 1851, 1852, 1853, 1855, 1856, 1857, 1859, 1860, 1861, 1862, 1863, 1864, 1865, 1866, 1869, 1875, 1876, 1893, 1870, 1871, 1872, 1873, 1874, 1877, 1885, 1878, 1879, 1884, 1880, 1881, 1882, 1883, 1886, 1887, 1892, 1888, 1889, 1890, 1891, 1894, 1896, 1897, 1907, 1908, 1898, 1899, 1900, 1901, 1902, 1903, 1904, 1905, 1906, 1910, 1911, 1912, 1913, 1914, 1916, 1918, 1934, 1935, 1938, 1944, 1952, 1957, 1917, 1919, 1920, 1922, 1923, 1924, 1921, 1925, 1926, 1927, 1928, 1929, 1930, 1931, 1932, 1933, 1936, 1937, 1939, 1941, 1942, 1943, 1940, 1945, 1946, 1947, 1948, 1949, 1950, 1951, 1953, 1954, 1955, 1956, 1958, 1959, 1964, 1974, 1965, 1966, 1967, 1968, 1969, 1970, 1971, 1972, 1973, 1979, 1980, 1990, 1991, 1992, 1993, 1998, 2010, 1981, 1982, 1983, 1984, 1985, 1986, 1987, 1988, 1989, 1994, 1995, 1996, 1997, 1999, 2009, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2011, 2012, 2013, 2014, 2016, 2017, 2018, 2022, 2032, 2033, 2034, 2035, 2046, 2047, 2048, 2049, 2054, 2056, 2059, 2019, 2020, 2021, 2023, 2024, 2025, 2026, 2027, 2028, 2029, 2030, 2031, 2036, 2037, 2038, 2039, 2040, 2041, 2042, 2043, 2044, 2045, 2050, 2051, 2052, 2053, 2055, 2057, 2058, 2060, 2061, 2062, 2063, 2064, 2065, 2066, 2067, 2068, 2069, 2071, 2072, 2073, 2074, 2075, 2077, 2078, 2079, 2080, 2081, 2082, 2083, 2084, 2085, 2088, 2089, 2095, 2105, 2106, 2107, 2108, 2090, 2091, 2092, 2093, 2094, 2096, 2097, 2098, 2099, 2100, 2101, 2102, 2103, 2104, 2111, 2112, 2113, 2114, 2115, 2118, 2120, 2146, 2149, 2151, 2119, 2121, 2125, 2132, 2133, 2143, 2144, 2145, 2122, 2124, 2123, 2126, 2127, 2128, 2129, 2130, 2131, 2134, 2135, 2136, 2137, 2138, 2139, 2140, 2141, 2142, 2147, 2148, 2150, 2152, 2153, 2154, 2161, 2171, 2172, 2173, 2174, 2175, 2176, 2155, 2156, 2157, 2158, 2159, 2160, 2162, 2163, 2164, 2165, 2166, 2167, 2168, 2169, 2170, 2178, 2179, 2180, 2181, 2184, 2185, 2186, 2187, 2190, 2191, 2192, 2193, 2203, 2194, 2195, 2196, 2197, 2198, 2199, 2200, 2201, 2202, 2206, 2207, 2217, 2219, 2231, 2239, 2244, 2254, 2257, 2208, 2209, 2216, 2210, 2211, 2212, 2213, 2214, 2215, 2218, 2220, 2221, 2228, 2229, 2230, 2222, 2223, 2224, 2225, 2226, 2227, 2232, 2237, 2238, 2233, 2234, 2235, 2236, 2240, 2241, 2242, 2243, 2245, 2246, 2247, 2248, 2249, 2250, 2251, 2252, 2253, 2255, 2256, 2258, 2259, 2261, 2262, 2272, 2273, 2274, 2275, 2276, 2263, 2264, 2265, 2266, 2267, 2268, 2269, 2270, 2271, 2278, 2279, 2289, 2290, 2291, 2292, 2297, 2309, 2280, 2281, 2282, 2283, 2284, 2285, 2286, 2287, 2288, 2293, 2294, 2295, 2296, 2298, 2308, 2299, 2300, 2301, 2302, 2303, 2304, 2305, 2306, 2307, 2310, 2311, 2312, 2313, 2315, 2316, 2317, 2318, 2320, 2327, 2328, 2329, 2339, 2340, 2362, 2373, 2374, 2385, 2386, 2387, 2388, 2389, 2400, 2321, 2322, 2323, 2324, 2325, 2326, 2330, 2331, 2332, 2333, 2334, 2335, 2336, 2337, 2338, 2341, 2342, 2344, 2345, 2346, 2351, 2355, 2343, 2347, 2348, 2349, 2350, 2352, 2353, 2354, 2356, 2357, 2358, 2359, 2360, 2361, 2363, 2364, 2365, 2366, 2367, 2368, 2369, 2370, 2371, 2372, 2375, 2376, 2377, 2378, 2379, 2380, 2381, 2382, 2383, 2384, 2390, 2391, 2392, 2393, 2394, 2395, 2396, 2397, 2398, 2399];
 
 #[rustfmt::skip]
 fn copy(id: u16, f: &crate::style::style::StylePatch, i: &mut crate::style::style::StylePatch) {
@@ -63118,6 +63136,7 @@ fn copy(id: u16, f: &crate::style::style::StylePatch, i: &mut crate::style::styl
         2397 => copy_2397(f, i),
         2398 => copy_2398(f, i),
         2399 => copy_2399(f, i),
+        2400 => copy_2400(f, i),
         _ => {}
     }
 }
@@ -65525,6 +65544,7 @@ fn unset(id: u16, f: &crate::style::style::StylePatch) -> bool {
         2397 => unset_2397(f),
         2398 => unset_2398(f),
         2399 => unset_2399(f),
+        2400 => unset_2400(f),
         _ => true,
     }
 }
@@ -66874,7 +66894,7 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         1833 => rebuild_1833(total, i, unset),
         1834 => rebuild_1834(total, i, unset),
         1835 => rebuild_1835(total, i, unset),
-        1838 => rebuild_1838(total, i, unset),
+        1836 => rebuild_1836(total, i, unset),
         1839 => rebuild_1839(total, i, unset),
         1840 => rebuild_1840(total, i, unset),
         1841 => rebuild_1841(total, i, unset),
@@ -66884,14 +66904,14 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         1845 => rebuild_1845(total, i, unset),
         1846 => rebuild_1846(total, i, unset),
         1847 => rebuild_1847(total, i, unset),
-        1849 => rebuild_1849(total, i, unset),
+        1848 => rebuild_1848(total, i, unset),
         1850 => rebuild_1850(total, i, unset),
         1851 => rebuild_1851(total, i, unset),
         1852 => rebuild_1852(total, i, unset),
-        1854 => rebuild_1854(total, i, unset),
+        1853 => rebuild_1853(total, i, unset),
         1855 => rebuild_1855(total, i, unset),
         1856 => rebuild_1856(total, i, unset),
-        1858 => rebuild_1858(total, i, unset),
+        1857 => rebuild_1857(total, i, unset),
         1859 => rebuild_1859(total, i, unset),
         1860 => rebuild_1860(total, i, unset),
         1861 => rebuild_1861(total, i, unset),
@@ -66900,27 +66920,27 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         1864 => rebuild_1864(total, i, unset),
         1865 => rebuild_1865(total, i, unset),
         1866 => rebuild_1866(total, i, unset),
-        1869 => rebuild_1869(total, i, unset),
+        1867 => rebuild_1867(total, i, unset),
         1870 => rebuild_1870(total, i, unset),
         1871 => rebuild_1871(total, i, unset),
         1872 => rebuild_1872(total, i, unset),
         1873 => rebuild_1873(total, i, unset),
         1874 => rebuild_1874(total, i, unset),
-        1877 => rebuild_1877(total, i, unset),
-        1879 => rebuild_1879(total, i, unset),
+        1875 => rebuild_1875(total, i, unset),
+        1878 => rebuild_1878(total, i, unset),
         1880 => rebuild_1880(total, i, unset),
         1881 => rebuild_1881(total, i, unset),
         1882 => rebuild_1882(total, i, unset),
         1883 => rebuild_1883(total, i, unset),
-        1885 => rebuild_1885(total, i, unset),
-        1887 => rebuild_1887(total, i, unset),
+        1884 => rebuild_1884(total, i, unset),
+        1886 => rebuild_1886(total, i, unset),
         1888 => rebuild_1888(total, i, unset),
         1889 => rebuild_1889(total, i, unset),
         1890 => rebuild_1890(total, i, unset),
         1891 => rebuild_1891(total, i, unset),
         1892 => rebuild_1892(total, i, unset),
-        1895 => rebuild_1895(total, i, unset),
-        1897 => rebuild_1897(total, i, unset),
+        1893 => rebuild_1893(total, i, unset),
+        1896 => rebuild_1896(total, i, unset),
         1898 => rebuild_1898(total, i, unset),
         1899 => rebuild_1899(total, i, unset),
         1900 => rebuild_1900(total, i, unset),
@@ -66931,17 +66951,17 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         1905 => rebuild_1905(total, i, unset),
         1906 => rebuild_1906(total, i, unset),
         1907 => rebuild_1907(total, i, unset),
-        1909 => rebuild_1909(total, i, unset),
+        1908 => rebuild_1908(total, i, unset),
         1910 => rebuild_1910(total, i, unset),
         1911 => rebuild_1911(total, i, unset),
         1912 => rebuild_1912(total, i, unset),
         1913 => rebuild_1913(total, i, unset),
-        1916 => rebuild_1916(total, i, unset),
-        1918 => rebuild_1918(total, i, unset),
-        1920 => rebuild_1920(total, i, unset),
+        1914 => rebuild_1914(total, i, unset),
+        1917 => rebuild_1917(total, i, unset),
+        1919 => rebuild_1919(total, i, unset),
         1921 => rebuild_1921(total, i, unset),
         1922 => rebuild_1922(total, i, unset),
-        1924 => rebuild_1924(total, i, unset),
+        1923 => rebuild_1923(total, i, unset),
         1925 => rebuild_1925(total, i, unset),
         1926 => rebuild_1926(total, i, unset),
         1927 => rebuild_1927(total, i, unset),
@@ -66951,28 +66971,28 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         1931 => rebuild_1931(total, i, unset),
         1932 => rebuild_1932(total, i, unset),
         1933 => rebuild_1933(total, i, unset),
-        1935 => rebuild_1935(total, i, unset),
+        1934 => rebuild_1934(total, i, unset),
         1936 => rebuild_1936(total, i, unset),
-        1939 => rebuild_1939(total, i, unset),
+        1937 => rebuild_1937(total, i, unset),
         1940 => rebuild_1940(total, i, unset),
         1941 => rebuild_1941(total, i, unset),
         1942 => rebuild_1942(total, i, unset),
-        1944 => rebuild_1944(total, i, unset),
-        1946 => rebuild_1946(total, i, unset),
+        1943 => rebuild_1943(total, i, unset),
+        1945 => rebuild_1945(total, i, unset),
         1947 => rebuild_1947(total, i, unset),
         1948 => rebuild_1948(total, i, unset),
         1949 => rebuild_1949(total, i, unset),
         1950 => rebuild_1950(total, i, unset),
-        1952 => rebuild_1952(total, i, unset),
+        1951 => rebuild_1951(total, i, unset),
         1953 => rebuild_1953(total, i, unset),
         1954 => rebuild_1954(total, i, unset),
         1955 => rebuild_1955(total, i, unset),
-        1957 => rebuild_1957(total, i, unset),
+        1956 => rebuild_1956(total, i, unset),
         1958 => rebuild_1958(total, i, unset),
         1959 => rebuild_1959(total, i, unset),
         1960 => rebuild_1960(total, i, unset),
         1961 => rebuild_1961(total, i, unset),
-        1964 => rebuild_1964(total, i, unset),
+        1962 => rebuild_1962(total, i, unset),
         1965 => rebuild_1965(total, i, unset),
         1966 => rebuild_1966(total, i, unset),
         1967 => rebuild_1967(total, i, unset),
@@ -66985,8 +67005,8 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         1974 => rebuild_1974(total, i, unset),
         1975 => rebuild_1975(total, i, unset),
         1976 => rebuild_1976(total, i, unset),
-        1978 => rebuild_1978(total, i, unset),
-        1980 => rebuild_1980(total, i, unset),
+        1977 => rebuild_1977(total, i, unset),
+        1979 => rebuild_1979(total, i, unset),
         1981 => rebuild_1981(total, i, unset),
         1982 => rebuild_1982(total, i, unset),
         1983 => rebuild_1983(total, i, unset),
@@ -66998,11 +67018,11 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         1989 => rebuild_1989(total, i, unset),
         1990 => rebuild_1990(total, i, unset),
         1991 => rebuild_1991(total, i, unset),
-        1993 => rebuild_1993(total, i, unset),
+        1992 => rebuild_1992(total, i, unset),
         1994 => rebuild_1994(total, i, unset),
         1995 => rebuild_1995(total, i, unset),
         1996 => rebuild_1996(total, i, unset),
-        1999 => rebuild_1999(total, i, unset),
+        1997 => rebuild_1997(total, i, unset),
         2000 => rebuild_2000(total, i, unset),
         2001 => rebuild_2001(total, i, unset),
         2002 => rebuild_2002(total, i, unset),
@@ -67012,16 +67032,16 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2006 => rebuild_2006(total, i, unset),
         2007 => rebuild_2007(total, i, unset),
         2008 => rebuild_2008(total, i, unset),
-        2010 => rebuild_2010(total, i, unset),
+        2009 => rebuild_2009(total, i, unset),
         2011 => rebuild_2011(total, i, unset),
         2012 => rebuild_2012(total, i, unset),
         2013 => rebuild_2013(total, i, unset),
-        2015 => rebuild_2015(total, i, unset),
+        2014 => rebuild_2014(total, i, unset),
         2016 => rebuild_2016(total, i, unset),
-        2018 => rebuild_2018(total, i, unset),
+        2017 => rebuild_2017(total, i, unset),
         2019 => rebuild_2019(total, i, unset),
         2020 => rebuild_2020(total, i, unset),
-        2022 => rebuild_2022(total, i, unset),
+        2021 => rebuild_2021(total, i, unset),
         2023 => rebuild_2023(total, i, unset),
         2024 => rebuild_2024(total, i, unset),
         2025 => rebuild_2025(total, i, unset),
@@ -67033,7 +67053,7 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2031 => rebuild_2031(total, i, unset),
         2032 => rebuild_2032(total, i, unset),
         2033 => rebuild_2033(total, i, unset),
-        2036 => rebuild_2036(total, i, unset),
+        2034 => rebuild_2034(total, i, unset),
         2037 => rebuild_2037(total, i, unset),
         2038 => rebuild_2038(total, i, unset),
         2039 => rebuild_2039(total, i, unset),
@@ -67045,14 +67065,14 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2045 => rebuild_2045(total, i, unset),
         2046 => rebuild_2046(total, i, unset),
         2047 => rebuild_2047(total, i, unset),
-        2049 => rebuild_2049(total, i, unset),
+        2048 => rebuild_2048(total, i, unset),
         2050 => rebuild_2050(total, i, unset),
         2051 => rebuild_2051(total, i, unset),
         2052 => rebuild_2052(total, i, unset),
-        2054 => rebuild_2054(total, i, unset),
-        2056 => rebuild_2056(total, i, unset),
+        2053 => rebuild_2053(total, i, unset),
+        2055 => rebuild_2055(total, i, unset),
         2057 => rebuild_2057(total, i, unset),
-        2060 => rebuild_2060(total, i, unset),
+        2058 => rebuild_2058(total, i, unset),
         2061 => rebuild_2061(total, i, unset),
         2062 => rebuild_2062(total, i, unset),
         2063 => rebuild_2063(total, i, unset),
@@ -67061,12 +67081,12 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2066 => rebuild_2066(total, i, unset),
         2067 => rebuild_2067(total, i, unset),
         2068 => rebuild_2068(total, i, unset),
-        2070 => rebuild_2070(total, i, unset),
+        2069 => rebuild_2069(total, i, unset),
         2071 => rebuild_2071(total, i, unset),
         2072 => rebuild_2072(total, i, unset),
         2073 => rebuild_2073(total, i, unset),
         2074 => rebuild_2074(total, i, unset),
-        2076 => rebuild_2076(total, i, unset),
+        2075 => rebuild_2075(total, i, unset),
         2077 => rebuild_2077(total, i, unset),
         2078 => rebuild_2078(total, i, unset),
         2079 => rebuild_2079(total, i, unset),
@@ -67076,13 +67096,13 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2083 => rebuild_2083(total, i, unset),
         2084 => rebuild_2084(total, i, unset),
         2085 => rebuild_2085(total, i, unset),
-        2087 => rebuild_2087(total, i, unset),
-        2089 => rebuild_2089(total, i, unset),
+        2086 => rebuild_2086(total, i, unset),
+        2088 => rebuild_2088(total, i, unset),
         2090 => rebuild_2090(total, i, unset),
         2091 => rebuild_2091(total, i, unset),
         2092 => rebuild_2092(total, i, unset),
         2093 => rebuild_2093(total, i, unset),
-        2095 => rebuild_2095(total, i, unset),
+        2094 => rebuild_2094(total, i, unset),
         2096 => rebuild_2096(total, i, unset),
         2097 => rebuild_2097(total, i, unset),
         2098 => rebuild_2098(total, i, unset),
@@ -67096,23 +67116,23 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2106 => rebuild_2106(total, i, unset),
         2107 => rebuild_2107(total, i, unset),
         2108 => rebuild_2108(total, i, unset),
-        2110 => rebuild_2110(total, i, unset),
+        2109 => rebuild_2109(total, i, unset),
         2111 => rebuild_2111(total, i, unset),
         2112 => rebuild_2112(total, i, unset),
         2113 => rebuild_2113(total, i, unset),
         2114 => rebuild_2114(total, i, unset),
         2115 => rebuild_2115(total, i, unset),
-        2118 => rebuild_2118(total, i, unset),
-        2122 => rebuild_2122(total, i, unset),
+        2116 => rebuild_2116(total, i, unset),
+        2119 => rebuild_2119(total, i, unset),
         2123 => rebuild_2123(total, i, unset),
-        2125 => rebuild_2125(total, i, unset),
+        2124 => rebuild_2124(total, i, unset),
         2126 => rebuild_2126(total, i, unset),
         2127 => rebuild_2127(total, i, unset),
         2128 => rebuild_2128(total, i, unset),
         2129 => rebuild_2129(total, i, unset),
         2130 => rebuild_2130(total, i, unset),
         2131 => rebuild_2131(total, i, unset),
-        2133 => rebuild_2133(total, i, unset),
+        2132 => rebuild_2132(total, i, unset),
         2134 => rebuild_2134(total, i, unset),
         2135 => rebuild_2135(total, i, unset),
         2136 => rebuild_2136(total, i, unset),
@@ -67124,18 +67144,18 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2142 => rebuild_2142(total, i, unset),
         2143 => rebuild_2143(total, i, unset),
         2144 => rebuild_2144(total, i, unset),
-        2146 => rebuild_2146(total, i, unset),
+        2145 => rebuild_2145(total, i, unset),
         2147 => rebuild_2147(total, i, unset),
-        2149 => rebuild_2149(total, i, unset),
-        2151 => rebuild_2151(total, i, unset),
+        2148 => rebuild_2148(total, i, unset),
+        2150 => rebuild_2150(total, i, unset),
         2152 => rebuild_2152(total, i, unset),
-        2154 => rebuild_2154(total, i, unset),
+        2153 => rebuild_2153(total, i, unset),
         2155 => rebuild_2155(total, i, unset),
         2156 => rebuild_2156(total, i, unset),
         2157 => rebuild_2157(total, i, unset),
         2158 => rebuild_2158(total, i, unset),
         2159 => rebuild_2159(total, i, unset),
-        2161 => rebuild_2161(total, i, unset),
+        2160 => rebuild_2160(total, i, unset),
         2162 => rebuild_2162(total, i, unset),
         2163 => rebuild_2163(total, i, unset),
         2164 => rebuild_2164(total, i, unset),
@@ -67151,12 +67171,12 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2174 => rebuild_2174(total, i, unset),
         2175 => rebuild_2175(total, i, unset),
         2176 => rebuild_2176(total, i, unset),
-        2181 => rebuild_2181(total, i, unset),
+        2177 => rebuild_2177(total, i, unset),
         2182 => rebuild_2182(total, i, unset),
-        2187 => rebuild_2187(total, i, unset),
-        2189 => rebuild_2189(total, i, unset),
-        2191 => rebuild_2191(total, i, unset),
-        2193 => rebuild_2193(total, i, unset),
+        2183 => rebuild_2183(total, i, unset),
+        2188 => rebuild_2188(total, i, unset),
+        2190 => rebuild_2190(total, i, unset),
+        2192 => rebuild_2192(total, i, unset),
         2194 => rebuild_2194(total, i, unset),
         2195 => rebuild_2195(total, i, unset),
         2196 => rebuild_2196(total, i, unset),
@@ -67167,18 +67187,18 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2201 => rebuild_2201(total, i, unset),
         2202 => rebuild_2202(total, i, unset),
         2203 => rebuild_2203(total, i, unset),
-        2205 => rebuild_2205(total, i, unset),
-        2207 => rebuild_2207(total, i, unset),
-        2209 => rebuild_2209(total, i, unset),
+        2204 => rebuild_2204(total, i, unset),
+        2206 => rebuild_2206(total, i, unset),
+        2208 => rebuild_2208(total, i, unset),
         2210 => rebuild_2210(total, i, unset),
         2211 => rebuild_2211(total, i, unset),
         2212 => rebuild_2212(total, i, unset),
         2213 => rebuild_2213(total, i, unset),
         2214 => rebuild_2214(total, i, unset),
         2215 => rebuild_2215(total, i, unset),
-        2217 => rebuild_2217(total, i, unset),
-        2219 => rebuild_2219(total, i, unset),
-        2221 => rebuild_2221(total, i, unset),
+        2216 => rebuild_2216(total, i, unset),
+        2218 => rebuild_2218(total, i, unset),
+        2220 => rebuild_2220(total, i, unset),
         2222 => rebuild_2222(total, i, unset),
         2223 => rebuild_2223(total, i, unset),
         2224 => rebuild_2224(total, i, unset),
@@ -67187,17 +67207,17 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2227 => rebuild_2227(total, i, unset),
         2228 => rebuild_2228(total, i, unset),
         2229 => rebuild_2229(total, i, unset),
-        2232 => rebuild_2232(total, i, unset),
+        2230 => rebuild_2230(total, i, unset),
         2233 => rebuild_2233(total, i, unset),
         2234 => rebuild_2234(total, i, unset),
         2235 => rebuild_2235(total, i, unset),
         2236 => rebuild_2236(total, i, unset),
         2237 => rebuild_2237(total, i, unset),
-        2239 => rebuild_2239(total, i, unset),
+        2238 => rebuild_2238(total, i, unset),
         2240 => rebuild_2240(total, i, unset),
         2241 => rebuild_2241(total, i, unset),
         2242 => rebuild_2242(total, i, unset),
-        2244 => rebuild_2244(total, i, unset),
+        2243 => rebuild_2243(total, i, unset),
         2245 => rebuild_2245(total, i, unset),
         2246 => rebuild_2246(total, i, unset),
         2247 => rebuild_2247(total, i, unset),
@@ -67206,12 +67226,12 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2250 => rebuild_2250(total, i, unset),
         2251 => rebuild_2251(total, i, unset),
         2252 => rebuild_2252(total, i, unset),
-        2254 => rebuild_2254(total, i, unset),
+        2253 => rebuild_2253(total, i, unset),
         2255 => rebuild_2255(total, i, unset),
-        2257 => rebuild_2257(total, i, unset),
+        2256 => rebuild_2256(total, i, unset),
         2258 => rebuild_2258(total, i, unset),
-        2260 => rebuild_2260(total, i, unset),
-        2262 => rebuild_2262(total, i, unset),
+        2259 => rebuild_2259(total, i, unset),
+        2261 => rebuild_2261(total, i, unset),
         2263 => rebuild_2263(total, i, unset),
         2264 => rebuild_2264(total, i, unset),
         2265 => rebuild_2265(total, i, unset),
@@ -67225,8 +67245,8 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2273 => rebuild_2273(total, i, unset),
         2274 => rebuild_2274(total, i, unset),
         2275 => rebuild_2275(total, i, unset),
-        2277 => rebuild_2277(total, i, unset),
-        2279 => rebuild_2279(total, i, unset),
+        2276 => rebuild_2276(total, i, unset),
+        2278 => rebuild_2278(total, i, unset),
         2280 => rebuild_2280(total, i, unset),
         2281 => rebuild_2281(total, i, unset),
         2282 => rebuild_2282(total, i, unset),
@@ -67238,11 +67258,11 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2288 => rebuild_2288(total, i, unset),
         2289 => rebuild_2289(total, i, unset),
         2290 => rebuild_2290(total, i, unset),
-        2292 => rebuild_2292(total, i, unset),
+        2291 => rebuild_2291(total, i, unset),
         2293 => rebuild_2293(total, i, unset),
         2294 => rebuild_2294(total, i, unset),
         2295 => rebuild_2295(total, i, unset),
-        2298 => rebuild_2298(total, i, unset),
+        2296 => rebuild_2296(total, i, unset),
         2299 => rebuild_2299(total, i, unset),
         2300 => rebuild_2300(total, i, unset),
         2301 => rebuild_2301(total, i, unset),
@@ -67252,15 +67272,15 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2305 => rebuild_2305(total, i, unset),
         2306 => rebuild_2306(total, i, unset),
         2307 => rebuild_2307(total, i, unset),
-        2309 => rebuild_2309(total, i, unset),
+        2308 => rebuild_2308(total, i, unset),
         2310 => rebuild_2310(total, i, unset),
         2311 => rebuild_2311(total, i, unset),
         2312 => rebuild_2312(total, i, unset),
-        2314 => rebuild_2314(total, i, unset),
+        2313 => rebuild_2313(total, i, unset),
         2315 => rebuild_2315(total, i, unset),
         2316 => rebuild_2316(total, i, unset),
         2317 => rebuild_2317(total, i, unset),
-        2320 => rebuild_2320(total, i, unset),
+        2318 => rebuild_2318(total, i, unset),
         2321 => rebuild_2321(total, i, unset),
         2322 => rebuild_2322(total, i, unset),
         2323 => rebuild_2323(total, i, unset),
@@ -67268,7 +67288,7 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2325 => rebuild_2325(total, i, unset),
         2326 => rebuild_2326(total, i, unset),
         2327 => rebuild_2327(total, i, unset),
-        2329 => rebuild_2329(total, i, unset),
+        2328 => rebuild_2328(total, i, unset),
         2330 => rebuild_2330(total, i, unset),
         2331 => rebuild_2331(total, i, unset),
         2332 => rebuild_2332(total, i, unset),
@@ -67278,24 +67298,24 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2336 => rebuild_2336(total, i, unset),
         2337 => rebuild_2337(total, i, unset),
         2338 => rebuild_2338(total, i, unset),
-        2340 => rebuild_2340(total, i, unset),
-        2342 => rebuild_2342(total, i, unset),
+        2339 => rebuild_2339(total, i, unset),
+        2341 => rebuild_2341(total, i, unset),
         2343 => rebuild_2343(total, i, unset),
         2344 => rebuild_2344(total, i, unset),
-        2346 => rebuild_2346(total, i, unset),
+        2345 => rebuild_2345(total, i, unset),
         2347 => rebuild_2347(total, i, unset),
         2348 => rebuild_2348(total, i, unset),
         2349 => rebuild_2349(total, i, unset),
-        2351 => rebuild_2351(total, i, unset),
+        2350 => rebuild_2350(total, i, unset),
         2352 => rebuild_2352(total, i, unset),
         2353 => rebuild_2353(total, i, unset),
-        2355 => rebuild_2355(total, i, unset),
+        2354 => rebuild_2354(total, i, unset),
         2356 => rebuild_2356(total, i, unset),
         2357 => rebuild_2357(total, i, unset),
         2358 => rebuild_2358(total, i, unset),
         2359 => rebuild_2359(total, i, unset),
         2360 => rebuild_2360(total, i, unset),
-        2363 => rebuild_2363(total, i, unset),
+        2361 => rebuild_2361(total, i, unset),
         2364 => rebuild_2364(total, i, unset),
         2365 => rebuild_2365(total, i, unset),
         2366 => rebuild_2366(total, i, unset),
@@ -67305,7 +67325,7 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2370 => rebuild_2370(total, i, unset),
         2371 => rebuild_2371(total, i, unset),
         2372 => rebuild_2372(total, i, unset),
-        2375 => rebuild_2375(total, i, unset),
+        2373 => rebuild_2373(total, i, unset),
         2376 => rebuild_2376(total, i, unset),
         2377 => rebuild_2377(total, i, unset),
         2378 => rebuild_2378(total, i, unset),
@@ -67318,7 +67338,7 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2385 => rebuild_2385(total, i, unset),
         2386 => rebuild_2386(total, i, unset),
         2387 => rebuild_2387(total, i, unset),
-        2390 => rebuild_2390(total, i, unset),
+        2388 => rebuild_2388(total, i, unset),
         2391 => rebuild_2391(total, i, unset),
         2392 => rebuild_2392(total, i, unset),
         2393 => rebuild_2393(total, i, unset),
@@ -67328,6 +67348,7 @@ fn rebuild(id: u16, total: &mut crate::style::style::Style, i: &crate::style::st
         2397 => rebuild_2397(total, i, unset),
         2398 => rebuild_2398(total, i, unset),
         2399 => rebuild_2399(total, i, unset),
+        2400 => rebuild_2400(total, i, unset),
         _ => {}
     }
 }

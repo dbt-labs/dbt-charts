@@ -1,7 +1,14 @@
 //! A board's merged patch: the `meta.yml` chain root to leaf, the board's `extends:` chain, then
 //! the board's own fields (`merged_patch` in the board-compile lane).
+//!
+//! The `meta.yml` chain runs root to leaf; its `lint:` is read apart, not folded; a package board also reads the
+//! host's `charts/meta.yml`. The result is the patch, the themes met (the last is the effective
+//! one), the layers and the notices. `tests/test_normalize_merged_fixture.py` is its oracle; it
+//! also compares the merge-time warnings, `Merged.warnings` and `Merged::restated(default_theme)`
+//! (a replaced layout or tag list, a heading margin in a meta or fragment, a restated theme or
+//! cascaded value).
 
-use crate::extends::{parent, split_own, Cx, FoldError, Patch};
+use crate::extends::{parent, split_own, Cx, FoldError, MetaLint, Patch};
 use crate::files::ProjectFiles;
 pub use crate::merge_warnings::{MergeWarning, RestatedError};
 use migrate::Date;
@@ -18,6 +25,8 @@ pub struct Merged {
     /// board's fragments last. The board's own patch is not among them.
     pub layers: Vec<(ProjectPath, Patch)>,
     pub notices: Vec<crate::extends::Notice>,
+    /// The `lint:` suppressions of the `meta.yml` chain.
+    pub lint: MetaLint,
     /// The layout and heading-margin warnings of the fold, in Python's order.
     pub warnings: Vec<MergeWarning>,
     own_cascaded: Patch,
@@ -124,6 +133,7 @@ pub fn merged_patch(
         themes: out.themes,
         layers: out.layers,
         notices: out.notices,
+        lint: out.lint,
         warnings,
         own_cascaded,
         own_extends: entries,

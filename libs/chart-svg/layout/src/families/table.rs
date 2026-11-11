@@ -6,9 +6,18 @@
 //! `calculate_column_layout_port`, `column_inputs`, `wrapped_headers`), themselves the port of
 //! production's `calculate_column_layout` and `_render_table_svg_core`, cited at each law. The
 //! table's root `<svg>` is part of the DOM contract and is emitted here. A table that needs a law
-//! this slice does not port is refused by name; `sweep/cartesian_refusals.json` lists them.
+//! this slice does not port is refused by name; `sweep/cartesian_refusals/` lists them.
+//!
+//! `plan` is the columns' widths at a width (production's `calculate_column_layout`: p95 demand and word
+//! floor per column, compact columns at their natural width, text columns sharing the rest,
+//! cluster-equalized and floored), the one-step fit cascade (padding to half, at least 6), every row's
+//! place and the table's height; the widths are the raw advances of
+//! `measure::shaped::FontBook::raw_advance`. `draw` is the header, its divider, the stripes and the
+//! cells with the table's root `<svg>`. [`TableFaces::of`] reads the body and header faces off the chart's
+//! total `TableChartStyle`; [`Plan::fits`] is the slot check under which production neither pages nor
+//! squeezes.
 
-use bind::model::Table;
+use bind::bound::Table;
 use board_model::style::style::Style;
 use board_model::style::table::{CellAlign, PaginationMode, TableChartStyle};
 use d3rs::py_float::py_float_sum;

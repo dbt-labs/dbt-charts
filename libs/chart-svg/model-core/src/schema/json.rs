@@ -4,6 +4,12 @@
 //! `extensions` adds the `x-dbt-*` annotations Python's schema does not carry:
 //! `x-dbt-facet`, `x-dbt-absent`, `x-dbt-inherit`, `x-dbt-inherit-slot`,
 //! `x-dbt-links`, `x-dbt-local`, `x-dbt-nested-drop`, `x-dbt-role`.
+//!
+//! A facet's or unit's keywords (`pattern`, bounds, `minLength`, item counts) come from its
+//! declaration (`Keywords` on `TypeExpr::Keyed`) and are hoisted beside the `anyOf` of its field;
+//! a facet's `in_arm` or a field's `arm_pattern` keeps the pattern in its arm as Python's
+//! `Annotated[str, ..] | None` does, and `InEngine` places the pattern under an `Engine`. The
+//! Authored view requires only what no fallback, `fill` or slot fills.
 
 use super::{Body, Prop, Schema, SchemaField, SchemaModel, Ty, View};
 use crate::{Bounds, Condition, Constraint, ConstraintKind, InEngine, Keywords, Scalar, Value};

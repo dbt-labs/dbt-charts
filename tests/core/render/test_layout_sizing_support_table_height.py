@@ -15,6 +15,10 @@ target_height. _align_cols_heights must compensate by passing a corrected height
 
 from __future__ import annotations
 
+import re
+
+from .._svg_render import render_board_to_svg
+
 # =============================================================================
 # _compute_support_table_entry_dx unit tests
 # =============================================================================
@@ -25,7 +29,7 @@ from __future__ import annotations
 # =============================================================================
 
 
-def test_titled_support_table_cols_card_heights_equal(tmp_path):
+def test_titled_support_table_cols_card_heights_equal() -> None:
     """Both cols: siblings have equal rendered SVG height after support_table calibration.
 
     A titled position:top support_table chart re-renders with a corrected
@@ -37,16 +41,6 @@ def test_titled_support_table_cols_card_heights_equal(tmp_path):
     two SVGs differed by that amount.
     Post-fix: both land within 2px of each other.
     """
-    import re
-
-    from dbt_charts.cli.filesystem_project import FilesystemProject
-    from dbt_charts.core.compile import compile as compile_board
-    from dbt_charts.core.execute.env import build_exec_env
-    from dbt_charts.core.render.board_resolve import build_resolved_board
-    from dbt_charts.core.render.boards import render_board_svg
-
-    from ..._run import Run
-
     _YAML = """
 title: Height Equality Test
 queries:
@@ -79,20 +73,7 @@ cols:
   - plain_chart
 """
 
-    result = compile_board(_YAML)
-    assert result.success and result.board is not None, result.errors
-
-    project = FilesystemProject(tmp_path)
-    executor = Run(
-        result.board,
-        build_exec_env(project),
-        query_registry=result.query_registry,
-    )
-    variables: dict = {}
-    resolved, render_cache = build_resolved_board(result.board, executor, variables)
-    svg = render_board_svg(
-        resolved, executor, variables, "#ffffff", render_cache=render_cache
-    )
+    svg = render_board_to_svg(_YAML)
 
     def _chart_svg_height(chart_id: str) -> float:
         """Return the rendered SVG height for a chart section in the board SVG."""
@@ -113,3 +94,45 @@ cols:
         f"(dt_chart={dt_h:.1f}px, plain_chart={plain_h:.1f}px). "
         "After support_table height correction, both siblings must match."
     )
+
+
+def test_bottom_strip_board_is_no_taller_than_top_strip_board() -> None:
+    """A bottom strip sits below the x labels it clears, so it adds no second label band.
+
+    The canvas below the plot is the further reach of the label band or the strip
+    (the gap that clears the labels, plus the strip), never their sum.
+    """
+    template = """
+title: Strip position
+queries:
+  q:
+    columns: [month, amount, orders]
+    values:
+      - ["2026-01-01", 120, 30]
+      - ["2026-02-01", 150, 41]
+      - ["2026-03-01", 90, 22]
+charts:
+  q:
+    query: q
+    type: bar
+    x: month
+    y: amount
+    height: 220
+    support_table:
+      - source: orders
+        label: Orders
+    style:
+      support_table:
+        position: POSITION
+rows:
+  - q
+"""
+
+    def board_height(position: str) -> float:
+        svg = render_board_to_svg(template.replace("POSITION", position))
+        vb = re.search(r'viewBox="0 0 [0-9.]+ ([0-9.]+)"', svg)
+        assert vb is not None
+        return float(vb.group(1))
+
+    top, bottom = board_height("top"), board_height("bottom")
+    assert bottom <= top + 2.0, f"bottom strip board {bottom}px vs top {top}px"

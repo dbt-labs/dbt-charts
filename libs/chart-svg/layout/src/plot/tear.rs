@@ -9,7 +9,7 @@
 //! ranged bar with numeric ends does) and which [`Law`] it draws by. Everything else follows the
 //! plot's size.
 
-use bind::model::ValueDomain;
+use bind::bound::ValueDomain;
 use scene::{PathCommand, PathData};
 
 use crate::geom::Size;

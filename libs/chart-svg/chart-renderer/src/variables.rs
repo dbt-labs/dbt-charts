@@ -220,9 +220,6 @@ where
 // variable_input_refinement.py
 // ---------------------------------------------------------------------
 
-const SLIDER_MAX_DISTINCT: usize = 200;
-const SLIDER_MAX_RANGE_STEPS: f64 = 1000.0;
-
 struct RefinedType {
     input_type: String,
     slider_min: Option<f64>,
@@ -230,86 +227,23 @@ struct RefinedType {
     slider_step: Option<f64>,
 }
 
-/// `variable_input_refinement.py::refine_input_type_from_data`.
+/// `variable_input_refinement.py::refine_input_type_from_data`; the data-aware law is
+/// `board_model::variable::refine_options`.
 fn refine_input_type_from_data(
     current_input: &str,
     input_auto_detected: bool,
     option_values: &[String],
 ) -> RefinedType {
-    let unchanged = || RefinedType {
-        input_type: current_input.to_string(),
-        slider_min: None,
-        slider_max: None,
-        slider_step: None,
-    };
-    if !input_auto_detected || option_values.is_empty() {
-        return unchanged();
+    let refined = input_auto_detected
+        .then(|| ::board_model::variable::refine_options(option_values))
+        .flatten();
+    let slider = refined.and_then(|r| r.slider);
+    RefinedType {
+        input_type: refined.map_or(current_input, |r| r.input.as_str()).to_string(),
+        slider_min: slider.map(|s| s.0),
+        slider_max: slider.map(|s| s.1),
+        slider_step: slider.map(|s| s.2),
     }
-    if looks_like_dates(option_values) {
-        return RefinedType {
-            input_type: "datepicker".to_string(),
-            slider_min: None,
-            slider_max: None,
-            slider_step: None,
-        };
-    }
-    if looks_like_booleans(option_values) {
-        return RefinedType {
-            input_type: "checkbox".to_string(),
-            slider_min: None,
-            slider_max: None,
-            slider_step: None,
-        };
-    }
-    if option_values.len() <= SLIDER_MAX_DISTINCT {
-        if let Some(parsed) = try_parse_numbers(option_values) {
-            let min_val = parsed.iter().cloned().fold(f64::INFINITY, f64::min);
-            let max_val = parsed.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let val_range = max_val - min_val;
-            if val_range > 0.0 {
-                let all_ints = parsed.iter().all(|v| v.fract() == 0.0);
-                let step = if all_ints {
-                    1.0
-                } else {
-                    (val_range / 100.0 * 1e6).round() / 1e6
-                };
-                if val_range / step <= SLIDER_MAX_RANGE_STEPS {
-                    return RefinedType {
-                        input_type: "slider".to_string(),
-                        slider_min: Some(min_val),
-                        slider_max: Some(max_val),
-                        slider_step: Some(step),
-                    };
-                }
-            }
-        }
-    }
-    unchanged()
-}
-
-fn looks_like_dates(values: &[String]) -> bool {
-    if values.len() < 2 {
-        return false;
-    }
-    let matches = values.iter().filter(|v| is_iso_date_prefix(v)).count();
-    matches as f64 / values.len() as f64 >= 0.8
-}
-
-fn is_iso_date_prefix(v: &str) -> bool {
-    if v.len() < 10 || !v.is_char_boundary(10) {
-        return false;
-    }
-    if full_iso_date(&v[..10]).is_none() {
-        return false;
-    }
-    let bytes = v.as_bytes();
-    if bytes.len() > 10 {
-        let next = bytes[10];
-        if next != b'T' && next != b' ' && next != b'\t' {
-            return false;
-        }
-    }
-    true
 }
 
 /// A full `YYYY-MM-DD` date, the one shape a control variable carries.
@@ -318,30 +252,6 @@ fn full_iso_date(s: &str) -> Option<(i32, u32, u32)> {
         return None;
     }
     ::bind::time_axis::parse_iso_date(s).map(|(y, m, d)| (y, m.into(), d.into()))
-}
-
-fn looks_like_booleans(values: &[String]) -> bool {
-    if values.len() != 2 {
-        return false;
-    }
-    let pair: HashSet<String> = values.iter().map(|v| v.trim().to_lowercase()).collect();
-    let candidates: [[&str; 2]; 3] = [["true", "false"], ["yes", "no"], ["0", "1"]];
-    candidates.iter().any(|c| {
-        let candidate: HashSet<String> = c.iter().map(|s| s.to_string()).collect();
-        candidate == pair
-    })
-}
-
-fn try_parse_numbers(values: &[String]) -> Option<Vec<f64>> {
-    let mut out = Vec::with_capacity(values.len());
-    for v in values {
-        let n: f64 = v.trim().parse().ok()?;
-        if !n.is_finite() {
-            return None;
-        }
-        out.push(n);
-    }
-    Some(out)
 }
 
 #[cfg(test)]

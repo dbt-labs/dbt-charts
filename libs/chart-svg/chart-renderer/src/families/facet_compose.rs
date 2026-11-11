@@ -429,7 +429,7 @@ fn ghost_rows(ys: impl Iterator<Item = f64>, style: &GhostStyle) -> Vec<f64> {
 fn ghost_gridlines(grid: &crate::common::AxisGrid, rows: &[f64], plot_x: f64, outer_x: f64) -> Result<Node, String> {
     let color = crate::common::required_ink(grid.color.as_deref(), "facet", "axis_y.grid.color")?;
     let width = grid.width.unwrap_or(1.5);
-    Ok(crate::contract::grid_group(rows.iter().map(|&row| crate::contract::rule(Role::Grid, (outer_x, row), (plot_x, row), color, width)).collect()))
+    Ok(::layout::contract::grid_group(rows.iter().map(|&row| crate::contract::rule(Role::Grid, (outer_x, row), (plot_x, row), color, width)).collect()))
 }
 
 /// The y a mirror ghost label paints at for the tick whose unlifted label y is `y`: above its gridline's row, a fixed

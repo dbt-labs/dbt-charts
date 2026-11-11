@@ -8,9 +8,12 @@
 //!
 //! A nested board is `Resolved::base(theme + in_force.resolve)`, not a `Resolved::apply` over its
 //! parent: the scope drops fields the parent resolved, as Python resolves theme plus scoped patch.
+//! `in_force` composes the three into the patch to resolve and the patch the board's children
+//! inherit. `tests/test_board_model_nested_scope_fixture.py` checks them against Python; the
+//! theme-switch canvas and ink canvas are `bind`'s.
 
 use crate::facet::Color;
-use crate::style::style::StylePatch;
+use crate::style::style::{Gap, StylePatch};
 use model_core::Tri;
 
 /// The layouts whose `layout.<type>.gap` a nested board reads.
@@ -65,7 +68,7 @@ pub fn with_nested_layout_gap(mut patch: StylePatch, kind: Option<GapLayout>) ->
         GapLayout::Grid => &patch.layout.grid.gap,
     };
     if let Some(gap) = gap {
-        patch.gap = Tri::Value(*gap);
+        patch.gap = Tri::Value(Gap::from(*gap));
     }
     patch
 }

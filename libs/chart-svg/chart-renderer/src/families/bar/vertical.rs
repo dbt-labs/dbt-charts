@@ -2104,17 +2104,36 @@ pub(crate) fn render_vertical_panel(
     // The buckets that keep a column at a plot `pw` wide: under a label the axis paints over a period, the first
     // bucket of that period; under on-tick band labels, whose columns stand on their own bars, the label openers.
     let strip_labeled = |pw: f64| -> Result<Option<Vec<bool>>, String> {
-        match (time.as_ref().zip(time_axis.as_ref()), &strip_periods, detected_data_tu.zip(label_periods)) {
-            (Some((t, axis)), _, _) => t.labeled(axis, pw, fonts),
-            (None, Some(periods), _) => Ok(support_table_strip::first_bucket_of_each_label(periods)),
-            (None, None, Some((data_tu, periods))) => Ok(support_table_strip::label_period_keep(
+        let labeled = match (time.as_ref().zip(time_axis.as_ref()), &strip_periods, detected_data_tu.zip(label_periods)) {
+            (Some((t, axis)), _, _) => return t.labeled(axis, pw, fonts),
+            (None, Some(periods), _) => support_table_strip::first_bucket_of_each_label(periods),
+            (None, None, Some((data_tu, periods))) => support_table_strip::label_period_keep(
                 &x_axis.dates(&cat_domain).date,
                 data_tu,
                 periods.visibility_tu,
                 ax_x.fiscal_year_start_month,
-            )),
-            (None, None, None) => Ok(None),
+            ),
+            (None, None, None) => None,
+        };
+        if filled_x.filled.is_none() {
+            return Ok(labeled);
         }
+        // An empty scaffold bucket has no figure to open a label period on; the next bucket with data does.
+        let carries: Vec<bool> = cat_domain.iter().map(|cat| rows.iter().any(|row| row_str(row, cat_field) == *cat)).collect();
+        let Some(labeled) = labeled else { return Ok(Some(carries)) };
+        let mut pending = false;
+        Ok(Some(
+            labeled
+                .iter()
+                .zip(&carries)
+                .map(|(&opens, &carries)| {
+                    pending |= opens;
+                    let keep = pending && carries;
+                    pending &= !carries;
+                    keep
+                })
+                .collect(),
+        ))
     };
     // Production's autosize-pad support_table shape: the cells and stubs are
     // ink like any other mark, measured once at the payload's own width, a
@@ -3492,9 +3511,8 @@ pub(crate) fn render_vertical_panel(
                     pad_t
                         + m.top
                         + m.plot_h
-                        + m.bottom
-                        + pad_b
-                        + if bottom_strip { strip_h + strip_axis_offset } else { 0.0 },
+                        + if bottom_strip { m.bottom.max(strip_axis_offset + strip_h) } else { m.bottom }
+                        + pad_b,
                     Some(strip_rows),
                 )
             }
@@ -3823,7 +3841,7 @@ pub(crate) fn render_vertical_panel(
             }
             lines.push(Node::line(Role::Grid, (grid_x1, y), (grid_x2, y), grid.faded_stroke(gc, gw)));
         }
-        plot.push(crate::contract::grid_group(lines));
+        plot.push(::layout::contract::grid_group(lines));
     }
 
     if let Some(t) = &tear {
@@ -3852,7 +3870,7 @@ pub(crate) fn render_vertical_panel(
                 }
                 lines.push(Node::line(Role::Grid, (layer_x1, y), (layer_x2, y), la.layer_grid_attrs(gc, gw)));
             }
-            plot.push(crate::contract::grid_group(lines));
+            plot.push(::layout::contract::grid_group(lines));
         }
     }
 
@@ -5192,7 +5210,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
                 .num("font-size", sl.font_size)
                 .set("font-weight", sl.font_weight.as_str())
                 .set("font-style", sl.font_style.as_str())
-                .set(crate::contract::SERIES_KEY, series.as_str())
+                .set(::layout::contract::SERIES_KEY, series.as_str())
                 .set("fill", rcolor.as_str())
                 .extend(rail_label_attrs);
             let label_attrs = crate::legend_view::direct_label(r.legend_view.as_ref(), label_attrs, series);

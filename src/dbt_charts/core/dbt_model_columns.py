@@ -50,18 +50,16 @@ from typing import TYPE_CHECKING
 
 import sqlglot.expressions as exp
 
-from dbt_charts.core.column_refs import (
-    extract_base_column_refs,
-    parse_sql_statements,
-)
-from dbt_charts.core.compile.models.query.normalized import is_sql_query
+from dbt_charts.core.column_refs import parse_sql_statements, query_column_refs
+from dbt_charts.core.compile.host_facts import HostQuery, sql_texts
 from dbt_charts.core.compile.sql_guard import (
     SKELETON_PLACEHOLDER_PREFIX,
+    dialect_for_source,
     is_sqlglot_dialect,
     sqlglot_dialect,
 )
 from dbt_charts.core.dbt_manifest import LoadedManifest, load_manifest
-from dbt_charts.core.dbt_ref_check import query_target_paths
+from dbt_charts.core.dbt_ref_check import SourceYaml, query_target_paths
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_DBT_MODEL_COLUMN_MISSING,
@@ -73,7 +71,8 @@ from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.dbt_jinja import has_dbt_jinja
 
 if TYPE_CHECKING:
-    from dbt_charts.core.compile.compiler import CompileResult
+    from collections.abc import Mapping
+
     from dbt_charts.core.project import Project
 
 _PLACEHOLDER_PREFIX = SKELETON_PLACEHOLDER_PREFIX
@@ -433,35 +432,33 @@ def _resolve_star_source(
     return _select_columns(inner, ctes, seen | {name_l}, via_dbt)
 
 
-def check_model_columns(compile_result: CompileResult, project: Project) -> None:
+def check_model_columns(
+    queries: Mapping[str, HostQuery],
+    project: Project,
+    board_sources: SourceYaml,
+) -> list[Diagnostic]:
     """Check board column references against statically derived model columns.
 
-    Mutates ``compile_result.errors`` / ``.warnings``, like
-    ``check_manifest_refs``. No-ops without a manifest — nothing to claim. A
-    manifest that exists but cannot be read is a real fault at a real
-    location and is reported here (``check_manifest_refs`` only loads the
-    manifest when a query carries a ref()/source() call, so it cannot be
-    relied on to have said it).
+    No manifest, nothing to claim. A manifest that exists but cannot be read is
+    a real fault at a real location and is reported here (``check_manifest_refs``
+    only loads the manifest when a query carries a ref()/source() call, so it
+    cannot be relied on to have said it); callers drop a duplicate of one it
+    already reported.
 
     Claims are scoped to ref() provenance: only a table that reached the
     query through ``{{ ref(...) }}`` is checked against the model registry —
     a bare name that happens to match a model may be a same-named relation on
     a different source entirely.
     """
-    if compile_result.board is None:
-        # A board that failed compile has no query registry to analyze; its
-        # own compile errors are the report.
-        return
+    found: list[Diagnostic] = []
+    sql_queries = sql_texts(queries)
     dbt_queries = {
         name
-        for name, query in compile_result.query_registry.items()
-        if is_sql_query(query)
-        and (
-            has_dbt_jinja(query.sql)
-            or (query.setup_sql is not None and has_dbt_jinja(query.setup_sql))
-        )
+        for name, query in sql_queries.items()
+        if has_dbt_jinja(query["sql"])
+        or (query["setup_sql"] is not None and has_dbt_jinja(query["setup_sql"]))
     }
-    target_paths = query_target_paths(compile_result, project, dbt_queries)
+    target_paths = query_target_paths(queries, project, dbt_queries, board_sources)
     manifests: dict[str | None, LoadedManifest] = {}
     # The default manifest is read even when no query calls ref(): an unreadable
     # one is a fault the author should hear about.
@@ -471,25 +468,33 @@ def check_model_columns(compile_result: CompileResult, project: Project) -> None
             loaded = load_manifest(project, target_path, optional=not reads_it)
         except ExecutionError as exc:
             diagnostic = exc.to_diagnostic()
-            if diagnostic not in compile_result.errors:
-                compile_result.errors.append(diagnostic)
+            if diagnostic not in found:
+                found.append(diagnostic)
             continue
         if loaded is not None:
             manifests[target_path] = loaded
     if not manifests or not dbt_queries:
-        return
+        return found
 
-    column_refs = extract_base_column_refs(compile_result)
+    sources = {**project.declared_sources.sources, **board_sources}
+    column_refs = {
+        name: query_column_refs(
+            query["sql"],
+            query["setup_sql"],
+            query["dialect"],
+            dialect_for_source(query["source"], sources),
+        )
+        for name, query in sql_queries.items()
+    }
     models_by_path: dict[str | None, dict[str, ModelColumns]] = {}
     warned: set[tuple[str, str]] = set()
-
     for query_name, refs in column_refs.items():
         if refs.indeterminate is not None:
             if query_name in dbt_queries:
                 # A dbt-backed query this check cannot vouch for — the gap
                 # stays visible, never a silent green. Plain-SQL queries are
                 # the SQL lint tiers' business.
-                compile_result.warnings.append(
+                found.append(
                     Diagnostic.from_code(
                         WARN_DBT_QUERY_COLUMNS_INDETERMINATE,
                         message=WARN_DBT_QUERY_COLUMNS_INDETERMINATE.message_template.format(
@@ -516,7 +521,7 @@ def check_model_columns(compile_result: CompileResult, project: Project) -> None
             if model.unresolved is not None:
                 if (query_name, table_l) not in warned:
                     warned.add((query_name, table_l))
-                    compile_result.warnings.append(
+                    found.append(
                         Diagnostic.from_code(
                             WARN_DBT_MODEL_COLUMNS_UNRESOLVED,
                             message=WARN_DBT_MODEL_COLUMNS_UNRESOLVED.message_template.format(
@@ -530,7 +535,7 @@ def check_model_columns(compile_result: CompileResult, project: Project) -> None
                     )
                 continue
             if column.lower() not in model.columns:
-                compile_result.errors.append(
+                found.append(
                     DbtChartsError.from_code(
                         ERR_DBT_MODEL_COLUMN_MISSING,
                         query_name=query_name,
@@ -539,3 +544,4 @@ def check_model_columns(compile_result: CompileResult, project: Project) -> None
                         available=sorted(model.columns),
                     ).to_diagnostic()
                 )
+    return found

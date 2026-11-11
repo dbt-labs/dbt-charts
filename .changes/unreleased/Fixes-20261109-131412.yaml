@@ -1,0 +1,3 @@
+kind: Fixes
+body: Table columns that compact numbers now repeat the magnitude suffix (K, M, B) on every row instead of only the first.
+time: 2026-11-09T13:14:12.30393-08:00

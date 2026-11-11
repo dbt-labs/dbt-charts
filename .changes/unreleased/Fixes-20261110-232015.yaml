@@ -1,0 +1,5 @@
+kind: Fixes
+body: A text block that is only a `---` rule now spans the whole card, and `style.text.column.max_chars` caps it.
+time: 2026-11-10T23:20:15.437063973Z
+custom:
+    DbtChartsIssue: "91"

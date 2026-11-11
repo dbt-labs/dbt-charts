@@ -99,6 +99,7 @@ from dbt_charts.cloud_client.context import (
 from dbt_charts.cloud_client.contract import (
     DBT_ROOT_OTHER,
     DBT_ROOT_REPO_ROOT,
+    PROJECT_SETTINGS_SETTABLE,
     AccessCheck,
     AccessList,
     AccessRow,
@@ -125,6 +126,7 @@ from dbt_charts.cloud_client.contract import (
     OrgStatus,
     ProjectConnectStarted,
     ProjectList,
+    ProjectSettings,
     ProjectStatus,
     ProjectSummary,
     PublicAccess,
@@ -2511,7 +2513,7 @@ def _report_connected(
         typer.echo(
             f"Connected {project.slug}: {project.repo_label}"
             f" (repository branch: {project.trunk_branch},"
-            f" dbtcharts.com branch: {project.work_branch})"
+            f" dbt Charts branch: {project.work_branch})"
         )
         typer.echo(_connect_next_step(org_slug, project))
     _record_published_to(cloud_host, org_slug, project, git_url)
@@ -2703,6 +2705,133 @@ def project_sync(
             "`dct cloud status` still reports unsynced until this sync"
             " lands -- give it a few seconds and re-run it."
         )
+
+
+_ON = frozenset({"on", "true", "yes", "1"})
+_OFF = frozenset({"off", "false", "no", "0"})
+
+
+def _setting_value(key: str, raw: str) -> bool | list[str] | str:
+    """A ``KEY=VALUE`` value typed the way ``ProjectSettings`` declares the key."""
+    annotation = ProjectSettings.model_fields[key].annotation
+    if annotation is bool:
+        if raw.lower() in _ON | _OFF:
+            return raw.lower() in _ON
+        raise typer.BadParameter(f"{key} takes on or off, got {raw!r}.")
+    if annotation == list[str]:
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    return raw
+
+
+def _print_settings(settings: ProjectSettings) -> None:
+    for key, value in settings.model_dump().items():
+        if key == "honor_agent_instructions_off_in_file":
+            continue
+        if isinstance(value, bool):
+            shown = "on" if value else "off"
+        elif isinstance(value, list):
+            shown = ", ".join(value)
+        else:
+            shown = value
+        lines = str(shown).splitlines() or [""]
+        typer.echo(f"{key:<28}{lines[0]}")
+        for line in lines[1:]:
+            typer.echo(f"{'':<28}{line}")
+        if key == "agent_instructions_honored" and (
+            reason := settings.honor_agent_instructions_off_in_file
+        ):
+            typer.echo(f"{'':<28}{reason}")
+
+
+@project_app.command("settings")
+def project_settings(
+    org: OrgOption = None,
+    project: ProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Show the project's General and Agent settings.
+
+    agent_instructions_honored is whether the agent reads the repo's
+    AGENTS.md, CLAUDE.md and skills/: the switch, unless the work branch's
+    dbt_charts.yml turns it off.
+    """
+    with _cloud(host, as_json) as (client, config):
+        context = _context(client, config, org, project)
+        result = client.project_settings(context.org, context.project)
+    if as_json:
+        print_json_result(result)
+        return
+    _print_settings(result)
+
+
+@project_app.command("set")
+def project_set(
+    pairs: Annotated[
+        list[str] | None,
+        typer.Argument(
+            metavar="KEY=VALUE...",
+            help=(
+                "Settings to change: "
+                + ", ".join(PROJECT_SETTINGS_SETTABLE)
+                + ". on/off for switches, commas between extra_skill_paths."
+            ),
+            show_default=False,
+        ),
+    ] = None,
+    custom_system_prompt_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--custom-system-prompt-file",
+            help="Set custom_system_prompt from this file's text.",
+            exists=True,
+            dir_okay=False,
+        ),
+    ] = None,
+    org: OrgOption = None,
+    project: ProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Change project settings, then show them all.
+
+    \b
+    Examples:
+      dct cloud project set honor_agent_instructions=on
+      dct cloud project set branch_mode=on allow_self_merge=off
+      dct cloud project set --custom-system-prompt-file prompt.md
+    """
+    keys = [pair.partition("=")[0] for pair in pairs or []]
+    repeated = sorted({key for key in keys if keys.count(key) > 1})
+    if repeated:
+        raise typer.BadParameter(f"Give each setting once: {', '.join(repeated)}.")
+    raw = parse_kv_pairs(pairs or [], "KEY=VALUE")
+    unknown = sorted(set(raw) - set(PROJECT_SETTINGS_SETTABLE))
+    if unknown:
+        raise typer.BadParameter(
+            f"Unknown setting {', '.join(unknown)}."
+            f" Settable: {', '.join(PROJECT_SETTINGS_SETTABLE)}."
+        )
+    changes: dict[str, object] = {
+        key: _setting_value(key, value) for key, value in raw.items()
+    }
+    if custom_system_prompt_file is not None:
+        if "custom_system_prompt" in changes:
+            raise typer.BadParameter(
+                "Give custom_system_prompt once: as KEY=VALUE or as a file."
+            )
+        changes["custom_system_prompt"] = custom_system_prompt_file.read_text(
+            encoding="utf-8"
+        )
+    if not changes:
+        raise typer.BadParameter("Name at least one KEY=VALUE to change.")
+    with _cloud(host, as_json) as (client, config):
+        context = _context(client, config, org, project)
+        result = client.set_project_settings(context.org, context.project, changes)
+    if as_json:
+        print_json_result(result)
+        return
+    _print_settings(result)
 
 
 @project_app.command("scaffold")

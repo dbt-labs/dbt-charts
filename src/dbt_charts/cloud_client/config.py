@@ -112,7 +112,8 @@ class PendingConnect(BaseModel):
         default=None, description="Project slug (default: from the name)."
     )
     trunk: str | None = Field(
-        default=None, description="Branch Cloud pulls from (default: the repo's)."
+        default=None,
+        description="Repository branch Cloud pulls from (default: the repo's).",
     )
     root: str | None = Field(
         default=None, description="Folder holding dbt_project.yml inside the repo."

@@ -122,6 +122,7 @@ fn offset_none(series: &mut [Vec<[f64; 2]>], order: &[usize]) {
     let m = series[order[0]].len();
     for i in 1..n {
         let (s0, s1) = (order[i - 1], order[i]);
+        #[allow(clippy::needless_range_loop, reason = "d3-shape stack indexes the same datum across rows by `j`")]
         for j in 0..m {
             let below = if series[s0][j][1].is_nan() { series[s0][j][0] } else { series[s0][j][1] };
             series[s1][j][0] = below;
@@ -162,6 +163,7 @@ fn offset_diverging(series: &mut [Vec<[f64; 2]>], order: &[usize]) {
         return;
     }
     let m = series[order[0]].len();
+    #[allow(clippy::needless_range_loop, reason = "d3-shape stack indexes the same datum across rows by `j`")]
     for j in 0..m {
         let (mut yp, mut yn) = (0.0, 0.0);
         for &i in order {
@@ -190,6 +192,7 @@ fn offset_silhouette(series: &mut [Vec<[f64; 2]>], order: &[usize]) {
     }
     let s0 = order[0];
     let m = series[s0].len();
+    #[allow(clippy::needless_range_loop, reason = "d3-shape stack indexes the same datum across rows by `j`")]
     for j in 0..m {
         let y: f64 = (0..n).map(|i| or_zero(series[i][j][1])).sum();
         series[s0][j][0] = -y / 2.0;

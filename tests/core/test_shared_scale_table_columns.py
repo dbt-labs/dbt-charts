@@ -12,6 +12,8 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
+import pytest
+
 from d3_format import format as _d3_format, parse as _d3_parse
 from dbt_charts.core.compile.format_value import format_kpi_parts
 from dbt_charts.core.compile.models.primitives import FormatTable
@@ -273,18 +275,18 @@ class TestFormatKpiPartsSharedScale:
         assert scale is not None
         return scale
 
-    def test_anchor_mode_shows_suffix_only_on_anchor_row(self) -> None:
+    def test_anchor_mode_shows_the_analytic_suffix_on_every_nonzero_row(self) -> None:
         rows = [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 12_000_000.0)]
         scale = self._resolved_scale(rows)
         assert scale.mode is SuffixMode.ANCHOR
         _, anchor_num, anchor_suffix = format_kpi_parts(
-            3_500_000, ".3~s", shared_scale=scale, is_anchor=True
+            3_500_000, ".3~s", shared_scale=scale
         )
         _, other_num, other_suffix = format_kpi_parts(
-            4_200_000, ".3~s", shared_scale=scale, is_anchor=False
+            4_200_000, ".3~s", shared_scale=scale
         )
         assert anchor_suffix.strip() == "M"
-        assert other_suffix == ""
+        assert other_suffix.strip() == "M"
         assert anchor_num == "3.5"
         assert other_num == "4.2"
 
@@ -297,16 +299,13 @@ class TestFormatKpiPartsSharedScale:
             3_500_000,
             FormatConfig(spec=".3~s", notation="narrative"),
             shared_scale=scale,
-            is_anchor=True,
         )
         assert suffix.strip() == "m"
 
     def test_zero_never_carries_a_suffix(self) -> None:
         rows = [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 12_000_000.0)]
         scale = self._resolved_scale(rows)
-        _, number_str, suffix = format_kpi_parts(
-            0, ".3~s", shared_scale=scale, is_anchor=False
-        )
+        _, number_str, suffix = format_kpi_parts(0, ".3~s", shared_scale=scale)
         assert suffix == ""
         assert number_str == "0"
 
@@ -325,20 +324,18 @@ class TestFormatKpiPartsSharedScale:
                 ".3~s",
                 default_number=True,
                 shared_scale=None,
-                is_anchor=False,
             )
         )
 
 
 class TestSharedScaleAnchorsRender:
-    """Full render-path regression: the table's row-paint loop strips the
-    magnitude suffix on non-anchor rows for an ANCHOR-mode shared_scale
-    column under `symbol_mode: anchors`, and keeps it on every row for a
-    REPEAT-mode one -- the acceptance criterion for wiring shared_scale into
-    the existing anchors-mode exclusion.
+    """Full render-path regression: under `symbol_mode: anchors` only the
+    currency/prefix symbol anchors; a shared_scale column prints its magnitude
+    suffix on every nonzero row, since a missing `K` changes the value a
+    thousandfold.
     """
 
-    def test_anchor_mode_shared_scale_strips_suffix_on_middle_rows(
+    def test_anchor_mode_shared_scale_repeats_suffix_on_every_row(
         self, make_chart
     ) -> None:
         from dbt_charts.core.compile.resolve import resolve
@@ -358,11 +355,9 @@ class TestSharedScaleAnchorsRender:
         chart = resolve(chart, data, chart_style_context=custom_ctx)
         svg = render_table_svg(chart, data, width=400, board_style=_BOARD_STYLE)
 
-        # Exactly one row (the anchor) carries the magnitude suffix; the
-        # other two show bare, digit-aligned numbers at the same scale.
-        assert svg.count(">M</tspan>") == 1, (
-            "Only the anchor row should keep its magnitude suffix under "
-            f"anchors + a resolved ANCHOR-mode shared_scale; got: {svg}"
+        assert svg.count(">M</tspan>") == 3, (
+            "Every row keeps its magnitude suffix under anchors + a "
+            f"resolved ANCHOR-mode shared_scale; got: {svg}"
         )
         # The numbers themselves must be the correctly-scaled digits, not
         # truncated by the precision-inversion bug (3.5 would render "4").
@@ -425,15 +420,10 @@ class TestSharedScaleAnchorsRender:
             f"all, even for an ANCHOR-mode shared_scale; got: {svg}"
         )
 
-    def test_zero_first_row_does_not_swallow_the_column_magnitude(
+    def test_zero_first_row_carries_no_magnitude_but_the_rest_do(
         self, make_chart
     ) -> None:
-        """A zero (or non-numeric) first row structurally cannot carry a
-        magnitude suffix (format_kpi_parts never puts one on a zero value).
-        Anchoring on row 0 unconditionally would leave an ANCHOR-mode
-        column's magnitude declared nowhere -- the anchor must fall to the
-        first row that can actually carry it.
-        """
+        """A zero never carries a magnitude suffix; every nonzero row does."""
         from dbt_charts.core.compile.resolve import resolve
 
         from ._engine_render import render_table_svg
@@ -450,9 +440,8 @@ class TestSharedScaleAnchorsRender:
         chart = resolve(chart, data, chart_style_context=custom_ctx)
         svg = render_table_svg(chart, data, width=400, board_style=_BOARD_STYLE)
 
-        assert svg.count(">M</tspan>") == 1, (
-            "The magnitude suffix must land on the first row that can "
-            f"actually carry it, even when row 0 is zero; got: {svg}"
+        assert svg.count(">M</tspan>") == 3, (
+            f"Every nonzero row carries the magnitude suffix; got: {svg}"
         )
 
 
@@ -908,3 +897,37 @@ class TestUnformattedColumnThatDoesNotCompact:
     def test_a_legend_table_never_bakes_exact_digits(self) -> None:
         column = self._resolve([5.0, 1200.0, 77.0], allow_shared_scale=False)
         assert column.format is None
+
+
+@pytest.mark.parametrize(
+    ("rows", "precision"),
+    [
+        ([(858.5, 1437.5), (1137.5, 1300.5)], 3),
+        ([(1500.5, 150000.5), (2314.0, 160250.0), (130000.5, 170000.5)], 2),
+        ([(120000.5, 150000.5), (125000.5, 160000.5)], 0),
+    ],
+)
+def test_sibling_columns_on_one_scale_bake_the_largest_precision_they_need(
+    rows: list[tuple[float, float]], precision: int
+) -> None:
+    columns = {"a": TableColumnConfig(), "b": TableColumnConfig()}
+    resolved = _with_resolved_scale_stops(
+        columns,
+        text_color=None,
+        canvas_tone="light",
+        formats=None,
+        font_family=DBT_SANS_TABULAR_FONT_FAMILY,
+        rows=[{"a": a, "b": b} for a, b in rows],
+        allow_shared_scale=True,
+        own_formats={},
+        defaults_format=None,
+        declared=None,
+        filter_variables=frozenset(),
+        link_open="page",
+    )
+    assert resolved is not None
+    specs = {
+        n: c.shared_scale.digit_spec for n, c in resolved.items() if c.shared_scale
+    }
+    assert set(specs) == {"a", "b"}
+    assert {_d3_parse(s).precision for s in specs.values()} == {precision}

@@ -5,6 +5,11 @@
 //! `id` / slugified title / `untitled_board`, then `{parent}_{row|col|grid}{n}` for an item and
 //! `{parent}_tab{n}` for a tab pane, whatever `id:` a nested board writes. The facts are keyed by
 //! tree position, the YAML path of the board (`@`, `@rows[1]`, `@rows[1].tabs.items[0]`).
+//!
+//! [`LayoutFacts`] reads the authored board for each tabs layout's variable, slugs and default
+//! tab, each details board's variable and default, each board's structural title level, and the
+//! visible variables each board declares with their defaults, by [`ItemId`] (tree position),
+//! matching `normalize/layout.py`. The `fixtures` feature builds the shared `host_inputs` for tests.
 
 use crate::files::ProjectFiles;
 use crate::rhythm;
@@ -16,13 +21,13 @@ use board_model::board::layout::{
 use board_model::board::{Board, BoardBodyAuthored};
 use board_model::facet::DisplayText;
 use board_model::ids::{BoardId, ChartId, ItemId};
-use board_model::variable::{OptionsQuery, VariableAuthored};
 use diagnostic::{diag, Diagnostic};
 use migrate::{read_board, Date};
 use model_core::{parse, Leaf, Tri};
 use project::ProjectPath;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use template::environment::RESERVED_VARIABLE_NAMES;
 
 /// What the board's charts carry that no single chart can know: a fact of the tree.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -33,21 +38,6 @@ pub struct ChartFacts {
     /// takes no slot and does not move the others. A chart authored with its own ink still
     /// holds its slot.
     pub rhythm_slot: Option<u32>,
-    /// The columns the chart's channels name that its query's output columns do not list under any
-    /// letter case (`str.lower()`, as the dbt and snowpark backends fold result columns; duckdb, sqlite
-    /// and the driver backends keep the engine's case), so a column is recorded only when it is
-    /// missing on every backend. Recorded
-    /// only where the query's columns are known, for the families `rhythm::cartesian` reads; bind
-    /// and validate decide what a missing column means.
-    pub missing_columns: Vec<MissingColumn>,
-}
-
-/// A channel naming a column its query does not select.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MissingColumn {
-    /// `x`, `y` or `color`.
-    pub channel: &'static str,
-    pub column: String,
 }
 
 /// What users see of the board's charts, derived from the board and kept out of the spine.
@@ -62,6 +52,11 @@ pub struct BoardIndex {
     /// The charts declared below the root board or in an imported file, by their key: Python
     /// resolves what they read against the board or file that declares them.
     pub declared_below: BTreeSet<String>,
+    /// The nested board's position (`@rows[1]`) that declared each query under its own `queries:`:
+    /// a query of the root has no entry.
+    pub query_boards: BTreeMap<String, String>,
+    /// What search and listings read of the root board.
+    pub facts: crate::search::BoardFacts,
 }
 
 /// A tabs layout: the variable that selects a tab, each tab's slug and the one open on load.
@@ -103,6 +98,10 @@ pub struct LayoutFacts {
     /// The chart each chart item places, by position: the name it was authored under, or the id
     /// hoisting gave an inline chart (run after hoisting, every chart item is a name).
     pub charts: BTreeMap<ItemId, String>,
+    /// The imported boards that are a passage of prose, by the position of the import: a row
+    /// Python counts toward a run of text-only rows but cannot point at, as it has no coordinates
+    /// in this file.
+    pub prose_imports: BTreeSet<ItemId>,
     /// The facts of each chart a layout item places, by position: Python compiles a copy of a chart
     /// per place, so a chart placed twice has two. Read from the merged root
     /// ([`Self::of_patch`]), which holds the chart definitions; empty from [`Self::of`].
@@ -121,16 +120,12 @@ pub enum FactsError {
     UnknownDefault {
         default: String,
         slug: String,
+        slugs: Vec<String>,
     },
     /// A variable default the index cannot read as a value.
     Variable {
         name: String,
         why: String,
-    },
-    /// A nested or imported board that names its own theme or `extends:`: the style it resolves
-    /// to is not ported.
-    NestedTheme {
-        pos: ItemId,
     },
     /// A board the layout walk did not give an id: the facts and the board disagree on its place.
     NoBoardId {
@@ -143,33 +138,48 @@ pub enum FactsError {
     },
     /// A layout item id that is not `row<n>`, `col<n>` or `grid<n>`.
     ItemId(String),
-    /// A variable name declared in two boards of the tree (`ERR-DUPLICATE-VARIABLE-NAME`).
-    DuplicateVariable(Box<Diagnostic>),
+    /// A variable name the tree refuses: declared in two boards (`ERR-DUPLICATE-VARIABLE-NAME`) or reserved (`ERR-RESERVED-VARIABLE-NAME`).
+    VariableName(Box<Diagnostic>),
+}
+
+impl FactsError {
+    /// The tab and variable-name codes as Python raises them; what Python raises without a code
+    /// (a variable default, a board with no id, an import, a layout item id) is `ERR-INTERNAL`.
+    pub(crate) fn diagnostics(&self) -> Vec<Diagnostic> {
+        vec![match self {
+            Self::UnknownDefault {
+                default,
+                slug,
+                slugs,
+            } => diag::err_tab_default_unknown(default.as_str(), slug.as_str(), slugs.clone()),
+            Self::VariableName(d) => (**d).clone(),
+            Self::EmptySlug { title } => diag::err_tab_title_empty_slug(title.as_str()),
+            Self::DuplicateSlug { slug } => diag::err_tab_title_duplicate_slug(slug.as_str()),
+            Self::Variable { .. }
+            | Self::NoBoardId { .. }
+            | Self::Import { .. }
+            | Self::ItemId(_) => diag::err_internal(self.to_string()),
+        }]
+    }
 }
 
 impl fmt::Display for FactsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptySlug { title } => write!(
-                f,
-                "Tab title '{title}' produces an empty slug. Tab titles must contain at least one alphanumeric character."
-            ),
-            Self::DuplicateSlug { slug } => write!(
-                f,
-                "Duplicate tab slug '{slug}'. Tab titles must produce unique slugs (after lowercasing and replacing spaces with _)."
-            ),
-            Self::UnknownDefault { default, slug } => {
+            Self::EmptySlug { .. } | Self::DuplicateSlug { .. } => {
+                self.diagnostics().iter().try_for_each(|d| match d.message() {
+                    Ok(text) => f.write_str(&text),
+                    Err(_) => f.write_str(d.code),
+                })
+            }
+            Self::UnknownDefault { default, slug, .. } => {
                 write!(f, "tabs.default '{default}' (slug '{slug}') names no tab")
             }
             Self::Variable { name, why } => write!(f, "variable {name}: {why}"),
-            Self::NestedTheme { pos } => write!(
-                f,
-                "the board at {pos} sets its own theme or extends, which is not ported yet"
-            ),
             Self::NoBoardId { pos } => write!(f, "the board at {pos} has no id in the layout facts"),
             Self::Import { path, why } => write!(f, "board import {path}: {why}"),
             Self::ItemId(id) => write!(f, "layout item id '{id}' is not row<n>, col<n> or grid<n>"),
-            Self::DuplicateVariable(d) => match d.message() {
+            Self::VariableName(d) => match d.message() {
                 Ok(text) => f.write_str(&text),
                 Err(_) => f.write_str(d.code),
             },
@@ -249,7 +259,7 @@ impl LayoutFacts {
             order: Vec::new(),
             prefix: Some(String::new()),
             declared: BTreeMap::new(),
-            duplicate: None,
+            refused: None,
         };
         let id = match (id, title) {
             (Some(id), _) => id.as_str().to_string(),
@@ -265,8 +275,8 @@ impl LayoutFacts {
             layout: layout.as_ref(),
         };
         w.shell(shell, &id, parent_dir(file), &ItemId::root(), 0)?;
-        match w.duplicate {
-            Some(d) => Err(FactsError::DuplicateVariable(Box::new(d))),
+        match w.refused {
+            Some(d) => Err(FactsError::VariableName(Box::new(d))),
             None => Ok((w.facts, w.order)),
         }
     }
@@ -322,7 +332,7 @@ struct Walk<'a> {
     declared: BTreeMap<String, String>,
     /// The first name declared twice. Python builds its variable registry after every board of the
     /// tree compiled, so it is reported once the walk found nothing else wrong.
-    duplicate: Option<Diagnostic>,
+    refused: Option<Diagnostic>,
 }
 
 /// `segment` under the board's authored path, `None` where the board has none.
@@ -417,95 +427,13 @@ impl Walk<'_> {
         pos: &ItemId,
         parent_level: u32,
     ) -> Result<(), FactsError> {
-        if !matches!(body.theme, Tri::Unset) || !matches!(body.extends, Tri::Unset) {
-            return Err(FactsError::NestedTheme { pos: pos.clone() });
-        }
-        if !body.charts.is_empty() {
-            self.imported_charts_refused()?;
-        }
-        self.imported_source_refused(body)?;
-        if !body.queries.is_empty() {
-            self.imported_queries_refused()?;
-        }
-        if body.variables.values().any(|v| {
-            matches!(&v.options, Tri::Value(o) if matches!(o.query, Tri::Value(OptionsQuery::Sql(_))))
-        }) {
-            self.imported_option_queries_refused()?;
-        }
         self.shell(Shell::of(body), id, dir, pos, parent_level)
-    }
-
-    /// Queries an imported board declares join the root's registry in Python, which is then
-    /// checked for composition cycles; this pass does not gather them yet.
-    fn imported_queries_refused(&self) -> Result<(), FactsError> {
-        match self.importing.last() {
-            Some(file) if self.importing.len() > 1 => Err(FactsError::Import {
-                path: file.as_str().to_string(),
-                why: "an imported board that declares queries is not ported yet".to_string(),
-            }),
-            _ => Ok(()),
-        }
-    }
-
-    /// A variable's SQL options query becomes a query of the root's registry in Python, checked
-    /// with the others for composition cycles; this pass does not gather it yet.
-    fn imported_option_queries_refused(&self) -> Result<(), FactsError> {
-        match self.importing.last() {
-            Some(file) if self.importing.len() > 1 => Err(FactsError::Import {
-                path: file.as_str().to_string(),
-                why: "an imported board that declares a variable with an SQL options query is \
-                      not ported yet"
-                    .to_string(),
-            }),
-            _ => Ok(()),
-        }
-    }
-
-    /// Charts an imported board declares would join the root's map under its own registry rules
-    /// (a duplicate name, its own default rows), which this pass does not do yet.
-    fn imported_charts_refused(&self) -> Result<(), FactsError> {
-        match self.importing.last() {
-            Some(file) if self.importing.len() > 1 => Err(FactsError::Import {
-                path: file.as_str().to_string(),
-                why: "an imported board that declares charts is not ported yet".to_string(),
-            }),
-            _ => Ok(()),
-        }
-    }
-
-    /// A board file a layout imports is normalized by Python as a nested board with its own source
-    /// and directory, over its own queries and variables, and every declared chart is judged
-    /// against it; none of that is ported, so a source, a query or a query-backed variable in it
-    /// is refused rather than left unjudged.
-    fn imported_source_refused(&self, body: &BoardBodyAuthored) -> Result<(), FactsError> {
-        let reads_query = |v: &VariableAuthored| {
-            let options = match &v.options {
-                Tri::Value(o) => !matches!(o.query, Tri::Unset) || !matches!(o.column, Tri::Unset),
-                _ => false,
-            };
-            options || !matches!(v.query, Tri::Unset) || !matches!(v.column, Tri::Unset)
-        };
-        match self.importing.last() {
-            Some(file)
-                if self.importing.len() > 1
-                    && (!matches!(body.source, Tri::Unset)
-                        || !body.queries.is_empty()
-                        || body.variables.values().any(reads_query)) =>
-            {
-                Err(FactsError::Import {
-                    path: file.as_str().to_string(),
-                    why:
-                        "an imported board that sets a source or declares queries is not ported yet"
-                            .to_string(),
-                })
-            }
-            _ => Ok(()),
-        }
     }
 
     /// Records the variables of the board being walked: the ones it declares, then the hidden ones
     /// its layout generates, which replace a declared one of the same name (Python's
-    /// `local_variables.update`). A name met before in the tree is the first duplicate.
+    /// `local_variables.update`). The first reserved name, hidden ones included, or name met
+    /// before in the tree is the refusal, in Python's per-name order.
     fn declare(&mut self, authored: &[&String], hidden: &[String]) {
         let mut names: Vec<&str> = authored.iter().map(|n| n.as_str()).collect();
         for name in hidden {
@@ -514,6 +442,9 @@ impl Walk<'_> {
             }
         }
         for name in names {
+            if self.refused.is_none() && RESERVED_VARIABLE_NAMES.contains(&name) {
+                self.refused = Some(diag::err_reserved_variable_name(name));
+            }
             let location = match &self.prefix {
                 None => "an imported board".to_string(),
                 Some(p) if p.is_empty() => format!("variables.{name}"),
@@ -523,8 +454,8 @@ impl Walk<'_> {
                 None => {
                     self.declared.insert(name.to_string(), location);
                 }
-                Some(first) if self.duplicate.is_none() => {
-                    self.duplicate = Some(diag::err_duplicate_variable_name(
+                Some(first) if self.refused.is_none() => {
+                    self.refused = Some(diag::err_duplicate_variable_name(
                         name,
                         first.as_str(),
                         location.as_str(),
@@ -645,7 +576,7 @@ impl Walk<'_> {
                 Ok(())
             }
             LayoutItemAuthored::Board(nested) => self.nested(nested, item_id, &id, dir, pos, level),
-            LayoutItemAuthored::InlineChart(_) => self.imported_charts_refused(),
+            LayoutItemAuthored::InlineChart(_) => Ok(()),
         }
     }
 
@@ -729,7 +660,8 @@ impl Walk<'_> {
                     .position(|s| *s == slug)
                     .ok_or_else(|| FactsError::UnknownDefault {
                         default: d.as_str().to_string(),
-                        slug,
+                        slug: slug.clone(),
+                        slugs: slugs.clone(),
                     })?
             }
             _ => 0,
@@ -760,9 +692,6 @@ impl Walk<'_> {
         if name.contains("{{") || name.contains("{%") {
             return Err(fail("a templated import path is not ported yet".into()));
         }
-        if name.ends_with(".md") {
-            return Err(fail("a markdown board is not ported yet".into()));
-        }
         if matches!(
             ProjectPath::try_from(name),
             Err(project::PathError::NotRelative(_) | project::PathError::Empty(_))
@@ -782,7 +711,12 @@ impl Walk<'_> {
             .files
             .read(&path)
             .ok_or_else(|| fail(format!("{path} does not exist")))?;
-        let node = yaml::parse_node(&text)
+        let parsed_text = if crate::markdown::is_markdown(&path) {
+            crate::markdown::read(&text, &path, true)
+        } else {
+            yaml::parse_node(&text)
+        };
+        let node = parsed_text
             .map_err(|d| fail(d.iter().map(|d| d.code).collect::<Vec<_>>().join(", ")))?;
         let node = read_board(node, self.today).node;
         crate::shape::refuse(&node, false).map_err(|d| fail(d.code.to_string()))?;

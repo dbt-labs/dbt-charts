@@ -18,8 +18,7 @@ pub fn legend_ladder<'a>(tiers: &Tiers<'a>) -> Ladder<Rung<'a, LegendStyleBase>>
 }
 
 /// The board's total legend with every leaf this slot walks (`symbol_limit`, and the leaves the
-/// engine decides per chart: `direction`, `visible`, `title.visible`) taken from the walk. `None`
-/// when a walk finds no rung, which the total ends, so never for a total style.
+/// engine decides per chart: `direction`, `visible`, `title.visible`) taken from the walk.
 pub fn walked_legend(tiers: &Tiers<'_>) -> Option<LegendStyleBase> {
     let ladder = legend_ladder(tiers);
     let mut base = tiers.charts.legend.base.clone();

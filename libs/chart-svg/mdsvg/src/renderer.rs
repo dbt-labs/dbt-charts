@@ -941,18 +941,66 @@ impl SVGRenderer {
         Ok((mins.iter().map(round_up).collect(), maxs.iter().map(round_up).collect()))
     }
 
-    /// `renderer.py::min_content_width` for a list of tables: the narrowest
-    /// whole-pixel width at which no table splits a word. Any other block is
-    /// refused by name.
-    pub fn table_min_content_width(&self, tables: &[AnyBlock]) -> Result<f64, String> {
+    /// `renderer.py::min_content_width`: the narrowest whole-pixel width at which no word of
+    /// `blocks` is split mid-glyph, the widest unbreakable token of any block in the font it paints
+    /// in. A table's floor is each column at its widest cell word plus padding; a rule, an image,
+    /// a code block and raw HTML wrap nothing and have none.
+    pub fn min_content_width(&self, blocks: &[AnyBlock]) -> Result<f64, String> {
         let mut floor = 0.0_f64;
-        for block in tables {
-            let AnyBlock::Table(table) = block else {
-                return Err("table_min_content_width: not a table".to_string());
-            };
-            floor = floor.max(py_float_sum(&self.table_column_extents(table)?.0));
+        for block in blocks {
+            floor = floor.max(self.block_min_width(block)?);
         }
         Ok(floor.ceil())
+    }
+
+    /// `renderer.py::_widest_token`: the widest whitespace-delimited token of any run, in the run's
+    /// own face, with an inline-code chip's padding on both sides.
+    fn widest_token(&self, runs: &[TextRun], font_size: f64, font_weight: Option<&str>, is_heading: bool) -> Result<f64, String> {
+        let mut widest = 0.0_f64;
+        for run in runs {
+            for token in split_whitespace_tokens(&run.text) {
+                let width = self.measure_text(token, font_size, run.is_bold, run.is_italic, run.is_code, font_weight, is_heading)?;
+                widest = widest.max(width + 2.0 * self.chip_inset(run));
+            }
+        }
+        Ok(widest)
+    }
+
+    /// `renderer.py::_block_min_width`. Python sizes the runs' inline images for the font size.
+    fn block_min_width(&self, block: &AnyBlock) -> Result<f64, String> {
+        let size = self.style.base_font_size;
+        match block {
+            AnyBlock::Paragraph(p) => self.widest_token(&self.build_text_runs(&p.spans, size)?, size, None, false),
+            AnyBlock::Heading(h) => {
+                let heading_size = self.style.get_heading_size(h.level);
+                let runs = self.build_text_runs(&h.spans, heading_size)?;
+                self.widest_token(&runs, heading_size, Some(&self.style.heading_font_weight), true)
+            }
+            AnyBlock::UnorderedList(l) => self.list_min_width(&l.items),
+            AnyBlock::OrderedList(l) => self.list_min_width(&l.items),
+            AnyBlock::Blockquote(bq) => {
+                let mut widest = 0.0_f64;
+                for inner in &bq.blocks {
+                    widest = widest.max(self.block_min_width(inner)?);
+                }
+                Ok(self.style.blockquote_padding + widest)
+            }
+            AnyBlock::Table(t) => Ok(py_float_sum(&self.table_column_extents(t)?.0)),
+            _ => Ok(0.0),
+        }
+    }
+
+    fn list_min_width(&self, items: &[ListItem]) -> Result<f64, String> {
+        let size = self.style.base_font_size;
+        let mut widest = 0.0_f64;
+        for item in items {
+            let mut inner = self.widest_token(&self.build_text_runs(&item.spans, size)?, size, None, false)?;
+            for child in &item.children {
+                inner = inner.max(self.block_min_width(child)?);
+            }
+            widest = widest.max(self.style.list_indent + inner);
+        }
+        Ok(widest)
     }
 
     /// `renderer.py::_table_column_widths`: content-sized columns, wrapping

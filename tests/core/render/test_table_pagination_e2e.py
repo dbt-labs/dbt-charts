@@ -157,3 +157,30 @@ def test_paginator_label_is_inert_to_selection() -> None:
         r"\.dbt-chart text\.dbt-paginator-label \{\s*user-select: none;\s*\}",
         controls_stylesheet(),
     )
+
+
+def test_a_live_table_with_a_few_wrapping_rows_keeps_its_page_size() -> None:
+    """A live table pages from a pool that holds its tallest rows on one page,
+    so the sizer must measure it that way too. Measured as a plain table it
+    reserves only the first page's rows, and a few wrapping rows elsewhere then
+    squeeze every page below the size the board asked for.
+    """
+    board_yaml = _BOARD_YAML.replace(
+        "      pagination:",
+        "      columns:\n        note:\n          width: 80\n      pagination:",
+    ).replace("page_rows: 5", "page_rows: 10")
+    result = compile(board_yaml)
+    assert result.success and result.board is not None, result.errors
+    rows = [
+        {"name": f"row_{i}", "note": "word " * 40 if i % 7 == 3 else "ok"}
+        for i in range(1, 31)
+    ]
+    executor = _make_executor(result.board, result.query_registry, rows)
+
+    render_result = render(
+        result.board, executor.ctx, executor.ledger, format="svg", controls=True
+    )
+    assert render_result.board_error is None, render_result.board_error
+    assert isinstance(render_result.output, str)
+
+    assert re.findall(r'data-dbt-page-rows="(\d+)"', render_result.output) == ["10"]

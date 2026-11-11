@@ -15,6 +15,17 @@
 //! prefixes and ALL-CAPS initials (`U.S`) are handled because a board
 //! variable's inferred label runs slug text through this same `title` branch.
 
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::unreachable
+    )
+)]
+
 use std::collections::{BTreeMap, HashSet};
 use std::sync::LazyLock;
 
@@ -29,8 +40,15 @@ use crate::titlecase_first_char::titlecase_first_char;
 /// bare word, which capitalizes the same text.
 const WORD_CHARS: &str = r"\p{L}\p{N}_";
 
-fn compile(pattern: &str) -> Regex {
+/// A pattern literal of this file.
+#[allow(clippy::expect_used, reason = "a literal pattern of this file; `every_literal_pattern_compiles` forces each static")]
+fn literal(pattern: &str) -> Regex {
     Regex::new(pattern).expect("titlecase pattern is a valid regex")
+}
+
+/// A pattern built from a catalog's words.
+fn built(pattern: &str) -> Result<Regex, String> {
+    Regex::new(pattern).map_err(|e| format!("titlecase pattern {pattern:?}: {e}"))
 }
 
 fn punct_class() -> String {
@@ -80,10 +98,10 @@ impl Small {
         }
         let small = alternation.as_str();
         Ok(Self {
-            words: compile(&format!("^(?i:{small})$")),
-            first: compile(&format!("^{}*((?i:{small}))(?:$|[^{WORD_CHARS}])", punct_class())),
-            last: compile(&format!("(?:^|[^{WORD_CHARS}])((?i:{small})){}?$", punct_class())),
-            subphrase: compile(&format!(r"([:.;?!\-–‒—―][ ])({small})")),
+            words: built(&format!("^(?i:{small})$"))?,
+            first: built(&format!("^{}*((?i:{small}))(?:$|[^{WORD_CHARS}])", punct_class()))?,
+            last: built(&format!("(?:^|[^{WORD_CHARS}])((?i:{small})){}?$", punct_class()))?,
+            subphrase: built(&format!(r"([:.;?!\-–‒—―][ ])({small})"))?,
             extra,
         })
     }
@@ -91,27 +109,31 @@ impl Small {
     /// The patterns of `lang`, built once; a language whose title style is not
     /// `en_small_words` has none.
     fn of(lang: &str) -> Result<&'static Small, String> {
-        static SMALLS: LazyLock<BTreeMap<&'static str, Small>> = LazyLock::new(|| {
+        static SMALLS: LazyLock<BTreeMap<&'static str, Result<Small, String>>> = LazyLock::new(|| {
             crate::language::LANGUAGES
                 .iter()
                 .copied()
                 .filter(|lang| crate::language::text(lang, "case.title_style") == Ok("en_small_words"))
-                .map(|lang| (lang, Small::build(lang).unwrap_or_else(|e| panic!("{e}"))))
+                .map(|lang| (lang, Small::build(lang)))
                 .collect()
         });
-        SMALLS.get(lang).ok_or_else(|| format!("language '{lang}': title style en_small_words needs case.small_words"))
+        SMALLS
+            .get(lang)
+            .ok_or_else(|| format!("language '{lang}': title style en_small_words needs case.small_words"))?
+            .as_ref()
+            .map_err(Clone::clone)
     }
 }
 
 /// `[\r\n]+` (`titlecase/__init__.py:99`): the library cases each line on its
 /// own and rejoins them with `\n` (`:200`).
-static LINE_BREAKS: LazyLock<Regex> = LazyLock::new(|| compile(r"[\r\n]+"));
+static LINE_BREAKS: LazyLock<Regex> = LazyLock::new(|| literal(r"[\r\n]+"));
 
 /// `INLINE_PERIOD = [\w][.][\w]` (`titlecase/__init__.py:46`; searched at
 /// `:139`): the stdlib fallback counts digits and `_` as word characters, so
 /// `v1.2` and `a_b.c_d` are dotted tokens kept verbatim.
 static INLINE_PERIOD: LazyLock<Regex> =
-    LazyLock::new(|| compile(&format!("[{WORD_CHARS}][.][{WORD_CHARS}]")));
+    LazyLock::new(|| literal(&format!("[{WORD_CHARS}][.][{WORD_CHARS}]")));
 
 /// `UC_ELSEWHERE = [PUNCT]*?[a-zA-Z]+[A-Z]+?` under `.match()`
 /// (`titlecase/__init__.py:47`; used at `:139`). The installed library has no
@@ -119,20 +141,20 @@ static INLINE_PERIOD: LazyLock<Regex> =
 /// at `:41`, is the law: after leading punctuation the first letter run must
 /// hold an uppercase letter past its first character.
 static UC_ELSEWHERE: LazyLock<Regex> =
-    LazyLock::new(|| compile(&format!("^{}*?[a-zA-Z]+[A-Z]+?", punct_class())));
+    LazyLock::new(|| literal(&format!("^{}*?[a-zA-Z]+[A-Z]+?", punct_class())));
 
 /// `UC_INITIALS = ^(?:[A-Z]\.|[A-Z]\.[A-Z])+$` (`titlecase/__init__.py:50`;
 /// matched at `:115`, ALL-CAPS lines only): a whole word of one-or-two-capital
 /// initials, each followed by a period (`V.`, `N.Y.`, `U.S`). ASCII capitals
 /// only, like the other fallback patterns.
 static UC_INITIALS: LazyLock<Regex> =
-    LazyLock::new(|| compile(r"^(?:[A-Z]\.|[A-Z]\.[A-Z])+$"));
+    LazyLock::new(|| literal(r"^(?:[A-Z]\.|[A-Z]\.[A-Z])+$"));
 
 /// `APOS_SECOND = ^[dol]['‘][\w]+(?:['s]{2})?$`, `regex.I`
 /// (`titlecase/__init__.py:49`; used at `:119`). `[\w]+` backtracks to leave
 /// the two characters of the optional tail.
 static APOS_SECOND: LazyLock<Regex> = LazyLock::new(|| {
-    compile(&format!(
+    literal(&format!(
         "^(?i:[dol])['‘][{WORD_CHARS}]+(?:(?i:['s]){{2}})?$"
     ))
 });
@@ -150,10 +172,10 @@ fn force_lowercase(word_lower: &str) -> bool {
 fn is_path_like(word: &str) -> bool {
     let token = word.trim_end_matches(['.', ',', ';', ':', '!', '?']);
     let segments: Vec<&str> = token.split('/').collect();
-    match segments.len() {
-        0 | 1 => false,
-        _ if segments[0].is_empty() && !segments[1].is_empty() => true,
-        2 => {
+    match segments.as_slice() {
+        [] | [_] => false,
+        [first, second, ..] if first.is_empty() && !second.is_empty() => true,
+        [_, _] => {
             segments.iter().any(|seg| {
                 seg.contains('_')
                     || seg
@@ -256,11 +278,8 @@ fn splice_capitalized(s: &str, start: usize, end: usize) -> String {
 /// (`titlecase/__init__.py:181`): a BOUNDARY match, not a whole-token one, so
 /// a slash/hyphen-joined token like "a/b" capitalizes only its leading "a".
 fn capitalize_leading_small_word(small: &Small, s: &str) -> String {
-    match small.first.captures(s) {
-        Some(caps) => {
-            let word = caps.get(1).expect("group 1 always participates");
-            splice_capitalized(s, word.start(), word.end())
-        }
+    match small.first.captures(s).and_then(|caps| caps.get(1)) {
+        Some(word) => splice_capitalized(s, word.start(), word.end()),
         None => s.to_string(),
     }
 }
@@ -269,12 +288,9 @@ fn capitalize_leading_small_word(small: &Small, s: &str) -> String {
 /// (`titlecase/__init__.py:187`): the match is the small word plus its one
 /// optional trailing PUNCT character, so the capitalized span includes it.
 fn capitalize_trailing_small_word(small: &Small, s: &str) -> String {
-    match small.last.captures(s) {
-        Some(caps) => {
-            let word = caps.get(1).expect("group 1 always participates");
-            let whole = caps.get(0).expect("group 0 always participates");
-            splice_capitalized(s, word.start(), whole.end())
-        }
+    let span = small.last.captures(s).and_then(|caps| Some((caps.get(1)?.start(), caps.get(0)?.end())));
+    match span {
+        Some((start, end)) => splice_capitalized(s, start, end),
         None => s.to_string(),
     }
 }
@@ -294,15 +310,14 @@ fn apply_subphrase_fix(small: &Small, text: &str) -> String {
 /// (d/l) or uppercase a leading vowel (o), keep the apostrophe, uppercase
 /// the letter right after it, leave the remainder untouched.
 fn apply_apos_second(word: &str) -> String {
-    let chars: Vec<char> = word.chars().collect();
-    let first = if chars[0].eq_ignore_ascii_case(&'o') {
-        chars[0].to_ascii_uppercase()
-    } else {
-        chars[0].to_ascii_lowercase()
+    let mut chars = word.chars();
+    let (Some(c0), Some(c1), Some(c2)) = (chars.next(), chars.next(), chars.next()) else {
+        return word.to_string();
     };
-    let third: String = chars[2].to_uppercase().collect();
-    let rest: String = chars[3..].iter().collect();
-    format!("{first}{}{third}{rest}", chars[1])
+    let first = if c0.eq_ignore_ascii_case(&'o') { c0.to_ascii_uppercase() } else { c0.to_ascii_lowercase() };
+    let third: String = c2.to_uppercase().collect();
+    let rest: String = chars.collect();
+    format!("{first}{c1}{third}{rest}")
 }
 
 /// titlecase's `MAC_MC` (`^([Mm]c|MC)(\w.+)`): a Mc/mc/MC-prefixed
@@ -429,13 +444,12 @@ fn process_line(small: &Small, line: &str, small_first_last: bool) -> String {
         tc.push((capfirst(&w), false));
     }
 
-    if small_first_last && !tc.is_empty() {
-        let last = tc.len() - 1;
-        if !tc[0].1 {
-            tc[0].0 = capitalize_leading_small_word(small, &tc[0].0);
+    if small_first_last {
+        if let Some((word, false)) = tc.first_mut() {
+            *word = capitalize_leading_small_word(small, word);
         }
-        if !tc[last].1 {
-            tc[last].0 = capitalize_trailing_small_word(small, &tc[last].0);
+        if let Some((word, false)) = tc.last_mut() {
+            *word = capitalize_trailing_small_word(small, word);
         }
     }
 
@@ -453,7 +467,7 @@ fn lowercase_extra_small_words(small: &Small, text: &str) -> String {
         return text.to_string();
     }
     let last = words.len() - 1;
-    for w in &mut words[1..last] {
+    for w in words.iter_mut().take(last).skip(1) {
         let lower = w.to_lowercase();
         let is_preserved_acronym = !w.is_empty()
             && w.chars().all(char::is_alphabetic)
@@ -595,6 +609,20 @@ pub fn apply_case_to_runs(runs: &[&str], case: &str) -> Result<Vec<String>, Stri
 #[cfg(test)]
 mod inline_period_tests {
     use super::*;
+
+    /// `literal` panics on an invalid pattern, so each static is forced here, where it fails, and
+    /// not in a render; every language's built patterns are forced the same way.
+    #[test]
+    fn every_literal_pattern_compiles() {
+        for pattern in [&*LINE_BREAKS, &*INLINE_PERIOD, &*UC_ELSEWHERE, &*UC_INITIALS, &*APOS_SECOND] {
+            assert!(!pattern.as_str().is_empty());
+        }
+        for lang in crate::language::LANGUAGES.iter().copied() {
+            if crate::language::text(lang, "case.title_style") == Ok("en_small_words") {
+                assert!(Small::of(lang).is_ok(), "{lang}");
+            }
+        }
+    }
 
     fn apply_case(text: &str, case: &str) -> Result<String, String> {
         apply_case_in("en", text, case)

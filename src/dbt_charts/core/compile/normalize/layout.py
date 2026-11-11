@@ -48,6 +48,8 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_DUPLICATE_QUERY_NAME,
     ERR_MARKDOWN_NOT_BOARD,
     ERR_TAB_DEFAULT_UNKNOWN,
+    ERR_TAB_TITLE_DUPLICATE_SLUG,
+    ERR_TAB_TITLE_EMPTY_SLUG,
 )
 
 # The enclosing board's own authoring path, threaded down so each item can name
@@ -251,18 +253,16 @@ def build_unified_layout(
         # Validate slugs
         for i, slug in enumerate(tab_slugs):
             if not slug:
-                raise CompilationError(
-                    f"Tab title '{tab_titles[i]}' produces an empty slug. "
-                    "Tab titles must contain at least one alphanumeric character."
+                raise CompilationError.from_code(
+                    ERR_TAB_TITLE_EMPTY_SLUG, title=tab_titles[i]
                 )
         # Check for slug collisions
         if len(set(tab_slugs)) != len(tab_slugs):
             seen: set[str] = set()
             for slug in tab_slugs:
                 if slug in seen:
-                    raise CompilationError(
-                        f"Duplicate tab slug '{slug}'. Tab titles must produce "
-                        "unique slugs (after lowercasing and replacing spaces with _)."
+                    raise CompilationError.from_code(
+                        ERR_TAB_TITLE_DUPLICATE_SLUG, slug=slug
                     )
                 seen.add(slug)
 

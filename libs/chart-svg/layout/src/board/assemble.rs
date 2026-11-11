@@ -8,9 +8,10 @@
 //! folds them) until the spine hands layout each body's total style, when that
 //! function alone changes: a leaf the patch leaves unset is an error naming its
 //! path, never a default. What text measures to (a body's own width, band and
-//! title) and what each chart needs come from [`Facts`].
+//! title) and what each chart needs come from [`Facts`]. [`Facts::root_band`] is the root's title band
+//! at the width the hug decided.
 
-use bind::model::DrawnSet;
+use bind::bound::DrawnSet;
 use board_model::board::layout::{GridItem, Layout, LayoutItem, Placement, TabItem, TabLayout};
 use board_model::board::value::Length;
 use board_model::board::{items, Board, BoardBody};
@@ -246,7 +247,8 @@ fn node(
                 }
             }
             layout => {
-                for placement in items(body, at) {
+                // A hidden item takes no space, and nothing of it is measured.
+                for placement in items(body, at).filter(|p| !drawn.is_hidden(&p.id)) {
                     let (item, inner) = item(layout, &placement, drawn, facts)?;
                     node_items.push(item);
                     ids.push((placement.id, inner));
@@ -305,7 +307,7 @@ fn pane(
     let (chrome, chrome_height, chrome_top) = geometry.chrome();
     let mut node_items = Vec::new();
     let mut ids = Vec::new();
-    for placement in placements.into_iter().flatten() {
+    for placement in placements.into_iter().flatten().filter(|p| !drawn.is_hidden(&p.id)) {
         let (item, inner) = item(&tab.layout, &placement, drawn, facts)?;
         node_items.push(item);
         ids.push((placement.id, inner));
@@ -329,7 +331,6 @@ fn pane(
 }
 
 fn item(layout: &Layout, placement: &Placement, drawn: &DrawnSet, facts: &mut impl Facts) -> Result<(Item, Held), Diagnostic> {
-    let is_drawn = !drawn.is_hidden(&placement.id);
     let place = match (placement.cell, layout) {
         (Some(grid), Layout::Grid(layout)) => Some(grid_place(grid, layout.columns as usize)?),
         _ => None,
@@ -345,7 +346,7 @@ fn item(layout: &Layout, placement: &Placement, drawn: &DrawnSet, facts: &mut im
             (nested.width.map(dim), nested.height.map(dim), Content::Board(node), Held::Board(ids))
         }
     };
-    let item = Item { width, height, place, drawn: is_drawn, drawn_without_data: is_drawn, content };
+    let item = Item { width, height, place, drawn: true, drawn_without_data: true, content };
     Ok((item, ids))
 }
 
@@ -440,7 +441,7 @@ pub fn board_geometry(style: &StylePatch) -> Result<BoardGeometry, Diagnostic> {
         cols_gap: leaf(style.layout.cols.gap, "style.layout.cols.gap")?,
         grid_gap: leaf(style.layout.grid.gap, "style.layout.grid.gap")?,
         gap: match style.gap {
-            Tri::Value(gap) => Some(gap),
+            Tri::Value(gap) => Some(gap.px()),
             Tri::Unset | Tri::Null => None,
         },
         padding: sides(&style.padding),

@@ -1668,6 +1668,9 @@ class CategoricalColorStyle(BaseModel):
         from dbt_charts.core.compile.resolve.style.palette import (  # noqa: PLC0415
             UnknownPaletteError,
         )
+        from dbt_charts.core.diagnostics.codes_compile import (  # noqa: PLC0415
+            ERR_PALETTE_STYLE_INVALID,
+        )
 
         data = dict(data)
         for field_name in ("palette", "single_series_palette"):
@@ -1676,15 +1679,21 @@ class CategoricalColorStyle(BaseModel):
                 continue
             try:
                 stops, requested = resolve_palette_alias(value)
-            except UnknownPaletteError:
+            except UnknownPaletteError as exc:
                 if not might_be_palette_role(value):
-                    raise
+                    raise ERR_PALETTE_STYLE_INVALID.validation_error(
+                        reason=str(exc)
+                    ) from None
                 # Possibly a theme palette role (`category`). Roles are not
                 # knowable here: the theme's `palettes:` map is not final until
                 # its whole extends chain has merged. `expand_palette_refs`
                 # runs the moment it is, substitutes the role, and raises on a
                 # name that is neither. Nothing downstream sees a bare name.
                 continue
+            except ValueError as exc:
+                raise ERR_PALETTE_STYLE_INVALID.validation_error(
+                    reason=str(exc)
+                ) from None
             data[field_name] = stops
             if requested is not None:
                 data["requested_alias_palette"] = requested

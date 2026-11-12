@@ -1,0 +1,57 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Conditional line and area styles
+width: 900
+notes: Points and value labels restyled by the value in their own row; the line and the area stay whole.
+
+queries:
+  revenue:
+    columns: [month, revenue, is_forecast]
+    values:
+      - [2024-01-01, 10, false]
+      - [2024-02-01, 14, false]
+      - [2024-03-01, 12, true]
+      - [2024-04-01, 18, true]
+      - [2024-05-01, 16, true]
+
+rows:
+  - cols: [c_line, c_area]
+
+charts:
+  c_line:
+    query: revenue
+    type: line
+    x: month
+    y: revenue
+    title: Forecast points dimmed and labels grayed
+    style:
+      marks:
+        point:
+          size: 60
+        line:
+          labels:
+            visible: true
+      conditional:
+        is_forecast:
+          - eq: true
+            marks:
+              point:
+                opacity: 0.4
+                filled: false
+                stroke_width: 2
+              text:
+                font:
+                  color: "#8a8a8a"
+  c_area:
+    query: revenue
+    type: area
+    x: month
+    y: revenue
+    title: Forecast points drawn only where forecast
+    style:
+      conditional:
+        is_forecast:
+          - eq: true
+            marks:
+              point:
+                size: 80
+                shape: diamond

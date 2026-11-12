@@ -9,6 +9,8 @@
 //   - Rounding uses round-half-up (JavaScript Math.round semantics).
 //   - SI type uses significant-digit precision, not decimal-place precision.
 
+use crate::invariant::{self, at, Invariant};
+
 use crate::predefined_formats::{
     PredefinedSpec, PREDEFINED_SPECS, PREDEFINED_SUB_UNIT_FALLBACK, PREDEFINED_TIME_SPECS,
 };
@@ -25,8 +27,21 @@ fn si_level(exponent: i32) -> i32 {
     exponent.div_euclid(3).clamp(-8, 8)
 }
 
+/// Add one unit in the last place of a decimal digit string, carrying through nines (`999` -> `1000`).
+fn round_up(digits: &mut Vec<u8>) {
+    for d in digits.iter_mut().rev() {
+        if *d == b'9' {
+            *d = b'0';
+        } else {
+            *d += 1;
+            return;
+        }
+    }
+    digits.insert(0, b'1');
+}
+
 fn si_prefix(level: i32) -> &'static str {
-    SI_PREFIXES[(level + SI_PREFIX_OFFSET) as usize]
+    at(&SI_PREFIXES, (level + SI_PREFIX_OFFSET) as usize)
 }
 
 /// d3-format's thousands grouping (`locale.grouping` + `locale.thousands`):
@@ -86,7 +101,7 @@ fn group_within(value: &str, grouping: &Grouping, width: usize) -> String {
     let mut remaining = value.len();
     let mut parts: Vec<&str> = Vec::new();
     let mut j = 0;
-    let mut g = grouping.sizes[0];
+    let mut g = *at(&grouping.sizes, 0);
     let mut length = 0usize;
     while remaining > 0 && g > 0 {
         if length.saturating_add(g + 1) > width {
@@ -100,7 +115,7 @@ fn group_within(value: &str, grouping: &Grouping, width: usize) -> String {
             break;
         }
         j = (j + 1) % grouping.sizes.len();
-        g = grouping.sizes[j];
+        g = *at(&grouping.sizes, j);
     }
     parts.reverse();
     parts.join(&grouping.separator)
@@ -166,22 +181,22 @@ fn parse_spec(s: &str) -> Result<Spec, String> {
     }
 
     // sign: '-' default, '+' (always show sign), ' ' (space for positive), '(' (parens for negative)
-    if i < n && matches!(bytes[i], b'-' | b'+' | b'(' | b' ') {
-        spec.sign = bytes[i] as char;
+    if let Some(c @ (b'-' | b'+' | b'(' | b' ')) = bytes.get(i).copied() {
+        spec.sign = c as char;
         i += 1;
     }
 
     // symbol: '$' currency or '#' alternate form. '#' only prefixes b/o/x/X
     // output, and those types are unimplemented, so it is inert here.
-    if i < n && matches!(bytes[i], b'$' | b'#') {
-        spec.symbol = bytes[i] as char;
+    if let Some(c @ (b'$' | b'#')) = bytes.get(i).copied() {
+        spec.symbol = c as char;
         if spec.symbol == '$' {
             spec.symbol_at = Some(i);
         }
         i += 1;
     }
 
-    if i < n && bytes[i] == b'0' {
+    if bytes.get(i) == Some(&b'0') {
         spec.zero = true;
         i += 1;
     }
@@ -192,7 +207,7 @@ fn parse_spec(s: &str) -> Result<Spec, String> {
         spec.align = '=';
     }
     let width_start = i;
-    while i < n && bytes[i].is_ascii_digit() {
+    while bytes.get(i).is_some_and(u8::is_ascii_digit) {
         i += 1;
     }
     if i > width_start {
@@ -202,17 +217,17 @@ fn parse_spec(s: &str) -> Result<Spec, String> {
     }
 
     // comma grouping
-    if i < n && bytes[i] == b',' {
+    if bytes.get(i) == Some(&b',') {
         spec.comma = true;
         i += 1;
     }
 
     // precision: .N
-    if i < n && bytes[i] == b'.' {
+    if bytes.get(i) == Some(&b'.') {
         let dot = i;
         i += 1;
         let start = i;
-        while i < n && bytes[i].is_ascii_digit() {
+        while bytes.get(i).is_some_and(u8::is_ascii_digit) {
             i += 1;
         }
         if i == start {
@@ -224,22 +239,22 @@ fn parse_spec(s: &str) -> Result<Spec, String> {
     }
 
     // trim trailing zeros
-    if i < n && bytes[i] == b'~' {
+    if bytes.get(i) == Some(&b'~') {
         spec.trim = true;
         i += 1;
     }
 
     // type letter
-    if i < n {
-        match bytes[i] {
+    if let Some(&letter) = bytes.get(i) {
+        match letter {
             b'f' | b'%' | b's' | b'd' | b'r' | b'g' | b'p' | b'e' => {
-                spec.type_ = bytes[i] as char;
+                spec.type_ = letter as char;
                 i += 1;
             }
             b'b' | b'o' | b'x' | b'X' | b'n' | b'c' => {
                 return Err(format!(
                     "unsupported type {:?} in d3 spec {s:?} — only f/%/s/d/r/g/p/e are implemented",
-                    bytes[i] as char
+                    letter as char
                 ));
             }
             c => {
@@ -287,34 +302,21 @@ fn js_number_to_string(v: f64) -> String {
 /// negative dyadic ties and extreme magnitudes the corpus never reaches.
 fn round_exact_abs(abs_val: f64, decimals: usize) -> String {
     let s = format!("{abs_val:.1074}");
-    let dot = s.find('.').expect("fixed-precision formatting always prints a dot");
+    let dot = s.find('.').held("fixed-precision formatting always prints a dot");
     let frac = &s[dot + 1..];
     let mut digits: Vec<u8> =
         s[..dot].bytes().chain(frac[..decimals].bytes()).collect();
-    if frac.as_bytes()[decimals] >= b'5' {
-        let mut i = digits.len();
-        loop {
-            if i == 0 {
-                digits.insert(0, b'1');
-                break;
-            }
-            i -= 1;
-            if digits[i] == b'9' {
-                digits[i] = b'0';
-            } else {
-                digits[i] += 1;
-                break;
-            }
-        }
+    if *at(frac.as_bytes(), decimals) >= b'5' {
+        round_up(&mut digits);
     }
     let int_len = digits.len() - decimals;
-    let int_part = std::str::from_utf8(&digits[..int_len]).expect("ascii digits");
+    let int_part = std::str::from_utf8(at(&digits, ..int_len)).held("ascii digits");
     if decimals == 0 {
         int_part.to_string()
     } else {
         format!(
             "{int_part}.{}",
-            std::str::from_utf8(&digits[int_len..]).expect("ascii digits")
+            std::str::from_utf8(at(&digits, int_len..)).held("ascii digits")
         )
     }
 }
@@ -369,8 +371,8 @@ fn format_decimal_parts(x: f64, p: usize) -> (String, i32) {
     debug_assert!(x > 0.0 && x.is_finite(), "format_decimal_parts: x must be positive finite");
     let p = p.max(1);
     let s = format!("{x:.*e}", p - 1);
-    let (mantissa, exp) = s.split_once('e').expect("exponential formatting always prints an e");
-    let exp: i32 = exp.parse().expect("exponential formatting prints an integer exponent");
+    let (mantissa, exp) = s.split_once('e').held("exponential formatting always prints an e");
+    let exp: i32 = exp.parse().held("exponential formatting prints an integer exponent");
     // Only a tie rounded down to even can differ from half-up, and rounding
     // down never carries, so `exp` is the value's own exponent there.
     if is_half_tie(x, p as i32 - 1 - exp) {
@@ -381,7 +383,7 @@ fn format_decimal_parts(x: f64, p: usize) -> (String, i32) {
 
 fn format_decimal_parts_exact(x: f64, p: usize) -> (String, i32) {
     let s = format!("{x:.1074}");
-    let dot = s.find('.').expect("fixed-precision formatting always prints a dot");
+    let dot = s.find('.').held("fixed-precision formatting always prints a dot");
     let (ip, fp) = (&s[..dot], &s[dot + 1..]);
     // First significant digit sets the decimal exponent; the digit stream
     // continues past the removed dot.
@@ -391,30 +393,17 @@ fn format_decimal_parts_exact(x: f64, p: usize) -> (String, i32) {
         let nz = fp
             .bytes()
             .position(|b| b != b'0')
-            .expect("x is positive and nonzero, so a significant digit exists");
+            .held("x is positive and nonzero, so a significant digit exists");
         (fp[nz..].bytes().collect(), -(nz as i32) - 1)
     };
-    let mut digits: Vec<u8> = stream[..p.min(stream.len())].to_vec();
+    let mut digits: Vec<u8> = at(&stream, ..p.min(stream.len())).to_vec();
     while digits.len() < p {
         digits.push(b'0');
     }
     if stream.get(p).is_some_and(|&b| b >= b'5') {
-        let mut i = digits.len();
-        loop {
-            if i == 0 {
-                digits.insert(0, b'1');
-                break;
-            }
-            i -= 1;
-            if digits[i] == b'9' {
-                digits[i] = b'0';
-            } else {
-                digits[i] += 1;
-                break;
-            }
-        }
+        round_up(&mut digits);
     }
-    let coefficient = String::from_utf8(digits).expect("ascii digits");
+    let coefficient = String::from_utf8(digits).held("ascii digits");
     // Carry can add a digit (e.g. 9.95 → 10.0 at p=1); exponent adjusts up.
     let exp_out = adj + (coefficient.len() as i32 - p as i32);
     let coefficient = if coefficient.len() > p {
@@ -630,7 +619,7 @@ pub fn sub_unit_engine_spec(fallback: &str) -> &'static str {
     if fallback == "number_full" {
         return SUB_UNIT_NUMBER_SPEC;
     }
-    predefined_spec(fallback).expect("a fallback is a spec-bearing member").d3
+    predefined_spec(fallback).held("a fallback is a spec-bearing member").d3
 }
 
 /// `SUB_UNIT_NUMBER_SPEC` (`predefined_formats.py`): what `number` and `compact`
@@ -704,7 +693,7 @@ fn numerals(locale: &Locale, out: String) -> String {
         Some(numerals) => out
             .chars()
             .map(|c| match c {
-                '0'..='9' => numerals[(c as u8 - b'0') as usize].clone(),
+                '0'..='9' => at(numerals, (c as u8 - b'0') as usize).clone(),
                 _ => c.to_string(),
             })
             .collect(),
@@ -840,24 +829,24 @@ fn trim_zeroes(text: &str, decimal: &str) -> String {
     };
     let rightmost_digit = match chars.iter().rposition(|&c| c == 'e') {
         Some(e) if e > 0 => Some(e),
-        _ => (dec + 1..chars.len()).rev().find(|&i| chars[i].is_ascii_digit()).map(|i| i + 1),
+        _ => (dec + 1..chars.len()).rev().find(|&i| chars.get(i).is_some_and(char::is_ascii_digit)).map(|i| i + 1),
     };
     let Some(rightmost) = rightmost_digit else {
         return text.to_string();
     };
-    let end: String = chars[rightmost..].iter().collect();
+    let end: String = at(&chars, rightmost..).iter().collect();
     let mut idx = rightmost;
     loop {
         idx -= 1;
         if idx <= dec {
             break;
         }
-        if chars[idx] != '0' {
+        if *at(&chars, idx) != '0' {
             idx += 1;
             break;
         }
     }
-    format!("{}{end}", chars[..idx].iter().collect::<String>())
+    format!("{}{end}", at(&chars, ..idx).iter().collect::<String>())
 }
 
 // d3's `format(value)` closure up to its closing `numerals(value)` step.
@@ -960,9 +949,9 @@ fn format_parsed(locale: &Locale, mut s: Spec, value: f64, suffix: &str) -> Resu
                 // d3-format 3.1.2 `formatDecimal`: `toLocaleString("en")` prints the shortest
                 // round-trip digits padded with zeros, with the commas removed.
                 let shortest = format!("{abs_val:e}");
-                let (mantissa, exponent) = shortest.split_once('e').expect("{:e} always prints an exponent");
+                let (mantissa, exponent) = shortest.split_once('e').held("{:e} always prints an exponent");
                 let digits = mantissa.replace('.', "");
-                let zeros = exponent.parse::<usize>().expect("a finite value >= 1e21") + 1 - digits.len();
+                let zeros = exponent.parse::<usize>().held("a finite value >= 1e21") + 1 - digits.len();
                 format!("{digits}{}", "0".repeat(zeros))
             } else {
                 round_half_up_abs(abs_val, 0)
@@ -973,7 +962,7 @@ fn format_parsed(locale: &Locale, mut s: Spec, value: f64, suffix: &str) -> Resu
         'e' => (format_exponential(abs_val, precision), ""),
         'g' => (format_general(abs_val, precision), ""),
         'p' => (format_rounded(abs_val * 100.0, precision), ""),
-        _ => unreachable!("parse_spec validated the type"),
+        _ => invariant::broken("parse_spec validated the type"),
     };
 
     let body = if s.trim { apply_trim(&body) } else { body };

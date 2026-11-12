@@ -59,6 +59,8 @@ pub trait Facts {
     fn pane_top(&mut self, body: &BoardBody, tabs: &TabLayout) -> Result<f64, Diagnostic>;
     /// The height of `body`'s details summary bar.
     fn summary_height(&mut self, body: &BoardBody) -> Result<f64, Diagnostic>;
+    /// How far below its bar a details section's content sits (`layout.details.content_y_offset`).
+    fn details_offset(&mut self, body: &BoardBody) -> Result<f64, Diagnostic>;
 }
 
 /// The tree's item ids beside its items, nested as the tree nests.
@@ -220,7 +222,7 @@ fn node(
     let details = match &body.details {
         None => None,
         Some(_) if root => return Err(Diagnostic::refused(refuse!("a details root board is not supported"))),
-        Some(_) => Some(Details { summary_height: facts.summary_height(body)?, collapsed: drawn.details_open(&body.id) != Some(true) }),
+        Some(_) => Some(Details { summary_height: facts.summary_height(body)?, content_offset: facts.details_offset(body)?, collapsed: drawn.details_open(&body.id) != Some(true) }),
     };
     let (kind, layout_gap) = match &body.layout {
         Layout::Tabs(tabs) => (Kind::Tabs { pane_offset: 0.0, pane_top: facts.pane_top(body, tabs)?, rail: 0.0 }, geometry.rows_gap),

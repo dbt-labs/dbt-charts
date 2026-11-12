@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import ConfigDict, Field
 
+from dbt_charts.core.compile.models.style.theme.line import LineConditionalRule
+
 from ._cartesian import _SeriesCartesianResolvedStyle
 from ._marks import ResolvedLineMarkStyle, ResolvedPointMarkStyle
 
@@ -24,6 +26,13 @@ class ResolvedLineStyle(_SeriesCartesianResolvedStyle):
     )
     point_mark: ResolvedPointMarkStyle = Field(
         description="Cascade-merged point mark geometry; size=None or <=0 means no point overlay.",
+    )
+    conditional: dict[str, list[LineConditionalRule]] | None = Field(
+        default=None,
+        description=(
+            "The chart's per-point rules keyed by column, color tokens resolved. "
+            "The renderer evaluates them against each point's row."
+        ),
     )
     dashes: list[list[int]] = Field(
         description=(

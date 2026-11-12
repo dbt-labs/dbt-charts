@@ -6,14 +6,26 @@ from typing import Literal
 
 from pydantic import Field
 
-from dbt_charts.core.compile.models.chart.authored import (
-    ConditionalRule,
-    KpiSupportConfig,
+from dbt_charts.core.compile.models.chart.authored import KpiSupportConfig
+from dbt_charts.core.compile.models.conditional_predicate import ConditionalPredicate
+from dbt_charts.core.compile.models.primitives import (
+    GlyphText,
+    ResolvedFormat,
+    ToneLiteral,
 )
-from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedKpiStyle
 
 from ._base import _BaseResolvedChartFields
+
+
+class KpiGoodRule(ConditionalPredicate):
+    """A sign rule ``good`` lowers to: the glyph it draws and the tone it colors with."""
+
+    glyph: GlyphText = Field(description="Glyph drawn when the rule matches.")
+    tone: ToneLiteral | None = Field(
+        default=None,
+        description="Tone coloring the glyph and value; None leaves them uncolored.",
+    )
 
 
 class ResolvedKpiSupportConfig(KpiSupportConfig):
@@ -21,9 +33,9 @@ class ResolvedKpiSupportConfig(KpiSupportConfig):
         default=None,
         description="Resolved `style.support.format`; a date value defaults to date_short when None.",
     )
-    rules: tuple[ConditionalRule, ...] | None = Field(
+    rules: tuple[KpiGoodRule, ...] | None = Field(
         default=None,
-        description="Color-resolved `conditional_formatting` rules keyed on the support column; None when the chart authors none.",
+        description="Sign rules `support.good` lowers to on the support value; None when `good` is unset.",
     )
 
 
@@ -68,7 +80,7 @@ class ResolvedKpiChart(_BaseResolvedChartFields):
         default=None,
         description="Which direction of the headline value is good; None leaves it neutral.",
     )
-    value_rules: tuple[ConditionalRule, ...] | None = Field(
+    value_rules: tuple[KpiGoodRule, ...] | None = Field(
         default=None,
         description="Sign rules the chart-root `good` lowers to on the headline; None when `good` is unset.",
     )

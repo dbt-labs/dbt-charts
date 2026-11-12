@@ -194,6 +194,17 @@ impl DataMark {
             .collect()
     }
 
+    /// Whether a box `b` laid over the chart hides this mark: a point or a stroked segment under
+    /// it. A filled outline is no mark `b` hides.
+    pub(crate) fn hidden_by(&self, b: &Bounds) -> bool {
+        match self {
+            DataMark::Box(_) => self.overlaps(b),
+            DataMark::Line { points, .. } => edge_hits(points[0], points[1], b),
+            DataMark::Polygon(_) => false,
+            DataMark::Tinted(mark, ..) => mark.hidden_by(b),
+        }
+    }
+
     /// Whether a halo `auto` draws on text over `b`: a line is no mark to it.
     fn overlaps(&self, b: &Bounds) -> bool {
         match self {

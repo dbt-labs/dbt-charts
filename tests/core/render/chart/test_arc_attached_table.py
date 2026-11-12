@@ -25,8 +25,11 @@ from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import PieChart
 from dbt_charts.core.compile.models.chart.resolved import ResolvedPieChart
 from dbt_charts.core.compile.models.primitives import (
+    ColumnFontStyle,
     FormatConfig,
-    StaticGradientColorStyle,
+)
+from dbt_charts.core.compile.models.style.authored.table import (
+    TableColumnDefaultsConfig,
 )
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.chart.pie_attachment import (
@@ -459,13 +462,15 @@ def test_resolve_hybrid_heading_style_reads_table_body_and_header_weight():
 
 
 def test_resolve_hybrid_heading_style_applies_static_color_override():
-    """A table's style.color.static override must reach the hybrid heading
-    color, not just the table body — regression for the migration that
-    changed TableChartStyle.color from a bare str to StaticGradientColorStyle,
-    which silently broke the old `isinstance(tc.color, str)` extraction."""
+    """A table's cell ink (column_defaults.font.color) must reach the hybrid
+    heading color, not just the table body."""
     rs, ctx = resolve_style_and_context(get_theme_style())
     table_style = ctx.table.model_copy(
-        update={"color": StaticGradientColorStyle(static="#ff0000", gradient=None)}
+        update={
+            "column_defaults": TableColumnDefaultsConfig(
+                font=ColumnFontStyle(color="#ff0000")
+            )
+        }
     )
 
     heading_font = resolve_hybrid_heading_font(table_style)

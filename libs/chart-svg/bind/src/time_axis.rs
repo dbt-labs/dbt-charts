@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use diagnostic::Diagnostic;
 use crate::temporal::{extent_of, floor_day, instant_iso, next_bucket, TimePart, TimeUnit};
-use d3rs::calendar::{civil_from_days, days_from_civil, days_in_month};
+use d3rs::calendar::{civil_from_days, days_from_civil};
 
 /// `parse_hh_mm_ss_ff`: two-digit fields with one consistent `:` style, an
 /// optional fraction of any length on the seconds.

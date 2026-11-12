@@ -28,7 +28,6 @@ def _board_style() -> Any:
 def _chart(
     *,
     style: dict[str, Any] | None = None,
-    conditional_formatting: dict[str, Any] | None = None,
     rows: list[str] | None = None,
     columns: list[str] | None = None,
     values: list[str] | None = None,
@@ -37,7 +36,6 @@ def _chart(
         id="t1",
         type="table",
         style=TableChartStylePatch.model_validate(style) if style else None,
-        conditional_formatting=conditional_formatting,
         rows=rows,
         columns=columns,
         values=values,
@@ -48,7 +46,6 @@ def _render(
     *,
     data: list[dict[str, Any]],
     style: dict[str, Any] | None = None,
-    conditional_formatting: dict[str, Any] | None = None,
     rows: list[str] | None = None,
     columns: list[str] | None = None,
     values: list[str] | None = None,
@@ -57,7 +54,6 @@ def _render(
     board_rs, board_ctx = _board_style()
     chart = _chart(
         style=style,
-        conditional_formatting=conditional_formatting,
         rows=rows,
         columns=columns,
         values=values,
@@ -92,10 +88,10 @@ def test_v2_table_svg_pivoted() -> None:
 
 
 def test_v2_table_svg_conditional_formatting() -> None:
-    """Chart-level conditional_formatting block drives per-cell styling."""
+    """`style.columns.<col>.conditional` drives per-cell styling."""
     data = [{"amount": -500}, {"amount": 200}]
-    cf = {"amount": {"when": [{"lt": 0, "background": "#fee2e2"}]}}
-    svg = _render(conditional_formatting=cf, data=data)
+    rules = [{"lt": 0, "background": "#fee2e2"}]
+    svg = _render(style={"columns": {"amount": {"conditional": rules}}}, data=data)
     assert "#fee2e2" in svg
 
 

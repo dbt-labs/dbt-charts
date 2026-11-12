@@ -135,10 +135,10 @@ def test_registry_entry_extends_another_entry() -> None:
     style = _pre_style(
         {
             "fonts": {"h2": {"extends": "heading", "size": 20}},
-            "title": {"font": "h2"},
+            "charts": {"axis": {"labels": {"font": "h2"}}},
         }
     )
-    font = style.title.font
+    font = style.charts.axis.labels.font
     assert font.size == 20
     assert font.weight == get_theme_style().fonts["heading"].weight
     assert style.fonts is not None
@@ -164,10 +164,10 @@ def test_registry_chains_resolve_with_own_fields_winning() -> None:
                 "b": {"extends": "a", "size": 10},
                 "c": {"extends": "b", "weight": 300},
             },
-            "title": {"font": "c"},
+            "charts": {"axis": {"labels": {"font": "c"}}},
         }
     )
-    font = style.title.font
+    font = style.charts.axis.labels.font
     assert (font.size, font.weight, font.case) == (10, 300, "upper")
 
 
@@ -553,11 +553,9 @@ charts:
       columns:
         revenue:
           font: {column_font}
-    conditional_formatting:
-      revenue:
-        when:
-          - gt: 1
-            font: {rule_font}
+          conditional:
+            - gt: 1
+              font: {rule_font}
 rows:
   - t
 """
@@ -581,7 +579,7 @@ def test_table_column_font_name_expands() -> None:
 
 def test_conditional_rule_font_name_expands() -> None:
     chart = _expanded_table()
-    assert chart.conditional_formatting["revenue"].when[0].font.color == "#ff0000"
+    assert chart.style.columns["revenue"].conditional[0].font.color == "#ff0000"
 
 
 def test_unknown_font_in_a_table_column_raises() -> None:
@@ -590,7 +588,9 @@ def test_unknown_font_in_a_table_column_raises() -> None:
 
 
 def test_unknown_font_in_a_conditional_rule_raises() -> None:
-    with pytest.raises(CompilationError, match="when\\[0\\].font"):
+    with pytest.raises(
+        CompilationError, match="style.columns.revenue.conditional\\[0\\].font"
+    ):
         _expanded_table(rule_font="nope")
 
 

@@ -27,11 +27,13 @@ use board_model::chart::layer::{CartesianLayer, LineLayer};
 use board_model::chart::{BarChart, ColorColumn, Columns};
 use board_model::ids::ChartId;
 use board_model::style::bar::{Orientation, StackMode};
+use board_model::style::style::Style;
 use board_model::style::marks::LabelVisible;
+use color::Rgba;
 use diagnostic::{codes, diag, py_str_repr, refuse, Diagnostic};
 use model_core::{Engine, SetLeaves, Tri};
 
-use crate::channel_type::{classify, y_is_numeric, ChannelType};
+use crate::column_kind::{field_channel, y_is_numeric, ChannelType, Role};
 use crate::category_colors::CategoryColorScale;
 use crate::decode::decode;
 use crate::derived::{DerivedChart, Placed};
@@ -39,7 +41,7 @@ use crate::families::cartesian::{self, axis_format, hex, no_data, plain_text, si
 use crate::formats::locale::active_number_locale;
 use crate::legend::fold_symbol_limit;
 use crate::bound::{self,
-    AuthoredLegend, AxisStyles, Baselines,  Datum, Failure, Key, Legend, LegendEntry, Mark, MarkLayer, MarkStyle, Naming, Orient, Paint,
+    AuthoredLegend, AxisStyles, Baselines, BarStyle, Datum, Failure, Key, Legend, LegendEntry, Mark, MarkLayer, MarkStyle, Naming, Orient, Paint,
     Panels, Pos, RowRef, Scale, ScaleKind, Series, SeriesKey, Tooltip, TooltipEntry,
 };
 use crate::plot::band::band_domain;
@@ -64,6 +66,7 @@ pub struct Bars {
     pub lines: Vec<Vec<Datum>>,
     pub baselines: Baselines,
     pub axis_styles: AxisStyles,
+    pub style: BarStyle,
     /// The frame, fill and legend the placement derives, after the chart's data has passed its refusals.
     pub derived: DerivedChart,
     /// The chart's own axis keys the other tiers already answer.
@@ -180,6 +183,9 @@ fn refuse_unported(chart: &BarChart, placed: &Placed<'_>) -> Result<(), Diagnost
     if fields.support_table.is_some() {
         return Err(unsupported(refuse!("a bar with `support_table:` is not supported")));
     }
+    if !chart.style.conditional.is_empty() {
+        return Err(unsupported(refuse!("a bar with `style.conditional` is not supported")));
+    }
     Ok(())
 }
 
@@ -190,6 +196,41 @@ fn refuse_legend_values(chart: &BarChart, derived: &DerivedChart) -> Result<(), 
         return Err(unsupported(refuse!("a bar legend with `values:` is not supported")));
     }
     Ok(())
+}
+
+/// The bar mark as production draws it: the chart's total `marks.bar` and the theme's label room. A
+/// single series sits on a band scale with no padding; grouped bars (which pad) are refused downstream. A `none` border color or a
+/// border of no width draws no outline.
+fn bar_style(chart: &BarChart, style: &Style, canvas: Rgba) -> Result<BarStyle, Diagnostic> {
+    let bar = &chart.style.marks.bar;
+    let color = bar.border.color.as_ref();
+    // `theme.background` is the canvas the chart's frame settled on.
+    let outline = if bar.border.width > 0.0 && color != "none" {
+        let ink = if color == "theme.background" {
+            hex(canvas)
+        } else {
+            // Normalize settles every other token into a color.
+            let parsed = color::parse_css_color(color).map_err(|e| diag::err_internal(format!("a bar border color is a color or `theme.background`: {e}")))?;
+            hex(parsed)
+        };
+        Some((ink, bar.border.width))
+    } else {
+        None
+    };
+    let opacity = match bar.opacity {
+        Engine::Value(opacity) => Some(opacity),
+        Engine::Rule(_) => None,
+    };
+    Ok(BarStyle {
+        band_width: bar.band_width,
+        max_size: bar.max_size,
+        radius: bar.border.radius,
+        outline,
+        opacity,
+        padding_inner: 0.0,
+        padding_outer: 0.0,
+        label_usable_ratio: style.charts.label_usable_ratio,
+    })
 }
 
 /// The laws of a bar chart over its rows; `None` when the query returned no rows. `scales` is the
@@ -219,7 +260,7 @@ pub fn bars(
     if dataset.rows.is_empty() {
         return Ok(None);
     }
-    let x_type = classify(&dataset.schema, &dataset.rows, Some(x_field), true)?;
+    let x_type = field_channel(&dataset.schema, &dataset.rows, x_field, Role::Dimension)?;
     if !y_is_numeric(&dataset.schema, &dataset.rows, y_field)? {
         let error = diag::err_bar_y_not_numeric(placed.public_id, y_field);
         return Err(match x_type {
@@ -300,7 +341,7 @@ pub fn bars(
     // A layer joining the bars' scale makes it round like any shared scale (`nice_shared_scale`).
     let nice = (!layers.is_empty()).then_some(true);
     let y_axis = cartesian::measure_axis(&p.y_ladder, y_zero, &spanned, y_format, domain::Mark::VerticalBar, nice)?;
-    let (axis_styles, [x_shown, y_shown]) = cartesian::axes((&p.x_ladder, p.x_title.clone(), false), (&p.y_ladder, p.y_title.clone(), false), &y_axis.domain, placed.scope, "bar", false, false)?;
+    let (axis_styles, [x_shown, y_shown]) = cartesian::axes((&p.x_ladder, p.x_title.clone(), false), (&p.y_ladder, p.y_title.clone(), false), &y_axis.domain, placed.scope, "bar", false, true)?;
 
     let tooltip_format = p.tooltip_format(&drawn)?;
     let locale = active_number_locale();
@@ -387,6 +428,7 @@ pub fn bars(
         lines,
         baselines,
         axis_styles,
+        style: bar_style(chart, p.style, derived.frame.canvas)?,
         derived,
         diagnostics: crate::restated::axes(&p.tiers, [&p.x_ladder, &p.y_ladder], placed.public_id),
     }))
@@ -441,7 +483,7 @@ pub fn bind(
         baselines: bars.baselines,
         axis_styles: bars.axis_styles,
         diagnostics: bars.diagnostics,
-        mark_style: MarkStyle { points: None, bins: None },
+        mark_style: MarkStyle { points: None, lines: None, bars: Some(bars.style), bins: None },
     })
     .map_err(internal)?;
     Ok(bound::Chart { title, subtitle, frame, family: Ok(bound::Family::Cartesian(bound::Cartesian::Plane(Box::new(plot)))) })

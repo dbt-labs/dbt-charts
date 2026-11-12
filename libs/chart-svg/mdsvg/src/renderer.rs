@@ -47,9 +47,10 @@ use crate::parser::parse as parse_markdown;
 use crate::style::Style;
 use crate::types::{
     AnyBlock, Blockquote, CodeBlock, Document, Heading, ImageBlock, ListItem, OrderedList,
-    Paragraph, RawHtmlBlock, Span, SpanType, Table, TableCell, TableRow, UnorderedList,
+    Paragraph, RawHtmlBlock, Span, SpanType, Start, Table, TableCell, TableRow, UnorderedList,
 };
 use crate::utils::collapse_spaces;
+use d3rs::invariant::{at, broken, Invariant};
 use d3rs::py_float::{py_float_sum, py_sum, PyNum};
 use d3rs::py_str::is_py_space;
 use measure::fonts::{
@@ -65,7 +66,7 @@ fn el(tag: &str, attrs: Vec<(&'static str, AttrValue)>, children: Vec<Child>) ->
         attrs: attrs.into_iter().fold(Attrs::new(), |attrs, (name, value)| match value {
             AttrValue::Geom(v) => attrs.geom(name, v),
             AttrValue::Text(text) => attrs.set(name, text),
-            other => unreachable!("mdsvg writes text and coordinates only, got {other:?}"),
+            other => broken(&format!("mdsvg writes text and coordinates only, got {other:?}")),
         }),
         children,
     }
@@ -151,6 +152,17 @@ fn sha256_hex8(input: &str) -> String {
 // Fixed order: also the order the rules are hashed and rendered in, so
 // changing it would churn every class prefix for no visual reason.
 const STYLE_RULE_NAMES: [&str; 6] = ["text", "mono", "heading", "code", "link", "blockquote"];
+
+/// A table row with more cells than the header gives columns: the parser
+/// pads and truncates every row to the header's width, so only a hand-built
+/// `Table` reaches it, in `table_column_extents`.
+const TABLE_ROW_TOO_WIDE: &str = "mdsvg-rs: a table row has more cells than its header";
+
+fn style_rule_body<'a>(bodies: &'a HashMap<&'static str, String>, name: &str) -> &'a String {
+    bodies
+        .get(name)
+        .held("style_rule_bodies has a body for every STYLE_RULE_NAMES entry")
+}
 
 /// CSS declarations for each `.md-*` rule, keyed by its bare name, in
 /// `STYLE_RULE_NAMES` order. Shared by `get_style_block` (which renders
@@ -257,7 +269,7 @@ fn compute_class_prefix(style: &Style) -> String {
     let bodies = style_rule_bodies(style);
     let css = STYLE_RULE_NAMES
         .iter()
-        .map(|name| print::xml_escape_attr(&bodies[name]))
+        .map(|name| print::xml_escape_attr(style_rule_body(&bodies, name)))
         .collect::<Vec<_>>()
         .join("\u{0}");
     sha256_hex8(&css)
@@ -287,19 +299,30 @@ fn list_item_count(block: &AnyBlock) -> Option<usize> {
 
 /// `renderer.py::_list_window`: the `count` items of list `block` from `start`,
 /// numbered as they are in `block`.
-fn list_window(block: &AnyBlock, start: usize, count: usize) -> AnyBlock {
-    let window = |items: &[ListItem]| {
-        items[start.min(items.len())..(start + count).min(items.len())].to_vec()
-    };
-    match block {
+fn list_window(block: &AnyBlock, start: usize, count: usize) -> Result<AnyBlock, String> {
+    let window = |items: &[ListItem]| items.iter().skip(start).take(count).cloned().collect();
+    Ok(match block {
         AnyBlock::UnorderedList(list) => {
             AnyBlock::UnorderedList(UnorderedList { items: window(&list.items) })
         }
         AnyBlock::OrderedList(list) => AnyBlock::OrderedList(OrderedList {
             items: window(&list.items),
-            start: list.start + start as i64,
+            start: Start::Number(list_number(&list.start, start)?),
         }),
-        _ => unreachable!("list_window is asked only of a list"),
+        _ => broken("list_window is asked only of a list"),
+    })
+}
+
+/// The number the item `offset` places after the list's first one carries.
+fn list_number(start: &Start, offset: usize) -> Result<u128, String> {
+    let refusal = |digits: &dyn std::fmt::Display| {
+        format!("ordered list number {digits} is too large to count and is not supported")
+    };
+    match start {
+        Start::Number(first) => first
+            .checked_add(offset as u128)
+            .ok_or_else(|| refusal(&format!("{first} + {offset}"))),
+        Start::TooLarge(digits) => Err(refusal(digits)),
     }
 }
 
@@ -336,9 +359,7 @@ fn wrap_colored_line(segments: &[CodeSegment], max_chars: i64) -> Vec<Vec<CodeSe
                 current_len = 0;
                 chunk_len = max_chars;
             }
-            let chars: Vec<char> = remaining.chars().collect();
-            let take = (chunk_len.max(0) as usize).min(chars.len());
-            let chunk: String = chars[..take].iter().collect();
+            let chunk: String = remaining.chars().take(chunk_len.max(0) as usize).collect();
             remaining = &remaining[chunk.len()..];
             current_len += chunk.chars().count() as i64;
             current.push((chunk, color.clone()));
@@ -357,13 +378,11 @@ fn truncate_segments(segments: &[CodeSegment], max_len: i64) -> Vec<CodeSegment>
         if remaining <= 0 {
             break;
         }
-        let chars: Vec<char> = text.chars().collect();
-        let take = (remaining.max(0) as usize).min(chars.len());
-        let chunk: String = chars[..take].iter().collect();
+        let chunk: String = text.chars().take(remaining.max(0) as usize).collect();
+        remaining -= chunk.chars().count() as i64;
         if !chunk.is_empty() {
             out.push((chunk, color.clone()));
         }
-        remaining -= take as i64;
     }
     out
 }
@@ -404,7 +423,7 @@ impl RenderResult {
         children.extend(indented_nodes(&lines));
         children.push(newline());
         // Markdown-svg writes the root size to 0.01, unlike a chart's root, which prints in full.
-        let on_grid = |v: f64| print::geometry(v).parse::<f64>().expect("geometry prints a number");
+        let on_grid = |v: f64| print::geometry(v).parse::<f64>().held("geometry prints a number");
         let extent = Extent { width: on_grid(self.width), height: on_grid(self.height) };
         Node::new(Role::Chrome, Attrs::new(), Shape::Svg { extent, children })
     }
@@ -606,11 +625,11 @@ impl SVGRenderer {
             format!("ERR-STYLE-CSS-VALUE-INVALID: Invalid style value for markdown text: {detail}.")
         })?;
         let measurer_for = |slot: &FontSlot| -> Result<std::sync::Arc<FontMeasurer>, String> {
-            let m = measure::fonts::cached_measurer(&slot.path, slot.font_number, slot.weight);
+            let m = slot.measurer();
             if !m.is_available() {
                 return Err(format!(
                     "Precise text measurement is required, but font {:?} is unavailable",
-                    slot.path
+                    slot.file.name
                 ));
             }
             Ok(m)
@@ -677,19 +696,10 @@ impl SVGRenderer {
         weight: f64,
     ) -> Option<std::sync::Arc<FontMeasurer>> {
         let font_face = font_face?;
-        let base = measure::fonts::cached_measurer(
-            &font_face.path,
-            font_face.font_number,
-            font_face.weight,
-        );
-        if !base.supports_weight() {
+        if !font_face.measurer().supports_weight() {
             return None;
         }
-        let measurer = measure::fonts::cached_measurer(
-            &font_face.path,
-            font_face.font_number,
-            Some(weight as f32),
-        );
+        let measurer = font_face.measurer_at(weight as f32);
         if measurer.is_available() {
             Some(measurer)
         } else {
@@ -706,15 +716,11 @@ impl SVGRenderer {
             .mono_slot
             .as_ref()
             .ok_or_else(|| "Precise monospace measurement is required, but no monospace FontMeasurer is available".to_string())?;
-        let mono_measurer = measure::fonts::cached_measurer(
-            &mono_slot.path,
-            mono_slot.font_number,
-            mono_slot.weight,
-        );
+        let mono_measurer = mono_slot.measurer();
         if !mono_measurer.is_available() {
             return Err(format!(
                 "Precise text measurement is required, but font {:?} is unavailable",
-                mono_slot.path
+                mono_slot.file.name
             ));
         }
         let width = mono_measurer.measure("M", 1.0);
@@ -896,7 +902,7 @@ impl SVGRenderer {
         is_heading: bool,
     ) -> Result<f64, String> {
         let pieces = self.run_pieces(runs, f64::INFINITY, font_size, font_weight, is_heading)?;
-        let widths = pieces.iter().map(|piece| match piece.meta.and_then(|i| runs[i].image.as_ref()) {
+        let widths = pieces.iter().map(|piece| match piece.meta.and_then(|i| at(runs, i).image.as_ref()) {
             Some(image) => image.width_addend(),
             None => PyNum::Float(piece.width),
         });
@@ -933,8 +939,11 @@ impl SVGRenderer {
                         )?);
                     }
                 }
-                mins[col] = mins[col].max(widest_token + padding);
-                maxs[col] = maxs[col].max(self.one_line_width(&runs, size, None, false)? + padding);
+                let (Some(min), Some(max)) = (mins.get_mut(col), maxs.get_mut(col)) else {
+                    return Err(TABLE_ROW_TOO_WIDE.into());
+                };
+                *min = min.max(widest_token + padding);
+                *max = max.max(self.one_line_width(&runs, size, None, false)? + padding);
             }
         }
         let round_up = |w: &f64| (w * 100.0).ceil() / 100.0;
@@ -1145,7 +1154,8 @@ impl SVGRenderer {
                 )?;
                 // A line an inline image makes taller than the rest refuses
                 // rather than packs.
-                if lines.iter().any(|line| line.height != lines[0].height) {
+                let first_height = lines.first().map(|line| line.height);
+                if lines.iter().any(|line| Some(line.height) != first_height) {
                     return Err(
                         "mdsvg-rs: inline image taller than its line in measure_blocks not supported".into(),
                     );
@@ -1167,7 +1177,7 @@ impl SVGRenderer {
                 });
             } else if let Some(items) = list_item_count(block).filter(|&n| n > 0) {
                 let line_advances = (0..items)
-                    .map(|i| Ok(self.render_block(&list_window(block, i, 1), &ctx)?.1))
+                    .map(|i| Ok(self.render_block(&list_window(block, i, 1)?, &ctx)?.1))
                     .collect::<Result<Vec<_>, String>>()?;
                 metrics.push(BlockMetrics {
                     line_advances,
@@ -1244,7 +1254,7 @@ impl SVGRenderer {
                 false,
             )?
         } else if let (Some(_), Some(count)) = (list_item_count(block), count) {
-            self.render_block(&list_window(block, start, count), &ctx)?
+            self.render_block(&list_window(block, start, count)?, &ctx)?
         } else {
             self.render_block(block, &ctx)?
         };
@@ -1262,7 +1272,11 @@ impl SVGRenderer {
         let bodies = style_rule_bodies(&self.style);
         let mut rules = vec![ws("\n")];
         for name in STYLE_RULE_NAMES {
-            let rule = format!("    .{} {{ {} }}", self.scoped_class(name), bodies[name]);
+            let rule = format!(
+                "    .{} {{ {} }}",
+                self.scoped_class(name),
+                style_rule_body(&bodies, name)
+            );
             rules.push(quoted(rule));
             rules.push(ws("\n"));
         }
@@ -1512,12 +1526,11 @@ impl SVGRenderer {
             true,
         )?;
         let text_height: f64 = lines.iter().map(|line| line.height).sum();
-        let grid = match style.heading_grid_px {
-            Some(grid) if !lines.is_empty() => grid,
+        let (grid, last) = match (style.heading_grid_px, lines.last()) {
+            (Some(grid), Some(last)) => (grid, last),
             _ => return Ok((lines, 0.0, text_height)),
         };
         let box_height = ((text_height / grid - 0.1 - 1e-9).ceil().max(1.0)) * grid;
-        let last = &lines[lines.len() - 1];
         let natural_last_baseline = text_height - last.height + last.ascent;
         let body_baseline = self.baseline_offset(style.base_font_size, style.line_height);
         let shift = box_height - grid + body_baseline - natural_last_baseline;
@@ -1562,7 +1575,7 @@ impl SVGRenderer {
                     AnyBlock::Table(_) => "TABLE",
                     AnyBlock::ImageBlock(_) => "IMAGE",
                     AnyBlock::RawHtmlBlock(_) => "HTML_BLOCK",
-                    AnyBlock::Paragraph(_) | AnyBlock::Heading(_) => unreachable!(),
+                    AnyBlock::Paragraph(_) | AnyBlock::Heading(_) => broken("an earlier arm handles a heading or paragraph"),
                 };
                 return Err(format!(
                     "first_baseline needs a heading or paragraph, got BlockType.{block_type}"
@@ -1838,7 +1851,7 @@ impl SVGRenderer {
 
         // Column separators.
         let mut col_x = ctx.x;
-        for col_width in &col_widths[..col_widths.len().saturating_sub(1)] {
+        for col_width in col_widths.iter().take(col_widths.len().saturating_sub(1)) {
             col_x += col_width;
             elements.push(table_gridline(col_x, ctx.y, col_x, current_y, &stroke));
         }
@@ -2019,8 +2032,10 @@ impl SVGRenderer {
         let line_height = font_size * self.style.line_height;
 
         for (idx, cell) in row.cells.iter().enumerate() {
-            let line_runs = &cell_lines[idx];
-            let col_width = col_widths[idx];
+            // `table_column_extents` refused a row wider than the header, and
+            // `measure_table_row_layout` wraps every cell of a row that was not.
+            let line_runs = at(cell_lines, idx);
+            let col_width = *at(col_widths, idx);
 
             let (text_x, anchor) = match cell.align.as_deref() {
                 Some("center") => (x + col_width / 2.0, "middle"),
@@ -2565,7 +2580,7 @@ impl SVGRenderer {
         let bullet_indent = self.style.list_indent;
 
         for (idx, item) in ol.items.iter().enumerate() {
-            let number = ol.start + idx as i64;
+            let number = list_number(&ol.start, idx)?;
 
             let number_text = format!("{number}.");
             let number_x = ctx.x + bullet_indent - 8.0;
@@ -2648,12 +2663,12 @@ impl SVGRenderer {
         let mut lines =
             self.text_lines(spans, ctx.width, font_size, font_weight, multiplier, is_heading)?;
         if let Some((start, count)) = line_window {
-            let end = count.map_or(lines.len(), |c| (start + c).min(lines.len()));
-            lines = if start >= lines.len() {
-                Vec::new()
-            } else {
-                lines[start..end].to_vec()
-            };
+            lines = lines
+                .iter()
+                .skip(start)
+                .take(count.unwrap_or(usize::MAX))
+                .cloned()
+                .collect();
         }
         self.paint_text_lines(&lines, ctx, font_size, css_class, font_weight, is_heading)
     }
@@ -3055,7 +3070,7 @@ impl SVGRenderer {
     /// `style.image_height`, else width over the fallback ratio. A box wider
     /// than a positive `available_width` scales down to it, aspect preserved.
     fn inline_image(&self, span: &Span, available_width: f64) -> Result<InlineImage, String> {
-        let url = span.url.as_deref().expect("Span::new requires an image url");
+        let url = span.url.as_deref().held("Span::new requires an image url");
         let actual_size = self.get_image_size(url)?;
         let mut width_is_int = false;
         let mut img_width = match (span.width, span.height, actual_size, self.style.image_width) {
@@ -3114,7 +3129,7 @@ impl SVGRenderer {
             if separator.is_empty() {
                 return Ok(0.0);
             }
-            let painted = separator_run(&runs[previous.meta.unwrap()], run, separator);
+            let painted = separator_run(at(runs, previous.meta.held("a wrap piece from run_pieces carries its run index")), run, separator);
             self.measure_text(
                 &painted.text,
                 font_size,
@@ -3190,7 +3205,7 @@ impl SVGRenderer {
                 // per-substring, surfaces the same `Err` `?` would.
                 measure(token)?;
                 let measure_ref =
-                    |t: &str| measure(t).expect("checked above: measure(token) already succeeded");
+                    |t: &str| measure(t).held("checked above: measure(token) already succeeded");
                 for (chunk_index, chunk) in split_token_precise(token, max_width - 2.0 * inset, &measure_ref)
                     .iter()
                     .enumerate()
@@ -3238,9 +3253,9 @@ impl SVGRenderer {
         for line in wrapped {
             let mut line_runs: Vec<TextRun> = Vec::new();
             for (index, piece) in line.iter().enumerate() {
-                let run = &runs[piece.meta.unwrap()];
+                let run = at(runs, piece.meta.held("a wrap piece from run_pieces carries its run index"));
                 let text = if index > 0 && !piece.separator.is_empty() {
-                    let previous_run = &runs[line[index - 1].meta.unwrap()];
+                    let previous_run = at(runs, at(&line, index - 1).meta.held("a wrap piece from run_pieces carries its run index"));
                     if previous_run.same_style(run) {
                         format!("{}{}", piece.separator, piece.text)
                     } else {
@@ -3309,7 +3324,7 @@ fn safe_href(url: &str) -> String {
     {
         return url.to_string();
     }
-    let scheme = url.split(':').next().unwrap().to_lowercase();
+    let scheme = url.split(':').next().held("split yields at least one piece").to_lowercase();
     if matches!(scheme.as_str(), "http" | "https" | "mailto") {
         url.to_string()
     } else {

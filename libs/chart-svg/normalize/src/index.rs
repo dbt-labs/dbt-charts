@@ -12,6 +12,7 @@
 //! matching `normalize/layout.py`. The `fixtures` feature builds the shared `host_inputs` for tests.
 
 use crate::files::ProjectFiles;
+use crate::hoist::BoardScope;
 use crate::rhythm;
 use crate::slug::slugify;
 use crate::variables::{default_of, Var, VariableFacts};
@@ -20,7 +21,7 @@ use board_model::board::layout::{
 };
 use board_model::board::{Board, BoardBodyAuthored};
 use board_model::facet::DisplayText;
-use board_model::ids::{BoardId, ChartId, ItemId};
+use board_model::ids::{BoardId, ChartId, ItemId, QueryId};
 use diagnostic::{diag, Diagnostic};
 use migrate::{read_board, Date};
 use model_core::{parse, Leaf, Tri};
@@ -52,9 +53,24 @@ pub struct BoardIndex {
     /// The charts declared below the root board or in an imported file, by their key: Python
     /// resolves what they read against the board or file that declares them.
     pub declared_below: BTreeSet<String>,
+    /// Each board's cache and incremental settings as its queries inherit them, by position
+    /// (`@` is the root).
+    pub boards: BTreeMap<ItemId, BoardScope>,
+    /// The board each query of the root's map belongs to, by key: every hoisted query, the root's
+    /// included (cache and incremental resolve through it).
+    pub query_owners: BTreeMap<String, ItemId>,
     /// The nested board's position (`@rows[1]`) that declared each query under its own `queries:`:
     /// a query of the root has no entry.
     pub query_boards: BTreeMap<String, String>,
+    /// The nested board that declares each chart of one, by key; a chart of the root (or an
+    /// imported one) has no entry.
+    pub chart_boards: BTreeMap<String, ItemId>,
+    /// The nested board that declares each variable of one, by name; a variable of the root has
+    /// no entry.
+    pub variable_boards: BTreeMap<String, ItemId>,
+    /// The query each `queries.<name>` the display text of an imported chart reads stands for, by
+    /// the chart's key: the chart's own file declares it. A chart of this board reads its own.
+    pub text_queries: BTreeMap<String, BTreeMap<String, QueryId>>,
     /// What search and listings read of the root board.
     pub facts: crate::search::BoardFacts,
 }
@@ -140,11 +156,17 @@ pub enum FactsError {
     ItemId(String),
     /// A variable name the tree refuses: declared in two boards (`ERR-DUPLICATE-VARIABLE-NAME`) or reserved (`ERR-RESERVED-VARIABLE-NAME`).
     VariableName(Box<Diagnostic>),
+    /// The host could not read a file an import names.
+    Unreadable(crate::files::ReadError),
+}
+
+impl From<crate::files::ReadError> for FactsError {
+    fn from(e: crate::files::ReadError) -> Self {
+        Self::Unreadable(e)
+    }
 }
 
 impl FactsError {
-    /// The tab and variable-name codes as Python raises them; what Python raises without a code
-    /// (a variable default, a board with no id, an import, a layout item id) is `ERR-INTERNAL`.
     pub(crate) fn diagnostics(&self) -> Vec<Diagnostic> {
         vec![match self {
             Self::UnknownDefault {
@@ -155,10 +177,14 @@ impl FactsError {
             Self::VariableName(d) => (**d).clone(),
             Self::EmptySlug { title } => diag::err_tab_title_empty_slug(title.as_str()),
             Self::DuplicateSlug { slug } => diag::err_tab_title_duplicate_slug(slug.as_str()),
-            Self::Variable { .. }
-            | Self::NoBoardId { .. }
-            | Self::Import { .. }
-            | Self::ItemId(_) => diag::err_internal(self.to_string()),
+            Self::Variable { name, why } => {
+                diag::err_variable_default_invalid(name.as_str(), why.as_str())
+            }
+            Self::Import { path, why } => {
+                diag::err_board_import_unresolved(path.as_str(), why.as_str())
+            }
+            Self::Unreadable(e) => e.diagnostic(),
+            Self::NoBoardId { .. } | Self::ItemId(_) => diag::err_internal(self.to_string()),
         }]
     }
 }
@@ -166,18 +192,24 @@ impl FactsError {
 impl fmt::Display for FactsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptySlug { .. } | Self::DuplicateSlug { .. } => {
-                self.diagnostics().iter().try_for_each(|d| match d.message() {
-                    Ok(text) => f.write_str(&text),
-                    Err(_) => f.write_str(d.code),
-                })
+            Self::EmptySlug { .. }
+            | Self::DuplicateSlug { .. }
+            | Self::Variable { .. }
+            | Self::Import { .. }
+            | Self::Unreadable(_) => {
+                self.diagnostics()
+                    .iter()
+                    .try_for_each(|d| match d.message() {
+                        Ok(text) => f.write_str(&text),
+                        Err(_) => f.write_str(d.code),
+                    })
             }
             Self::UnknownDefault { default, slug, .. } => {
                 write!(f, "tabs.default '{default}' (slug '{slug}') names no tab")
             }
-            Self::Variable { name, why } => write!(f, "variable {name}: {why}"),
-            Self::NoBoardId { pos } => write!(f, "the board at {pos} has no id in the layout facts"),
-            Self::Import { path, why } => write!(f, "board import {path}: {why}"),
+            Self::NoBoardId { pos } => {
+                write!(f, "the board at {pos} has no id in the layout facts")
+            }
             Self::ItemId(id) => write!(f, "layout item id '{id}' is not row<n>, col<n> or grid<n>"),
             Self::VariableName(d) => match d.message() {
                 Ok(text) => f.write_str(&text),
@@ -709,7 +741,7 @@ impl Walk<'_> {
         }
         let text = self
             .files
-            .read(&path)
+            .read(&path)?
             .ok_or_else(|| fail(format!("{path} does not exist")))?;
         let parsed_text = if crate::markdown::is_markdown(&path) {
             crate::markdown::read(&text, &path, true)

@@ -291,13 +291,16 @@ def lookup_board_query_sql(
     # preview then falls to the default dialect's spelling rather than refusing.
     from dbt_charts.core.compile.models.source import is_file_source
     from dbt_charts.core.dialects import get_dialect
-    from dbt_charts.core.execute.plan import merge_board_variables, utc_now
+    from dbt_charts.core.execute.plan import (
+        CACHE_REF_JINJA_RE,
+        merge_board_variables,
+        utc_now,
+    )
     from dbt_charts.core.execute.sql_literals import (
         INLINE_PLACEHOLDERS,
         inline_params_for_dialect,
     )
     from dbt_charts.core.execute.sql_translate import (
-        dialect_differs,
         dialect_unsupported,
         render_in_dialect,
     )
@@ -335,15 +338,21 @@ def lookup_board_query_sql(
                         "the source's warehouse",
                         "no source resolved for this query",
                     )
-                if dialect_differs(query.dialect, source_config):
-                    if is_file_source(source_config):
+                # A query over `.cache` rows runs on DuckDB, not its source.
+                reads_cache = CACHE_REF_JINJA_RE.search(query.sql) is not None
+                engine = (
+                    "duckdb"
+                    if reads_cache
+                    else engine_dialect(query.dialect, source_config)
+                )
+                if query.dialect != engine:
+                    if is_file_source(source_config) and not reads_cache:
                         raise dialect_unsupported(
                             query.dialect,
                             "duckdb",
                             "queries on a file source are not translated, so write "
                             "the SQL in duckdb",
                         )
-                    engine = engine_dialect(query.dialect, source_config)
                     translated_sql, translated_params = render_in_dialect(
                         expanded_query.sql,
                         query.dialect,

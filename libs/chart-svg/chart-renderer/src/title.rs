@@ -640,6 +640,7 @@ pub fn compute_board_content_box(
     variables_height: f64,
     inline_band_height: f64,
     gap: f64,
+    variables_gap: f64,
     has_layout_items: bool,
     opens_with_text: bool,
     card_padding: f64,
@@ -667,7 +668,7 @@ pub fn compute_board_content_box(
     }
     if variables_height > 0.0 {
         if has_prev {
-            height += gap;
+            height += variables_gap;
         }
         height += variables_height;
         has_prev = true;
@@ -977,54 +978,60 @@ mod tests {
     }
 
     #[test]
+    fn compute_board_content_box_puts_the_variables_gap_above_the_band() {
+        let box_ = compute_board_content_box(40.0, 0.0, 30.0, 0.0, 8.0, 10.0, false, false, 0.0);
+        assert_eq!(box_.non_layout_height, 40.0 + 10.0 + 30.0);
+    }
+
+    #[test]
     fn compute_board_content_box_takes_back_a_leading_text_rows_inset_under_a_title() {
-        let box_ = compute_board_content_box(40.0, 0.0, 0.0, 0.0, 8.0, true, true, 16.0);
+        let box_ = compute_board_content_box(40.0, 0.0, 0.0, 0.0, 8.0, 8.0, true, true, 16.0);
         assert_eq!(box_.gap_before_layout, -16.0);
-        let with_text = compute_board_content_box(40.0, 20.0, 0.0, 0.0, 8.0, true, true, 16.0);
+        let with_text = compute_board_content_box(40.0, 20.0, 0.0, 0.0, 8.0, 8.0, true, true, 16.0);
         assert_eq!(with_text.gap_before_layout, 8.0);
     }
 
     #[test]
     fn compute_board_content_box_degenerates_with_no_title_or_text() {
-        let box_ = compute_board_content_box(0.0, 0.0, 0.0, 0.0, 8.0, true, false, 16.0);
+        let box_ = compute_board_content_box(0.0, 0.0, 0.0, 0.0, 8.0, 8.0, true, false, 16.0);
         assert_eq!((box_.content_top, box_.non_layout_height, box_.gap_before_layout), (0.0, 0.0, 0.0));
     }
 
     #[test]
     fn compute_board_content_box_reserves_padding_and_gap_for_a_title() {
-        let box_ = compute_board_content_box(40.0, 0.0, 0.0, 0.0, 8.0, true, false, 16.0);
+        let box_ = compute_board_content_box(40.0, 0.0, 0.0, 0.0, 8.0, 8.0, true, false, 16.0);
         assert_eq!((box_.content_top, box_.non_layout_height, box_.gap_before_layout), (16.0, 56.0, 8.0));
     }
 
     #[test]
     fn compute_board_content_box_no_gap_before_layout_without_layout_items() {
-        let box_ = compute_board_content_box(40.0, 0.0, 0.0, 0.0, 8.0, false, false, 16.0);
+        let box_ = compute_board_content_box(40.0, 0.0, 0.0, 0.0, 8.0, 8.0, false, false, 16.0);
         assert_eq!(box_.gap_before_layout, 0.0);
     }
 
     #[test]
     fn compute_board_content_box_title_to_text_is_a_zero_gap() {
-        let box_ = compute_board_content_box(40.0, 20.0, 0.0, 0.0, 8.0, true, false, 16.0);
+        let box_ = compute_board_content_box(40.0, 20.0, 0.0, 0.0, 8.0, 8.0, true, false, 16.0);
         // 40 (title) + 0 gap + 20 (text) + 16 (card_padding) = 76.
         assert_eq!((box_.content_top, box_.non_layout_height, box_.gap_before_layout), (16.0, 76.0, 8.0));
     }
 
     #[test]
     fn compute_board_content_box_text_only_takes_the_normal_gap_to_layout() {
-        let box_ = compute_board_content_box(0.0, 20.0, 0.0, 0.0, 8.0, true, false, 16.0);
+        let box_ = compute_board_content_box(0.0, 20.0, 0.0, 0.0, 8.0, 8.0, true, false, 16.0);
         assert_eq!((box_.content_top, box_.non_layout_height, box_.gap_before_layout), (16.0, 36.0, 8.0));
     }
 
     #[test]
     fn compute_board_content_box_adds_variables_after_text_with_a_normal_gap() {
-        let box_ = compute_board_content_box(40.0, 20.0, 30.0, 0.0, 8.0, true, false, 16.0);
+        let box_ = compute_board_content_box(40.0, 20.0, 30.0, 0.0, 8.0, 8.0, true, false, 16.0);
         // 40 (title) + 0 gap + 20 (text) + 8 gap + 30 (variables) + 16 (card_padding).
         assert_eq!((box_.content_top, box_.non_layout_height, box_.gap_before_layout), (16.0, 114.0, 8.0));
     }
 
     #[test]
     fn compute_board_content_box_inline_band_replaces_title_and_variables() {
-        let box_ = compute_board_content_box(0.0, 20.0, 0.0, 50.0, 8.0, true, false, 16.0);
+        let box_ = compute_board_content_box(0.0, 20.0, 0.0, 50.0, 8.0, 8.0, true, false, 16.0);
         // 50 (inline band) + 8 gap (band -> text is a normal gap, not the
         // title-to-text zero gap) + 20 (text) + 16 (card_padding).
         assert_eq!((box_.content_top, box_.non_layout_height, box_.gap_before_layout), (16.0, 94.0, 8.0));

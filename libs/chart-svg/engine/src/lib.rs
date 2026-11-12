@@ -6,10 +6,10 @@
 //! What the spine's total `Style` and the host will own is a caller fact for now ([`EngineFacts`]),
 //! each the one place that changes when it lands.
 //!
-//! `render_board(&Board, &ChartStyles, &RunResult, &mut impl EngineFacts)` returns a `Rendered`
+//! `render_board(&Board, &ChartStyles, &RunResult, &FontBook, &mut impl EngineFacts)` returns a `Rendered`
 //! (`svg` and `report`): bind, `layout::board::assemble::lay_out`, the board's frame composed on
 //! nodes (`compose`), and one `print`. The board's language and time locale are open for all of it
-//! (`scope`), and the markup ends in `dedupe`. Nothing in production calls it.
+//! (`scope`), and the nodes end in `layout::board::styles`' dedupe. Nothing in production calls it.
 //!
 //! The engine draws only what it models, and anything else is refused by name rather than
 //! approximated: failed charts, KPI cards, callout cards, plain tables of text columns and
@@ -18,14 +18,14 @@
 //! A failed chart reports its error at each placement, as production does.
 
 mod compose;
-mod dedupe;
 mod facts;
-mod frame;
+pub mod host;
 pub mod plan;
 mod plot;
 mod scope;
 mod slot;
 mod styles;
+mod texts;
 
 pub use facts::EngineFacts;
 pub use plan::plan;
@@ -35,13 +35,16 @@ use bind::board::ChartStyles;
 use bind::run::RunResult;
 use board_model::board::Board;
 use board_model::ids::{ChartId, ItemId};
-use diagnostic::{diag, Diagnostic};
+use diagnostic::Diagnostic;
 use layout::geom::Rect;
+use measure::shaped::FontBook;
 
 /// A rendered board: its SVG and what it reports about the render.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Rendered {
     pub svg: String,
+    /// Each drawn chart's own `<svg>`, keyed as `Report.boxes` is: see [`host::chart_svgs`].
+    pub charts: Vec<(String, String)>,
     pub report: Report,
 }
 
@@ -62,16 +65,18 @@ pub struct Report {
     pub height: f64,
 }
 
-/// Renders `board` over `run`: bind, layout, then the board's frame, printed once.
-pub fn render_board(board: &Board, styles: &ChartStyles, run: &RunResult, facts: &mut impl EngineFacts) -> Result<Rendered, Diagnostic> {
-    scope::of(board)?.within(|| render_scoped(board, styles, run, facts))
+/// Renders `board` over `run`: bind, layout, then the board's frame, printed once. `book` is the
+/// host's font book, built once from the font bytes at init: the engine builds no font book of its own.
+pub fn render_board(board: &Board, styles: &ChartStyles, run: &RunResult, book: &FontBook, facts: &mut impl EngineFacts) -> Result<Rendered, Diagnostic> {
+    scope::of(board.regional.as_ref())?.within(|| render_scoped(board, styles, run, book, facts))
 }
 
-fn render_scoped(board: &Board, styles: &ChartStyles, run: &RunResult, facts: &mut impl EngineFacts) -> Result<Rendered, Diagnostic> {
-    let book = measure::shaped::FontBook::load_dir(std::path::Path::new(facts.fonts_dir())).map_err(diag::err_internal)?;
+fn render_scoped(board: &Board, styles: &ChartStyles, run: &RunResult, book: &FontBook, facts: &mut impl EngineFacts) -> Result<Rendered, Diagnostic> {
+    let filled = texts::filled(board, run, &*facts)?;
+    let board = &filled;
     let bound = bind::bind(board, styles, run)?;
     let slots = slot::plan(board, styles, &bound, &*facts)?;
-    let laid = layout::board::assemble::lay_out(board, bound.drawn(), &mut slots.facts(&*facts, &book))?;
+    let laid = layout::board::assemble::lay_out(board, bound.drawn(), &mut slots.facts(&*facts, book))?;
     let mut diagnostics: Vec<Diagnostic> = bound
         .charts()
         .values()
@@ -83,9 +88,12 @@ fn render_scoped(board: &Board, styles: &ChartStyles, run: &RunResult, facts: &m
     diagnostics.extend(laid.diagnostics.iter().cloned());
     diagnostics.extend(bound.diagnostics.iter().cloned());
     let boxes = compose::boxes(board, &laid, &slots, bound.drawn());
-    let nodes = compose::board(board, &bound, &slots, &laid, run, &*facts, &book)?;
+    let (mut nodes, drawn) = compose::board(board, &bound, &slots, &laid, run, &*facts, book)?;
+    diagnostics.extend(drawn);
+    layout::board::styles::dedupe_repeated_style_rules(&mut nodes)?;
     Ok(Rendered {
-        svg: dedupe::dedupe_repeated_style_rules(&print::print(&nodes)),
+        charts: host::chart_svgs(&nodes),
+        svg: print::print(&nodes),
         report: Report { diagnostics, boxes, width: laid.width, height: laid.height },
     })
 }

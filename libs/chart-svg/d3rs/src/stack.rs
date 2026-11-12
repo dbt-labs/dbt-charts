@@ -2,6 +2,8 @@
 //! `order/*.js`: series are indices into `values[series][point]`, a missing
 //! value is NaN (d3's `+undefined`), and each point becomes its `[y0, y1]`.
 
+use crate::invariant::{at, at_mut, Invariant};
+
 /// `stackOffset*`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Offset {
@@ -39,7 +41,7 @@ pub fn stack(values: &[Vec<f64>], order: Order, offset: Offset) -> Stacked {
     let oz = order_of(values, order);
     let mut index = vec![0; series.len()];
     for (i, &o) in oz.iter().enumerate() {
-        index[o] = i;
+        *at_mut(&mut index, o) = i;
     }
     match offset {
         Offset::None => offset_none(&mut series, &oz),
@@ -49,6 +51,22 @@ pub fn stack(values: &[Vec<f64>], order: Order, offset: Offset) -> Stacked {
         Offset::Wiggle => offset_wiggle(&mut series, &oz),
     }
     Stacked { series, index }
+}
+
+fn first(order: &[usize]) -> usize {
+    *at(order, 0)
+}
+
+fn row_of(series: &[Vec<[f64; 2]>], s: usize) -> &[[f64; 2]] {
+    at(series, s)
+}
+
+fn cell(series: &[Vec<[f64; 2]>], s: usize, j: usize) -> &[f64; 2] {
+    at(row_of(series, s), j)
+}
+
+fn cell_mut(series: &mut [Vec<[f64; 2]>], s: usize, j: usize) -> &mut [f64; 2] {
+    at_mut(at_mut(series, s), j)
 }
 
 /// `order/ascending.js`'s `sum`: a falsy value (0, NaN) adds nothing.
@@ -81,7 +99,7 @@ pub fn order_of(values: &[Vec<f64>], order: Order) -> Vec<usize> {
         }
         Order::Ascending => {
             let sums: Vec<f64> = values.iter().map(|s| series_sum(s)).collect();
-            none.sort_by(|&a, &b| sums[a].partial_cmp(&sums[b]).expect("sums are finite"));
+            none.sort_by(|&a, &b| at(&sums, a).partial_cmp(at(&sums, b)).held("sums are finite"));
             none
         }
         Order::Descending => {
@@ -91,7 +109,7 @@ pub fn order_of(values: &[Vec<f64>], order: Order) -> Vec<usize> {
         }
         Order::Appearance => {
             let peaks: Vec<usize> = values.iter().map(|s| peak(s)).collect();
-            none.sort_by_key(|&i| peaks[i]);
+            none.sort_by_key(|&i| *at(&peaks, i));
             none
         }
         Order::InsideOut => {
@@ -100,10 +118,10 @@ pub fn order_of(values: &[Vec<f64>], order: Order) -> Vec<usize> {
             let (mut tops, mut bottoms) = (Vec::new(), Vec::new());
             for j in order_of(values, Order::Appearance) {
                 if top < bottom {
-                    top += sums[j];
+                    top += at(&sums, j);
                     tops.push(j);
                 } else {
-                    bottom += sums[j];
+                    bottom += at(&sums, j);
                     bottoms.push(j);
                 }
             }
@@ -119,14 +137,13 @@ fn offset_none(series: &mut [Vec<[f64; 2]>], order: &[usize]) {
     if n <= 1 {
         return;
     }
-    let m = series[order[0]].len();
+    let m = row_of(series, first(order)).len();
     for i in 1..n {
-        let (s0, s1) = (order[i - 1], order[i]);
-        #[allow(clippy::needless_range_loop, reason = "d3-shape stack indexes the same datum across rows by `j`")]
+        let (s0, s1) = (*at(order, i - 1), *at(order, i));
         for j in 0..m {
-            let below = if series[s0][j][1].is_nan() { series[s0][j][0] } else { series[s0][j][1] };
-            series[s1][j][0] = below;
-            series[s1][j][1] += below;
+            let below = if cell(series, s0, j)[1].is_nan() { cell(series, s0, j)[0] } else { cell(series, s0, j)[1] };
+            cell_mut(series, s1, j)[0] = below;
+            cell_mut(series, s1, j)[1] += below;
         }
     }
 }
@@ -145,12 +162,12 @@ fn offset_expand(series: &mut [Vec<[f64; 2]>], order: &[usize]) {
     if n == 0 {
         return;
     }
-    let m = series[0].len();
+    let m = row_of(series, 0).len();
     for j in 0..m {
-        let y: f64 = (0..n).map(|i| or_zero(series[i][j][1])).sum();
+        let y: f64 = (0..n).map(|i| or_zero(cell(series, i, j)[1])).sum();
         if y != 0.0 {
             for row in series.iter_mut() {
-                row[j][1] /= y;
+                at_mut(row, j)[1] /= y;
             }
         }
     }
@@ -162,12 +179,11 @@ fn offset_diverging(series: &mut [Vec<[f64; 2]>], order: &[usize]) {
     if n == 0 {
         return;
     }
-    let m = series[order[0]].len();
-    #[allow(clippy::needless_range_loop, reason = "d3-shape stack indexes the same datum across rows by `j`")]
+    let m = row_of(series, first(order)).len();
     for j in 0..m {
         let (mut yp, mut yn) = (0.0, 0.0);
         for &i in order {
-            let d = &mut series[i][j];
+            let d = cell_mut(series, i, j);
             let dy = d[1] - d[0];
             if dy > 0.0 {
                 d[0] = yp;
@@ -190,13 +206,12 @@ fn offset_silhouette(series: &mut [Vec<[f64; 2]>], order: &[usize]) {
     if n == 0 {
         return;
     }
-    let s0 = order[0];
-    let m = series[s0].len();
-    #[allow(clippy::needless_range_loop, reason = "d3-shape stack indexes the same datum across rows by `j`")]
+    let s0 = first(order);
+    let m = row_of(series, s0).len();
     for j in 0..m {
-        let y: f64 = (0..n).map(|i| or_zero(series[i][j][1])).sum();
-        series[s0][j][0] = -y / 2.0;
-        series[s0][j][1] += -y / 2.0;
+        let y: f64 = (0..n).map(|i| or_zero(cell(series, i, j)[1])).sum();
+        cell_mut(series, s0, j)[0] = -y / 2.0;
+        cell_mut(series, s0, j)[1] += -y / 2.0;
     }
     offset_none(series, order);
 }
@@ -206,8 +221,8 @@ fn offset_wiggle(series: &mut [Vec<[f64; 2]>], order: &[usize]) {
     if n == 0 {
         return;
     }
-    let s0 = order[0];
-    let m = series[s0].len();
+    let s0 = first(order);
+    let m = row_of(series, s0).len();
     if m == 0 {
         return;
     }
@@ -215,25 +230,25 @@ fn offset_wiggle(series: &mut [Vec<[f64; 2]>], order: &[usize]) {
     for j in 1..m {
         let (mut s1, mut s2) = (0.0, 0.0);
         for i in 0..n {
-            let si = order[i];
-            let sij0 = or_zero(series[si][j][1]);
-            let sij1 = or_zero(series[si][j - 1][1]);
+            let si = *at(order, i);
+            let sij0 = or_zero(cell(series, si, j)[1]);
+            let sij1 = or_zero(cell(series, si, j - 1)[1]);
             let mut s3 = (sij0 - sij1) / 2.0;
-            for &sk in &order[..i] {
-                let skj0 = or_zero(series[sk][j][1]);
-                let skj1 = or_zero(series[sk][j - 1][1]);
+            for &sk in order.iter().take(i) {
+                let skj0 = or_zero(cell(series, sk, j)[1]);
+                let skj1 = or_zero(cell(series, sk, j - 1)[1]);
                 s3 += skj0 - skj1;
             }
             s1 += sij0;
             s2 += s3 * sij0;
         }
-        series[s0][j - 1][0] = y;
-        series[s0][j - 1][1] += y;
+        cell_mut(series, s0, j - 1)[0] = y;
+        cell_mut(series, s0, j - 1)[1] += y;
         if s1 != 0.0 {
             y -= s2 / s1;
         }
     }
-    series[s0][m - 1][0] = y;
-    series[s0][m - 1][1] += y;
+    cell_mut(series, s0, m - 1)[0] = y;
+    cell_mut(series, s0, m - 1)[1] += y;
     offset_none(series, order);
 }

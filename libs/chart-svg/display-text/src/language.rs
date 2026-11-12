@@ -31,23 +31,26 @@ enum Entry {
 
 type Catalog = BTreeMap<String, Entry>;
 
-fn catalogs() -> &'static BTreeMap<&'static str, Catalog> {
-    static CATALOGS: OnceLock<BTreeMap<&'static str, Catalog>> = OnceLock::new();
-    CATALOGS.get_or_init(|| {
-        LANGUAGES
-            .iter()
-            .zip(SOURCES)
-            .map(|(lang, source)| {
-                let catalog = serde_json::from_str(source)
-                    .unwrap_or_else(|e| panic!("language/{lang}.json: {e}"));
-                (*lang, catalog)
-            })
-            .collect()
-    })
+fn catalogs() -> Result<&'static BTreeMap<&'static str, Catalog>, String> {
+    static CATALOGS: OnceLock<Result<BTreeMap<&'static str, Catalog>, String>> = OnceLock::new();
+    CATALOGS
+        .get_or_init(|| {
+            LANGUAGES
+                .iter()
+                .zip(SOURCES)
+                .map(|(lang, source)| {
+                    let catalog = serde_json::from_str(source)
+                        .map_err(|e| format!("language/{lang}.json: {e}"))?;
+                    Ok((*lang, catalog))
+                })
+                .collect()
+        })
+        .as_ref()
+        .map_err(String::clone)
 }
 
 fn catalog(lang: &str) -> Result<&'static Catalog, String> {
-    catalogs().get(lang).ok_or_else(|| unknown_language(lang))
+    catalogs()?.get(lang).ok_or_else(|| unknown_language(lang))
 }
 
 fn unknown_language(lang: &str) -> String {
@@ -240,30 +243,26 @@ fn fill(
     count: Option<&str>,
     args: &[(&str, &str)],
 ) -> Result<String, String> {
-    let mut used = vec![false; args.len()];
+    let mut seen: Vec<&str> = Vec::new();
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
-    while let Some(open) = rest.find('{') {
-        out.push_str(&rest[..open]);
-        let close = rest[open..]
-            .find('}')
-            .ok_or_else(|| format!("message '{id}' in '{lang}': unclosed '{{'"))?
-            + open;
-        let name = &rest[open + 1..close];
-        let value = match args.iter().position(|(key, _)| *key == name) {
-            Some(i) => {
-                used[i] = true;
-                args[i].1
-            }
-            None if name == "n" && count.is_some() => count.expect("checked"),
-            None => return Err(format!("message '{id}' in '{lang}': no value for '{{{name}}}'")),
+    while let Some((before, after)) = rest.split_once('{') {
+        out.push_str(before);
+        let (name, tail) = after
+            .split_once('}')
+            .ok_or_else(|| format!("message '{id}' in '{lang}': unclosed '{{'"))?;
+        let value = match (args.iter().find(|(key, _)| *key == name), count) {
+            (Some((_, value)), _) => *value,
+            (None, Some(count)) if name == "n" => count,
+            _ => return Err(format!("message '{id}' in '{lang}': no value for '{{{name}}}'")),
         };
+        seen.push(name);
         out.push_str(value);
-        rest = &rest[close + 1..];
+        rest = tail;
     }
     out.push_str(rest);
-    if let Some(i) = used.iter().position(|u| !u) {
-        return Err(format!("message '{id}' in '{lang}': unused arg '{}'", args[i].0));
+    if let Some((key, _)) = args.iter().find(|(key, _)| !seen.contains(key)) {
+        return Err(format!("message '{id}' in '{lang}': unused arg '{key}'"));
     }
     Ok(out)
 }

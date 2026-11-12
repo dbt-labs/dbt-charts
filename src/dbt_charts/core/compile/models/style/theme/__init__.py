@@ -144,6 +144,7 @@ from dbt_charts.core.compile.models.style.theme.histogram import (
     HistogramChartStyle,
 )
 from dbt_charts.core.compile.models.style.theme.kpi import (
+    KpiBackgroundGradient,
     KpiChartStyle,
     KpiLabelStyle,
     KpiSupportGlyphStyle,
@@ -349,6 +350,7 @@ __all__ = [
     "HoverEmphasisStyle",
     "InputStyle",
     "InputWidths",
+    "KpiBackgroundGradient",
     "KpiChartStyle",
     "KpiLabelStyle",
     "KpiSupportGlyphStyle",

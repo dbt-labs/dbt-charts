@@ -1,27 +1,59 @@
 //! `chart/authored/bar.py`: bars, and the histogram that bins x. Both tags read one model
-//! (Python's `BarChart`), so the struct cannot see which tag it was read under; the rules that
-//! depend on it are [`BarChart::type_rules`], called with the tag.
+//! (Python's `BarChart`), so the struct cannot see which tag it was read under. A rule that
+//! depends on it names the tag (`read_under = "type"`): the histogram's tooltip, y_start,
+//! annotations, pattern, layers, support_table and legend-edge rules are declared constraints, in
+//! the order Python's `BarChart.__constraints__` states them: the first a board breaks is the
+//! message it gets.
 
 use super::annotation::Annotation;
-use super::layer::{y_start_not_null, CartesianLayer};
-use super::{
-    CartesianChartFields, ChartAuthored, Columns, NonBlankColumn, PatternChannelField,
-    TooltipFields,
-};
+use super::layer::CartesianLayer;
+use super::{CartesianChartFields, NonBlankColumn, PatternChannelField, TooltipFields};
 use crate::style::bar::BarChartStyle;
-use diagnostic::diag::err_validation_field as err;
-use diagnostic::Diagnostic;
-use model_core::{Authored, Tri};
 use model_derive::Model;
 
 /// Bar or histogram chart; a histogram adds automatic x binning.
 #[derive(Debug, Clone, PartialEq, Model)]
 #[model(
-    constraint(forbids(tooltip, when(set(layers)))),
-    constraint(forbids(tooltip, when(set(y_start)))),
-    constraint(forbids(y_start, when(is_in("style.stack", "zero", "normalize", "center")))),
-    constraint(forbids(y_start, when(list(y)))),
-    constraint(not_null(y_start))
+    read_under = "type",
+    constraint(forbids(support_table, when(is_in(type, "histogram")),
+        message = "chart.support_table is not supported for chart type 'histogram' in v1. Supported chart types: area, bar, line."
+    )),
+    constraint(not_null(y_start,
+        message = "y_start names no column; remove it for bars that start at zero."
+    )),
+    constraint(forbids(layers, when(is_in(type, "histogram")), nonempty(layers),
+        message = "chart.layers is not supported for chart type 'histogram'. Supported chart types: area, bar, line, scatter."
+    )),
+    constraint(forbids(pattern, "style.pattern", when(is_in(type, "histogram")),
+        message = "pattern is not supported on type: histogram: its bars are bins of rows, so a column has no single value to pattern by."
+    )),
+    constraint(forbids("style.legend.position.edge", when(is_in(type, "histogram"), is_in("style.legend.position.edge", "endpoints")),
+        message = "legend position `endpoints` is not supported on type: histogram: it has one series, so there are no endpoint labels to print. Set the edge to `top`, `bottom`, `left` or `right`, or remove it."
+    )),
+    constraint(forbids(annotations, when(is_in(type, "histogram")), nonempty(annotations),
+        message = "annotations are not supported on type: histogram: a histogram bins x, so an anchor has no category or date slot to name."
+    )),
+    constraint(forbids(tooltip, when(set(layers)),
+        message = "tooltip is not supported with layers: an overlay mark's card describes the layer, not a column of the base query."
+    )),
+    constraint(forbids(tooltip, when(is_in(type, "histogram")),
+        message = "tooltip is not supported on type: histogram: a bar there is a bin of rows, not one row, so a column has no single value to show."
+    )),
+    constraint(forbids(tooltip, when(set(y_start)),
+        message = "tooltip is not supported with y_start: a ranged bar's card shows its start, end and difference."
+    )),
+    constraint(forbids(y_start, when(is_in(type, "histogram")),
+        message = "y_start is not supported on type: histogram — a histogram's bars count from zero, so it takes no y_start."
+    )),
+    constraint(forbids(y_start, when(is_in("style.stack", "zero", "normalize", "center")),
+        message = "y_start sets each bar's start, so it can't be stacked; remove style.stack or y_start."
+    )),
+    constraint(forbids(y_start, when(list(y)),
+        message = "y_start sets one start per bar, so y must name a single column, not a list."
+    )),
+    constraint(forbids(layers, when(is_in(type, "bar"), list(y)), nonempty(layers),
+        message = "Bar chart: layers are not supported with multi-metric (y: [...]) charts. Use a long-form query with one y field."
+    ))
 )]
 #[allow(clippy::duplicated_attributes)]
 pub struct BarChart {
@@ -43,67 +75,4 @@ pub struct BarChart {
     /// Rules, bands, notes and trends drawn on the chart. Not supported when type: histogram.
     #[model(fill = fill_empty, nullable)]
     pub annotations: Vec<Annotation>,
-}
-
-fn set<T>(t: &Tri<T>) -> bool {
-    matches!(t, Tri::Value(_))
-}
-
-impl BarChart {
-    /// The rules Python's `BarChart.__constraints__` states on `type:`. A histogram bins x and
-    /// counts, so it refuses what needs a mark per row or a measure; a bar refuses a multi-measure
-    /// `y:` that has no x or carries layers, and an `x:` with no `y:`.
-    ///
-    /// `written` says whether a chart-relative path appears in the source: a nested model has no
-    /// presence bit in its twin, so `style: {pattern: {}}` (which Python refuses on a histogram)
-    /// reads the same as no `pattern` there, and only the source map tells them apart.
-    pub fn type_rules(
-        chart: &Authored<BarChart>,
-        histogram: bool,
-        written: &dyn Fn(&str) -> bool,
-    ) -> Vec<Diagnostic> {
-        let c = &chart.cartesian;
-        let multi = matches!(&c.y, Tri::Value(Columns::Many(_)));
-        let layers = chart.layers.as_ref().is_some_and(|l| !l.is_empty());
-        let mut out = y_start_not_null(&chart.y_start);
-        let mut refuse =
-            |field: &str, message: &str| out.push(err(field, format!("Value error, {message}")));
-        if histogram {
-            if layers {
-                refuse("layers", "chart.layers is not supported for chart type 'histogram'. Supported chart types: area, bar, line, scatter.");
-            }
-            if set(&chart.pattern.pattern) || written("style.pattern") {
-                refuse("pattern", "pattern is not supported on type: histogram: its bars are bins of rows, so a column has no single value to pattern by.");
-            }
-            if set(&c.support_table) {
-                refuse("support_table", "chart.support_table is not supported for chart type 'histogram' in v1. Supported chart types: area, bar, line.");
-            }
-            if chart.annotations.as_ref().is_some_and(|a| !a.is_empty()) {
-                refuse("annotations", "annotations are not supported on type: histogram: a histogram bins x, so an anchor has no category or date slot to name.");
-            }
-            if chart.tooltip.tooltip.is_some() {
-                refuse("tooltip", "tooltip is not supported on type: histogram: a bar there is a bin of rows, not one row, so a column has no single value to show.");
-            }
-            if set(&chart.y_start) {
-                refuse("y_start", "y_start is not supported on type: histogram — a histogram's bars count from zero, so it takes no y_start.");
-            }
-        } else {
-            if multi && layers {
-                refuse("layers", "Bar chart: layers are not supported with multi-metric (y: [...]) charts. Use a long-form query with one y field.");
-            }
-        }
-        out
-    }
-}
-
-impl ChartAuthored {
-    /// [`BarChart::type_rules`] under the tag this chart was read with; no other family has a rule
-    /// that reads its tag.
-    pub fn type_rules(&self, written: &dyn Fn(&str) -> bool) -> Vec<Diagnostic> {
-        match self {
-            Self::Bar(b) => BarChart::type_rules(b, false, written),
-            Self::Histogram(b) => BarChart::type_rules(b, true, written),
-            _ => Vec::new(),
-        }
-    }
 }

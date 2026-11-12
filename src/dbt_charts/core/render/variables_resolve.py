@@ -20,6 +20,7 @@ import datetime
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from dbt_charts.core.compile.column_match import match_column
 from dbt_charts.core.compile.models.chart.normalized import CalloutChart
 from dbt_charts.core.compile.models.variable.authored import VariableInputType
 from dbt_charts.core.compile.normalize.variable_input_refinement import (
@@ -31,6 +32,7 @@ from dbt_charts.core.compile.resolve.style.board import resolve_cascaded_font
 from dbt_charts.core.compile.template.daterange import (
     current_board_clock,
     is_daterange_preset,
+    parse_daterange_preset,
     resolve_daterange_preset_iso,
 )
 from dbt_charts.core.compile.template.variables import (
@@ -44,9 +46,11 @@ from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.render.board_variables import (
     LinkedOptions,
     current_daterange_presets,
+    variable_link,
 )
 from dbt_charts.core.render.conditions import eval_bool_condition
-from dbt_charts.core.render.variables_layout import ControlSpec
+from dbt_charts.core.render.controls import compact_preset_label
+from dbt_charts.core.render.variables_layout import ControlSpec, traits_of
 from dbt_charts.core.text.case import inferred_display_name
 from dbt_charts.core.text.format_d3 import active_time_locale, board_word
 
@@ -67,6 +71,20 @@ UNSET_DATE_MESSAGE = "controls.any_date"
 # The inputs a user types free text into: they show a placeholder while empty,
 # and number carries authored bounds.
 FREE_ENTRY_INPUTS = frozenset({"text", "input", "textarea", "number"})
+
+
+@dataclass(frozen=True)
+class Segment:
+    """One button of a button row: the value it commits, its text, and its link.
+
+    ``href`` is None when the button does nothing — the selected button of a
+    required variable, or any button of a disabled control.
+    """
+
+    value: str
+    label: str
+    selected: bool
+    href: str | None
 
 
 @dataclass(frozen=True)
@@ -128,6 +146,8 @@ class ResolvedControl:
     preset: str | None = None
     # The preset menu a daterange offers; empty for every other input.
     presets: tuple[str, ...] = ()
+    # The buttons of the buttons form; empty when the control draws as a field.
+    segments: tuple[Segment, ...] = ()
 
     @property
     def spec(self) -> ControlSpec:
@@ -137,6 +157,8 @@ class ResolvedControl:
             input=self.input,
             label=self.label,
             value=self.display_value,
+            segment_labels=tuple(segment.label for segment in self.segments),
+            segments_labeled=self.input != "daterange",
         )
 
 
@@ -185,6 +207,23 @@ def resolve_controls(
             current = coerce_multiselect(
                 UNSET_MULTISELECT if current is None else current
             )
+        enabled = _is_enabled(var_def, current_values, results)
+        presets = (
+            variables_style.presets if var_def.presets is None else var_def.presets
+        )
+        segments = _segments(
+            name,
+            refined.input_type,
+            option_values,
+            presets,
+            current,
+            preset,
+            not var_def.required,
+            enabled,
+            current_values,
+            variables_style.presets_display == "buttons",
+            bool(var_def.options and var_def.options.static),
+        )
         controls.append(
             ResolvedControl(
                 name=name,
@@ -207,15 +246,10 @@ def resolve_controls(
                 slider_max=high,
                 slider_step=step,
                 can_unset=not var_def.required,
-                enabled=_is_enabled(var_def, current_values, results),
+                enabled=enabled,
                 preset=preset,
-                presets=(
-                    variables_style.presets
-                    if var_def.presets is None
-                    else var_def.presets
-                )
-                if refined.input_type == "daterange"
-                else (),
+                presets=presets if refined.input_type == "daterange" else (),
+                segments=segments,
                 placeholder=(
                     var_def.placeholder
                     if refined.input_type in FREE_ENTRY_INPUTS
@@ -226,6 +260,53 @@ def resolve_controls(
             )
         )
     return tuple(controls)
+
+
+def _segments(
+    name: str,
+    input_type: VariableInputType,
+    option_values: list[str],
+    presets: tuple[str, ...],
+    current: Any,  # type-state: explicit_any — the committed value, whatever shape its widget commits (ResolvedControl.current)
+    preset: str | None,
+    can_unset: bool,
+    linkable: bool,
+    current_values: VariableValues,
+    show_presets: bool,
+    static_options: bool,
+) -> tuple[Segment, ...]:
+    """The buttons form's buttons, or none when the control draws as a field.
+
+    A radio draws buttons only with static options: a query's options are known only
+    after the query runs, which the sizing pass cannot do, and a button row sized as
+    a field would overrun its band. A daterange draws its presets as buttons only when the
+    style asks for it. Buttons link by name — a preset's link carries ``last_6_months``,
+    never the dates it resolves to today — and the selected one links to the
+    unset state, or to nothing when the variable cannot be unset.
+    """
+    kind = traits_of(input_type).segments
+    if kind == "options" and not static_options:
+        return ()
+    if kind == "options":
+        entries = [(value, value) for value in option_values]
+        chosen = None if current in (None, "") else str(current)
+    elif kind == "presets" and show_presets:
+        entries = [
+            (preset_name, compact_preset_label(parse_daterange_preset(preset_name)))
+            for preset_name in presets
+        ]
+        chosen = preset
+    else:
+        return ()
+    segments: list[Segment] = []
+    for value, label in entries:
+        selected = value == chosen
+        if not linkable or (selected and not can_unset):
+            href = None
+        else:
+            href = variable_link(current_values, name, "" if selected else value)
+        segments.append(Segment(value, label, selected, href))
+    return tuple(segments)
 
 
 def _is_enabled(
@@ -396,7 +477,9 @@ def query_option_cells(
 
     See ``query_option_rows`` for the failure contract.
     """
-    return _option_cells(query_option_rows(name, query_ref, results, variables))
+    return _option_cells(
+        query_option_rows(name, query_ref, results, variables), query_ref
+    )
 
 
 def query_option_rows(
@@ -434,18 +517,25 @@ def query_option_rows(
 
 def _option_cells(
     rows: CacheRows,
+    query: str,
 ) -> list[Any]:  # type-state: explicit_any — raw query cells
     if not rows:
         return []
-    value_key = _option_value_key(rows)
+    value_key = _option_value_key(rows, query)
     return [row[value_key] for row in rows if row.get(value_key) is not None]
 
 
-def _option_value_key(rows: CacheRows) -> str:
+def _option_value_key(rows: CacheRows, query: str) -> str:
     """The column an options query's values come from: 'value', 'label', 'name'
-    or 'id' if the rows have one, else the first column."""
+    or 'id' if the rows have one (``match_column``), else the first column."""
+    columns = rows[0].keys()
     return next(
-        (key for key in ("value", "label", "name", "id") if key in rows[0]),
+        (
+            found
+            for key in ("value", "label", "name", "id")
+            if (found := match_column(key, columns, f"options query {query!r}"))
+            is not None
+        ),
         next(iter(rows[0])),
     )
 
@@ -467,10 +557,10 @@ def resolve_options(
     if query is None or results is None:
         return resolve_option_values(name, var_def, results, current_values), ()
     rows = query_option_rows(name, query, results, dict(current_values))
-    values = list(dict.fromkeys(str(cell) for cell in _option_cells(rows)))
+    values = list(dict.fromkeys(str(cell) for cell in _option_cells(rows, query)))
     if not rows or OPTION_COUNT_COLUMN not in rows[0]:
         return values, ()
-    value_key = _option_value_key(rows)
+    value_key = _option_value_key(rows, query)
     counts = {
         str(row[value_key]): int(row[OPTION_COUNT_COLUMN])
         for row in rows

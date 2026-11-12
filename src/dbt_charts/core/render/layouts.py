@@ -40,11 +40,7 @@ from dbt_charts.core.compile.models.board.resolved import ResolvedLayoutItem
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
-from dbt_charts.core.render.board_variables import (
-    committed_text,
-    current_context_variables,
-    current_daterange_presets,
-)
+from dbt_charts.core.render.board_variables import variable_link
 from dbt_charts.core.render.chart.rendering import render_layout_item
 from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.sizing import (
@@ -316,27 +312,6 @@ def render_grid_layout(
     return f"{bg_rect}\n{''.join(rendered_items)}", max_bottom_edge
 
 
-def _build_toggle_url(
-    variables: VariableValues, param_name: str, new_value: str
-) -> str:
-    """Build URL that changes one param while preserving all others.
-
-    Every set board variable rides along, never host-injected render context;
-    a preset daterange links its preset id, so the link stays rolling.
-    """
-    from urllib.parse import urlencode
-
-    presets = current_daterange_presets()
-    context = current_context_variables()
-    params = {
-        k: presets[k] if k in presets else committed_text(v)
-        for k, v in variables.items()
-        if v is not None and k not in context
-    }
-    params[param_name] = new_value
-    return "?" + urlencode(params)
-
-
 _NO_PADDING = {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
 
 
@@ -501,7 +476,7 @@ def render_tabs_layout(
         if source_path:
             attrs += authored_attrs(f"{source_path}.title", "title")
         if tab_variable and not is_active:
-            href = _build_toggle_url(variables, tab_variable, slug)
+            href = variable_link(variables, tab_variable, slug)
             tab_bar_parts.append(
                 f'<a href="{escape_attr(checked_href(href))}" {attrs}>{tab_svg}</a>'
             )
@@ -635,7 +610,7 @@ def render_details_summary(
         raise ValueError(
             "Details summary rendering requires item.details_variable to be set"
         )
-    href = _build_toggle_url(variables, var_name, new_value)
+    href = variable_link(variables, var_name, new_value)
 
     # Summary bar fill from header background (expanded) or stripe (collapsed).
     # No fallback to board background — when the theme omits these, use

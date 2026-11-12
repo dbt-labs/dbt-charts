@@ -4,7 +4,7 @@ Covers:
 - the host routes ``snowflake`` to it; a non-snowflake source is refused
 - SQL is composed the way the dbt backend does (Jinja variables, param
   inlining) and sent through the injected session
-- Column names come back lowercased regardless of the session's own casing
+- Column names keep their spelling, except an all-uppercase (default Snowflake) one reads lowercase
 - A session failure surfaces as a QueryResult error, never an empty success
 - The module imports nothing from ``snowflake.*`` at load time
 """
@@ -210,6 +210,14 @@ class TestExecute:
         assert result.is_success, result.error
         assert result.columns == ["id", "name"]
         assert result.data == [{"id": 1, "name": "alice"}]
+
+    def test_keeps_a_quoted_mixed_case_column(self, tmp_path: Any) -> None:
+        session = _FakeSession(rows=[{"MAU Seat Util %": 0.5, "ID": 1}])
+        adapter = _registry(session, tmp_path)
+        query = SqlQuery(sql='SELECT 0.5 AS "MAU Seat Util %", 1 AS id', source="sf")
+        result = run_query(adapter, query, source_config=_snowflake_source())
+        assert result.is_success, result.error
+        assert result.columns == ["MAU Seat Util %", "id"]
 
     def test_session_failure_returns_error_not_empty_success(
         self, tmp_path: Any

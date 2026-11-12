@@ -1,26 +1,31 @@
-//! A KPI's `conditional_formatting` rules over one cell: `resolve_conditional_styles`
-//! (`chart-renderer/src/families/table/bind.rs`, which the KPI support row shares). Every matching
-//! non-default rule contributes its outputs, the last match winning per output; a `default: true`
-//! rule fires only when no other rule matched. What a KPI support row never reads (a rule's
-//! `background`, and a font's weight, style or decoration) is refused by name, as is a color that
-//! is not a hex literal, since color tokens resolve before the card paints and this stage does not.
+//! A KPI's `style.conditional` rules over one row, and the sign rules `good` stands for. A column's
+//! rules are one ordered list: every matching non-default rule contributes its outputs, the last
+//! match winning per output; a `default: true` rule fires only when no other rule in the column
+//! matched. This slice paints the support row only, so a rule that styles the card, the headline or
+//! the label, a font weight, or a color that is not a hex literal (color tokens resolve before the
+//! card paints and this stage does not) is refused by name.
 
-use board_model::chart::conditional_formatting::ConditionalRule;
 use board_model::chart::kpi::Good;
 use board_model::primitives::Tone;
-use board_model::style::kpi::{KpiGlyphSet, KpiTonesStyle};
+use board_model::style::kpi::{KpiChartStyleConditional, KpiGlyphSet, KpiTonesStyle};
 use diagnostic::{refuse, Diagnostic};
-use model_core::Tri;
+use indexmap::IndexMap;
 use serde_json::Value;
 
-/// The outputs the matched rules contribute: the value's ink, the glyph and its ink, and the
-/// `tone` color kept apart from the glyph's so the value can take it too.
+/// What `good` draws for a cell: the sign's glyph and the color of its tone.
 #[derive(Debug, Default, PartialEq)]
-pub struct RuleOverrides {
-    pub color: Option<String>,
+pub struct Signed {
     pub glyph: Option<String>,
-    pub glyph_color: Option<String>,
     pub tone_color: Option<String>,
+}
+
+/// What the matched rules set on the support row, the later match winning per output.
+#[derive(Debug, Default, PartialEq)]
+pub struct SupportPatch {
+    /// `support.font.color`.
+    pub color: Option<String>,
+    /// `support.tone`.
+    pub tone: Option<Tone>,
 }
 
 /// `json_loose_eq`: numbers compare by value (`1 == 1.0`); everything else must match in type and value.
@@ -37,7 +42,7 @@ fn same_kind_eq(value: Option<&Value>, want: &Value) -> bool {
 }
 
 /// `match_predicate`. `value` is `None` for a null cell.
-fn matches(rule: &ConditionalRule, value: Option<&Value>) -> Result<bool, Diagnostic> {
+fn matches(rule: &KpiChartStyleConditional, value: Option<&Value>) -> Result<bool, Diagnostic> {
     let p = &rule.predicate;
     if p.default.is_some() {
         return Ok(true);
@@ -96,44 +101,71 @@ pub fn tone_color(tones: &KpiTonesStyle, tone: Tone) -> &str {
     }
 }
 
-/// `_validate_support_rules`: a KPI support rule paints only a font color, a glyph and its ink, so
-/// any other output is refused whether or not its rule matches.
-fn check_outputs(rule: &ConditionalRule) -> Result<(), Diagnostic> {
+/// A rule paints only the support row's font color and tone, whether or not it matches.
+fn check_outputs(column: &str, rule: &KpiChartStyleConditional) -> Result<(), Diagnostic> {
+    let at = |what: &str| Diagnostic::refused(refuse!("a KPI `style.conditional.{column}` rule that sets {what} is not supported"));
     if rule.background.is_some() {
-        return Err(Diagnostic::refused(refuse!("a KPI conditional rule `background` is not supported")));
+        return Err(at("`background`"));
     }
-    if let Some(font) = &rule.font {
-        if font.extends != Tri::Unset || font.weight.is_some() || font.style.is_some() || font.decoration.is_some() {
-            return Err(Diagnostic::refused(refuse!("a KPI conditional rule font other than `color` is not supported")));
+    if rule.value.is_some() || rule.label.is_some() {
+        return Err(at("`value` or `label`"));
+    }
+    if let Some(font) = rule.support.as_ref().and_then(|support| support.font.as_ref()) {
+        if font.extends.is_some() || font.weight.is_some() {
+            return Err(at("a support font other than `color`"));
         }
     }
     Ok(())
 }
 
-/// `_apply_rule_outputs`.
-fn apply(rule: &ConditionalRule, out: &mut RuleOverrides, tones: &KpiTonesStyle) -> Result<(), Diagnostic> {
-    if let Some(color) = rule.font.as_ref().and_then(|font| font.color.as_ref()) {
+fn apply(rule: &KpiChartStyleConditional, out: &mut SupportPatch) -> Result<(), Diagnostic> {
+    let Some(support) = &rule.support else {
+        return Ok(());
+    };
+    if let Some(color) = support.font.as_ref().and_then(|font| font.color.as_ref()) {
         out.color = Some(hex(color.as_str())?);
     }
-    if let Some(glyph) = &rule.glyph {
-        out.glyph = Some(glyph.as_str().to_string());
-        out.glyph_color = None;
-    }
-    if let Some(color) = &rule.glyph_color {
-        out.glyph_color = Some(hex(color.as_str())?);
-    } else if let Some(tone) = rule.tone {
-        out.glyph_color = Some(tone_color(tones, tone).to_string());
-        out.tone_color = out.glyph_color.clone();
+    if let Some(tone) = support.tone {
+        out.tone = Some(tone);
     }
     Ok(())
+}
+
+/// The support row's patch from every column's rules, each tested against its own cell of `row`.
+pub fn support_patch(conditional: &IndexMap<String, Vec<KpiChartStyleConditional>>, row: &serde_json::Map<String, Value>) -> Result<SupportPatch, Diagnostic> {
+    let mut out = SupportPatch::default();
+    for (column, rules) in conditional {
+        let Some(cell) = row.get(column) else {
+            return Err(Diagnostic::refused(refuse!("a KPI `style.conditional.{column}` on a column the query does not return is not supported")));
+        };
+        let cell = Some(cell).filter(|cell| !cell.is_null());
+        for rule in rules {
+            check_outputs(column, rule)?;
+        }
+        let (mut matched_any, mut default_rule) = (false, None);
+        for rule in rules {
+            if rule.predicate.default.is_some() {
+                default_rule = Some(rule);
+                continue;
+            }
+            if matches(rule, cell)? {
+                matched_any = true;
+                apply(rule, &mut out)?;
+            }
+        }
+        if let (false, Some(rule)) = (matched_any, default_rule) {
+            apply(rule, &mut out)?;
+        }
+    }
+    Ok(out)
 }
 
 /// `_good_rules`: the sign rules `good` stands for on `cell`, as the outputs they give it. A positive
 /// value takes the `up` glyph and a negative one the `down` glyph, each in the tone of its direction
 /// (`good: up` makes up positive), and zero the `neutral` glyph alone. A null cell matches none.
 /// Production refuses a cell that is no number, and a style that leaves `up` or `down` unset.
-pub fn good_overrides(good: Good, glyphs: &KpiGlyphSet, tones: &KpiTonesStyle, cell: Option<&Value>) -> Result<RuleOverrides, Diagnostic> {
-    let mut out = RuleOverrides::default();
+pub fn good_overrides(good: Good, glyphs: &KpiGlyphSet, tones: &KpiTonesStyle, cell: Option<&Value>) -> Result<Signed, Diagnostic> {
+    let mut out = Signed::default();
     if cell.is_some_and(|cell| cell.as_f64().is_none_or(|v| !v.is_finite())) {
         return Err(Diagnostic::refused(refuse!("a KPI `good` over a cell that is not a number is not supported")));
     }
@@ -158,29 +190,6 @@ pub fn good_overrides(good: Good, glyphs: &KpiGlyphSet, tones: &KpiTonesStyle, c
         }
     };
     out.glyph = Some(glyph.clone());
-    out.glyph_color = tone.map(|tone| tone_color(tones, tone).to_string());
-    out.tone_color = out.glyph_color.clone();
-    Ok(out)
-}
-
-/// The outputs `rules` give `value` (`None` for a null cell) on top of `start`, the sign rules of a
-/// `good`, which the authored rules override output by output.
-pub fn resolve_conditional_styles(rules: &[ConditionalRule], value: Option<&Value>, tones: &KpiTonesStyle, start: RuleOverrides) -> Result<RuleOverrides, Diagnostic> {
-    rules.iter().try_for_each(check_outputs)?;
-    let mut out = start;
-    let (mut matched_any, mut default_rule) = (false, None);
-    for rule in rules {
-        if rule.predicate.default.is_some() {
-            default_rule = Some(rule);
-            continue;
-        }
-        if matches(rule, value)? {
-            matched_any = true;
-            apply(rule, &mut out, tones)?;
-        }
-    }
-    if let (false, Some(rule)) = (matched_any, default_rule) {
-        apply(rule, &mut out, tones)?;
-    }
+    out.tone_color = tone.map(|tone| tone_color(tones, tone).to_string());
     Ok(out)
 }

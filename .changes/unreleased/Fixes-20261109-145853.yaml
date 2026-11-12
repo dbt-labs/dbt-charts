@@ -1,0 +1,3 @@
+kind: Fixes
+body: A support row names its unit in its row label and prints bare numbers.
+time: 2026-11-09T14:58:53.415442-08:00

@@ -9,7 +9,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Callable, Mapping
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import GetCoreSchemaHandler
 from pydantic_core import CoreSchema, core_schema
@@ -121,6 +121,30 @@ class InheritSlot:
 
     from_path: str
     links: Mapping[str, str] = dataclasses.field(default_factory=dict, hash=False)
+
+
+@dataclasses.dataclass(frozen=True)
+class Conditionable:
+    """A conditional rule may set this field, so it can vary per row.
+
+    Attached via ``Annotated[T, Conditionable()]``. ``build_conditional_model``
+    keeps exactly the marked fields, plus the parents leading to them, as a
+    rule's body. On a nested-model field the marker keeps the whole subtree, or
+    only the leaves named in ``only``. ``rule_type`` replaces the field's type in
+    the rule, for a field whose static form takes more than a rule may.
+    """
+
+    only: tuple[str, ...] = ()
+    rule_type: type | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class ChartLocal:
+    """The field is authored on a chart's own ``style`` only.
+
+    Theme and board scope (``style.charts.<family>``) refuse it: the value names
+    things only one chart has, such as its query columns.
+    """
 
 
 @dataclasses.dataclass(frozen=True)
@@ -246,6 +270,31 @@ class SkipInheritSlots:
     """
 
     cascade: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class ResultColumn:
+    """The string names a column of a query result, matched ignoring case.
+
+    Before a chart resolves, ``match_column_refs`` rewrites every string so
+    marked to the result's own spelling (``column_match.match_column``), so
+    everything downstream compares names exactly. It walks types, not field
+    names: a field holding a column name carries this marker or is missed.
+    ``template``: the string is a link template whose ``{{ name }}``
+    placeholders name columns, rather than a column name itself.
+    """
+
+    template: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class ResultQuery:
+    """The string names the query whose result the column refs beside or
+    under it read, in place of the chart's own query (a layer's ``query:``,
+    a ``layer_query_formats`` key). ``None`` keeps the enclosing query."""
+
+
+ColumnRef = Annotated[str, ResultColumn()]
 
 
 @dataclasses.dataclass(frozen=True)

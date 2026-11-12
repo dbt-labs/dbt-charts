@@ -13,9 +13,9 @@ Entry Points:
 
 from typing import TYPE_CHECKING, Any
 
+from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.query.normalized import (
     AnyQuery,
-    SqlQuery,
     ValuesQuery,
     is_sql_query,
 )
@@ -166,31 +166,54 @@ def resolve_query_source(
             there is no implicit one to fall back to, or
             whatever the resolver raises for an unresolvable name.
     """
-    authored = None if isinstance(query, ValuesQuery) else query.source
+    return resolve_authored_source(
+        None if isinstance(query, ValuesQuery) else query.source,
+        query.sql if is_sql_query(query) else None,
+        sources=sources,
+        project_sources=sources.runtime_config(),
+        resolver=resolver,
+        dbt_context=dbt_context,
+        board_sources=board.sources if board is not None else {},
+        query_name=query_name,
+    )
+
+
+def resolve_authored_source(
+    authored: str | None,
+    sql: str | None,
+    *,
+    sources: SourceRegistry,
+    project_sources: ProjectSourcesConfig,
+    resolver: SourceResolver,
+    dbt_context: DbtContext | None,
+    board_sources: dict[str, dict[str, Any]],  # type-state: explicit_any — raw
+    query_name: str,
+) -> "ResolvedSourceConfig | None":
+    """:func:`resolve_query_source` over the query's fields: its authored source
+    name, and its ``sql`` (None for a query that is not SQL)."""
     if authored is None:
-        if not is_sql_query(query):
+        if sql is None:
             return None
         authored = effective_source(sources, None)
         if authored is None:
             raise source_not_named_error(sources)
-    board_sources = board.sources if board is not None else {}
     resolved = resolver.resolve(
         authored=authored,
         board_sources=board_sources,
-        project_sources=sources.runtime_config(),
+        project_sources=project_sources,
         dbt_context=dbt_context,
         query_name=query_name,
     )
-    if resolved is None and is_sql_query(query):
+    if resolved is None and sql is not None:
         return default_sql_source(
-            query, sources, resolver, board_sources, dbt_context, query_name
+            sql, project_sources, resolver, board_sources, dbt_context, query_name
         )
     return resolved
 
 
 def default_sql_source(
-    query: SqlQuery,
-    sources: SourceRegistry,
+    sql: str,
+    project_sources: ProjectSourcesConfig,
     resolver: SourceResolver,
     board_sources: dict[str, dict[str, Any]],  # type-state: explicit_any — raw
     dbt_context: DbtContext | None,
@@ -212,11 +235,11 @@ def default_sql_source(
     assert dbt_context is not None, (
         "a resolver deferred a SQL query's source with no dbt project linked"
     )
-    if has_dbt_jinja(query.sql):
+    if has_dbt_jinja(sql):
         resolved = resolver.resolve(
             authored=DbtProfileSourceConfig(type="dbt_profile"),
             board_sources=board_sources,
-            project_sources=sources.runtime_config(),
+            project_sources=project_sources,
             dbt_context=dbt_context,
             query_name=query_name,
         )

@@ -24,6 +24,14 @@ pub enum FillError {
     NestedCardGap,
     /// A positional row whose length is not the column count.
     RowShape { query: String, row: usize },
+    /// The host could not read `dbt_charts.yml`.
+    Unreadable(crate::files::ReadError),
+}
+
+impl From<crate::files::ReadError> for FillError {
+    fn from(e: crate::files::ReadError) -> Self {
+        Self::Unreadable(e)
+    }
 }
 
 impl FillError {
@@ -32,16 +40,19 @@ impl FillError {
             Self::BadCeiling(why) => diag::err_html_policy_ceiling_invalid(why.as_str()),
             Self::NestedCardGap => diag::err_card_gap_nested(),
             Self::RowShape { query, row } => diag::err_values_row_shape(query.as_str(), *row),
+            Self::Unreadable(e) => e.diagnostic(),
         }]
     }
 }
 
 impl fmt::Display for FillError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.diagnostics().iter().try_for_each(|d| match d.message() {
-            Ok(text) => f.write_str(&text),
-            Err(_) => f.write_str(d.code),
-        })
+        self.diagnostics()
+            .iter()
+            .try_for_each(|d| match d.message() {
+                Ok(text) => f.write_str(&text),
+                Err(_) => f.write_str(d.code),
+            })
     }
 }
 
@@ -134,7 +145,9 @@ fn rank(p: HtmlPolicy) -> u8 {
 pub fn html_policy_ceiling(files: &dyn ProjectFiles) -> Result<HtmlPolicy, FillError> {
     let Some(text) = ProjectPath::try_from("dbt_charts.yml")
         .ok()
-        .and_then(|p| files.read(&p))
+        .map(|p| files.read(&p))
+        .transpose()?
+        .flatten()
     else {
         return Ok(HtmlPolicy::TrustedRaw);
     };

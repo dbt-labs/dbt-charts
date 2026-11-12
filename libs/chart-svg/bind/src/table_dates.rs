@@ -154,7 +154,7 @@ impl Moment {
     }
 
     fn hour12(self) -> u32 {
-        if self.hour % 12 == 0 {
+        if self.hour.is_multiple_of(12) {
             12
         } else {
             self.hour % 12

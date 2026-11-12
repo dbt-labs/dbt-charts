@@ -1,0 +1,80 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Conditional pie, heatmap and map styles
+width: 900
+notes: A slice, a cell and a region restyled by the value in their own row, beside their color channel.
+
+queries:
+  revenue_by_region:
+    columns: [region, revenue]
+    values:
+      - [EMEA, 50]
+      - [APAC, 30]
+      - [NA, 90]
+  visits:
+    columns: [day, hour, visits]
+    values:
+      - [Mon, am, 12]
+      - [Tue, am, 55]
+      - [Mon, pm, 91]
+      - [Tue, pm, 20]
+  population:
+    columns: [state_code, pop]
+    values:
+      - ["9", 742]
+      - ["23", 44]
+      - ["25", 901]
+
+rows:
+  - cols: [c_pie, c_heatmap, c_map]
+
+charts:
+  c_pie:
+    query: revenue_by_region
+    type: pie
+    theta: revenue
+    color: region
+    title: EMEA in brand blue
+    style:
+      conditional:
+        region:
+          - eq: EMEA
+            marks:
+              slice:
+                color: "#1f4e99"
+                stroke:
+                  color: "#ffffff"
+                  width: 2
+  c_heatmap:
+    query: visits
+    type: heatmap
+    x: day
+    y: hour
+    color: visits
+    title: Busiest cells outlined
+    style:
+      conditional:
+        visits:
+          - gte: 90
+            marks:
+              rect:
+                stroke:
+                  color: "#c62828"
+                  width: 3
+  c_map:
+    query: population
+    type: map
+    geo:
+      source: us-states
+    lookup: state_code
+    value: pop
+    title: One region highlighted
+    style:
+      conditional:
+        state_code:
+          - eq: "9"
+            marks:
+              geoshape:
+                fill: "#c62828"
+                stroke:
+                  color: "#000000"
+                  width: 1.5

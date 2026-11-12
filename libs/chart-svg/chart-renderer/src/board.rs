@@ -112,9 +112,14 @@ pub struct BoardPayload {
     /// request set, as opposed to defaults merged into `variable_values`.
     #[serde(default)]
     pub overridden_variables: Vec<String>,
+    /// `board_variables.current_daterange_presets()`: each daterange variable
+    /// whose committed value is a preset, by name, as the preset id. Its value
+    /// in `variable_values` is the dates that preset resolved to.
+    #[serde(default)]
+    pub daterange_presets: serde_json::Map<String, Value>,
     /// `board_variables.py::current_context_variables` — host-injected render
     /// context among `variable_values` (a directory listing), which text may
-    /// read but a toggle link back to this board must not carry.
+    /// read but a link back to this board must not carry.
     #[serde(default)]
     pub context_variables: Vec<String>,
     /// `board_sweep.py::_variable_datasets` — every visible variable's own
@@ -1104,8 +1109,7 @@ fn chart_title_text(chart_json: &Value, chart_type: &str, id: &str) -> Result<St
 /// `compile/models/board/resolved.py::_is_magnitude_colored`: true when
 /// this chart's `color` channel paints a quantitative value — a `gradient`
 /// mode ramp, bare `color: <field>` authoring flagged `quantitative_data`
-/// by `_flag_quantitative_color`, or a `conditional` mode carrying a
-/// continuous `fallback_scale`. Read straight off the chart's own
+/// by `_flag_quantitative_color`. Read straight off the chart's own
 /// `resolved_channels.color` (already present on every chart item's JSON —
 /// the same data every family's own emitter reads to paint the legend).
 pub(crate) fn is_magnitude_colored(chart_json: &Value) -> bool {
@@ -1115,11 +1119,8 @@ pub(crate) fn is_magnitude_colored(chart_json: &Value) -> bool {
     else {
         return false;
     };
-    let mode = color.get("mode").and_then(Value::as_str);
-    if mode == Some("gradient") || color.get("quantitative_data") == Some(&Value::Bool(true)) {
-        return true;
-    }
-    mode == Some("conditional") && !color.get("fallback_scale").is_none_or(Value::is_null)
+    color.get("mode").and_then(Value::as_str) == Some("gradient")
+        || color.get("quantitative_data") == Some(&Value::Bool(true))
 }
 
 /// `svg_utils.border_rect`: a stroke-only rect tracing a `width` x `height`
@@ -2041,7 +2042,13 @@ fn render_details_summary(
     }
     .unwrap_or("");
     let new_value = if expanded { "false" } else { "true" };
-    let href = build_toggle_url(&payload.variable_values, &payload.context_variables, details_variable, new_value);
+    let href = crate::variables::variable_link(
+        &payload.variable_values,
+        &payload.daterange_presets,
+        &payload.context_variables,
+        details_variable,
+        new_value,
+    )?;
     let fill = if expanded { &details.expanded_fill } else { &details.collapsed_fill };
     let fill_attr = fill.as_deref().unwrap_or("none");
     let summary_rect = format!(
@@ -2066,73 +2073,6 @@ fn render_details_summary(
         xml_escape_attr(&details.title_font_color),
         html_escape(label),
     ))
-}
-
-/// `layouts.py::_build_toggle_url`: change one URL param while preserving
-/// every other current variable value — non-`null` board variables only
-/// (never `context_variables`), matching
-/// `{k: str(v) for k, v in variables.items() if v is not None}`, then
-/// `params[param_name] = new_value`. Python dict order is INSERTION order:
-/// an existing key is updated in place (position unchanged), a new one is
-/// appended last — `variables` is `serde_json::Map` (the crate's
-/// `preserve_order` feature backs it with an insertion-ordered map), so
-/// iterating it and updating `params` in place the same way reproduces that
-/// order exactly. No sort — `urlencode` walks the dict as given, and an
-/// alphabetical sort here would silently reorder every multi-variable
-/// board's toggle-link query string relative to production's.
-fn build_toggle_url(
-    variables: &serde_json::Map<String, Value>,
-    context_variables: &[String],
-    param_name: &str,
-    new_value: &str,
-) -> String {
-    let mut params: Vec<(String, String)> = variables
-        .iter()
-        .filter(|(k, v)| !v.is_null() && !context_variables.contains(k))
-        .map(|(k, v)| (k.clone(), jinja_query_value_str(v)))
-        .collect();
-    if let Some(entry) = params.iter_mut().find(|(k, _)| k == param_name) {
-        entry.1 = new_value.to_string();
-    } else {
-        params.push((param_name.to_string(), new_value.to_string()));
-    }
-    let query = params
-        .iter()
-        .map(|(k, v)| format!("{}={}", url_encode(k), url_encode(v)))
-        .collect::<Vec<_>>()
-        .join("&");
-    format!("?{query}")
-}
-
-/// Python's bare `str(value)` for a URL query param — mirrors `title::
-/// jinja_value_str`'s own stringification (identical scalar shapes: a
-/// tab/details variable is always a string or bool at compile time), but
-/// stays local rather than depending on `title.rs` for one small helper.
-fn jinja_query_value_str(v: &Value) -> String {
-    match v {
-        Value::String(s) => s.clone(),
-        Value::Bool(b) => if *b { "True" } else { "False" }.to_string(),
-        Value::Number(n) => n.to_string(),
-        other => other.to_string(),
-    }
-}
-
-/// `urllib.parse.urlencode`'s per-value percent-encoding (query-string
-/// safe set: alphanumerics and `-_.~` pass through unescaped, space
-/// becomes `+`, everything else is `%XX`) — the same encoding Python's
-/// `urlencode` applies to both keys and values.
-fn url_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for byte in s.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char);
-            }
-            b' ' => out.push('+'),
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
 }
 
 /// `_docs_site.py::DEFAULT_DOCS_SITE_URL`.
@@ -3150,7 +3090,13 @@ fn render_tabs_layout(
         }
         match layout.tab_variable.as_deref() {
             Some(tab_variable) if !is_active => {
-                let href = build_toggle_url(&payload.variable_values, &payload.context_variables, tab_variable, slug);
+                let href = crate::variables::variable_link(
+                    &payload.variable_values,
+                    &payload.daterange_presets,
+                    &payload.context_variables,
+                    tab_variable,
+                    slug,
+                )?;
                 tab_bar_parts.push(format!(r#"<a href="{}" {attrs}>{tab_svg}</a>"#, xml_escape_attr(&href)));
             }
             _ => tab_bar_parts.push(format!("<g {attrs}>{tab_svg}</g>")),
@@ -3269,7 +3215,7 @@ fn footer_attribution_svg(
             String::new()
         };
         format!(
-            r#"<text x="{}" y="{}" text-anchor="end" font-size="{}" fill="{color}" font-family="{font_family}"{weight_attr}>{}</text>"#,
+            r#"<text x="{}" y="{}" text-anchor="end" font-size="{}" fill="{color}" font-family="{font_family}" data-dct-role="footer-text"{weight_attr}>{}</text>"#,
             // Snapped like the Python side (svg_utils.px) — see its comment.
             num_full(px(end_x)),
             num_full(y),
@@ -3598,6 +3544,7 @@ fn nested_board_sizing_context(
         variables_h,
         inline_band_h,
         effective_child_gap,
+        nested.style.variables.gap(),
         !nested.layout.items.is_empty(),
         opens_with_text(nested, &payload.variable_values)?,
         card_pad,
@@ -4286,6 +4233,8 @@ fn render_nested_board(
             &nested_variables_path(source_path),
             &payload.overridden_variables,
             Some(&payload.variable_datasets),
+            &payload.daterange_presets,
+            &payload.context_variables,
             &nested.style.variables,
             fonts_dir,
             &payload.painted_italics,
@@ -4392,10 +4341,12 @@ fn render_nested_board(
             .ok_or("style.variables.label.font.case must be resolved")?;
         let controls = crate::variables::resolve_controls(
             &visible_variables,
-            &variable_values,
+            &payload.variable_values,
             Some(&payload.variable_datasets),
             &nested.style.variables,
             label_case,
+            &payload.daterange_presets,
+            &payload.context_variables,
         )?;
         crate::variables::render_variables_strip_svg(
             &controls,
@@ -4543,6 +4494,7 @@ fn render_nested_board(
         nested_variables_height,
         inline_header_height,
         child_gap + card_gap,
+        nested.style.variables.gap(),
         !nested.layout.items.is_empty(),
         opens_with_text(&nested, &payload.variable_values)?,
         card_pad,
@@ -4612,7 +4564,7 @@ fn render_nested_board(
         y += text_height;
         header_end = y;
         if !nested_variables_svg.is_empty() && inline_header_svg.is_empty() {
-            y += child_gap + card_gap;
+            y += nested.style.variables.gap();
         }
     }
 
@@ -4650,7 +4602,7 @@ fn render_nested_board(
     // it), placed at the running `y` the header/text pieces left off at.
     if !nested_variables_svg.is_empty() {
         if text_svg.is_empty() && !title_svg.is_empty() {
-            y += child_gap + card_gap;
+            y += nested.style.variables.gap();
         }
         items.push(translate_group(
             &num_full(px(content_x)),
@@ -4875,6 +4827,8 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
             "variables",
             &payload.overridden_variables,
             Some(&payload.variable_datasets),
+            &payload.daterange_presets,
+            &payload.context_variables,
             &board.style.variables,
             fonts_dir,
             &payload.painted_italics,
@@ -4982,6 +4936,8 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
             Some(&payload.variable_datasets),
             &board.style.variables,
             label_case,
+            &payload.daterange_presets,
+            &payload.context_variables,
         )?;
         crate::variables::render_variables_strip_svg(
             &controls,
@@ -5001,6 +4957,7 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
         text_height,
         variables_height,
         inline_header_height,
+        effective_gap,
         effective_gap,
         !board.layout.items.is_empty(),
         opens_with_text(&board, &payload.variable_values)?,
@@ -5696,16 +5653,6 @@ mod tests {
             "resolved_channels": {"color": {"mode": "series", "quantitative_data": false}}
         });
         assert!(!is_magnitude_colored(&categorical_series));
-
-        let conditional_with_fallback = serde_json::json!({
-            "resolved_channels": {"color": {"mode": "conditional", "fallback_scale": {}}}
-        });
-        assert!(is_magnitude_colored(&conditional_with_fallback));
-
-        let conditional_no_fallback = serde_json::json!({
-            "resolved_channels": {"color": {"mode": "conditional", "fallback_scale": null}}
-        });
-        assert!(!is_magnitude_colored(&conditional_no_fallback));
     }
 }
 
@@ -5853,7 +5800,7 @@ mod nested_box_sidecar_tests {
     /// (`ResolvedLayoutItem.board: ResolvedBoard`).
     fn minimal_board_json(layout_items: serde_json::Value) -> serde_json::Value {
         let variables_input = serde_json::json!({
-            "height": 28.0, "border": {"radius": 4.0}, "background": "#ffffff",
+            "height": 28.0, "border": {"radius": 4.0}, "background": "#ffffff", "selected_color": "#111", "selected_tint": 0.12, "selected_weight": 500,
             "padding": {"top": 6.0, "right": 10.0, "bottom": 6.0, "left": 10.0},
             "widths": {"text": 140.0, "number": 100.0, "range": 120.0, "slider_value_min": 30.0, "checkbox": 16.0, "daterange": 160.0},
             "range": {"default_min": 0.0, "default_max": 100.0, "default_step": 1.0}
@@ -5861,6 +5808,7 @@ mod nested_box_sidecar_tests {
         let font = serde_json::json!({"size": 11.0, "family": "Inter", "color": "#000000", "weight": "400", "case": "none"});
         let style_variables = serde_json::json!({
             "position": "top", "title_inline_band_bottom_pad": 8.0, "gap": 10.0,
+            "presets": ["today"], "presets_display": "menu", "overflow": "menu",
             "title_inline_title_max_width": 0.0,
             "font": font, "label": {"font": font}, "value": {"font": font},
             "placeholder": {"font": {"size": 11.0, "family": "Inter", "color": "#999999", "weight": "400", "case": "none"}},
@@ -6381,14 +6329,16 @@ mod nested_box_sidecar_tests {
 
 #[cfg(test)]
 mod toggle_url_tests {
-    use super::*;
-
     #[test]
     fn toggle_url_omits_host_context_variables() {
         let variables = serde_json::json!({"siblings": ["a.yml"], "vendor": "Acme"});
         let variables = variables.as_object().unwrap();
         let context = vec!["siblings".to_string()];
-        assert_eq!(build_toggle_url(variables, &context, "_tab_t", "two"), "?vendor=Acme&_tab_t=two");
-        assert!(build_toggle_url(variables, &[], "_tab_t", "two").contains("siblings"));
+        let presets = serde_json::Map::new();
+        let link = |context: &[String]| {
+            crate::variables::variable_link(variables, &presets, context, "_tab_t", "two").unwrap()
+        };
+        assert_eq!(link(&context), "?vendor=Acme&_tab_t=two");
+        assert!(link(&[]).contains("siblings"));
     }
 }

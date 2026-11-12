@@ -3,7 +3,7 @@
 
 use std::borrow::Cow;
 
-use column_types::{ColumnType, ColumnTypes};
+use column_types::ColumnTypes;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -360,35 +360,13 @@ pub fn last_nonnull_value(
 /// alone does not catch it. This predicate is the missing precondition a
 /// categorical-x gate (line/area's authored-sort gate) needs alongside it.
 pub fn is_year_shaped(types: &ColumnTypes, rows: &[serde_json::Map<String, Value>], field: &str) -> Result<bool, String> {
-    // A declared float is a measure, never a year.
-    if *types.get(field)? == ColumnType::Float {
-        return Ok(false);
+    use crate::column_kind::{field_kind_in, ColumnKind, Window};
+    // Every non-null cell, as `normalize_labeled_temporal` reads `values`: it then rewrites every row.
+    match field_kind_in(types, rows, field, Window::All).map_err(|d| d.to_string())? {
+        ColumnKind::Text { ambiguous_year: true, .. } => Err(crate::column_kind::unicode_digit_year().to_string()),
+        ColumnKind::Number { year } | ColumnKind::Text { year, .. } => Ok(year),
+        ColumnKind::Empty | ColumnKind::Date | ColumnKind::Boolean | ColumnKind::Other => Ok(false),
     }
-    const YEAR_MIN: f64 = 1700.0;
-    const YEAR_MAX: f64 = 2100.0;
-    let mut any = false;
-    for row in rows {
-        let v = match row.get(field) {
-            Some(v) if !v.is_null() => v,
-            _ => continue,
-        };
-        any = true;
-        let ok = match v {
-            Value::Number(n) => n
-                .as_f64()
-                .is_some_and(|f| f.fract() == 0.0 && (YEAR_MIN..=YEAR_MAX).contains(&f)),
-            Value::String(s) => {
-                s.len() == 4
-                    && s.bytes().all(|b| b.is_ascii_digit())
-                    && s.parse::<i32>().is_ok_and(|y| (1700..=2100).contains(&y))
-            }
-            _ => false,
-        };
-        if !ok {
-            return Ok(false);
-        }
-    }
-    Ok(any)
 }
 
 /// A color channel's legend/palette domain: the distinct values, sorted the
@@ -410,6 +388,7 @@ pub fn color_domain_of<'a>(
 #[cfg(test)]
 mod is_year_shaped_tests {
     use super::*;
+    use column_types::ColumnType;
 
     fn declared(kind: ColumnType) -> ColumnTypes {
         ColumnTypes::default().with("year", kind.clone()).with("code", kind)

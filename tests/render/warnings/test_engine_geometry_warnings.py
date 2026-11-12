@@ -18,6 +18,7 @@ from dbt_charts.core.diagnostics import (
     WARN_BAR_GROUPED_SERIES_COINCIDE,
     WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM,
     WARN_LAYOUT_MIN_EXCEEDS_HEIGHT,
+    WARN_LEGEND_OVERLAY_COVERS_MARKS,
     WARN_VALUE_LABELS_CROWD_WIDTH,
     WARN_VALUE_LABELS_NO_MARKERS,
     WARN_VALUE_LABELS_THINNED,
@@ -31,6 +32,7 @@ from dbt_charts.core.render.warnings import (
     bar_grouped_series_coincide,
     facet_panel_width_below_minimum,
     layout_min_exceeds_height,
+    legend_overlay_covers_marks,
     value_labels_crowd_width,
     value_labels_no_markers,
     value_labels_thinned,
@@ -258,3 +260,10 @@ def test_markerless_value_labels_anchor_on_the_label_style() -> None:
         value_labels_no_markers.detect(_ctx(WARN_VALUE_LABELS_NO_MARKERS, {}))
     )
     assert diagnostic.path == "charts.c1.style.marks.bar.labels"
+
+
+def test_an_overlay_legend_over_marks_anchors_on_the_legend_position() -> None:
+    diagnostic = _only(
+        legend_overlay_covers_marks.detect(_ctx(WARN_LEGEND_OVERLAY_COVERS_MARKS, {}))
+    )
+    assert diagnostic.path == "charts.c1.style.legend.position"

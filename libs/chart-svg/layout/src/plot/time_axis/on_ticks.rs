@@ -66,6 +66,7 @@ impl TimeAxis<'_> {
             ticks,
             labels,
             gutter,
+            interval: false,
         })
     }
 
@@ -361,7 +362,7 @@ impl TimeAxis<'_> {
             } else {
                 (slot.day - lo) / (hi - lo)
             };
-            let x = self.x_at(frac, width);
+            let x = self.x_of(slot.day, width);
             let (align, baseline) = if angle == 0.0 {
                 (self.range_align(frac, width), Baseline::Top)
             } else {

@@ -105,7 +105,7 @@ def test_a_chart_level_token_and_a_single_series_list_item_migrate() -> None:
 
     result = prepare_board_mapping(mapping)
 
-    assert result["charts"]["c"]["style"]["color"]["static"] == "chrome[8]"
+    assert result["charts"]["c"]["style"]["marks"]["bar"]["color"] == "chrome[8]"
     series = result["style"]["charts"]["color"]["categorical"]["single_series_palette"]
     assert series == ["dbt-grays.11"]
 
@@ -173,7 +173,7 @@ def test_a_nested_boards_own_charts_migrate() -> None:
 
     result = prepare_board_mapping(mapping)["rows"][0]
 
-    assert result["charts"]["c"]["style"]["color"]["static"] == "chrome[8]"
+    assert result["charts"]["c"]["style"]["marks"]["bar"]["color"] == "chrome[8]"
     assert result["style"] == {
         "background": "dbt-grays.8",
         "font": {"color": "dbt-grays.8"},

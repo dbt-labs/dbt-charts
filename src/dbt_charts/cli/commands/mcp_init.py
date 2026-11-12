@@ -129,7 +129,7 @@ def run_init(
         )
         typer.echo(
             "  Resources: dct://boards, dct://board/{path}, "
-            "dct://guide/{chart,report-design}"
+            "dct://guide/{chart,board-layout,report-design}"
         )
 
     typer.echo("")

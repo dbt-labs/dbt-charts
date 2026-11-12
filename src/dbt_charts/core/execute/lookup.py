@@ -35,6 +35,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_QUERY_INTERRUPTED,
     ERR_WAREHOUSE_AUTH,
     ERR_WAREHOUSE_CONNECTION,
+    ERR_WAREHOUSE_PERMISSION,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
 from dbt_charts.core.diagnostics.registry import REGISTRY, ErrorCode
@@ -640,7 +641,7 @@ def cache_failure(
     ):
         return
     # Says nothing about the query: it was stopped, not answered.
-    # Credential, connection, and missing-relation or -column failures are
+    # Credential, connection, permission, and missing-relation or -column failures are
     # fixed outside the board (re-auth, `dbt run`, a migration), so the next
     # render must run the query again rather than replay them.
     if isinstance(exception, DbtChartsError) and (
@@ -649,6 +650,7 @@ def cache_failure(
             ERR_QUERY_INTERRUPTED,
             ERR_WAREHOUSE_AUTH,
             ERR_WAREHOUSE_CONNECTION,
+            ERR_WAREHOUSE_PERMISSION,
             ERR_BINDER_UNKNOWN_RELATION,
             ERR_BINDER_UNKNOWN_COLUMN,
         )

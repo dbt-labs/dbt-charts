@@ -121,7 +121,7 @@ def test_dialect_vocabulary_matches_source_types() -> None:
     assert result.errors
 
 
-def test_cache_reference_requires_a_duckdb_dialect() -> None:
+def test_cache_reference_compiles_in_any_dialect() -> None:
     queries = """\
   base:
     sql: select 1 as a
@@ -131,9 +131,7 @@ def test_cache_reference_requires_a_duckdb_dialect() -> None:
     source: db
     dialect: %s
 """
-    assert [e.code for e in _compile(queries % "bigquery").errors] == [
-        "ERR-SQL-DIALECT-UNSUPPORTED"
-    ]
+    assert _compile(queries % "bigquery").errors == []
     assert _compile(queries % "duckdb").errors == []
 
 
@@ -178,13 +176,13 @@ rows:
 """
 
 
-def test_inline_chart_query_cache_reference_requires_a_duckdb_dialect() -> None:
+def test_inline_chart_query_cache_reference_compiles_in_its_dialect() -> None:
     result = compile(
         _INLINE % "select a from {{ queries.base.cache }}",
         file="f.yml",
         project_sources=_SOURCES,
     )
-    assert [e.code for e in result.errors] == ["ERR-SQL-DIALECT-UNSUPPORTED"]
+    assert result.errors == []
 
 
 def test_inline_chart_query_cannot_mix_dialects_through_a_reference() -> None:

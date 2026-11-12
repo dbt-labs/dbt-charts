@@ -208,3 +208,85 @@ def test_supplied_datasets_must_cover_shared_layer_queries() -> None:
 # domainMin for THAT case only (test_measure_axis_tick_ladder_parity.py
 # covers it) — scoped narrowly to
 # avoid moving this (and every other) single-metric line's domain here.
+
+
+# ── Percent axes: headroom never leaves [0, 1] ──────────────────────────────
+
+
+def _axis_y(
+    chart_type: str,
+    values: list[float],
+    *,
+    fmt: str = ".0%",
+    axis_y: dict[str, Any] | None = None,
+    **chart_fields: Any,
+) -> Any:
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "pct",
+            "type": chart_type,
+            "x": "x",
+            "y": "val",
+            "style": {"axis_y": {"labels": {"format": fmt}, **(axis_y or {})}},
+            **chart_fields,
+        }
+    )
+    rows = [{"x": i, "val": v} for i, v in enumerate(values)]
+    return resolve(chart, rows, chart_style_context=_BOARD_CTX).style.axis_y
+
+
+def test_percent_line_reaching_100_stops_headroom_at_100() -> None:
+    ay = _axis_y("line", [0.38, 0.55, 0.9, 1.0])
+    assert ay.domain_max == 1.0
+    assert ay.domain_min == pytest.approx(0.38 - _HEADROOM * 0.62)
+
+
+def test_percent_line_near_zero_stops_headroom_at_zero() -> None:
+    ay = _axis_y(
+        "line", [0.02, 0.3, 0.5], axis_y={"scale": {"continuous": {"zero": False}}}
+    )
+    assert ay.domain_min == 0.0
+    assert ay.domain_max == pytest.approx(0.5 + _HEADROOM * 0.48)
+
+
+def test_percent_line_past_100_keeps_span_headroom() -> None:
+    ay = _axis_y("line", [0.4, 0.8, 1.2])
+    assert ay.domain_max == pytest.approx(1.2 + _HEADROOM * 0.8)
+
+
+def test_non_percent_line_keeps_span_headroom() -> None:
+    ay = _axis_y("line", [0.38, 0.55, 0.9, 1.0], fmt=".2f")
+    assert ay.domain_max == pytest.approx(1.0 + _HEADROOM * 0.62)
+
+
+def test_authored_domain_beats_the_percent_cap() -> None:
+    ay = _axis_y(
+        "line",
+        [0.38, 1.0],
+        axis_y={"scale": {"continuous": {"domain": [0, 1.1]}}},
+    )
+    assert max(ay.tick_values) == 1.1
+
+
+def test_percent_zero_anchored_bar_stops_headroom_at_100() -> None:
+    assert _axis_y("bar", [0.4, 0.8, 1.0]).domain_max == 1.0
+
+
+def test_percent_zero_anchored_bar_below_100_keeps_headroom() -> None:
+    assert _axis_y("bar", [0.4, 0.5]).domain_max == pytest.approx(0.5 * (1 + _HEADROOM))
+
+
+def test_percent_stacked_bar_totalling_100_stops_headroom_at_100() -> None:
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "pct",
+            "type": "bar",
+            "x": "x",
+            "y": ["a", "b"],
+            "stack": "zero",
+            "style": {"axis_y": {"labels": {"format": ".0%"}}},
+        }
+    )
+    rows = [{"x": i, "a": 0.6, "b": 0.4} for i in range(3)]
+    ay = resolve(chart, rows, chart_style_context=_BOARD_CTX).style.axis_y
+    assert max(ay.tick_values) <= 1.0

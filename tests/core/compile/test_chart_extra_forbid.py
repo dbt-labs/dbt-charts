@@ -10,10 +10,9 @@ from dbt_charts.core.compile.models.chart.authored import (
     AuthoredChart,
     BarLayer,
     ChartTotal,
-    ConditionalRule,
     LayerAxisYStyle,
-    _PredicateBase,
 )
+from dbt_charts.core.compile.models.conditional_predicate import ConditionalPredicate
 from dbt_charts.core.compile.models.style.theme import SliceLabelsStyle
 
 _chart_patch_adapter = TypeAdapter(AuthoredChart)
@@ -34,15 +33,9 @@ def test_chart_helper_classes_reject_extra_fields(cls: type) -> None:
 
 
 def test_predicate_base_rejects_extra_fields() -> None:
-    """Regression: _PredicateBase must have extra='forbid' like all authored models."""
+    """Regression: ConditionalPredicate must have extra='forbid' like all authored models."""
     with pytest.raises(ValidationError, match="bogus_key"):
-        _PredicateBase(bogus_key=True)  # type: ignore[call-arg]
-
-
-def test_conditional_rule_rejects_extra_fields() -> None:
-    """ConditionalRule still rejects extras (own model_config not changed)."""
-    with pytest.raises(ValidationError, match="bogus_key"):
-        ConditionalRule(column="status", bogus_key=True)  # type: ignore[call-arg]
+        ConditionalPredicate(bogus_key=True)  # type: ignore[call-arg]
 
 
 def test_chart_patch_rejects_unknown_key():

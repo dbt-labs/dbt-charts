@@ -159,7 +159,6 @@ style:
     level: auto
     font:
       extends: heading
-      size: 18
     compact_weight: 600
     # Additive level offsets by card pixel width. Added to the base heading
     # level before indexing the heading ramp. The canonical tier classifier and
@@ -725,6 +724,7 @@ style:
     # Board-local overrides live under board.style.marks.* (tier-3).
     marks:
       bar:
+        color: auto
         border:
           width: 1
           # Halo knockout: tracks the theme's canvas so adjacent bars separate
@@ -773,6 +773,7 @@ style:
           dx: auto
           dy: auto
       area:
+        color: auto
         # Soft tinted fill on a cream-knockout undercoat -- the overlap recipe
         # for 2+ unstacked series. A single series has nothing to overlap and
         # nothing for a trend line to sit on top of, so resolve (area.py)
@@ -828,6 +829,7 @@ style:
             extends: label
             color: chrome[7]
       slice:
+        color: auto
         # gap 0 lets the stroke (canvas-color knockout) be the only
         # visible separator between slices.
         gap: 0
@@ -877,6 +879,7 @@ style:
           cap: auto
           join: auto
       rect:
+        color: auto
         opacity: auto
         stroke: null
       circle:
@@ -1381,6 +1384,8 @@ style:
       - last_12_months
       - month_to_date
       - year_to_date
+    presets_display: menu
+    overflow: menu
     # title-inline is the structural default: board title left, variable controls
     # right, baselines aligned on one horizontal band. Untitled boards fall back
     # to a standalone variables band packed to the same right edge (render path
@@ -1392,6 +1397,7 @@ style:
     gap: 10.0
     label_position: inline
     container_height: 36.0
+    compact_height: 24.0
     control_gap: 8.0
     font: label
     label:
@@ -1415,6 +1421,8 @@ style:
       # through the variables strip; boards (or sibling themes) that want
       # an opaque input bg should set this explicitly.
       background: transparent
+      selected_tint: 0.12
+      selected_weight: 500
       padding:
         top: 4.0
         right: 8.0

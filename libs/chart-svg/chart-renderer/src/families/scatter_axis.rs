@@ -856,7 +856,7 @@ impl TemporalXAxis {
                 let value = ::layout::labels_expr::Val::Date(instant * 864e5);
                 let default = if expr.uses_label() { self.default_label(wall.floor() as i64)? } else { String::new() };
                 let text = ::bind::time_zone::with_expression_local(aware, || {
-                    expr.eval(&::layout::labels_expr::Tick::at(i, count, value, &default))
+                    expr.eval(&::layout::labels_expr::Tick::at(i, count, value, &default), &crate::labels_expr::env())
                 })
                 .map_err(|e| ::layout::labels_expr::describe(&e, "a validated tick"))?;
                 let text = self.cased(&text)?;

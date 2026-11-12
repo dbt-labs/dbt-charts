@@ -164,6 +164,7 @@ def _resolve_token(context: ChartStyleContext, token: str) -> str:
         context.palettes,
         context.roles,
         single_series_palette=context.single_series_palette,
+        categorical_palette=context.palette,
     )
     assert isinstance(resolved, str)
     return resolved

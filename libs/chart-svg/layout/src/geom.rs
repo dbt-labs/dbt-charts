@@ -49,3 +49,10 @@ impl Insets {
         left: 0.0,
     };
 }
+
+/// A bar's end radius: the authored one, at most this share of the bar's thickness and half its
+/// length (`common.rs::bar_corner_radius`).
+pub fn bar_corner_radius(authored: f64, thickness: f64, length: f64) -> f64 {
+    const THICKNESS_SHARE: f64 = 0.25;
+    authored.min(THICKNESS_SHARE * thickness).min(length / 2.0)
+}

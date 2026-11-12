@@ -5,6 +5,7 @@ No warehouse connection, no query execution (unless --warehouse is passed).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -17,14 +18,15 @@ from dbt_charts.agent_api._paths import (
     resolve_board_path,
 )
 from dbt_charts.core.board import board_warning_codes, partition_compile_warnings
+from dbt_charts.core.compile.column_match import match_column
+from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.engine import engine_compile
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import missing_format_columns
-from dbt_charts.core.compile.host_facts import parse_host_facts
-from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.host_facts import UnboundChart, parse_host_facts
 from dbt_charts.core.compile.resolve.chart.positional import (
     channel_error,
-    is_unbound,
+    unbound_columns_error,
 )
 from dbt_charts.core.compile.validate.chart_color_tokens import (
     chart_color_token_errors,
@@ -44,11 +46,13 @@ from dbt_charts.core.diagnostics import (
     SourceRange,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.diagnostics.registry import ErrorCode
 from dbt_charts.core.execute.chart_columns import (
-    chart_column_refs,
     missing_column_error,
 )
+from dbt_charts.core.execute.planned import plan_board
+from dbt_charts.core.execute.query_plan import QueryPlan
 from dbt_charts.core.project import (
     CHARTS_SUBDIR,
     PROJECT_CONFIG_NAME,
@@ -179,31 +183,38 @@ def validate(path: Path, *, project: Project) -> ValidateResult:
     return _validate_resolved(resolved, project, None, True)
 
 
-def _refusal_diagnostics(
-    refusal: _engine.CompileError, relpath: str
-) -> list[Diagnostic]:
+def _refusal_diagnostics(refusal: _engine.CompileError) -> list[Diagnostic]:
     """The engine's coded refusals as diagnostics."""
     out: list[Diagnostic] = []
     for found in refusal.diagnostics:
         code = REGISTRY.get(found["code"])
         if not isinstance(code, ErrorCode):
             raise TypeError(f"engine refused with non-error code {found['code']}")
-        diagnostic = DbtChartsError.from_code(code, **found["params"]).to_diagnostic(
-            file=relpath
-        )
-        placed: dict[str, object] = {}
-        if (path := found.get("path")) is not None:
-            placed["path"] = path
-        if (hint := found.get("hint")) is not None:
-            # The engine reads no environment, so its docs link is the shipped default.
-            placed["hint"] = hint.replace(DEFAULT_DOCS_SITE_URL, docs_site_url())
-        if (located := found.get("range")) is not None:
-            placed["range"] = SourceRange.model_validate(located)
-        if code is ERR_UNRESOLVED_REFERENCE and "context" in diagnostic.fields:
+        error = DbtChartsError.from_code(code, **found["params"])
+        fields = dict(error.fields)
+        if code is ERR_UNRESOLVED_REFERENCE and "context" in fields:
             # `fields` holds the bare place; only the message's `{context}` carries " in ".
-            bare = diagnostic.fields["context"].removeprefix(" in ")
-            placed["fields"] = {**diagnostic.fields, "context": bare}
-        out.append(diagnostic.model_copy(update=placed))
+            fields["context"] = fields["context"].removeprefix(" in ")
+        hint = found.get("hint")
+        if hint is not None:
+            # The engine reads no environment, so its docs link is the shipped default.
+            hint = hint.replace(DEFAULT_DOCS_SITE_URL, docs_site_url())
+        elif code.hint_generator is not None:
+            hint = code.hint_generator(**fields)
+        located = found.get("range")
+        out.append(
+            Diagnostic.from_code(
+                code,
+                message=str(error),
+                fix=code.fix_template,
+                hint=hint,
+                path=found.get("path", error.field_path or None),
+                range=None if located is None else SourceRange.model_validate(located),
+                query=fields.get("query_name"),
+                fields=fields,
+                detail=error.detail,
+            )
+        )
     return out
 
 
@@ -295,17 +306,18 @@ def _validate_resolved(
     validate_compiled_queries(result)
     board_sources = result.board.sources if result.board else {}
     refused: list[Diagnostic] = []
+    compiled: _engine.CompiledBoard | None = None
     if result.board is None:
         host_queries = {}
     elif resolved.is_markdown:
-        # The engine compiles YAML boards; a markdown board's queries come from
-        # the Python compile until it reads them.
+        # The host checks below read a markdown board's queries off the Python compile
+        # until they read the engine's; the warehouse tier compiles it in the engine.
         host_queries = sql_host_queries(result.query_registry)
     else:
         try:
             compiled = engine_compile(resolved)
         except _engine.CompileError as refusal:
-            refused = _refusal_diagnostics(refusal, resolved.relpath)
+            refused = _refusal_diagnostics(refusal)
             host_queries = {}
         else:
             host_queries = parse_host_facts(compiled.host_facts_json())["queries"]
@@ -339,9 +351,39 @@ def _validate_resolved(
     # The warehouse tier runs last and only on a board that already compiled —
     # it appends to the stateless findings rather than standing in for them.
     if env is not None and not errors:
-        wh_errors, wh_warnings = _warehouse_findings(result, resolved.relpath, env)
-        errors += wh_errors
-        warnings += wh_warnings
+        try:
+            # The tier connects, so the plan carries the env's sources with their values
+            # rendered, over the project's declarations; the compile above has only those. A
+            # declaration the env lacks (a test registry's) stays as declared.
+            runtime = env.sources.runtime_config()
+            compiled = engine_compile(
+                resolved,
+                named,
+                sources=ProjectSourcesConfig(
+                    sources={**project.declared_sources.sources, **runtime.sources},
+                    implicit_source=runtime.implicit_source,
+                ),
+            )
+            plan = plan_board(
+                compiled,
+                None,
+                builtins=None,
+                now=datetime.now(UTC),
+                strict=False,
+                active_tab_only=False,
+                only_charts=None,
+                all_queries=True,
+            )
+        except _engine.CompileError as refusal:
+            errors += _refusal_diagnostics(refusal)
+        except ExecutionError as refusal:
+            errors.append(refusal.to_diagnostic(file=resolved.relpath))
+        else:
+            wh_errors, wh_warnings = _warehouse_findings(
+                compiled, plan, resolved.relpath, env
+            )
+            errors += wh_errors
+            warnings += wh_warnings
 
     chart_codes: dict[str, set[str]] = {}
     if resolved.is_markdown:
@@ -457,7 +499,8 @@ def check_channel_sets(compile_result: CompileResult, relpath: str) -> None:
 
 
 def _warehouse_findings(
-    compile_result: CompileResult,
+    compiled: _engine.CompiledBoard,
+    plan: QueryPlan,
     relpath: str,
     env: ExecEnv,
 ) -> tuple[list[Diagnostic], list[Diagnostic]]:
@@ -465,38 +508,37 @@ def _warehouse_findings(
 
     Returns (errors, warnings) to append to the stateless findings — this tier
     only ever adds. A query the adapter cannot check without running it comes
-    back as a warning saying so, never as a silent pass.
+    back as a warning saying so, never as a silent pass. It reads the engine's
+    host facts and its query plan, which holds every SQL query, placed or not.
     """
-    from dbt_charts.core.compile.models.query.normalized import is_sql_query
     from dbt_charts.core.execute.warehouse_check import warehouse_check
 
-    # This tier runs only when compilation reported no errors, and every
-    # CompileResult that carries no errors carries a board.
-    board = compile_result.board
-    assert board is not None
+    facts = parse_host_facts(compiled.host_facts_json())
 
-    # query name -> [(chart name, channel label, column name)] it must contain.
+    # query key -> [(chart id, channel label, column name)] it must contain.
     refs_by_query: dict[str, list[tuple[str, str, str]]] = {}
-    # query name -> the charts that bind its columns by position.
-    unbound_by_query: dict[str, list[Chart]] = {}
-    for chart_name, chart in board.charts.items():
-        for query_name, label, column in chart_column_refs(chart):
-            refs_by_query.setdefault(query_name, []).append((chart_name, label, column))
-        if is_unbound(chart) and chart.query_name is not None:
-            unbound_by_query.setdefault(chart.query_name, []).append(chart)
+    for chart_id, refs in facts["column_refs"].items():
+        for query_key, label, column in refs:
+            refs_by_query.setdefault(query_key, []).append((chart_id, label, column))
+    # query key -> the charts that bind its columns by position.
+    unbound_by_query: dict[str, list[UnboundChart]] = {}
+    for chart in facts["unbound_charts"]:
+        if chart["query"] is not None:
+            unbound_by_query.setdefault(chart["query"], []).append(chart)
 
     errors: list[Diagnostic] = []
     warnings: list[Diagnostic] = []
 
-    for query_name, query in compile_result.query_registry.items():
-        if not is_sql_query(query):
+    for query_key, query in facts["queries"].items():
+        query_name = query["label"]
+        if query["type"] != "sql":
             warnings.append(
                 Diagnostic.from_code(
                     WARN_WAREHOUSE_CHECK_UNAVAILABLE,
                     message=WARN_WAREHOUSE_CHECK_UNAVAILABLE.message_template.format(
                         name=query_name,
                         reason=(
-                            f"a {query.query_type} query carries no SQL for the "
+                            f"a {query['type']} query carries no SQL for the "
                             "warehouse to check"
                         ),
                     ),
@@ -508,13 +550,7 @@ def _warehouse_findings(
             continue
 
         try:
-            check = warehouse_check(
-                query,
-                board=board,
-                env=env,
-                query_name=query_name,
-                query_registry=compile_result.query_registry,
-            )
+            check = warehouse_check(plan, query_key, env=env)
         except DbtChartsError as exc:
             # An unresolvable source is a project-level fault, not a verdict on
             # this query — stop rather than repeat it once per remaining query.
@@ -563,11 +599,32 @@ def _warehouse_findings(
             continue
 
         result_columns = {c.name for c in check.columns}
-        for chart in unbound_by_query.get(query_name, []):
-            error = channel_error(chart, [c.name for c in check.columns])
+        for chart in unbound_by_query.get(query_key, []):
+            columns = [c.name for c in check.columns]
+            try:
+                side = {
+                    field: [
+                        match_column(c, columns, f"chart {chart['chart']!r} {field}")
+                        or c
+                        for c in named
+                    ]
+                    for field, named in chart["side_columns"].items()
+                }
+                error = unbound_columns_error(
+                    chart["chart"], chart["type"], columns, side
+                )
+            except CompilationError as exc:
+                error = exc
             if error is not None:
                 errors.append(error.to_diagnostic(file=relpath))
-        for column_name in missing_format_columns(query.formats, result_columns):
+        try:
+            missing_formats = missing_format_columns(
+                query_name, plan["queries"][query_key]["formats"], result_columns
+            )
+        except CompilationError as exc:
+            errors.append(exc.to_diagnostic(file=relpath))
+            missing_formats = []
+        for column_name in missing_formats:
             errors.append(
                 DbtChartsError.from_code(
                     ERR_QUERY_FORMAT_COLUMN_MISSING,
@@ -576,8 +633,15 @@ def _warehouse_findings(
                     columns=", ".join(sorted(result_columns)),
                 ).to_diagnostic(file=relpath)
             )
-        for chart_name, channel_label, column_name in refs_by_query.get(query_name, []):
-            if column_name not in result_columns:
+        for chart_name, channel_label, column_name in refs_by_query.get(query_key, []):
+            try:
+                found = match_column(
+                    column_name, result_columns, f"chart {chart_name!r} {channel_label}"
+                )
+            except CompilationError as exc:
+                errors.append(exc.to_diagnostic(file=relpath))
+                continue
+            if found is None:
                 errors.append(
                     missing_column_error(
                         chart_name,

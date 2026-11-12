@@ -33,12 +33,15 @@ struct MagnitudeTable {
     language: BTreeMap<String, Registers>,
 }
 
-fn magnitude_table() -> &'static MagnitudeTable {
-    static TABLE: OnceLock<MagnitudeTable> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        serde_json::from_str(include_str!("../locale/magnitude_words.json"))
-            .unwrap_or_else(|e| panic!("locale/magnitude_words.json: {e}"))
-    })
+fn magnitude_table() -> Result<&'static MagnitudeTable, String> {
+    static TABLE: OnceLock<Result<MagnitudeTable, String>> = OnceLock::new();
+    TABLE
+        .get_or_init(|| {
+            serde_json::from_str(include_str!("../locale/magnitude_words.json"))
+                .map_err(|e| format!("locale/magnitude_words.json: {e}"))
+        })
+        .as_ref()
+        .map_err(String::clone)
 }
 
 #[derive(Deserialize)]
@@ -49,12 +52,15 @@ struct FirstDayTable {
     first_day: BTreeMap<String, String>,
 }
 
-fn first_day_table() -> &'static FirstDayTable {
-    static TABLE: OnceLock<FirstDayTable> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        serde_json::from_str(include_str!("../locale/first_day.json"))
-            .unwrap_or_else(|e| panic!("locale/first_day.json: {e}"))
-    })
+fn first_day_table() -> Result<&'static FirstDayTable, String> {
+    static TABLE: OnceLock<Result<FirstDayTable, String>> = OnceLock::new();
+    TABLE
+        .get_or_init(|| {
+            serde_json::from_str(include_str!("../locale/first_day.json"))
+                .map_err(|e| format!("locale/first_day.json: {e}"))
+        })
+        .as_ref()
+        .map_err(String::clone)
 }
 
 const WEEKDAYS: [&str; 7] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
@@ -65,8 +71,8 @@ fn definition(
     sources: &[&'static str],
     tag: &str,
 ) -> Result<&'static str, String> {
-    match tags.iter().position(|t| *t == tag) {
-        Some(i) => Ok(sources[i]),
+    match tags.iter().zip(sources).find(|(t, _)| **t == tag) {
+        Some((_, source)) => Ok(source),
         None => Err(format!(
             "unknown {kind} locale '{tag}'; supported: {}",
             tags.join(", ")
@@ -88,7 +94,7 @@ pub fn time_locale(tag: &str) -> Result<&'static str, String> {
 /// language row.
 pub fn magnitude_words(tag: &str) -> Result<&'static Registers, String> {
     number_locale(tag)?;
-    let table = magnitude_table();
+    let table = magnitude_table()?;
     let language = tag.split('-').next().unwrap_or(tag);
     table
         .region
@@ -102,7 +108,7 @@ pub fn magnitude_words(tag: &str) -> Result<&'static Registers, String> {
 pub fn week_start(tag: &str) -> Result<usize, String> {
     time_locale(tag)?;
     let region = tag.split_once('-').map_or("", |(_, region)| region);
-    let day = first_day_table()
+    let day = first_day_table()?
         .first_day
         .get(region)
         .ok_or_else(|| format!("time locale '{tag}' has no CLDR first weekday"))?;
@@ -147,7 +153,7 @@ mod tests {
 
     #[test]
     fn a_region_row_differs_from_its_language_row() {
-        let table = magnitude_table();
+        let table = magnitude_table().unwrap();
         for (tag, words) in &table.region {
             assert!(NUMBER_LOCALES.contains(&tag.as_str()), "{tag}");
             let language = &table.language[tag.split('-').next().unwrap()];

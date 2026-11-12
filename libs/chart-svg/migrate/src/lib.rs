@@ -78,7 +78,7 @@ pub use decl::{
     path, value_map, ConditionalMove, Declarations, Deletion, DocumentRewrite, Grammars, KeyPath,
     MapKeyDeletion, Mapped, Move, Rewrite, Rewritten, Rewrote, ScalarKey, ValueMap,
 };
-pub use doc::{Edit, Seg, SYNTHETIC};
+pub use doc::{from_json, Edit, Seg, SYNTHETIC};
 pub use engine::{
     migrate, plan_text, retired_keys, Migrated, Outcome, RetiredKey, TextError, TextPlan,
 };

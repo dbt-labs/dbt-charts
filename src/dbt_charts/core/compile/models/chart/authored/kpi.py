@@ -14,11 +14,10 @@ from dbt_charts.core.compile.models.constraints import (
     IsSet,
     Requires,
 )
-from dbt_charts.core.compile.models.markers import Channel, DisplayText
+from dbt_charts.core.compile.models.markers import Channel, ColumnRef, DisplayText
 from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
 
-from ._base import _BaseChartFields, _ConditionalFormattingField
-from ._conditional_formatting import FieldConditionalFormatting
+from ._base import _BaseChartFields
 
 
 class KpiSupportConfig(ConstrainedModel):
@@ -46,7 +45,7 @@ class KpiSupportConfig(ConstrainedModel):
         ),
     )
 
-    value: str | None = Field(
+    value: ColumnRef | None = Field(
         default=None,
         description="Column reference (string column name) for the support number/text.",
     )
@@ -102,22 +101,7 @@ class KpiSupportConfig(ConstrainedModel):
         return data
 
 
-def default_rule_beside_good(
-    entry: FieldConditionalFormatting, column: str, key: str
-) -> str | None:
-    """Why a `default: true` rule on the column `good` reads is unreachable;
-    None when the entry carries no such rule."""
-    if not any(rule.default for rule in entry.when):
-        return None
-    return (
-        f"conditional_formatting.{column} has a `default: true` rule "
-        f"beside `{key}`, whose sign rules cover every nonzero value, "
-        "so the default rule would apply only at zero or null. Replace "
-        "it with an explicit predicate such as `eq: 0` or `between`."
-    )
-
-
-class KpiChart(_BaseChartFields, _ConditionalFormattingField):
+class KpiChart(_BaseChartFields):
     """Authored patch for KPI (key performance indicator) charts.
 
     KPI charts do not use title: (use label: instead); a query of one column
@@ -176,19 +160,9 @@ class KpiChart(_BaseChartFields, _ConditionalFormattingField):
         KpiChartStylePatch | None,
         Field(default=None, description="Appearance overrides for this chart alone."),
     ]
-    background: Annotated[
-        str | dict[str, Any] | None,
-        Field(
-            default=None,
-            description=(
-                "Gradient background channel, {column, scale} shape. "
-                "Paints the card background by the value's position in the scale."
-            ),
-        ),
-    ]
 
     @model_validator(mode="after")
-    def _reject_good_beside_static_marks_or_catch_all(self) -> KpiChart:
+    def _reject_good_beside_static_marks(self) -> KpiChart:
         if self.good is not None:
             if self.glyph is not None:
                 raise ValueError(
@@ -196,9 +170,6 @@ class KpiChart(_BaseChartFields, _ConditionalFormattingField):
                     "picks the glyph from the value's sign. Choose the symbols "
                     "with `style.value.glyph.up`, `.down`, and `.neutral`."
                 )
-            # A `value` left to bind by position names no column to check here.
-            if self.value is not None:
-                self._reject_default_rule_beside_good(self.value, "good")
         support = self.support
         if support is None or support.good is None:
             return self
@@ -209,20 +180,7 @@ class KpiChart(_BaseChartFields, _ConditionalFormattingField):
                 "`support.good` and `style.support.tone` cannot both be set: "
                 "`good` picks the tone from the value's sign. Remove one."
             )
-        # A column shared with the headline keeps its rules on the headline.
-        if support.value is not None and support.value != self.value:
-            self._reject_default_rule_beside_good(support.value, "support.good")
         return self
-
-    def _reject_default_rule_beside_good(self, column: str, key: str) -> None:
-        if self.conditional_formatting is None:
-            return
-        entry = self.conditional_formatting.get(column)
-        message = (
-            None if entry is None else default_rule_beside_good(entry, column, key)
-        )
-        if message is not None:
-            raise ValueError(message)
 
     @field_validator("value", mode="before")
     @classmethod
@@ -271,6 +229,13 @@ class KpiChart(_BaseChartFields, _ConditionalFormattingField):
                     "  style:\n"
                     "    support:\n"
                     "      tone: positive\n"
+                )
+            if "background" in data:
+                raise ValueError(
+                    "'background:' is not a KPI chart root field. Use "
+                    "style.background instead:\n\n"
+                    "  style:\n"
+                    f"    background: {data['background']!r}\n"
                 )
             for key in ("format", "formatter"):
                 if key in data:

@@ -1,6 +1,8 @@
 //! The authoring law of a format spec: where `d3_format.parse` refuses a number spec, and which
 //! strftime directives a spec names (`text/format_d3.py`). No formatting happens here.
 
+use crate::invariant::at;
+
 /// Why `d3_format.parse` refuses a spec; `position` indexes the spec's characters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
@@ -26,30 +28,30 @@ impl ParseError {
 /// type letter the spec names, if any.
 pub fn parse(spec: &str) -> Result<Option<char>, ParseError> {
     let s: Vec<char> = spec.chars().collect();
-    let at = |i: usize| s.get(i).copied();
+    let peek = |i: usize| s.get(i).copied();
     let is_align = |c: Option<char>| c.is_some_and(|c| "><^=".contains(c));
-    let mut i = if s.len() >= 2 && is_align(at(1)) {
+    let mut i = if s.len() >= 2 && is_align(peek(1)) {
         2
     } else {
-        usize::from(is_align(at(0)))
+        usize::from(is_align(peek(0)))
     };
     let skip = |set: &str, i: &mut usize| {
-        if at(*i).is_some_and(|c| set.contains(c)) {
+        if peek(*i).is_some_and(|c| set.contains(c)) {
             *i += 1;
         }
     };
     skip("-+( ", &mut i);
     skip("$#", &mut i);
     skip("0", &mut i);
-    while at(i).is_some_and(|c| c.is_ascii_digit()) {
+    while peek(i).is_some_and(|c| c.is_ascii_digit()) {
         i += 1;
     }
     skip(",", &mut i);
-    if at(i) == Some('.') {
+    if peek(i) == Some('.') {
         let dot = i;
         i += 1;
         let start = i;
-        while at(i).is_some_and(|c| c.is_ascii_digit()) {
+        while peek(i).is_some_and(|c| c.is_ascii_digit()) {
             i += 1;
         }
         if i == start {
@@ -57,7 +59,7 @@ pub fn parse(spec: &str) -> Result<Option<char>, ParseError> {
         }
     }
     skip("~", &mut i);
-    let kind = match at(i) {
+    let kind = match peek(i) {
         Some(c) if c.is_ascii_alphabetic() || c == '%' => Some(c),
         Some(found) => return Err(ParseError::Type { position: i, found }),
         None => None,
@@ -66,7 +68,7 @@ pub fn parse(spec: &str) -> Result<Option<char>, ParseError> {
     match i < s.len() {
         true => Err(ParseError::Trailing {
             position: i,
-            rest: s[i..].iter().collect(),
+            rest: at(&s, i..).iter().collect(),
         }),
         false => Ok(kind),
     }
@@ -78,7 +80,7 @@ pub fn is_time_format(spec: &str) -> bool {
     let spec = spec.replace("%%", "");
     let b = spec.as_bytes();
     (0..b.len()).any(|i| {
-        b[i] == b'%' && {
+        *at(b, i) == b'%' && {
             let j = i + 1 + usize::from(matches!(b.get(i + 1), Some(b'-' | b'_' | b'0')));
             b.get(j).is_some_and(u8::is_ascii_alphabetic)
         }
@@ -200,7 +202,7 @@ pub fn find_unsupported_directive(spec: &str) -> Option<char> {
     let s: Vec<char> = spec.replace("%%", "").chars().collect();
     let mut i = 0;
     while i < s.len() {
-        if s[i] != '%' {
+        if *at(&s, i) != '%' {
             i += 1;
             continue;
         }
@@ -208,8 +210,8 @@ pub fn find_unsupported_directive(spec: &str) -> Option<char> {
         // The regex `%[-_0]?(.)` falls back to reading the modifier as the letter.
         let (letter, used) = match (modifier, s.get(i + 2)) {
             (true, Some(c)) if *c != '\n' => (*c, 3),
-            (true, _) => (s[i + 1], 2),
-            (false, _) if s.get(i + 1).is_some_and(|c| *c != '\n') => (s[i + 1], 2),
+            (true, _) => (*at(&s, i + 1), 2),
+            (false, _) if s.get(i + 1).is_some_and(|c| *c != '\n') => (*at(&s, i + 1), 2),
             _ => {
                 i += 1;
                 continue;
@@ -230,7 +232,7 @@ pub fn vega_unsupported_directives(spec: &str) -> Vec<char> {
     let mut found = std::collections::BTreeSet::new();
     let mut i = 0;
     while i < s.len() {
-        if s[i] != '%' {
+        if *at(&s, i) != '%' {
             i += 1;
             continue;
         }

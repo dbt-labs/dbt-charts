@@ -96,6 +96,38 @@ class WarehousePermissionError(WarehouseProbeError):
 _GENERIC_PROBE_MESSAGE = (
     "Could not connect to the warehouse. Check your connection details and try again."
 )
+# What to check when no rule placed the failure, by family. A family absent here
+# keeps the generic sentence.
+_CHECK_FIELDS: dict[str, str] = {
+    "postgres": "`host`, `port`, `dbname`, `user` and `password`",
+    "redshift": "`host`, `port`, `dbname`, `user` and `password`",
+    "snowflake": (
+        "`account`, `user`, and `password`, `private_key_path` or `authenticator`"
+    ),
+    "databricks": "`host`, `http_path` and `token`",
+    "trino": "`host`, `port`, `user` and `method`",
+    "duckdb": "`path`",
+}
+_BIGQUERY_GENERIC_MESSAGE = (
+    "Could not connect to the warehouse. Authenticate with `gcloud auth "
+    "application-default login`, or set `keyfile:` to a service-account key file, "
+    "then check `project`."
+)
+
+
+def _unplaced_probe_error(source_type: str, text: str) -> WarehouseProbeError:
+    """The bucket for a failure no rule placed, naming the fields to check."""
+    if source_type == "bigquery":
+        return WarehouseProbeError(_BIGQUERY_GENERIC_MESSAGE, detail=text)
+    if source_type in _CHECK_FIELDS:
+        return WarehouseProbeError(
+            "Could not connect to the warehouse. Check the source's "
+            f"{_CHECK_FIELDS[source_type]}.",
+            detail=text,
+        )
+    return WarehouseProbeError(_GENERIC_PROBE_MESSAGE, detail=text)
+
+
 # Shared by both classifiers below — each buckets a family-specific text or
 # type onto the same authored sentence, so one copy avoids the two ever
 # drifting apart.
@@ -244,7 +276,7 @@ def classify_connection_error(source_type: str, exc: Exception) -> WarehouseProb
         if _BIGQUERY_NOT_FOUND_SUBSTRING in text:
             return WarehouseDatabaseNotFoundError(_NOT_FOUND_MESSAGE, detail=text)
 
-    return WarehouseProbeError(_GENERIC_PROBE_MESSAGE, detail=text)
+    return _unplaced_probe_error(source_type, text)
 
 
 def _classify_bigquery_discovery_error(
@@ -288,7 +320,7 @@ def _classify_bigquery_discovery_error(
         )
     if isinstance(exc, NotFound):
         return WarehouseDatabaseNotFoundError(_NOT_FOUND_MESSAGE, detail=text)
-    return WarehouseProbeError(_GENERIC_PROBE_MESSAGE, detail=text)
+    return _unplaced_probe_error("bigquery", text)
 
 
 def import_bigquery(module_name: str) -> Any:

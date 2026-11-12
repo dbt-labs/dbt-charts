@@ -19,6 +19,7 @@ use board_model::style::font::LetterCase;
 use board_model::style::style::Style;
 use diagnostic::{diag, refuse, Diagnostic};
 use mdsvg::renderer::SVGRenderer;
+use measure::shaped::FontBook;
 use mdsvg::style::Style as MdsvgStyle;
 use mdsvg::types::{AnyBlock, Document, Heading, Span, SpanType};
 use regex::Regex;
@@ -68,11 +69,13 @@ pub struct Slot {
     pub gap: f64,
 }
 
+/// Whether `text` writes Jinja, which layout reads only once it is filled.
+pub fn has_template_syntax(text: &str) -> bool {
+    ["{{", "{%", "{#"].iter().any(|syntax| text.contains(syntax))
+}
+
 fn refuse_template(text: &str, what: &str) -> Result<(), Diagnostic> {
-    if ["{{", "{%", "{#"]
-        .iter()
-        .any(|syntax| text.contains(syntax))
-    {
+    if has_template_syntax(text) {
         return Err(Diagnostic::refused(refuse!(
             "a board's {what} with template syntax is not supported"
         )));
@@ -139,12 +142,12 @@ fn refuse_items(items: &[mdsvg::types::ListItem], what: &str, italic: bool) -> R
 }
 
 fn renderer(
-    fonts_dir: &str,
+    book: &FontBook,
     style: &Style,
     overrides: &Overrides,
 ) -> Result<SVGRenderer, Diagnostic> {
     let md_style = compact_style(style, overrides)?;
-    let slots = font_slots(fonts_dir, &md_style)?;
+    let slots = font_slots(book, &md_style)?;
     SVGRenderer::new(md_style, slots).map_err(diag::err_internal)
 }
 
@@ -167,9 +170,9 @@ fn title_blocks(title: &str, italic: bool) -> Result<(Document, Heading), Diagno
 /// (`prose_measure`), inside the card padding on both sides. The title is measured in the title
 /// renderer (`title_min_content_width`, `title_max_content_width`) and the text in the body's
 /// (`prose_content_widths`), both over the blocks the paint pass draws.
-pub fn own_width(style: &Style, title: Option<&str>, text: Option<&str>, fonts_dir: &str) -> Result<IntrinsicWidth, Diagnostic> {
+pub fn own_width(style: &Style, title: Option<&str>, text: Option<&str>, book: &FontBook) -> Result<IntrinsicWidth, Diagnostic> {
     let body = compact_style(style, &Overrides::PROSE)?;
-    let measure = readable_measure(char_ratio(fonts_dir, &body)? * body.base_font_size, style.text.column.max_chars);
+    let measure = readable_measure(char_ratio(book, &body)? * body.base_font_size, style.text.column.max_chars);
     let inset = 2.0 * style.frame.card_padding;
     let ask = |renderer: &SVGRenderer, blocks: &Document| -> Result<IntrinsicWidth, Diagnostic> {
         let floor = renderer.min_content_width(blocks).map_err(diag::err_internal)?;
@@ -178,11 +181,11 @@ pub fn own_width(style: &Style, title: Option<&str>, text: Option<&str>, fonts_d
     };
     let mut width = IntrinsicWidth::NONE;
     if let Some(title) = title {
-        let (blocks, _, renderer) = title_setup(style, title, fonts_dir)?;
+        let (blocks, _, renderer) = title_setup(style, title, book)?;
         width = width.combine_max(ask(&renderer, &blocks)?);
     }
     if let Some(text) = text {
-        let (blocks, _, renderer) = text_setup(style, text, fonts_dir)?;
+        let (blocks, _, renderer) = text_setup(style, text, book)?;
         width = width.combine_max(ask(&renderer, &blocks)?);
     }
     Ok(width)
@@ -190,30 +193,30 @@ pub fn own_width(style: &Style, title: Option<&str>, text: Option<&str>, fonts_d
 
 /// What sizing, planning and painting a board's title all read it through (`title_blocks` and
 /// `title_renderer`): its heading, and the renderer of the root title's typography.
-fn title_setup(style: &Style, title: &str, fonts_dir: &str) -> Result<(Document, Heading, SVGRenderer), Diagnostic> {
+fn title_setup(style: &Style, title: &str, book: &FontBook) -> Result<(Document, Heading, SVGRenderer), Diagnostic> {
     refuse_template(title, "title")?;
     refuse_case(&style.title.font.case, "board title")?;
     let overrides = root_title_overrides(style)?;
-    let italic = has_italic(fonts_dir, &compact_style(style, &overrides)?);
+    let italic = has_italic(&compact_style(style, &overrides)?);
     let (blocks, heading) = title_blocks(title, italic)?;
-    let renderer = renderer(fonts_dir, style, &overrides)?;
+    let renderer = renderer(book, style, &overrides)?;
     Ok((blocks, heading, renderer))
 }
 
 /// What sizing, planning and painting a board's text all read it through (`prose_blocks` and the
 /// body renderer): the blocks with their small headings bolded, the body's markdown style and its
 /// renderer.
-fn text_setup(style: &Style, source: &str, fonts_dir: &str) -> Result<(Document, MdsvgStyle, SVGRenderer), Diagnostic> {
+fn text_setup(style: &Style, source: &str, book: &FontBook) -> Result<(Document, MdsvgStyle, SVGRenderer), Diagnostic> {
     refuse_template(source, "text")?;
     refuse_case(&style.text.font.case, "board text")?;
     let md_style = compact_style(style, &Overrides::PROSE)?;
     let mut blocks = mdsvg::parse(source);
-    refuse_blocks(&blocks, "text", has_italic(fonts_dir, &md_style))?;
+    refuse_blocks(&blocks, "text", has_italic(&md_style))?;
     if blocks.iter().any(|b| matches!(b, AnyBlock::Heading(_))) && style.title.font.case != LetterCase::None {
         return Err(Diagnostic::refused(refuse!("a board's text with a heading under a title letter case is not supported")));
     }
     bold_small_headings(&mut blocks, |level| md_style.get_heading_size(level), md_style.base_font_size);
-    let renderer = renderer(fonts_dir, style, &Overrides::PROSE)?;
+    let renderer = renderer(book, style, &Overrides::PROSE)?;
     Ok((blocks, md_style, renderer))
 }
 
@@ -221,10 +224,10 @@ fn text_setup(style: &Style, source: &str, fonts_dir: &str) -> Result<(Document,
 pub fn title(
     style: &Style,
     title: &str,
-    fonts_dir: &str,
+    book: &FontBook,
     width: f64,
 ) -> Result<TitleBlock, Diagnostic> {
-    let (blocks, heading, renderer) = title_setup(style, title, fonts_dir)?;
+    let (blocks, heading, renderer) = title_setup(style, title, book)?;
     let rendered = renderer
         .render_content(&blocks, width, 0.0)
         .map_err(diag::err_internal)?;
@@ -344,7 +347,7 @@ fn span_boxes(container: f64, board_width: f64, grid: usize, gap: f64) -> Vec<(f
         .min(grid as f64)
         .max(1.0) as usize;
     if count == 1 {
-        return vec![(0.0, container)];
+        return vec![(0.0, container.min(span))];
     }
     (0..count)
         .map(|i| {
@@ -360,12 +363,12 @@ fn span_boxes(container: f64, board_width: f64, grid: usize, gap: f64) -> Vec<(f
 pub fn text(
     style: &Style,
     source: &str,
-    fonts_dir: &str,
+    book: &FontBook,
     slot: Slot,
 ) -> Result<TextBlock, Diagnostic> {
-    let (blocks, md_style, renderer) = text_setup(style, source, fonts_dir)?;
+    let (blocks, md_style, renderer) = text_setup(style, source, book)?;
     let body = md_style.base_font_size;
-    let char_px = char_ratio(fonts_dir, &md_style)? * body;
+    let char_px = char_ratio(book, &md_style)? * body;
     let (pad, max_chars) = (style.frame.card_padding, style.text.column.max_chars);
     let boxes = span_boxes(
         slot.width + 2.0 * pad,
@@ -406,6 +409,11 @@ pub fn text(
             .map_err(diag::err_internal)?
             .min(slot.width.min(readable))
     };
+    // No board this stage draws has multi-column text, so a card's lone span is
+    // never a snapped measure: the text aligns in the whole card.
+    if boxes.len() == 1 {
+        first = (0.0, slot.width + 2.0 * pad);
+    }
     if wanted > measure {
         measure = wanted;
         first = (0.0, slot.width + 2.0 * pad);
@@ -490,5 +498,19 @@ pub fn content_box(
         } else {
             0.0
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_card_between_one_and_two_spans_offers_one_span() {
+        let span = grid_span(1128.0, 3, 20.0);
+        for fraction in [0.35, 0.4, 0.45] {
+            assert_eq!(span_boxes(1128.0 * fraction, 1128.0, 3, 20.0), vec![(0.0, span)]);
+        }
+        assert_eq!(span_boxes(1128.0 * 0.25, 1128.0, 3, 20.0), vec![(0.0, 1128.0 * 0.25)]);
     }
 }

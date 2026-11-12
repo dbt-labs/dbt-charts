@@ -31,7 +31,7 @@ use display_text::case::apply_case;
 use crate::conditions::eval_bool_condition;
 use diagnostic::py_str;
 use ::bind::time_locale::active_time_locale;
-use crate::svg::{num_full};
+use crate::svg::num_full;
 use print::{xml_escape, xml_escape_attr};
 
 fn pxi(v: f64) -> String {
@@ -93,6 +93,12 @@ struct InputStyleDoc {
     height: f64,
     border: CornerStyleDoc,
     background: String,
+    /// A theme's solid fill for a button row's selected segment; absent draws a tint.
+    #[serde(default)]
+    selected_background: Option<String>,
+    selected_color: String,
+    selected_tint: f64,
+    selected_weight: Value,
     padding: SpacingValuesDoc,
     widths: InputWidthsDoc,
     range: RangeDefaultsDoc,
@@ -118,9 +124,17 @@ pub struct VariablesStyleDoc {
     border: PanelBorderDoc,
     control_gap: f64,
     input: InputStyleDoc,
+    presets: Vec<String>,
+    presets_display: String,
+    overflow: String,
 }
 
 impl VariablesStyleDoc {
+    /// `style.variables.gap`: also the space above a nested board's band.
+    pub fn gap(&self) -> f64 {
+        self.gap
+    }
+
     /// `variables_style.label.font.case` — the letter-case transform an
     /// unlabeled control's inferred display name runs through
     /// (`resolve_controls`'s own `inferred_display_name` call).
@@ -178,6 +192,8 @@ pub struct VariableDoc {
     step: Option<f64>,
     #[serde(default)]
     pub defined_in_other_file: bool,
+    #[serde(default)]
+    presets: Option<Vec<String>>,
 }
 
 fn default_input() -> String {
@@ -185,6 +201,15 @@ fn default_input() -> String {
 }
 
 impl VariableDoc {
+    /// Whether the options are written in the board (`options.static`), as
+    /// opposed to read from a query the sizing pass cannot run.
+    fn has_static_options(&self) -> bool {
+        self.options
+            .as_ref()
+            .and_then(|o| o.static_values.as_ref())
+            .is_some_and(|values| !values.is_empty())
+    }
+
     /// `Variable.get_option_query`.
     fn option_query(&self) -> Option<&str> {
         if let Some(opts) = &self.options {
@@ -303,6 +328,8 @@ struct InputTraits {
     sizing: &'static str,
     ornament: &'static str,
     unset: &'static str,
+    /// What the buttons form draws as buttons: `options`, `presets`, or `none`.
+    segments: &'static str,
 }
 
 /// `variables_layout.py::_INPUT_TRAITS` / `traits_of` — a complete mapping
@@ -314,41 +341,55 @@ fn traits_of(input_type: &str) -> Result<InputTraits, String> {
             sizing: "text",
             ornament: "none",
             unset: "none",
+            segments: "none",
         },
-        "select" | "radio" => InputTraits {
+        "select" => InputTraits {
             sizing: "content",
             ornament: "arrow",
             unset: "chooser",
+            segments: "none",
+        },
+        "radio" => InputTraits {
+            sizing: "content",
+            ornament: "arrow",
+            unset: "chooser",
+            segments: "options",
         },
         "multiselect" => InputTraits {
             sizing: "summary",
             ornament: "arrow",
             unset: "chooser",
+            segments: "none",
         },
         "date" | "datepicker" => InputTraits {
             sizing: "content",
             ornament: "calendar",
             unset: "date",
+            segments: "none",
         },
         "daterange" => InputTraits {
             sizing: "daterange",
             ornament: "calendar",
             unset: "range",
+            segments: "presets",
         },
         "number" => InputTraits {
             sizing: "number",
             ornament: "none",
             unset: "none",
+            segments: "none",
         },
         "slider" | "range" => InputTraits {
             sizing: "slider",
             ornament: "none",
             unset: "none",
+            segments: "none",
         },
         "checkbox" => InputTraits {
             sizing: "checkbox",
             ornament: "none",
             unset: "none",
+            segments: "none",
         },
         other => return Err(format!("board variable input type not modeled: {other}")),
     })
@@ -360,6 +401,10 @@ pub struct ControlSpec {
     pub input: String,
     pub label: String,
     pub value: String,
+    /// The button row's segment texts; empty for a control drawn as a field.
+    pub segment_labels: Vec<String>,
+    /// Whether the buttons form draws the control's label (a timespan button row does not).
+    pub segments_labeled: bool,
 }
 
 #[derive(Clone)]
@@ -373,6 +418,14 @@ pub struct ControlBox {
     pub width: f64,
     pub height: f64,
     pub label_width: f64,
+    pub labeled: bool,
+    /// Each row's segment widths; empty means the control is a field.
+    pub segment_rows: Vec<Vec<f64>>,
+    /// A button row wider than its slot that fell back to the field.
+    pub overflowed: bool,
+    pub value_width: f64,
+    /// The width the buttons want on one row, whether or not they got it.
+    pub buttons_width: f64,
 }
 
 /// `variables_layout.py::ResetBox`.
@@ -485,6 +538,21 @@ fn input_width(
     })
 }
 
+/// `variables_layout.py::_wrap_segments`.
+fn wrap_segments(widths: &[f64], room: f64) -> Vec<Vec<f64>> {
+    let mut rows: Vec<Vec<f64>> = vec![Vec::new()];
+    let mut used = 0.0_f64;
+    for &width in widths {
+        if !rows.last().expect("one row open").is_empty() && used + width > room + WRAP_EPSILON {
+            rows.push(Vec::new());
+            used = 0.0;
+        }
+        rows.last_mut().expect("one row open").push(width);
+        used += width;
+    }
+    rows
+}
+
 /// `variables_layout.py::_drawn_value` — a `summary` field's text cut to its
 /// text slot by the engine's truncation law.
 fn drawn_value(
@@ -525,57 +593,149 @@ pub fn lay_out_variables(
         .size
         .ok_or("style.variables.font.size must be configured")?;
 
-    let mut boxes: Vec<ControlBox> = Vec::new();
-    let mut x = 0.0_f64;
-    let mut row: i64 = 0;
+    let padding = vs.input.padding.left + vs.input.padding.right;
+    let mut boxes: Vec<ControlBox> = Vec::with_capacity(specs.len());
+    let mut widths = Vec::with_capacity(specs.len() + 1);
+    let mut spans = Vec::with_capacity(specs.len() + 1);
     for spec in specs {
-        let label_width = text_width(&field_label(&spec.label)?, font_size, fonts_dir);
-        let control_width = label_width
-            + vs.control_gap
-            + input_width(spec, vs, font_size, fonts_dir)?
-            + ornament_gap(&spec.input, font_size)?
-            + ornament_width(&spec.input, font_size)?;
-        if !boxes.is_empty() && x + control_width > available + WRAP_EPSILON {
-            row += 1;
-            x = 0.0;
+        let segment_widths: Vec<f64> = spec
+            .segment_labels
+            .iter()
+            .map(|text| text_width(text, font_size, fonts_dir) + padding)
+            .collect();
+        let field_label_width = text_width(&field_label(&spec.label)?, font_size, fonts_dir);
+        let mut labeled = spec.segments_labeled;
+        let mut label_width = if labeled { field_label_width } else { 0.0 };
+        let lead = if labeled { label_width + vs.control_gap } else { 0.0 };
+        let value_width = text_width(&spec.value, font_size, fonts_dir).max(font_size) + padding;
+        let mut segment_rows: Vec<Vec<f64>> = Vec::new();
+        let mut overflowed = false;
+        let mut single_row = 0.0_f64;
+        if !segment_widths.is_empty() {
+            single_row = lead + segment_widths.iter().sum::<f64>().max(value_width);
+            if single_row <= available + WRAP_EPSILON {
+                segment_rows = vec![segment_widths.clone()];
+            } else if vs.overflow == "wrap" {
+                segment_rows = wrap_segments(&segment_widths, (available - lead).max(1.0));
+            } else {
+                overflowed = true;
+            }
         }
+        let button_rows = segment_rows.len().max(1);
+        let (control_width, box_height) = if !segment_rows.is_empty() {
+            let widest = segment_rows
+                .iter()
+                .map(|r| r.iter().sum::<f64>())
+                .fold(0.0_f64, f64::max);
+            (
+                lead + widest.max(value_width),
+                button_rows as f64 * row_height + (button_rows - 1) as f64 * gap,
+            )
+        } else {
+            label_width = field_label_width;
+            labeled = true;
+            (
+                label_width
+                    + vs.control_gap
+                    + input_width(spec, vs, font_size, fonts_dir)?
+                    + ornament_gap(&spec.input, font_size)?
+                    + ornament_width(&spec.input, font_size)?,
+                row_height,
+            )
+        };
         boxes.push(ControlBox {
             name: spec.name.clone(),
             input: spec.input.clone(),
             label: spec.label.clone(),
             value: drawn_value(spec, vs, font_size, fonts_dir)?,
-            x,
-            y: row as f64 * (row_height + gap),
+            x: 0.0,
+            y: 0.0,
             width: control_width,
-            height: row_height,
+            height: box_height,
             label_width,
+            labeled,
+            segment_rows,
+            overflowed,
+            value_width,
+            buttons_width: single_row,
         });
-        x += control_width + gap;
+        widths.push(control_width);
+        spans.push(button_rows as i64);
     }
-    let reset = if specs.len() >= MIN_CONTROLS_FOR_RESET {
-        let reset_width = text_width(&word("controls.reset")?, font_size, fonts_dir)
-            + vs.input.padding.left
-            + vs.input.padding.right;
-        if x + reset_width > available + WRAP_EPSILON {
-            row += 1;
-            x = 0.0;
-        }
-        Some(ResetBox {
-            x,
-            y: row as f64 * (row_height + gap),
-            width: reset_width,
-            height: row_height,
-        })
-    } else {
-        None
-    };
-    let rows = row + 1;
+    if specs.len() >= MIN_CONTROLS_FOR_RESET {
+        widths.push(
+            text_width(&word("controls.reset")?, font_size, fonts_dir)
+                + vs.input.padding.left
+                + vs.input.padding.right,
+        );
+        spans.push(1);
+    }
+    let places = flow(&widths, &spans, gap, balanced_limit(&widths, &spans, gap, available));
+    for (b, &(x, row)) in boxes.iter_mut().zip(&places) {
+        b.x = x;
+        b.y = row as f64 * (row_height + gap);
+    }
+    let (last_x, last_row) = places[places.len() - 1];
+    let reset = (widths.len() > specs.len()).then(|| ResetBox {
+        x: last_x,
+        y: last_row as f64 * (row_height + gap),
+        width: widths[widths.len() - 1],
+        height: row_height,
+    });
+    let rows = last_row + spans[spans.len() - 1];
     Ok(VariablesLayout {
         boxes,
         height: rows as f64 * row_height + (rows - 1) as f64 * gap,
         rows,
         reset,
     })
+}
+
+/// `variables_layout.py::_flow`: each item's `(x, row)`, rows no wider than `limit`. The first
+/// item of a row is placed wherever it lands: an overrun is visible, a dropped filter is not. An
+/// item spanning several rows (wrapped buttons) owns them: whatever follows starts below it.
+fn flow(widths: &[f64], spans: &[i64], gap: f64, limit: f64) -> Vec<(f64, i64)> {
+    let mut places = Vec::with_capacity(widths.len());
+    let (mut x, mut row) = (0.0_f64, 0_i64);
+    for (&w, &span) in widths.iter().zip(spans) {
+        if !places.is_empty() && x + w > limit + WRAP_EPSILON {
+            row += 1;
+            x = 0.0;
+        }
+        places.push((x, row));
+        x += w + gap;
+        if span > 1 {
+            row += span - 1;
+            x = limit + gap;
+        }
+    }
+    places
+}
+
+/// `variables_layout.py::_balanced_limit`: the narrowest run width that packs into as few rows
+/// as `available` does.
+fn balanced_limit(widths: &[f64], spans: &[i64], gap: f64, available: f64) -> f64 {
+    let rows_at =
+        |limit: f64| flow(widths, spans, gap, limit).last().map_or(0, |p| p.1) + spans[spans.len() - 1];
+    let rows = rows_at(available);
+    if rows == 1 {
+        return available;
+    }
+    let mut runs = Vec::new();
+    for start in 0..widths.len() {
+        let mut x = 0.0_f64;
+        for &w in &widths[start..] {
+            if x + w > available + WRAP_EPSILON {
+                break;
+            }
+            runs.push(x + w);
+            x += w + gap;
+        }
+    }
+    runs.sort_by(f64::total_cmp);
+    runs.into_iter()
+        .find(|&limit| rows_at(limit) == rows)
+        .unwrap_or(available)
 }
 
 #[cfg(test)]
@@ -588,6 +748,8 @@ mod layout_tests {
             input: "multiselect".into(),
             label: "Region".into(),
             value: value.into(),
+            segment_labels: Vec::new(),
+            segments_labeled: true,
         }
     }
 
@@ -637,10 +799,14 @@ mod layout_tests {
             "container_height": 32.0,
             "border": {"color": "#ccc"},
             "control_gap": 8.0,
+            "presets": ["today", "last_5_days", "year_to_date"],
+            "presets_display": "menu",
+            "overflow": "menu",
             "input": {
                 "height": 28.0,
                 "border": {"radius": 4.0},
                 "background": "#fff",
+                "selected_color": "#111", "selected_tint": 0.12, "selected_weight": 500,
                 "padding": {"top": 6.0, "right": 10.0, "bottom": 6.0, "left": 10.0},
                 "widths": {"text": 140.0, "number": 100.0, "range": 120.0, "slider_value_min": 30.0, "checkbox": 16.0, "daterange": 160.0},
                 "range": {"default_min": 0.0, "default_max": 100.0, "default_step": 1.0},
@@ -667,6 +833,28 @@ mod layout_tests {
     }
 
     #[test]
+    fn a_wrapped_strip_balances_its_rows() {
+        let vs = fixture_style();
+        let specs: Vec<ControlSpec> = (0..5)
+            .map(|i| ControlSpec {
+                name: format!("v{i}"),
+                input: "text".into(),
+                label: format!("Var {i}"),
+                value: String::new(),
+                segment_labels: Vec::new(),
+                segments_labeled: true,
+            })
+            .collect();
+        let one_row = lay_out_variables(&specs, 10_000.0, &vs, &fonts_dir()).unwrap();
+        let reset = one_row.reset.expect("five controls reserve a reset");
+        let layout =
+            lay_out_variables(&specs, reset.x + reset.width - 1.0, &vs, &fonts_dir()).unwrap();
+        assert_eq!(layout.rows, 2);
+        assert_eq!(layout.boxes.iter().filter(|b| b.y == 0.0).count(), 3);
+        assert!(layout.reset.expect("still reserved").y > 0.0);
+    }
+
+    #[test]
     fn a_wide_control_wraps_to_a_second_row() {
         let vs = fixture_style();
         let specs = vec![
@@ -675,12 +863,16 @@ mod layout_tests {
                 input: "text".into(),
                 label: "A".into(),
                 value: "value".into(),
+                segment_labels: Vec::new(),
+                segments_labeled: true,
             },
             ControlSpec {
                 name: "b".into(),
                 input: "text".into(),
                 label: "B".into(),
                 value: "value".into(),
+                segment_labels: Vec::new(),
+                segments_labeled: true,
             },
         ];
         // A narrow strip forces the second control, then the reset, onto their own rows.
@@ -701,6 +893,8 @@ mod layout_tests {
             input: "text".into(),
             label: "A".into(),
             value: "".into(),
+            segment_labels: Vec::new(),
+            segments_labeled: true,
         }];
         let layout = lay_out_variables(&specs, 400.0, &vs, &fonts_dir()).unwrap();
         assert!(layout.reset.is_none());
@@ -752,6 +946,16 @@ mod layout_tests {
 // variables_resolve.py
 // ---------------------------------------------------------------------
 
+/// `variables_resolve.py::Segment`: one button of a row.
+pub struct Segment {
+    pub value: String,
+    pub label: String,
+    pub selected: bool,
+    /// None when the button does nothing: the selected button of a required
+    /// variable, or any button of a disabled control.
+    pub href: Option<String>,
+}
+
 pub struct ResolvedControl {
     pub name: String,
     pub input: String,
@@ -781,6 +985,10 @@ pub struct ResolvedControl {
     pub authored_max: Option<f64>,
     pub authored_step: Option<f64>,
     pub defined_in_other_file: bool,
+    /// The buttons of the buttons form; empty when the control draws as a field.
+    pub segments: Vec<Segment>,
+    /// The preset a daterange commits; `current` then holds its dates.
+    pub preset: Option<String>,
 }
 
 impl ResolvedControl {
@@ -790,8 +998,200 @@ impl ResolvedControl {
             input: self.input.clone(),
             label: self.label.clone(),
             value: self.display_value.clone(),
+            segment_labels: self.segments.iter().map(|s| s.label.clone()).collect(),
+            segments_labeled: self.input != "daterange",
         }
     }
+}
+
+/// A daterange preset name parsed by `compile/template/daterange.py`'s grammar,
+/// holding what the button row's labels read.
+struct Preset {
+    kind: &'static str,
+    unit: &'static str,
+    n: u64,
+    fiscal: bool,
+}
+
+const PRESET_UNITS: [&str; 5] = ["day", "week", "month", "quarter", "year"];
+
+fn preset_unit(text: &str) -> Option<&'static str> {
+    PRESET_UNITS.iter().copied().find(|unit| *unit == text)
+}
+
+/// `parse_daterange_preset` for the shapes a label needs.
+fn parse_preset(name: &str) -> Result<Preset, String> {
+    let bad = || format!("`{name}` is not a daterange preset");
+    match name {
+        "today" => return Ok(Preset { kind: "today", unit: "day", n: 1, fiscal: false }),
+        "yesterday" => return Ok(Preset { kind: "yesterday", unit: "day", n: 1, fiscal: false }),
+        _ => {}
+    }
+    for kind in ["before_previous", "previous", "last"] {
+        if let Some(rest) = name.strip_prefix(&format!("{kind}_")) {
+            let (n, rest) = rest.split_once('_').ok_or_else(bad)?;
+            if n.starts_with('0') || n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(bad());
+            }
+            let n: u64 = n.parse().map_err(|_| bad())?;
+            let (fiscal, unit) = match rest.strip_prefix("fiscal_") {
+                Some(unit) => (true, unit),
+                None => (false, rest),
+            };
+            let unit = preset_unit(unit.strip_suffix('s').unwrap_or(unit)).ok_or_else(bad)?;
+            if fiscal && !matches!(unit, "quarter" | "year") {
+                return Err(bad());
+            }
+            return Ok(Preset { kind, unit, n, fiscal });
+        }
+    }
+    let (kind, rest) = if let Some(rest) = name.strip_prefix("this_") {
+        ("this", rest)
+    } else if let Some(rest) = name.strip_suffix("_to_date") {
+        ("to_date", rest)
+    } else {
+        return Err(bad());
+    };
+    let (fiscal, unit) = match rest.strip_prefix("fiscal_") {
+        Some(unit) => (true, unit),
+        None => (false, rest),
+    };
+    let unit = preset_unit(unit).ok_or_else(bad)?;
+    if fiscal && !matches!(unit, "quarter" | "year") {
+        return Err(bad());
+    }
+    Ok(Preset { kind, unit, n: 1, fiscal })
+}
+
+/// `controls.py::preset_label`.
+fn preset_label(preset: &Preset) -> Result<String, String> {
+    let unit = if preset.fiscal {
+        format!("fiscal_{}", preset.unit)
+    } else {
+        preset.unit.to_string()
+    };
+    match preset.kind {
+        "today" | "yesterday" => word(&format!("controls.{}", preset.kind)),
+        "this" => word(&format!("controls.this_{unit}")),
+        "to_date" => word(&format!("controls.{unit}_to_date")),
+        kind => {
+            let duration =
+                display_text::language::tr(&format!("duration.{unit}"), Some(preset.n), &[])?;
+            display_text::language::tr(
+                &format!("controls.preset_{kind}"),
+                None,
+                &[("duration", duration.as_str())],
+            )
+        }
+    }
+}
+
+/// `controls.py::compact_preset_label`: ticker notation (1D 5D 3M YTD 12M), and
+/// the long label for a form with no such spelling.
+fn compact_preset_label(preset: &Preset) -> Result<String, String> {
+    if preset.fiscal {
+        return preset_label(preset);
+    }
+    let letter = match preset.unit {
+        "day" => "D",
+        "week" => "W",
+        "month" => "M",
+        "quarter" => "Q",
+        _ => "Y",
+    };
+    match preset.kind {
+        "today" => Ok("1D".to_string()),
+        "last" if preset.n > 1 || preset.unit == "day" => Ok(format!("{}{letter}", preset.n)),
+        // `last_1_<unit>` is calendar-aligned, so its dates are the unit to date.
+        "last" | "to_date" => Ok(format!("{letter}TD")),
+        _ => preset_label(preset),
+    }
+}
+
+/// `board_variables.py::variable_link`: a `?` link that sets one variable and
+/// keeps every other as it is, never host-injected `context` variables; a
+/// preset daterange links its preset id. An empty `value` unsets `name`.
+pub fn variable_link(
+    values: &serde_json::Map<String, Value>,
+    presets: &serde_json::Map<String, Value>,
+    context: &[String],
+    name: &str,
+    value: &str,
+) -> Result<String, String> {
+    let mut params: Vec<(String, String)> = Vec::new();
+    for (key, current) in values {
+        if current.is_null() || context.contains(key) {
+            continue;
+        }
+        let text = match presets.get(key) {
+            Some(preset) => py_str(preset),
+            None => committed_value(current)?,
+        };
+        params.push((key.clone(), text));
+    }
+    match params.iter_mut().find(|(key, _)| key == name) {
+        Some(param) => param.1 = value.to_string(),
+        None => params.push((name.to_string(), value.to_string())),
+    }
+    let pairs: Vec<String> = params
+        .iter()
+        .map(|(key, value)| {
+            format!("{}={}", crate::href::quote_plus(key), crate::href::quote_plus(value))
+        })
+        .collect();
+    Ok(format!("?{}", pairs.join("&")))
+}
+
+/// `variables_resolve.py::_segments`.
+#[allow(clippy::too_many_arguments)]
+fn build_segments(
+    name: &str,
+    input_type: &str,
+    option_values: &[String],
+    presets: &[String],
+    current: &Value,
+    can_unset: bool,
+    linkable: bool,
+    current_values: &serde_json::Map<String, Value>,
+    committed_presets: &serde_json::Map<String, Value>,
+    context_variables: &[String],
+    show_presets: bool,
+    static_options: bool,
+) -> Result<Vec<Segment>, String> {
+    let (entries, chosen): (Vec<(String, String)>, Option<String>) =
+        match traits_of(input_type)?.segments {
+            "options" if !static_options => return Ok(Vec::new()),
+            "options" => (
+                option_values.iter().map(|v| (v.clone(), v.clone())).collect(),
+                (!value_is_unset(current)).then(|| py_str(current)),
+            ),
+            "presets" if show_presets => {
+                let mut entries = Vec::new();
+                for preset in presets {
+                    entries.push((preset.clone(), compact_preset_label(&parse_preset(preset)?)?));
+                }
+                let chosen = committed_presets.get(name).map(py_str);
+                (entries, chosen)
+            }
+            _ => return Ok(Vec::new()),
+        };
+    let mut segments = Vec::with_capacity(entries.len());
+    for (value, label) in entries {
+        let selected = chosen.as_deref() == Some(value.as_str());
+        let href = if !linkable || (selected && !can_unset) {
+            None
+        } else {
+            Some(variable_link(
+                current_values,
+                committed_presets,
+                context_variables,
+                name,
+                if selected { "" } else { &value },
+            )?)
+        };
+        segments.push(Segment { value, label, selected, href });
+    }
+    Ok(segments)
 }
 
 fn field_label(label: &str) -> Result<String, String> {
@@ -1171,7 +1571,8 @@ fn py_json_dumps(value: &Value, out: &mut String) -> Result<(), String> {
     Ok(())
 }
 
-/// `variables_resolve.py::resolve_controls`. `datasets` mirrors Python's
+/// `variables_resolve.py::resolve_controls`. `committed_presets` is
+/// `current_daterange_presets()`: the sizing pass has none to give. `datasets` mirrors Python's
 /// `executor: Option<...>` — `None` for the sizing pass, `Some` for render.
 /// `label_font_case` is `variables_style.label.font.case`, resolved once by
 /// the caller (the same value every unlabeled control's inferred display
@@ -1182,6 +1583,8 @@ pub fn resolve_controls(
     datasets: Option<&HashMap<String, Vec<serde_json::Map<String, Value>>>>,
     vs: &VariablesStyleDoc,
     label_font_case: &str,
+    committed_presets: &serde_json::Map<String, Value>,
+    context_variables: &[String],
 ) -> Result<Vec<ResolvedControl>, String> {
     let mut controls = Vec::new();
     for (name, var_def) in variable_defs {
@@ -1220,6 +1623,30 @@ pub fn resolve_controls(
         } else {
             None
         };
+        let enabled = datasets.is_none()
+            || eval_bool_condition(
+                &var_def.enabled,
+                true,
+                current_values,
+                "board variable enabled",
+            )?;
+        let can_unset = !var_def.required.unwrap_or(false);
+        let presets = var_def.presets.as_deref().unwrap_or(&vs.presets);
+        let segments = build_segments(
+            name,
+            &refined.input_type,
+            &option_values,
+            presets,
+            &current,
+            can_unset,
+            enabled,
+            current_values,
+            committed_presets,
+            context_variables,
+            vs.presets_display == "buttons",
+            var_def.has_static_options(),
+        )?;
+        let refined_input = refined.input_type.clone();
         controls.push(ResolvedControl {
             name: name.to_string(),
             input: refined.input_type,
@@ -1230,23 +1657,22 @@ pub fn resolve_controls(
             option_values,
             // `_is_enabled` (variables_resolve.py:193-208): the executor-less
             // sizing pass never reads `enabled` — it moves no box.
-            enabled: datasets.is_none()
-                || eval_bool_condition(
-                    &var_def.enabled,
-                    true,
-                    current_values,
-                    "board variable enabled",
-                )?,
+            enabled,
             slider_min: low,
             slider_max: high,
             slider_step: step,
-            can_unset: !var_def.required.unwrap_or(false),
+            can_unset,
             placeholder: var_def.placeholder.clone(),
             hint,
             authored_min: var_def.min,
             authored_max: var_def.max,
             authored_step: var_def.step,
             defined_in_other_file: var_def.defined_in_other_file,
+            segments,
+            preset: committed_presets
+                .get(name)
+                .filter(|_| refined_input == "daterange")
+                .map(py_str),
         });
     }
     Ok(controls)
@@ -1274,7 +1700,15 @@ fn variables_layout_for_sizing(
         .case
         .as_deref()
         .ok_or("style.variables.label.font.case must be resolved")?;
-    let controls = resolve_controls(variable_defs, variable_values, None, vs, label_case)?;
+    let controls = resolve_controls(
+        variable_defs,
+        variable_values,
+        None,
+        vs,
+        label_case,
+        &serde_json::Map::new(),
+        &[],
+    )?;
     let specs: Vec<ControlSpec> = controls.iter().map(ResolvedControl::spec).collect();
     lay_out_variables(&specs, width, vs, fonts_dir)
 }
@@ -1510,6 +1944,8 @@ pub fn render_title_variables_inline_band(
     variables_path: &str,
     overridden: &[String],
     datasets: Option<&HashMap<String, Vec<serde_json::Map<String, Value>>>>,
+    committed_presets: &serde_json::Map<String, Value>,
+    context_variables: &[String],
     vs: &VariablesStyleDoc,
     fonts_dir: &str,
     painted_italics: &crate::embed_fonts::PaintedItalics,
@@ -1564,7 +2000,15 @@ pub fn render_title_variables_inline_band(
         .case
         .as_deref()
         .ok_or("style.variables.label.font.case must be resolved")?;
-    let controls = resolve_controls(visible_variables, variable_values, datasets, vs, label_case)?;
+    let controls = resolve_controls(
+        visible_variables,
+        variable_values,
+        datasets,
+        vs,
+        label_case,
+        committed_presets,
+        context_variables,
+    )?;
     let (vars_svg, vars_h) =
         render_variables_strip_svg(
             &controls,
@@ -2005,11 +2449,13 @@ fn draw_text_field(
     vs: &VariablesStyleDoc,
     fonts_dir: &str,
     hint: bool,
+    ornamented: bool,
+    text_at: Option<f64>,
 ) -> Result<Vec<String>, String> {
     let fs = font_size(vs)?;
     let value_font = &vs.value.font;
     let family = value_font.family.as_deref().unwrap_or_default();
-    let text_x = x + vs.input.padding.left;
+    let text_x = text_at.unwrap_or(x + vs.input.padding.left);
     let baseline = y + height / 2.0 + centered_baseline_offset(family, fs, fonts_dir);
     let color = if hint {
         vs.placeholder.font.color.as_deref().unwrap_or_default()
@@ -2017,8 +2463,8 @@ fn draw_text_field(
         value_font.color.as_deref().unwrap_or_default()
     };
 
-    let mut parts = vec![
-        field_rect(x, y, width, height, vs),
+    let mut parts = if text_at.is_some() { Vec::new() } else { vec![field_rect(x, y, width, height, vs)] };
+    parts.push(
         format!(
             r#"<text x="{}" y="{}" font-size="{}" font-family="{}" fill="{}">{}</text>"#,
             pxi(text_x),
@@ -2028,10 +2474,12 @@ fn draw_text_field(
             xml_escape_attr(color),
             xml_escape(&box_.value)
         ),
-    ];
+    );
     match traits_of(&box_.input)?.ornament {
-        "arrow" => parts.push(draw_arrow(x + width, y + height / 2.0, fs, vs)?),
-        "calendar" => parts.push(draw_calendar(x + width, y + height / 2.0, fs, vs)?),
+        "arrow" if ornamented => parts.push(draw_arrow(x + width, y + height / 2.0, fs, vs)?),
+        "calendar" if ornamented => {
+            parts.push(draw_calendar(x + width, y + height / 2.0, fs, vs)?)
+        }
         _ => {}
     }
     Ok(parts)
@@ -2132,7 +2580,7 @@ fn draw_slider(
             xml_escape_attr(value_font.color.as_deref().unwrap_or_default())
         ),
         format!(
-            r#"<text x="{}" y="{}" font-size="{}" font-family="{}" fill="{}">{}</text>"#,
+            r#"<text data-dbt-ornament="slider-value" x="{}" y="{}" font-size="{}" font-family="{}" fill="{}">{}</text>"#,
             pxi(x + track_width + vs.control_gap),
             pxi(mid + centered_baseline_offset(family, fs, fonts_dir)),
             pxi(fs),
@@ -2154,7 +2602,11 @@ fn draw_field(
     height: f64,
     vs: &VariablesStyleDoc,
     fonts_dir: &str,
+    align: &str,
 ) -> Result<Vec<String>, String> {
+    if !box_.segment_rows.is_empty() {
+        return draw_buttons(control, box_, x, y, width, vs, fonts_dir, align);
+    }
     match traits_of(&box_.input)?.sizing {
         "checkbox" => Ok(draw_checkbox(control.checked, x, y, vs)),
         "slider" => draw_slider(control, box_, x, y, width, height, vs, fonts_dir),
@@ -2167,8 +2619,146 @@ fn draw_field(
             vs,
             fonts_dir,
             control.hint.is_some(),
+            true,
+            None,
         ),
     }
+}
+
+/// `variables_strip.py::_corner`.
+fn corner(x: f64, y: f64, radius: f64) -> String {
+    if radius == 0.0 {
+        String::new()
+    } else {
+        format!("A{} {} 0 0 1 {} {}", pxi(radius), pxi(radius), pxi(x), pxi(y))
+    }
+}
+
+/// `variables_strip.py::_segment_path`.
+fn segment_path(x: f64, y: f64, w: f64, h: f64, radius: f64, left: bool, right: bool) -> String {
+    let rl = if left { radius } else { 0.0 };
+    let rr = if right { radius } else { 0.0 };
+    format!(
+        "M{} {} L{} {} {} L{} {} {} L{} {} {} L{} {} {} Z",
+        pxi(x + rl), pxi(y),
+        pxi(x + w - rr), pxi(y),
+        corner(x + w, y + rr, rr),
+        pxi(x + w), pxi(y + h - rr),
+        corner(x + w - rr, y + h, rr),
+        pxi(x + rl), pxi(y + h),
+        corner(x, y + h - rl, rl),
+        pxi(x), pxi(y + rl),
+        corner(x + rl, y, rl),
+    )
+}
+
+/// `variables_strip.py::_draw_buttons`: the button row (hidden at rest) and the
+/// selected value standing in for it in the same box.
+fn draw_buttons(
+    control: &ResolvedControl,
+    box_: &ControlBox,
+    x: f64,
+    y: f64,
+    width: f64,
+    vs: &VariablesStyleDoc,
+    fonts_dir: &str,
+    align: &str,
+) -> Result<Vec<String>, String> {
+    let fs = font_size(vs)?;
+    let value_font = &vs.value.font;
+    let family = value_font.family.as_deref().unwrap_or_default();
+    let field_height = vs.input.height;
+    let radius = vs.input.border.radius;
+    let pad_y = (vs.container_height - field_height) / 2.0;
+    let pitch = vs.container_height + vs.gap;
+    let label_ink = vs.label.font.color.as_deref().unwrap_or_default();
+    let selected_ink = vs.input.selected_color.as_str();
+    let selected_weight = font_weight_as_css(&vs.input.selected_weight);
+    let resting_weight = font_weight_as_css(
+        value_font.weight.as_ref().ok_or("style.variables.value.font.weight must be resolved")?,
+    );
+
+    let rest_x = if align == "end" { x + width - box_.value_width } else { x };
+    let run_on = (box_.labeled && align != "end")
+        .then(|| x - vs.control_gap + text_width(" ", fs, fonts_dir));
+    let at_rest = draw_text_field(
+        box_, rest_x, y, box_.value_width, field_height, vs, fonts_dir, false, false, run_on,
+    )?;
+    let mut drawn: Vec<String> = Vec::new();
+    let mut segments = control.segments.iter();
+    for (index, widths) in box_.segment_rows.iter().enumerate() {
+        let row_y = box_.y + index as f64 * pitch + pad_y;
+        let row_width: f64 = widths.iter().sum();
+        drawn.push(format!(
+            r#"<rect data-dbt-field="buttons" x="{}" y="{}" width="{}" height="{}" rx="{}" fill="{}" stroke="none"/>"#,
+            pxi(x), pxi(row_y), pxi(row_width), pxi(field_height), pxi(radius),
+            xml_escape_attr(&vs.input.background)
+        ));
+        let baseline = row_y + field_height / 2.0 + centered_baseline_offset(family, fs, fonts_dir);
+        let mut left = x;
+        for (position, &width) in widths.iter().enumerate() {
+            let segment = segments.next().ok_or("button row has fewer segments than its layout")?;
+            let (first, last) = (position == 0, position == widths.len() - 1);
+            let (weight, ink, fill) = if segment.selected {
+                (
+                    selected_weight.as_str(),
+                    selected_ink,
+                    match &vs.input.selected_background {
+                        Some(fill) => format!(
+                            r#"<path d="{}" fill="{}"/>"#,
+                            segment_path(left, row_y, width, field_height, radius, first, last),
+                            xml_escape_attr(fill)
+                        ),
+                        None => format!(
+                            r#"<path d="{}" fill="{}" fill-opacity="{}"/>"#,
+                            segment_path(left, row_y, width, field_height, radius, first, last),
+                            xml_escape_attr(label_ink),
+                            float_repr(vs.input.selected_tint)
+                        ),
+                    },
+                )
+            } else {
+                (resting_weight.as_str(), label_ink, String::new())
+            };
+            let divider = if first {
+                String::new()
+            } else {
+                format!(
+                    r#"<line data-dbt-field="divider" x1="{}" y1="{}" x2="{}" y2="{}" stroke="none"/>"#,
+                    pxi(left), pxi(row_y), pxi(left), pxi(row_y + field_height)
+                )
+            };
+            let inverse = if segment.selected && vs.input.selected_background.is_some() {
+                r#" data-dbt-inverse="true""#
+            } else {
+                ""
+            };
+            let href = match &segment.href {
+                Some(href) => format!(r#" href="{}""#, xml_escape_attr(href)),
+                None => String::new(),
+            };
+            drawn.push(format!(
+                r#"<a data-dbt-segment="{}"{href}{inverse} role="radio" aria-checked="{}"><rect x="{}" y="{}" width="{}" height="{}" fill="transparent"/>{fill}{divider}<rect data-dbt-segment-ring="true" x="{}" y="{}" width="{}" height="{}" rx="{}" fill="none" stroke="none"/><text x="{}" y="{}" text-anchor="middle" font-size="{}" font-weight="{weight}" font-family="{}" fill="{}">{}</text></a>"#,
+                xml_escape_attr(&segment.value),
+                if segment.selected { "true" } else { "false" },
+                pxi(left), pxi(row_y), pxi(width), pxi(field_height),
+                pxi(left + 2.0), pxi(row_y + 2.0), pxi(width - 4.0), pxi(field_height - 4.0),
+                pxi((radius - 2.0).max(0.0)),
+                pxi(left + width / 2.0), pxi(baseline), pxi(fs),
+                xml_escape_attr(family),
+                xml_escape_attr(ink),
+                xml_escape(&segment.label)
+            ));
+            left += width;
+        }
+    }
+    Ok(vec![
+        format!(
+            r#"<g data-dbt-buttons-value="true" class="dbt-pointer-inert">{}</g>"#,
+            at_rest.concat()
+        ),
+        format!(r#"<g data-dbt-buttons="true" opacity="0">{}</g>"#, drawn.concat()),
+    ])
 }
 
 /// `variables_strip.py::_committed_value` — public re-export point for
@@ -2180,6 +2770,7 @@ fn draw_control(
     vs: &VariablesStyleDoc,
     variables_path: &str,
     fonts_dir: &str,
+    align: &str,
 ) -> Result<String, String> {
     let fs = font_size(vs)?;
     let label_font = &vs.label.font;
@@ -2191,8 +2782,9 @@ fn draw_control(
         .unwrap_or_default();
 
     let x = box_.x + dx;
-    let field_x = x + box_.label_width + vs.control_gap;
-    let field_width = (box_.width - box_.label_width - vs.control_gap).max(0.0);
+    let lead = if box_.labeled { box_.label_width + vs.control_gap } else { 0.0 };
+    let field_x = x + lead;
+    let field_width = (box_.width - lead).max(0.0);
     let field_height = vs.input.height;
     let field_y = box_.y + (box_.height - field_height) / 2.0;
     let baseline = box_.y + box_.height / 2.0 + centered_baseline_offset(family, fs, fonts_dir);
@@ -2209,15 +2801,19 @@ fn draw_control(
         String::new()
     };
 
-    let mut parts = vec![format!(
-        r#"<text{label_kind} x="{}" y="{}" font-size="{}" font-weight="{weight}" font-family="{}" fill="{}">{}</text>"#,
-        pxi(x),
-        pxi(baseline),
-        pxi(fs),
-        xml_escape_attr(family),
-        xml_escape_attr(label_font.color.as_deref().unwrap_or_default()),
-        xml_escape(&field_label(&box_.label)?), weight = xml_escape_attr(&weight)
-    )];
+    let mut parts = if box_.labeled {
+        vec![format!(
+            r#"<text{label_kind} x="{}" y="{}" font-size="{}" font-weight="{weight}" font-family="{}" fill="{}">{}</text>"#,
+            pxi(x),
+            pxi(baseline),
+            pxi(fs),
+            xml_escape_attr(family),
+            xml_escape_attr(label_font.color.as_deref().unwrap_or_default()),
+            xml_escape(&field_label(&box_.label)?), weight = xml_escape_attr(&weight)
+        )]
+    } else {
+        Vec::new()
+    };
     parts.extend(draw_field(
         control,
         box_,
@@ -2227,6 +2823,7 @@ fn draw_control(
         field_height,
         vs,
         fonts_dir,
+        align,
     )?);
 
     let disabled = if !control.enabled {
@@ -2244,7 +2841,11 @@ fn draw_control(
     };
     let value_attr = format!(
         r#" data-dbt-value="{}""#,
-        xml_escape_attr(&committed_value(&control.current)?)
+        xml_escape_attr(&match (&control.preset, &control.current) {
+            (_, Value::Null) => String::new(),
+            (Some(preset), _) => preset.clone(),
+            (None, current) => committed_value(current)?,
+        })
     );
     let mut bounds = if traits_of(&box_.input)?.sizing == "slider" {
         format!(
@@ -2307,8 +2908,9 @@ fn draw_control(
     // matching the harness's own render mode rather than a static export's.
     let options = String::new();
 
+    let form = if box_.segment_rows.is_empty() { "" } else { r#" data-dbt-form="buttons""# };
     Ok(format!(
-        r#"<g data-dbt-variable="{}"{handle} data-dbt-input="{}"{checked_attr}{disabled}{value_attr}{bounds}{unset}{options} data-dbt-x="{}" data-dbt-y="{}" data-dbt-width="{}" data-dbt-height="{}">{}</g>"#,
+        r#"<g data-dbt-variable="{}"{handle} data-dbt-input="{}"{form}{checked_attr}{disabled}{value_attr}{bounds}{unset}{options} data-dbt-x="{}" data-dbt-y="{}" data-dbt-width="{}" data-dbt-height="{}">{}</g>"#,
         xml_escape_attr(&box_.name),
         xml_escape_attr(&box_.input),
         pxi(x),
@@ -2334,6 +2936,24 @@ pub fn render_variables_strip_svg(
     }
     let specs: Vec<ControlSpec> = controls.iter().map(ResolvedControl::spec).collect();
     let layout = lay_out_variables(&specs, width, vs, fonts_dir)?;
+    for box_ in layout.boxes.iter().filter(|b| b.overflowed) {
+        let path = if variables_path.is_empty() {
+            Value::Null
+        } else {
+            Value::from(format!("{variables_path}.{}", box_.name))
+        };
+        diagnostic::warn(
+            diagnostic::Diagnostic::new(
+                &diagnostic::codes::WARN_VARIABLE_BUTTONS_OVERFLOW,
+                [
+                    ("available", Value::from(width)),
+                    ("needed", Value::from(box_.buttons_width)),
+                    ("variable", Value::from(box_.name.clone())),
+                ],
+            )
+            .with_sink_param("path", path),
+        );
+    }
     let offsets = row_offsets(&layout, width, align);
 
     let mut drawn = Vec::with_capacity(controls.len());
@@ -2346,6 +2966,7 @@ pub fn render_variables_strip_svg(
             vs,
             variables_path,
             fonts_dir,
+            align,
         )?);
     }
 
@@ -2414,5 +3035,280 @@ mod strip_tests {
                 "{input} should not be free-entry"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod buttons_form_tests {
+    use super::*;
+
+    fn style(overflow: &str, presets_display: &str) -> VariablesStyleDoc {
+        let font = serde_json::json!({"size": 11.0, "family": "Inter", "color": "#555", "weight": "400", "case": "none"});
+        serde_json::from_value(serde_json::json!({
+            "position": "top",
+            "title_inline_band_bottom_pad": 8.0,
+            "gap": 10.0,
+            "title_inline_title_max_width": 0.0,
+            "font": font,
+            "label": {"font": font},
+            "value": {"font": font},
+            "placeholder": {"font": font},
+            "container_height": 36.0,
+            "border": {"color": "#ccc"},
+            "control_gap": 8.0,
+            "presets": ["today", "last_5_days", "last_1_months", "year_to_date", "previous_3_months"],
+            "presets_display": presets_display,
+            "overflow": overflow,
+            "input": {
+                "height": 32.0,
+                "border": {"radius": 4.0},
+                "background": "#fff",
+                "selected_color": "#111", "selected_tint": 0.12, "selected_weight": 500,
+                "padding": {"top": 4.0, "right": 8.0, "bottom": 4.0, "left": 8.0},
+                "widths": {"text": 140.0, "number": 100.0, "range": 120.0, "slider_value_min": 30.0, "checkbox": 16.0, "daterange": 160.0},
+                "range": {"default_min": 0.0, "default_max": 100.0, "default_step": 1.0},
+            },
+        }))
+        .expect("style deserializes")
+    }
+
+    fn fonts_dir() -> String {
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../src/dbt_charts/core/render/fonts"
+        )
+        .to_string()
+    }
+
+    fn draw(
+        defs: serde_json::Value,
+        values: serde_json::Value,
+        width: f64,
+        vs: &VariablesStyleDoc,
+    ) -> (String, Vec<diagnostic::Diagnostic>) {
+        let docs: Vec<(String, VariableDoc)> =
+            deserialize_ordered(defs).expect("variables deserialize");
+        let refs: Vec<(&str, &VariableDoc)> = docs.iter().map(|(n, d)| (n.as_str(), d)).collect();
+        let values = values.as_object().expect("an object").clone();
+        diagnostic::collect(|| {
+            let controls = resolve_controls(&refs, &values, None, vs, "none", &serde_json::Map::new(), &[]).unwrap();
+            render_variables_strip_svg(&controls, width, vs, "start", "variables", &[], &fonts_dir())
+                .unwrap()
+                .0
+        })
+    }
+
+    fn group_by() -> serde_json::Value {
+        serde_json::json!({"group_by": {
+            "input": "radio", "visible": true,
+            "options": {"static": ["Region", "Sub Region", "Manager"]}
+        }})
+    }
+
+    #[test]
+    fn radio_draws_one_link_segment_per_option_and_marks_the_selected() {
+        let (svg, warnings) = draw(
+            group_by(),
+            serde_json::json!({"group_by": "Sub Region"}),
+            1000.0,
+            &style("menu", "menu"),
+        );
+        assert!(warnings.is_empty());
+        assert!(svg.contains(r#"data-dbt-form="buttons""#));
+        assert_eq!(svg.matches("data-dbt-segment=").count(), 3);
+        assert!(svg.contains(r#"data-dbt-segment="Region" href="?group_by=Region""#));
+        // The selected segment of an optional variable links to the unset state.
+        assert!(svg.contains(r#"data-dbt-segment="Sub Region" href="?group_by=""#));
+        assert_eq!(svg.matches(r#"aria-checked="true""#).count(), 1);
+        assert!(svg.contains(r#"<g data-dbt-buttons="true" opacity="0">"#));
+    }
+
+    #[test]
+    fn a_required_selected_segment_has_no_link() {
+        let defs = serde_json::json!({"group_by": {
+            "input": "radio", "visible": true, "required": true,
+            "options": {"static": ["A", "B"]}
+        }});
+        let (svg, _) = draw(defs, serde_json::json!({"group_by": "A"}), 1000.0, &style("menu", "menu"));
+        assert!(svg.contains(r#"data-dbt-segment="A" role="radio""#));
+        assert!(svg.contains(r#"data-dbt-segment="B" href="?group_by=B""#));
+    }
+
+    #[test]
+    fn a_buttons_wider_than_its_slot_draws_the_field_and_warns() {
+        let (svg, warnings) = draw(group_by(), serde_json::json!({}), 120.0, &style("menu", "menu"));
+        assert!(!svg.contains("data-dbt-segment="));
+        assert!(!svg.contains("data-dbt-form"));
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "WARN-VARIABLE-BUTTONS-OVERFLOW");
+    }
+
+    #[test]
+    fn wrap_flows_the_buttons_onto_further_rows_without_a_warning() {
+        let (svg, warnings) = draw(group_by(), serde_json::json!({}), 200.0, &style("wrap", "menu"));
+        assert!(warnings.is_empty());
+        assert_eq!(svg.matches("data-dbt-segment=").count(), 3);
+        assert!(svg.matches(r#"data-dbt-field="buttons""#).count() > 1);
+    }
+
+    #[test]
+    fn preset_buttons_uses_ticker_labels_and_keeps_long_ones_where_none_exists() {
+        let defs = serde_json::json!({"span": {"input": "daterange", "visible": true}});
+        let (svg, _) = draw(defs, serde_json::json!({}), 1000.0, &style("menu", "buttons"));
+        for label in [">1D<", ">5D<", ">MTD<", ">YTD<"] {
+            assert!(svg.contains(label), "{label}");
+        }
+        assert!(svg.contains(">Previous 3 months<"));
+        assert!(svg.contains(r#"href="?span=last_5_days""#));
+    }
+
+    fn style_with_selected(background: Option<&str>, color: &str) -> VariablesStyleDoc {
+        let mut vs = style("menu", "menu");
+        vs.input.selected_background = background.map(str::to_string);
+        vs.input.selected_color = color.to_string();
+        vs
+    }
+
+    #[test]
+    fn a_theme_selected_fill_and_text_replace_the_tint() {
+        let vs = style_with_selected(Some("#111111"), "#fefefe");
+        let (svg, _) = draw(group_by(), serde_json::json!({"group_by": "Region"}), 1000.0, &vs);
+        assert!(svg.contains(r##"<path d="M"##) && svg.contains(r##"fill="#111111"/>"##));
+        assert!(!svg.contains("fill-opacity"));
+        assert!(svg.contains(r##"fill="#fefefe">Region</text>"##));
+        assert!(svg.contains(r#"data-dbt-inverse="true""#));
+    }
+
+    #[test]
+    fn without_a_theme_fill_the_selected_segment_is_a_tint() {
+        let (svg, _) = draw(group_by(), serde_json::json!({"group_by": "Region"}), 1000.0, &style("menu", "menu"));
+        assert!(svg.contains("fill-opacity"));
+        assert!(!svg.contains("data-dbt-inverse"));
+    }
+
+    #[test]
+    fn a_right_aligned_buttons_shows_its_value_at_the_buttons_right_edge() {
+        let vs = style("menu", "menu");
+        let docs: Vec<(String, VariableDoc)> = deserialize_ordered(group_by()).unwrap();
+        let refs: Vec<(&str, &VariableDoc)> = docs.iter().map(|(n, d)| (n.as_str(), d)).collect();
+        let values = serde_json::json!({"group_by": "Region"}).as_object().unwrap().clone();
+        let controls = resolve_controls(&refs, &values, None, &vs, "none", &serde_json::Map::new(), &[]).unwrap();
+        let (svg, _) =
+            render_variables_strip_svg(&controls, 1000.0, &vs, "end", "variables", &[], &fonts_dir())
+                .unwrap();
+        let attr = |tag: &str, name: &str| -> f64 {
+            let from = svg.find(tag).expect(tag);
+            let rest = &svg[from..];
+            let at = rest.find(&format!(r#" {name}=""#)).unwrap() + name.len() + 3;
+            rest[at..].split('"').next().unwrap().parse().unwrap()
+        };
+        let buttons_right = attr(r#"data-dbt-field="buttons""#, "x") + attr(r#"data-dbt-field="buttons""#, "width");
+        let value_at = svg.find("data-dbt-buttons-value").unwrap();
+        let value_rect = &svg[value_at..];
+        let rect_from = value_rect.find(r#"data-dbt-field="input""#).unwrap();
+        let rect = &value_rect[rect_from..];
+        let num = |name: &str| -> f64 {
+            let at = rect.find(&format!(r#" {name}=""#)).unwrap() + name.len() + 3;
+            rect[at..].split('"').next().unwrap().parse().unwrap()
+        };
+        assert_eq!(num("x") + num("width"), buttons_right);
+    }
+
+    #[test]
+    fn a_left_aligned_buttons_value_follows_its_label_by_one_word_space() {
+        let vs = style("menu", "menu");
+        let (svg, _) = draw(group_by(), serde_json::json!({"group_by": "Region"}), 1000.0, &vs);
+        let xs: Vec<f64> = svg
+            .split("<text ")
+            .skip(1)
+            .map(|t| {
+                let at = t.find(r#"x=""#).unwrap() + 3;
+                t[at..].split('"').next().unwrap().parse().unwrap()
+            })
+            .collect();
+        let expected = text_width("Group by:", 11.0, &fonts_dir()) + text_width(" ", 11.0, &fonts_dir());
+        assert!((xs[1] - xs[0] - expected).abs() < 0.6, "{xs:?} vs {expected}");
+    }
+
+    #[test]
+    fn a_radio_with_query_options_keeps_the_field() {
+        let defs = serde_json::json!({"g": {
+            "input": "radio", "visible": true, "options": {"query": "opts"}
+        }});
+        let vs = style("menu", "menu");
+        let docs: Vec<(String, VariableDoc)> = deserialize_ordered(defs).unwrap();
+        let refs: Vec<(&str, &VariableDoc)> = docs.iter().map(|(n, d)| (n.as_str(), d)).collect();
+        let mut datasets = HashMap::new();
+        datasets.insert(
+            "g".to_string(),
+            vec![serde_json::json!({"value": "A"}).as_object().unwrap().clone()],
+        );
+        let controls = resolve_controls(
+            &refs, &serde_json::Map::new(), Some(&datasets), &vs, "none", &serde_json::Map::new(), &[],
+        )
+        .unwrap();
+        assert_eq!(controls[0].option_values, vec!["A".to_string()]);
+        assert!(controls[0].segments.is_empty());
+    }
+
+    #[test]
+    fn the_overflow_warning_names_where_the_variable_is_written() {
+        let (_, warnings) = draw(group_by(), serde_json::json!({}), 120.0, &style("menu", "menu"));
+        assert_eq!(warnings[0].params["path"], serde_json::json!("variables.group_by"));
+    }
+
+    #[test]
+    fn a_committed_preset_selects_its_segment_and_links_by_name() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let defs = serde_json::json!({"span": {"input": "daterange", "visible": true}});
+        let vs = style("menu", "buttons");
+        let docs: Vec<(String, VariableDoc)> = deserialize_ordered(defs).unwrap();
+        let refs: Vec<(&str, &VariableDoc)> = docs.iter().map(|(n, d)| (n.as_str(), d)).collect();
+        let values = serde_json::json!({"span": ["2026-04-20", "2026-10-20"]})
+            .as_object().unwrap().clone();
+        let presets = serde_json::json!({"span": "last_5_days"}).as_object().unwrap().clone();
+        let controls = resolve_controls(&refs, &values, None, &vs, "none", &presets, &[]).unwrap();
+        let (svg, _) =
+            render_variables_strip_svg(&controls, 1000.0, &vs, "start", "variables", &[], &fonts_dir())
+                .unwrap();
+        assert_eq!(svg.matches(r#"aria-checked="true""#).count(), 1);
+        assert!(svg.contains(r#"data-dbt-segment="last_5_days" href="?span=""#));
+        assert!(svg.contains(r#"data-dbt-segment="today" href="?span=today""#));
+        assert!(!svg.contains("2026-04"));
+    }
+
+    #[test]
+    fn an_unresolved_preset_value_is_refused_by_name() {
+        let defs = serde_json::json!({"span": {"input": "daterange", "visible": true}});
+        let vs = style("menu", "buttons");
+        let docs: Vec<(String, VariableDoc)> = deserialize_ordered(defs).unwrap();
+        let refs: Vec<(&str, &VariableDoc)> = docs.iter().map(|(n, d)| (n.as_str(), d)).collect();
+        let values = serde_json::json!({"span": "last_7_days"}).as_object().unwrap().clone();
+        let result = resolve_controls(&refs, &values, None, &vs, "none", &serde_json::Map::new(), &[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn the_preset_grammar_matches_pythons() {
+        for bad in ["last_0_days", "last_007_days", "last_+3_days", "last_3_fiscal_days", "this_fiscal_week", "fiscal_week_to_date"] {
+            assert!(parse_preset(bad).is_err(), "{bad}");
+        }
+        for good in ["last_3_days", "last_2_fiscal_quarters", "this_fiscal_year", "fiscal_year_to_date", "year_to_date", "previous_1_months"] {
+            assert!(parse_preset(good).is_ok(), "{good}");
+        }
+    }
+
+    #[test]
+    fn one_link_law_encodes_a_multiselect_the_way_python_commits_it() {
+        let values = serde_json::json!({"m": ["a", "b"], "x": 1}).as_object().unwrap().clone();
+        let link = variable_link(&values, &serde_json::Map::new(), &[], "x", "2").unwrap();
+        assert_eq!(link, "?m=%5B%22a%22%2C+%22b%22%5D&x=2");
+    }
+
+    #[test]
+    fn menu_display_keeps_a_daterange_a_field() {
+        let defs = serde_json::json!({"span": {"input": "daterange", "visible": true}});
+        let (svg, _) = draw(defs, serde_json::json!({}), 1000.0, &style("menu", "menu"));
+        assert!(!svg.contains("data-dbt-segment="));
     }
 }

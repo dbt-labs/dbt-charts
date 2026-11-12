@@ -136,7 +136,6 @@ CHART_FIELDS = (
     "multiples",
     "support_table",
     "spanners",
-    "conditional_formatting",
     "style",
 )
 
@@ -423,7 +422,7 @@ def _render_chart_item(
                     "preferred_width": True,  # internal baked width
                     "query": True,  # AnyQuery object — use query_name instead
                     "base_dir": True,  # provenance for image refs; artifact-only
-                    "support": {"rules"},  # baked from conditional_formatting
+                    "support": {"rules"},  # baked from `good`
                 },
             ),
             "data": data,

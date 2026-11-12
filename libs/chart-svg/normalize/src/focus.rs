@@ -52,7 +52,7 @@ pub fn focus(
         .charts
         .get(key.as_str())
         .ok_or_else(|| CompileError::internal("a focused chart has no dependencies"))?;
-    if needed.iter().any(|n| all.nested.contains(n)) {
+    if needed.iter().any(|n| index.variable_boards.contains_key(n)) {
         return Err(CompileError::internal(
             "chart_focus on a chart that reads a variable a nested board declares",
         ));

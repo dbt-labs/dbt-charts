@@ -153,10 +153,17 @@ class TestTableRendererStyleConsumption:
         assert "#0000cc" in svg
 
     def test_table_uses_style_text_color(self):
-        from dbt_charts.core.compile.models.primitives import StaticGradientColorStyle
+        from dbt_charts.core.compile.models.primitives import ColumnFontStyle
+        from dbt_charts.core.compile.models.style.authored.table import (
+            TableColumnDefaultsConfig,
+        )
 
         table_style = _ctx().table.model_copy(
-            update={"color": StaticGradientColorStyle(static="#dd00dd")}
+            update={
+                "column_defaults": TableColumnDefaultsConfig(
+                    font=ColumnFontStyle(color="#dd00dd")
+                )
+            }
         )
         data = [{"a": "hello"}]
         svg = render_table_svg(

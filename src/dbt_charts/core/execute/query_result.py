@@ -31,6 +31,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_WAREHOUSE_AUTH,
     ERR_WAREHOUSE_BYTES_CAP_EXCEEDED,
     ERR_WAREHOUSE_CONNECTION,
+    ERR_WAREHOUSE_PERMISSION,
     ERR_WAREHOUSE_RUNTIME,
 )
 from dbt_charts.core.diagnostics.execution import QueryError
@@ -257,7 +258,9 @@ def handle_adapter_error(operation: str, error: Exception) -> QueryResult:
     )
 
 
-def connection_failure(source_type: str, error: Exception) -> QueryResult:
+def connection_failure(
+    source_type: str, error: Exception, *, source: str, origin: str
+) -> QueryResult:
     """The verdict for a warehouse that could not be opened.
 
     The in-process adapters connect inside the same block that classifies query
@@ -267,13 +270,19 @@ def connection_failure(source_type: str, error: Exception) -> QueryResult:
 
     Classifies via the same probe classifier as test_connection. probe.detail
     (raw driver text, which may carry hostnames, PIDs, or usernames) stays on
-    .detail, never on message or .fields.
+    .detail, never on message or .fields. *source* is the source's name and
+    *origin* what it is (warehouse type, and the dbt project when it came from
+    a dbt profile), so the agent knows which connection to repair.
     """
     probe = classify_connection_error(source_type, error)
     return QueryResult(
         data=[],
         error=QueryError.from_code(
-            ERR_WAREHOUSE_CONNECTION, reason=str(probe), detail=probe.detail
+            ERR_WAREHOUSE_CONNECTION,
+            reason=str(probe),
+            detail=probe.detail,
+            source=source,
+            origin=origin,
         ),
     )
 
@@ -340,6 +349,9 @@ _SQLSTATE_ERROR_CODES: dict[str, ErrorCode] = {
     "42S22": ERR_BINDER_UNKNOWN_COLUMN,  # column not found
     "22018": ERR_BINDER_TYPE_MISMATCH,  # invalid character value for cast
     "42803": ERR_BINDER_GROUP_BY,  # grouping_error (Postgres, Redshift)
+    # insufficient_privilege: Postgres, Redshift, and Snowflake/Databricks, which
+    # report their grant failures under the same SQLSTATE.
+    "42501": ERR_WAREHOUSE_PERMISSION,
 }
 
 # Message forms of a column that is neither grouped nor aggregated. DuckDB's
@@ -402,18 +414,42 @@ _AUTH_MESSAGES: dict[str, re.Pattern[str]] = {
         r"invalid_grant|Reauthentication is needed"
         r"|default credentials were not found|DefaultCredentialsError"
         r"|Could not automatically determine credentials|RefreshError"
+        r"|Request had invalid authentication credentials"
     ),
     "snowflake": re.compile(
         r"Incorrect username or password|Authentication token has expired"
+        r"|JWT token is invalid|Invalid OAuth access token"
+        r"|OAuth access token expired"
     ),
+    "databricks": re.compile(r"Invalid access token|UNAUTHENTICATED"),
     "postgres": re.compile(r"password authentication failed"),
     "postgresql": re.compile(r"password authentication failed"),
-    "redshift": re.compile(r"password authentication failed"),
+    "redshift": re.compile(
+        r"password authentication failed"
+        r"|The security token included in the request is invalid|ExpiredToken"
+    ),
+}
+
+# Message forms of a grant the connected role lacks, by dialect. Postgres and
+# Redshift also arrive as SQLSTATE 42501 where the driver reports one. BigQuery
+# is matched on its access-denied wording only: a 403 alone is also quota
+# exhaustion. DuckDB has no grants; its permission errors are configuration
+# (read-only, external access off), where "grant access" would mislead.
+_POSTGRES_DENIED = re.compile(
+    r"permission denied for (?:table|relation|schema|view|database)"
+)
+_PERMISSION_MESSAGES: dict[str, re.Pattern[str]] = {
+    "bigquery": re.compile(r"Access Denied:|accessDenied"),
+    "snowflake": re.compile(r"Insufficient privileges to operate on"),
+    "databricks": re.compile(r"INSUFFICIENT_PERMISSIONS|PERMISSION_DENIED"),
+    "postgres": _POSTGRES_DENIED,
+    "postgresql": _POSTGRES_DENIED,
+    "redshift": _POSTGRES_DENIED,
 }
 
 
 def classify_warehouse_error(
-    operation: str, error: Exception, dialect: str
+    operation: str, error: Exception, dialect: str, *, source: str
 ) -> QueryResult:
     """Map a warehouse-execution exception to a typed ERR-* QueryResult.
 
@@ -431,6 +467,7 @@ def classify_warehouse_error(
             a wrapped DbtChartsError (e.g. "dbt SQL execution").
         error: The exception raised during warehouse execution.
         dialect: The resolved warehouse dialect name (e.g. "bigquery").
+        source: The source's name, which the next step a message gives names.
 
     Returns:
         QueryResult with the original message preserved verbatim and a typed
@@ -458,6 +495,10 @@ def classify_warehouse_error(
         return QueryResult(data=[], error=rejected)
     elif dialect in _AUTH_MESSAGES and _AUTH_MESSAGES[dialect].search(str(error)):
         code = ERR_WAREHOUSE_AUTH
+    elif dialect in _PERMISSION_MESSAGES and _PERMISSION_MESSAGES[dialect].search(
+        str(error)
+    ):
+        code = ERR_WAREHOUSE_PERMISSION
     elif dialect in _MISSING_RELATION_MESSAGES and _MISSING_RELATION_MESSAGES[
         dialect
     ].search(str(error)):
@@ -468,10 +509,21 @@ def classify_warehouse_error(
         code = ERR_BINDER_UNKNOWN_COLUMN
     else:
         code = ERR_WAREHOUSE_RUNTIME
-    classified = QueryError.from_code(code, detail=str(error))
-    note = UNKNOWN_RELATION_DIALECT_NOTES.get(dialect)
-    if code is ERR_BINDER_UNKNOWN_RELATION and note is not None:
-        noted = QueryError(f"{classified} {note}", code=code)
+    classified = QueryError.from_code(code, detail=str(error), source=source)
+    notes = []
+    if code is ERR_BINDER_UNKNOWN_RELATION and dialect in (
+        UNKNOWN_RELATION_DIALECT_NOTES
+    ):
+        notes.append(UNKNOWN_RELATION_DIALECT_NOTES[dialect])
+    if code in (ERR_BINDER_UNKNOWN_RELATION, ERR_BINDER_UNKNOWN_COLUMN) and (
+        dialect != "duckdb"
+    ):
+        # DuckDB's binder error already lists the candidates; the others do not.
+        notes.append(
+            f"To list a table's real names, run `dct query {source} --table <table>`."
+        )
+    if notes:
+        noted = QueryError(f"{classified} {' '.join(notes)}", code=code)
         noted.detail = classified.detail
         return QueryResult(data=[], error=noted)
     return QueryResult(data=[], error=classified)

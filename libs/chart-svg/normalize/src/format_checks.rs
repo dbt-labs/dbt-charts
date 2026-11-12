@@ -11,7 +11,6 @@ use board_model::style::style::Style;
 use d3rs::format_spec::{
     self, is_engine_name, is_number_name, is_time_name, ParseError, GRAIN_NAMES, TEXT_NAMES,
 };
-use diagnostic::hints::close_format;
 use diagnostic::{diag, py_str_repr, Diagnostic};
 use indexmap::IndexMap;
 use model_core::{Leaf, LeafValues, Resolved, ToPatch, Tri};
@@ -204,11 +203,7 @@ fn invalid(
     if let Some(names) = available {
         d = d.with_sink_param("available", list(names.iter().cloned()));
     }
-    let pool: Vec<String> = available.into_iter().flatten().cloned().collect();
-    match close_format(spec, &pool) {
-        Some(hint) => d.with_hint(hint),
-        None => d,
-    }
+    d
 }
 
 fn number_explanation(spec: &str, error: &ParseError) -> String {
@@ -419,7 +414,8 @@ fn check_redefinition_kind(name: &str, target: &Fmt) -> Result<(), Diagnostic> {
             name,
             path,
             explanation,
-        ));
+        )
+        .with_sink_param("available", list(Vec::<String>::new())));
     }
     let spec_is_time = is_time_name(spec) && is_engine_name(spec)
         || (!is_engine_name(spec) && format_spec::is_time_format(spec));
@@ -776,8 +772,7 @@ pub fn format_checks(
             },
         };
         for f in own.into_iter().flatten() {
-            validate_spec(&f.fmt, aliases, &format!("style.{}", f.path), f.slot)
-                .map_err(refuse)?;
+            validate_spec(&f.fmt, aliases, &format!("style.{}", f.path), f.slot).map_err(refuse)?;
         }
         for (key, chart) in &patch.body.charts {
             let Some(chart) = chart else { continue };

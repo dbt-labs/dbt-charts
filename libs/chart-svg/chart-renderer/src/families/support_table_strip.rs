@@ -15,10 +15,9 @@
 //!   driven by bar.rs's and line.rs's composed arms): production's
 //!   `autosize: pad` shape — the plot keeps the payload view verbatim, the
 //!   strip floats above it, and the canvas grows around the ink, the strip's
-//!   own cells and stubs included. Carries the full declare-once affix
-//!   anchoring (`strip_numerals_for_values`/`StripNumerals` ported below —
-//!   trimmed and composed-SI rows both) and, off a band scale only, the
-//!   centering cell dx. Cells and stubs anchor from the value axis's orient.
+//!   own cells and stubs included. Carries bare numerals (`StripNumerals`,
+//!   below: digits alone, the unit in the row label) and, off a band scale
+//!   only, the centering cell dx. Cells and stubs anchor from the value axis's orient.
 //!
 //! Row-y convention: `_row_y_pixel` (`support_table_attachment.py`) measures
 //! every row/divider/inter-row-rule pixel from the plot edge (`y=0` for
@@ -34,7 +33,7 @@ use std::collections::{HashMap, HashSet};
 use diagnostic::codes;
 use ::bind::temporal::TimeUnit;
 use diagnostic::Diagnostic;
-use crate::common::{slug_to_display, Divider, FormatSlot, GappedDivider, Font, SignPlacement};
+use crate::common::{slug_to_display, Divider, FormatSlot, GappedDivider, Font};
 use ::bind::rows::{row_str};
 use ::bind::formats::locale::active_number_locale;
 use measure::FontBook;
@@ -547,143 +546,140 @@ fn reduce(op: &str, vals: &[f64]) -> Result<Option<f64>, String> {
     }))
 }
 
-// ── Declare-once numerals (port of `strip_numerals_for_values` /
-//    `StripNumerals`, support_table_attachment.py + numeral_scale.py) ─────
+// ── Bare numerals (unit notation rule 3) ─────────────────────────────────
 
-/// How one strip row spells its numbers: the digit spec each cell formats
-/// through, plus the affix the anchor cell alone declares. Two spellings:
-/// a `s`-type (SI) format is COMPOSED — the row divides by one shared
-/// magnitude and formats through a rebuilt fixed-point spec — while every
-/// other affix-carrying format is TRIMMED — cells format through the
-/// author's own spec and non-anchor cells have the repeated affix removed
-/// from the formatted string. An un-anchored row (production's
-/// `plain_numerals` / `StripAnchor.nowhere()`) declares nothing: every cell
-/// paints the author's spec in full.
+/// How one strip row spells its numbers: digits alone, whatever the format, with the unit its
+/// cells leave out kept in `unit` for the row label to name (`Pipeline, $K`). An `s`-type (SI)
+/// format is COMPOSED: the row divides by one shared magnitude and formats through a rebuilt
+/// fixed-point spec. A row that cannot share a tier (values a tier apart, or a sliver that would
+/// print as zero) prints its values in full, unrounded digits and names no tier, so no cell ever
+/// carries a magnitude letter the label does not name.
 pub struct StripNumerals {
     pub(crate) digit_spec: String,
-    /// The currency the anchor cell declares, spelled the board's way.
-    prefix: String,
-    suffix: String,
+    /// The locale's percent sign, which a `%`-type spec's cells drop.
+    percent: String,
     /// What a non-negative composed cell leads with when the spec asks for a sign
     /// (`+` or a space); a negative one leads with the locale's minus instead.
     plus: String,
     divisor: f64,
-    suffix_is_magnitude: bool,
-    repeat_suffix: bool,
-    /// An affix or notation a d3 spec cannot carry (`StripNumerals.authored`):
-    /// its spec is `digit_spec`, painted on the anchor cell alone when
-    /// `declares_once`, else on every cell.
-    authored: Option<FormatSlot>,
-    declares_once: bool,
-    /// `repeat: every`: each cell declares the unit, none is bare.
-    pub(crate) every: bool,
+    /// Each cell prints its value's shortest exact digits (`digit_spec`'s `~f` takes the
+    /// value's own decimals): a row that names no tier must not round.
+    exact: bool,
+    /// The pieces of the unit, in reading order (`$`, `K`), so a label that names some of them is
+    /// given only the rest.
+    unit: Vec<String>,
 }
 
 impl StripNumerals {
-    /// A row that keeps the author's own spec with no unit to declare.
-    pub(crate) fn plain(spec: &str) -> StripNumerals {
-        StripNumerals {
-            digit_spec: spec.to_string(),
-            prefix: String::new(),
-            suffix: String::new(),
+    /// The numerals of a row of `values` formatted by `resolved`.
+    pub(crate) fn for_values(values: &[f64], resolved: &str) -> Result<StripNumerals, String> {
+        let parts = d3rs::format::parse_parts(resolved).map_err(|e| format!("support_table: format {resolved:?}: {e}"))?;
+        let currency = if parts.symbol { vec![currency_lead()] } else { Vec::new() };
+        let spec = if parts.symbol { d3rs::format::without_symbol(resolved)? } else { resolved.to_string() };
+        if parts.type_ != 's' {
+            let percent = if parts.type_ == '%' { active_number_locale().locale.percent.clone() } else { String::new() };
+            let unit = currency.into_iter().chain((!percent.is_empty()).then(|| percent.clone())).collect();
+            return Ok(StripNumerals { digit_spec: spec, percent, plus: String::new(), divisor: 1.0, exact: false, unit });
+        }
+        let sign = if parts.sign == '-' { String::new() } else { parts.sign.to_string() };
+        // Unrounded: under a label that names no tier, a rounded `951,000` would read as exact.
+        let full_digits = || StripNumerals {
+            digit_spec: format!("{sign},~f"),
+            percent: String::new(),
             plus: String::new(),
             divisor: 1.0,
-            suffix_is_magnitude: false,
-            repeat_suffix: false,
-            authored: None,
-            declares_once: false,
-            every: false,
+            exact: true,
+            unit: currency.clone(),
+        };
+        let voters: Vec<f64> = values.iter().copied().filter(|v| *v != 0.0 && v.is_finite()).collect();
+        let extreme = voters.iter().fold(0.0_f64, |a, v| a.max(v.abs()));
+        // The tier most values sit in; a tie that includes values below every tier goes to the largest value's.
+        let mut tally: std::collections::HashMap<Option<i32>, usize> = std::collections::HashMap::new();
+        for v in &voters {
+            *tally.entry(natural_tier(*v)).or_insert(0) += 1;
         }
-    }
-
-    /// `_authored_affix_numerals`: the affix declares on the anchor cell when
-    /// the strip is `anchored` and the slot asks (`repeat: anchor`, or a house
-    /// format's default), on every cell otherwise (`repeat: every`, a
-    /// literal d3 spec, a notation alone). A `$` spec and an anchored
-    /// `before_prefix` sign refuse by name; on a `left_axis` a house format's
-    /// default `before_prefix` prefix is not anchored, so nothing refuses.
-    pub(crate) fn authored(slot: &FormatSlot, anchored: bool, left_axis: bool, field_path: &str) -> Result<StripNumerals, Diagnostic> {
-        let declares_once = anchored
-            && (!slot.prefix.is_empty() || !slot.suffix.is_empty())
-            && match slot.repeat.as_deref() {
-                Some(repeat) => repeat == "anchor",
-                // A prefix that leads the sign on a left axis stays on every cell (the author asked
-                // for `before_prefix`); declared once it would lead the anchor's sign, which the
-                // right axis refuses.
-                None => slot.is_house() && !(left_axis && slot.sign_placement == Some(SignPlacement::BeforePrefix) && !slot.prefix.is_empty()),
-            };
-        if declares_once && !slot.prefix.is_empty() && slot.sign_placement == Some(SignPlacement::BeforePrefix) {
-            return Err(Diagnostic::new(
-                &codes::ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX,
-                [("field_path", serde_json::json!(field_path))],
-            ));
+        let top = tally.values().copied().max().unwrap_or(0);
+        let tied: Vec<Option<i32>> = tally.iter().filter(|(_, &count)| count == top).map(|(tier, _)| *tier).collect();
+        let tier = if tied.contains(&None) { natural_tier(extreme) } else { tied.iter().filter_map(|t| *t).max() };
+        let Some(majority) = tier else { return Ok(full_digits()) };
+        let magnitude = 10f64.powi(majority);
+        let finest = voters.iter().copied().min_by(|a, b| a.abs().partial_cmp(&b.abs()).expect("voters are finite")).expect("a tier needs a voter");
+        // Values more than one tier below the shared one would inflate every sibling's precision.
+        let tiers_ascending = [3, 6, 9, 12];
+        let tier_index = |tier: i32| tiers_ascending.iter().position(|&t| t == tier).expect("a tier") as i32;
+        match natural_tier(finest) {
+            Some(own) if tier_index(majority) - tier_index(own) <= 1 => {}
+            _ => return Ok(full_digits()),
         }
-        Ok(StripNumerals { authored: Some(slot.clone()), declares_once, ..StripNumerals::plain(&slot.spec) })
-    }
-
-    /// The anchor's trailing affix, which hangs past the digit edge every bare cell's digits end at
-    /// (`StripNumerals.hung_suffix`, support_table_attachment.py:785-796): right-aligned text puts a
-    /// trailing affix on the aligned edge, so the anchor's digits would sit one affix-width left of
-    /// every bare cell's. A prefix leads the digits, and a row whose every cell carries the suffix
-    /// has no lone trailing affix: neither hangs.
-    pub(crate) fn hung_suffix(&self) -> &str {
-        if let Some(slot) = &self.authored {
-            return if self.declares_once { &slot.suffix } else { "" };
-        }
-        if self.repeat_suffix {
-            ""
-        } else {
-            &self.suffix
-        }
-    }
-
-    /// Whether `v` can declare the row's unit (`_drawn_index_transform`'s
-    /// CARRIES flag): finite, and non-zero when the suffix is a magnitude —
-    /// "0k" is meaningless, while $0 and 0% are real readings.
-    pub fn carries(&self, v: f64) -> bool {
-        v.is_finite() && !(self.suffix_is_magnitude && v == 0.0)
-    }
-
-    /// The text one cell paints. `is_anchor` marks the single unit-declaring
-    /// cell (the first carrying cell in paint order).
-    pub fn cell_text(&self, v: f64, is_anchor: bool) -> Result<String, String> {
-        let is_anchor = is_anchor || self.every;
-        if let Some(slot) = &self.authored {
-            // `_compose_affixed_text` / `_bare_authored_text`: the declaring
-            // cell leads its sign with the prefix, the rest paint the digits
-            // alone.
-            let text = if !self.declares_once || is_anchor {
-                slot.paint_anchored(&self.digit_spec, v, self.declares_once)
-            } else {
-                d3rs::format::without_symbol(&self.digit_spec).and_then(|bare_spec| slot.bare_digits(&bare_spec, v))
-            };
-            return text.map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec));
-        }
-        if self.prefix.is_empty() && self.suffix.is_empty() {
-            return ::bind::formats::locale::d3_format(&self.digit_spec, v)
-                .map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec));
-        }
-        if !self.suffix_is_magnitude && self.prefix.is_empty() {
-            // Trimmed: format through the author's spec, then remove the
-            // repeated suffix from the cell — rebuilding the spec is what would
-            // silently drop a sign or zero pad.
-            let full = ::bind::formats::locale::d3_format(&self.digit_spec, v)
-                .map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec))?;
-            if is_anchor {
-                return Ok(full);
+        let decimals = (parts.precision.unwrap_or(6) as i32 - decimal_exponent(finest.abs() / magnitude)).max(0);
+        let digit_spec = format!(",.{decimals}~f");
+        // A voter whose scaled form prints no non-zero digit would be indistinguishable from a genuine zero.
+        for v in &voters {
+            let printed = ::bind::formats::locale::d3_format(&digit_spec, v / magnitude)
+                .map_err(|e| format!("support_table: format {digit_spec:?}: {e}"))?;
+            if !printed.chars().any(|c| c.is_ascii_digit() && c != '0') {
+                return Ok(full_digits());
             }
-            return Ok(if self.suffix.is_empty() { full } else { full.replacen(self.suffix.as_str(), "", 1) });
         }
-        // Composed: the sign leads the currency ("−$448"); a magnitude suffix
-        // never shows on zero, a unit suffix does.
-        let digits = ::bind::formats::locale::d3_format(&self.digit_spec, v.abs() / self.divisor)
-            .map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec))?;
-        let locale = active_number_locale();
-        let sign = if v < 0.0 { locale.locale.minus.as_str() } else { self.plus.as_str() };
-        let prefix = if is_anchor { self.prefix.as_str() } else { "" };
-        let suffix_on = (!self.suffix_is_magnitude || v != 0.0) && (self.repeat_suffix || is_anchor);
-        let suffix = if suffix_on { self.suffix.as_str() } else { "" };
-        Ok(format!("{sign}{prefix}{digits}{suffix}"))
+        let plus = if matches!(parts.sign, '+' | ' ') { parts.sign.to_string() } else { String::new() };
+        let unit = currency.into_iter().chain([crate::common::suffix_at_register(majority, true)?]).collect();
+        Ok(StripNumerals { digit_spec, percent: String::new(), plus, divisor: magnitude, exact: false, unit })
+    }
+
+    /// The unit around `self`'s own: an authored `prefix` leads it and a `suffix` trails it.
+    pub(crate) fn wrap_unit(&mut self, prefix: &str, suffix: &str) {
+        self.unit.insert(0, prefix.trim().to_string());
+        self.unit.push(suffix.trim().to_string());
+    }
+
+    /// What `label` is missing of this row's unit, as the `, K` its row label is given
+    /// (`Total $` is given `, K`): empty when the label names the whole unit.
+    pub(crate) fn unit_suffix(&self, label: &str) -> String {
+        let words: Vec<&str> = label.split(|c: char| !c.is_alphanumeric()).collect();
+        let names = |piece: &str| {
+            let piece = piece.trim();
+            if piece.chars().all(char::is_alphanumeric) {
+                words.contains(&piece)
+            } else {
+                label.contains(piece)
+            }
+        };
+        // A code and a tier read apart (`EUR K`); a symbol hugs what follows (`$K`).
+        let missing = self.unit.iter().filter(|piece| !piece.is_empty() && !names(piece)).fold(String::new(), |mut joined, piece| {
+            if joined.ends_with(char::is_alphabetic) && piece.starts_with(char::is_alphabetic) {
+                joined.push(' ');
+            }
+            joined.push_str(piece);
+            joined
+        });
+        if missing.is_empty() {
+            missing
+        } else {
+            format!(", {missing}")
+        }
+    }
+
+    /// `label` with its [`Self::unit_suffix`].
+    pub(crate) fn labeled(&self, label: &str) -> String {
+        format!("{label}{}", self.unit_suffix(label))
+    }
+
+    /// The text one cell paints: digits alone.
+    pub fn cell_text(&self, v: f64) -> Result<String, String> {
+        let wrong = |e: String| format!("support_table: format {:?}: {e}", self.digit_spec);
+        let text = if self.exact {
+            // Rust's `Display` for `f64` is the shortest round-trip form, never exponent notation.
+            let decimals = v.abs().to_string().split_once('.').map_or(0, |(_, fraction)| fraction.len());
+            let spec = self.digit_spec.replacen("~f", &format!(".{decimals}f"), 1);
+            ::bind::formats::locale::d3_format(&spec, v).map_err(wrong)?
+        } else if self.divisor != 1.0 {
+            let digits = ::bind::formats::locale::d3_format(&self.digit_spec, v.abs() / self.divisor).map_err(wrong)?;
+            let locale = active_number_locale();
+            format!("{}{digits}", if v < 0.0 { locale.locale.minus.as_str() } else { self.plus.as_str() })
+        } else {
+            ::bind::formats::locale::d3_format(&self.digit_spec, v).map_err(wrong)?
+        };
+        Ok(if self.percent.is_empty() { text } else { text.replacen(self.percent.as_str(), "", 1) })
     }
 }
 
@@ -695,13 +691,7 @@ fn natural_tier(v: f64) -> Option<i32> {
     SI_TIERS.iter().copied().find(|&t| magnitude >= 10f64.powi(t))
 }
 
-/// Digits before the decimal point in `v`'s plain written-out form
-/// (truncating — 999.5 has 3 written integer digits).
-fn integer_digit_count(v: f64) -> usize {
-    format!("{}", v.abs().floor() as i128).len()
-}
-
-/// Like `integer_digit_count` but negative-capable below 1.0
+/// Digits before the decimal point, negative-capable below 1.0
 /// (`_decimal_exponent`).
 fn decimal_exponent(v: f64) -> i32 {
     if v == 0.0 {
@@ -710,121 +700,15 @@ fn decimal_exponent(v: f64) -> i32 {
     v.abs().log10().floor() as i32 + 1
 }
 
-/// Port of `strip_numerals_for_values` + `_magnitude_numerals`
-/// (support_table_attachment.py) over `shared_scale_for_column`
-/// (numeral_scale.py). `anchored` is the caller's anchor decision — false
-/// (production's `plain_numerals`: an unpinned sort, quantitative x) paints
-/// the author's spec in full on every cell. Every cell ends at its lane's right
-/// edge, so a declared currency or suffix simply extends the anchor leftward.
-/// `vertical` is a column block (`vertical=True`): its magnitude suffix speaks
-/// the analytic register while it declares once, narrative once it repeats.
-pub(crate) fn strip_numerals_for_values(values: &[f64], resolved: &str, vertical: bool, every: bool) -> Result<StripNumerals, String> {
-    let parts = d3rs::format::parse_parts(resolved)
-        .map_err(|e| format!("support_table: format {resolved:?}: {e}"))?;
-    if parts.type_ != 's' {
-        let locale = active_number_locale();
-        let suffix = if parts.type_ == '%' { locale.locale.percent.clone() } else { String::new() };
-        let (lead, trail) = currency_affixes(parts.symbol, every);
-        if !trail.is_empty() {
-            return Ok(StripNumerals { suffix, ..StripNumerals::plain(resolved) });
-        }
-        let digit_spec = if lead.is_empty() { resolved.to_string() } else { d3rs::format::without_symbol(resolved)? };
-        return Ok(StripNumerals { digit_spec, prefix: lead, suffix, ..StripNumerals::plain(resolved) });
-    }
-
-    // Composed (`s` type): majority-vote tier over non-zero finite values;
-    // every refusal below keeps the author's spec (the row simply doesn't
-    // compact) — production's own fallback, never a heuristic.
-    let voters: Vec<f64> = values.iter().copied().filter(|v| *v != 0.0 && v.is_finite()).collect();
-    if voters.is_empty() {
-        return Ok(StripNumerals::plain(resolved));
-    }
-    let mut tally: std::collections::HashMap<Option<i32>, usize> = std::collections::HashMap::new();
-    for v in &voters {
-        *tally.entry(natural_tier(*v)).or_insert(0) += 1;
-    }
-    let top = *tally.values().max().expect("voters is non-empty");
-    let tied: Vec<Option<i32>> = tally.iter().filter(|(_, &c)| c == top).map(|(t, _)| *t).collect();
-    if tied.contains(&None) {
-        return Ok(StripNumerals::plain(resolved));
-    }
-    let majority = tied.iter().filter_map(|t| *t).max().expect("no None in tie");
-    let extreme = values.iter().fold(0.0_f64, |a, v| a.max(v.abs()));
-    if integer_digit_count(extreme) < 6 {
-        return Ok(StripNumerals::plain(resolved));
-    }
-    let magnitude = 10f64.powi(majority);
-    let finest = voters
-        .iter()
-        .copied()
-        .min_by(|a, b| a.abs().partial_cmp(&b.abs()).expect("voters are finite"))
-        .expect("voters is non-empty");
-    // tier_distance: how many tiers below the majority the finest value's own
-    // tier sits; None (below every tier) or > 1 would inflate every sibling's
-    // precision — refuse.
-    let tiers_ascending = [3, 6, 9, 12];
-    let distance = match natural_tier(finest) {
-        None => None,
-        Some(vt) => Some(
-            tiers_ascending.iter().position(|&t| t == majority).expect("majority is a tier")
-                as i32
-                - tiers_ascending.iter().position(|&t| t == vt).expect("tier from natural_tier")
-                    as i32,
-        ),
-    };
-    match distance {
-        None => return Ok(StripNumerals::plain(resolved)),
-        Some(d) if d > 1 => return Ok(StripNumerals::plain(resolved)),
-        _ => {}
-    }
-    let sig_figs = parts.precision.unwrap_or(6) as i32;
-    let decimals = (sig_figs - decimal_exponent(finest.abs() / magnitude)).max(0);
-    let plus = match parts.sign {
-        '+' | ' ' => parts.sign.to_string(),
-        _ => String::new(),
-    };
-    let digit_spec = format!(",.{decimals}~f");
-    // Zero-print guard: a voter whose scaled form prints no non-zero digit
-    // would be indistinguishable from a genuine zero row.
-    for v in &voters {
-        let printed = ::bind::formats::locale::d3_format(&digit_spec, v / magnitude)
-            .map_err(|e| format!("support_table: format {digit_spec:?}: {e}"))?;
-        if !printed.chars().any(|c| c.is_ascii_digit() && c != '0') {
-            return Ok(StripNumerals::plain(resolved));
-        }
-    }
-    let mode_repeat = integer_digit_count(extreme / magnitude) >= 4;
-    let pow = 10f64.powi(decimals);
-    let printed_extreme = (extreme / magnitude * pow).round() / pow;
-    let repeat = mode_repeat || integer_digit_count(printed_extreme) >= 4;
-    let (lead, trail) = currency_affixes(parts.symbol, every);
-    Ok(StripNumerals {
-        digit_spec,
-        prefix: lead,
-        plus,
-        suffix: format!("{}{trail}", crate::common::suffix_at_register(majority, vertical && !repeat)?),
-        divisor: magnitude,
-        suffix_is_magnitude: true,
-        repeat_suffix: repeat,
-        authored: None,
-        declares_once: false,
-        every: false,
-    })
-}
-
-/// `_currency_affixes`: a `$` spec's currency as `(lead, trail)` around the
-/// digits and a magnitude suffix. Declared once it leads; on every cell
-/// (`repeats`) it keeps the locale's side.
-fn currency_affixes(has_symbol: bool, repeats: bool) -> (String, String) {
-    if !has_symbol {
-        return (String::new(), String::new());
-    }
+/// The currency symbol a row's unit names: the board's own.
+fn currency_lead() -> String {
     let locale = active_number_locale();
-    let (lead, trail) = locale.composed_currency("$", repeats);
+    let (lead, trail) = locale.composed_currency("$", false);
     if lead.is_empty() && trail.is_empty() {
-        return (locale.locale.currency[0].clone(), String::new());
+        locale.locale.currency[0].clone()
+    } else {
+        lead
     }
-    (lead, trail)
 }
 
 pub(crate) fn format_cell(v: Option<&CellValue>, spec: Option<&str>) -> Result<String, String> {
@@ -871,7 +755,7 @@ impl ComposedRow {
 
 /// One composed-layout cell, its text painted ending at `x + row.dx`
 /// (`text-anchor: end`, on every axis side): `x` is the cell's center on the
-/// parent chart's own x encoding, moved past it by the hung suffix on an anchor.
+/// parent chart's own x encoding.
 /// `w` is the shaped width Vega's autosize-pad bounds union reads (S6 — a cell
 /// past the plot's edge overhangs it by that width).
 #[derive(Debug, Clone, serde::Serialize)]
@@ -879,9 +763,6 @@ pub struct ComposedCell {
     pub x: f64,
     pub text: String,
     pub w: f64,
-    /// The anchor's hung-suffix width, 0 on every other cell; a column
-    /// block reads it to place the anchor past its digit edge.
-    pub hang: f64,
     /// How far right of its column's x the cell centers to align as the column's
     /// axis label does (`Column::center_dx`), 0 under a centered label.
     pub align_dx: f64,
@@ -889,22 +770,6 @@ pub struct ComposedCell {
     pub aria: String,
     /// The chart's link around the cell, when it has one (`link_cells`).
     pub href: Option<String>,
-    /// How a carrying cell paints when it is the row's anchor, the
-    /// unit-declaring cell: `skip_strip` promotes the first carrying cell it
-    /// keeps, so the unit survives a skipped anchor.
-    #[serde(skip)]
-    pub declaring: Option<Declaring>,
-}
-
-/// A carrying cell's text, shaped width and hung-suffix width as the row's anchor,
-/// and how far its `x` moves to hang that suffix (0 for the cell that already is
-/// the anchor).
-#[derive(Debug, Clone)]
-pub struct Declaring {
-    text: String,
-    w: f64,
-    hang: f64,
-    dx: f64,
 }
 
 /// One composed-layout row. Each cell's digits end `dx` right of its center
@@ -995,31 +860,6 @@ impl Column {
     }
 }
 
-/// The widest painted text of a row's values before any trailing unit (an
-/// anchor's `$` counts) and the widest trailing unit: the two terms of the
-/// strip's one cell width.
-#[derive(Clone, Copy, Default)]
-pub(crate) struct CellWidth {
-    digits: f64,
-    unit: f64,
-}
-
-impl CellWidth {
-    fn widest(self, other: CellWidth) -> CellWidth {
-        CellWidth { digits: self.digits.max(other.digits), unit: self.unit.max(other.unit) }
-    }
-
-    /// How far the digits' right edge sits from the column's center once the cell,
-    /// `digits + unit` wide, is centered on it and the unit takes the slot at its end.
-    fn digits_edge(self) -> f64 {
-        (self.digits - self.unit) / 2.0
-    }
-
-    fn total(self) -> f64 {
-        self.digits + self.unit
-    }
-}
-
 /// Cells + their width (dx input) for one row's own values —
 /// factored out of `build_rows_composed` so the per_series branch can build
 /// N rows off the same logic a normal entry uses for one. Every cell ends at
@@ -1032,75 +872,25 @@ pub(crate) fn build_cells(
     fonts: &FontBook,
     font_family: &str,
     font_size: f64,
-    hang_along_x: bool,
-) -> Result<(Vec<ComposedCell>, CellWidth), String> {
-    // The anchor is the first carrying cell in paint order
-    // (`_drawn_index_transform`: valid + finite, non-zero for a magnitude
-    // suffix) — computed per ROW even for a per_series entry's shared
-    // numerals ("After the per-series filter, so each series numbers its
-    // own drawn cells and anchors its own leftmost one",
-    // support_table_attachment.py:1416-1419).
-    let anchor_idx = numerals
-        .as_ref()
-        .and_then(|n| values.iter().position(|v| matches!(v, Some(CellValue::Num(num)) if n.carries(*num))));
-    let mut width = CellWidth::default();
+) -> Result<(Vec<ComposedCell>, f64), String> {
+    let mut width = 0.0_f64;
     let mut cells = Vec::with_capacity(values.len());
-    for (i, (v, &x)) in values.iter().zip(x_positions.iter()).enumerate() {
-        let cell = match (v, numerals) {
-            (Some(CellValue::Num(num)), Some(n)) if num.is_finite() => {
-                let bare = n.cell_text(*num, false)?;
-                let declared = n.cell_text(*num, true)?;
-                let declared_w = fonts.measure_shaped(&declared, font_family, font_size)?;
-                // Whatever follows a cell's last digit (its own unit, or the row's declared one)
-                // sits in the unit column past the digit edge every cell's digits end at: the
-                // text ends one unit-width right of that edge. A column block keeps the
-                // band-center `x` and reads `hang`.
-                let bare_hang = fonts.measure(trailing_unit(&bare), font_family, font_size)?;
-                let declared_hang = fonts.measure(trailing_unit(&declared), font_family, font_size)?;
-                width = width.widest(CellWidth { digits: fonts.measure(&bare, font_family, font_size)? - bare_hang, unit: bare_hang });
-                // Any carrying cell can become the row's anchor once buckets are dropped, so the
-                // cell width reads its declared form too: the `$` counts, the unit goes in the slot.
-                let carries = n.carries(*num);
-                if carries {
-                    width = width.widest(CellWidth {
-                        digits: fonts.measure(&declared, font_family, font_size)? - declared_hang,
-                        unit: declared_hang,
-                    });
-                }
-                let (text, w, cell_hang) = if anchor_idx == Some(i) {
-                    (declared.clone(), declared_w, declared_hang)
-                } else {
-                    let w = fonts.measure_shaped(&bare, font_family, font_size)?;
-                    (bare, w, bare_hang)
-                };
-                let along = |hang: f64| if hang_along_x { hang } else { 0.0 };
-                let x = x + along(cell_hang);
-                let declaring =
-                    carries.then(|| Declaring { text: declared, w: declared_w, hang: declared_hang, dx: along(declared_hang) - along(cell_hang) });
-                ComposedCell { x, text, w, hang: cell_hang, align_dx: 0.0, aria: String::new(), href: None, declaring }
-            }
-            _ => {
-                let text = format_cell(v.as_ref(), spec)?;
-                if matches!(v, Some(CellValue::Num(_))) {
-                    width = width.widest(CellWidth { digits: fonts.measure(&text, font_family, font_size)?, unit: 0.0 });
-                }
-                let w = fonts.measure_shaped(&text, font_family, font_size)?;
-                ComposedCell { x, text, w, hang: 0.0, align_dx: 0.0, aria: String::new(), href: None, declaring: None }
-            }
+    for (v, &x) in values.iter().zip(x_positions.iter()) {
+        let text = match (v, numerals) {
+            (Some(CellValue::Num(num)), Some(n)) if num.is_finite() => n.cell_text(*num)?,
+            _ => format_cell(v.as_ref(), spec)?,
         };
-        cells.push(cell);
+        if matches!(v, Some(CellValue::Num(_))) {
+            width = width.max(fonts.measure(&text, font_family, font_size)?);
+        }
+        let w = fonts.measure_shaped(&text, font_family, font_size)?;
+        cells.push(ComposedCell { x, text, w, align_dx: 0.0, aria: String::new(), href: None });
     }
     Ok((cells, width))
 }
 
-/// What follows a cell's last digit: the unit it carries (`k`, `%`, ` USD`), which sits
-/// in the strip's unit column. Empty when the text ends on a digit or has none.
-pub(crate) fn trailing_unit(text: &str) -> &str {
-    text.char_indices().filter(|(_, c)| c.is_numeric()).last().map_or("", |(i, c)| &text[i + c.len_utf8()..])
-}
-
 /// One entry's cells per visual line — a strip row or a column block column —
-/// and the declare-once numerals its whole block shares. `lines` holds one
+/// and the bare numerals its whole block shares. `lines` holds one
 /// value list per series for a normal `per_series:` entry and exactly one
 /// otherwise; `nums` pools every line's numbers, the input production's
 /// per-ENTRY `entry_values`/`_entry_numerals` see (`support_table_attachment.py`
@@ -1112,30 +902,34 @@ pub(crate) struct EntryLines<'a> {
     pub(crate) nums: Vec<f64>,
 }
 
-/// Resolve one entry against the query rows. `anchored` is the caller's
-/// production anchor decision; a `per_series:` entry additionally needs the
+impl EntryLines<'_> {
+    /// `label` with the unit its cells leave out appended: see [`StripNumerals::labeled`].
+    pub(crate) fn labeled(&self, label: &str) -> String {
+        self.numerals.as_ref().map_or_else(|| label.to_string(), |n| n.labeled(label))
+    }
+
+    /// The row label as the strip paints it: the name cut to `LABEL_STUB_LIMIT_PX`, then the unit
+    /// it is missing, which is never cut (`Accessories…, $K`).
+    pub(crate) fn stub(&self, fonts: &FontBook, family: &str, size: f64, name: &str) -> Result<String, String> {
+        let kept = truncate_label(fonts, family, size, name, true)?;
+        let suffix = self.numerals.as_ref().map_or_else(String::new, |n| n.unit_suffix(&kept));
+        Ok(format!("{kept}{suffix}"))
+    }
+}
+
+/// Resolve one entry against the query rows. A `per_series:` entry needs the
 /// chart's color field and series list, refused by name otherwise (production's
-/// own guard, `attach_support_table`, :1910-1921). `vertical` is a column
-/// block, whose magnitude suffix speaks the column register
-/// (`strip_numerals_for_values`).
+/// own guard, `attach_support_table`, :1910-1921).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn entry_lines<'a>(
     entry: &'a SupportTableEntry,
     rows: &[serde_json::Map<String, Value>],
     x_field: &str,
     domain: &[String],
-    anchored: bool,
-    axis_on_right: bool,
-    vertical: bool,
     color_field: Option<&str>,
     series_order: &[String],
-    chart_id: &str,
-    entry_index: usize,
 ) -> Result<EntryLines<'a>, Diagnostic> {
     let spec = entry.format.as_ref().map(|f| f.spec.as_str());
-    // `_entry_numerals`: a predefined name declares once; a d3 literal with
-    // the same spec keeps per-cell units.
-    let predefined = entry.format.as_ref().is_some_and(FormatSlot::is_house);
     let lines: Vec<Vec<Option<CellValue>>> = if let Some(per_series_field) = &entry.per_series {
         let Some(cfield) = color_field else {
             return Err(
@@ -1176,36 +970,26 @@ pub(crate) fn entry_lines<'a>(
             crate::common::check_percent_range(*n, None, spec)?;
         }
     }
-    let numerals = match (&entry.format, spec) {
-        (Some(slot), _) if slot.has_affix() => {
-            Some(StripNumerals::authored(
-                slot,
-                anchored,
-                !axis_on_right,
-                &format!("charts.{chart_id}.support_table.entries[{entry_index}].format"),
-            )?)
-        }
-        (_, Some(s)) if !anchored || !predefined => Some(StripNumerals::plain(s)),
-        (slot, Some(s)) => {
-            let every = slot.as_ref().is_some_and(|f| f.repeat.as_deref() == Some("every"));
-            let mut numerals = strip_numerals_for_values(&nums, s, vertical, every)?;
-            numerals.every = every;
-            Some(numerals)
-        }
-        (_, None) => None,
-    };
+    let numerals = spec
+        .map(|spec| {
+            let mut numerals = StripNumerals::for_values(&nums, spec)?;
+            if let Some(slot) = &entry.format {
+                numerals.wrap_unit(&slot.prefix, &slot.suffix);
+            }
+            Ok::<_, String>(numerals)
+        })
+        .transpose()?;
     Ok(EntryLines { spec, lines, numerals, nums })
 }
 
-/// Build the composed strip's rows: declare-once numerals per entry
-/// (`anchored` per the caller's production anchor decision), the strip's one
+/// Build the composed strip's rows: bare numerals per entry, the strip's one
 /// cell width measured with its own font (the tabular font production's
 /// `numeric=True` measurer picks) over every value of every row, and the stub
 /// label truncated at `LABEL_STUB_LIMIT_PX`.
 ///
 /// Each cell sits in its column's label cell (`columns`, one per bucket of
 /// `domain`), band or point alike, and its digits end at one edge whichever side
-/// the value axis is on; an anchor's unit takes the slot past it. This departs
+/// the value axis is on. This departs
 /// from production, which centers a lane on a bar's band only and ends a line's
 /// digits on the point.
 ///
@@ -1218,7 +1002,6 @@ pub(crate) fn entry_lines<'a>(
 /// production's own guard (`attach_support_table`, :1910-1921).
 #[allow(clippy::too_many_arguments)]
 pub fn build_rows_composed(
-    chart_id: &str,
     config: &SupportTableConfig,
     rows: &[serde_json::Map<String, Value>],
     x_field: &str,
@@ -1226,8 +1009,6 @@ pub fn build_rows_composed(
     columns: &[Column],
     fonts: &FontBook,
     style: &SupportTableStyle,
-    anchored: bool,
-    axis_on_right: bool,
     color_field: Option<&str>,
     series_order: &[String],
     series_ink: &[String],
@@ -1246,26 +1027,23 @@ pub fn build_rows_composed(
     let resolved = config
         .entries
         .iter()
-        .enumerate()
-        .map(|(entry_index, entry)| {
+        .map(|entry| {
             entry_lines(
                 entry,
                 rows,
                 x_field,
                 domain,
-                anchored,
-                axis_on_right,
-                false,
                 color_field,
                 series_order,
-                chart_id,
-                entry_index,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut out: Vec<ComposedRow> = Vec::new();
-    let mut width = CellWidth::default();
-    for (entry, EntryLines { spec, lines, numerals, .. }) in config.entries.iter().zip(resolved) {
+    let mut width = 0.0_f64;
+    for (entry, resolved) in config.entries.iter().zip(resolved) {
+        let series_labels = series_order.iter().map(|name| resolved.stub(fonts, label_family, label_size, name)).collect::<Result<Vec<_>, _>>()?;
+        let row_label = if entry.per_series.is_some() { String::new() } else { resolved.stub(fonts, label_family, label_size, &entry_label(entry)?)? };
+        let EntryLines { spec, lines, numerals, .. } = resolved;
         if entry.per_series.is_some() {
             if series_ink.len() != series_order.len() {
                 return Err(
@@ -1279,15 +1057,15 @@ pub fn build_rows_composed(
             let mut cells_by_series: Vec<Vec<ComposedCell>> = Vec::with_capacity(lines.len());
             for values in &lines {
                 let (mut cells, row_width) =
-                    build_cells(values, &x_positions, &numerals, spec, fonts, font_family, font_size, true)?;
+                    build_cells(values, &x_positions, &numerals, spec, fonts, font_family, font_size)?;
                 link_cells(&mut cells, entry, domain, links);
-                width = width.widest(row_width);
+                width = width.max(row_width);
                 cells_by_series.push(cells);
             }
             for (i, cells) in cells_by_series.into_iter().enumerate() {
                 // A per_series row is always headed by the series name
                 // (a `by_measure` entry reads as a `source` one).
-                let label = truncate_label(fonts, label_family, label_size, &series_order[i], true)?;
+                let label = series_labels[i].clone();
                 let label_w = fonts.measure_shaped(&label, label_family, label_size)?;
                 out.push(ComposedRow {
                     label,
@@ -1304,10 +1082,10 @@ pub fn build_rows_composed(
         }
 
         let (mut cells, entry_width) =
-            build_cells(&lines[0], &x_positions, &numerals, spec, fonts, font_family, font_size, true)?;
-        width = width.widest(entry_width);
+            build_cells(&lines[0], &x_positions, &numerals, spec, fonts, font_family, font_size)?;
+        width = width.max(entry_width);
         link_cells(&mut cells, entry, domain, links);
-        let label = truncate_label(fonts, label_family, label_size, &entry_label(entry)?, true)?;
+        let label = row_label;
         let label_w = fonts.measure_shaped(&label, label_family, label_size)?;
         out.push(ComposedRow {
             label,
@@ -1322,9 +1100,9 @@ pub fn build_rows_composed(
     }
     // One cell width for the strip, so every row's digits share one edge.
     for row in &mut out {
-        row.dx = width.digits_edge();
+        row.dx = width / 2.0;
         for (cell, column) in row.cells.iter_mut().zip(columns) {
-            cell.align_dx = column.center_dx(width.total());
+            cell.align_dx = column.center_dx(width);
             cell.x += cell.align_dx;
         }
     }
@@ -1340,16 +1118,31 @@ fn entry_label(entry: &SupportTableEntry) -> Result<String, String> {
     }
 }
 
-/// The widest row label the strip would paint, as `build_rows_composed`
+/// The widest row label the strip would paint, unit included, as `build_rows_composed`
 /// truncates and measures it: a chart that parks the labels in another
 /// column sizes that column before any row is built.
-pub fn widest_stub(config: &SupportTableConfig, series_order: &[String], fonts: &FontBook, style: &SupportTableStyle) -> Result<f64, String> {
+#[allow(clippy::too_many_arguments)]
+pub fn widest_stub(
+    config: &SupportTableConfig,
+    rows: &[serde_json::Map<String, Value>],
+    x_field: &str,
+    domain: &[String],
+    color_field: Option<&str>,
+    series_order: &[String],
+    fonts: &FontBook,
+    style: &SupportTableStyle,
+) -> Result<f64, Diagnostic> {
     let (family, size) = label_font_resolved(style);
+    let rows = config.source_rows(rows);
     let mut widest = 0.0_f64;
     for entry in &config.entries {
-        let labels = if entry.per_series.is_some() { series_order.to_vec() } else { vec![entry_label(entry)?] };
+        let lines = entry_lines(entry, rows, x_field, domain, color_field, series_order)?;
+        let labels = if entry.per_series.is_some() {
+            series_order.iter().map(|name| lines.stub(fonts, family, size, name)).collect::<Result<Vec<_>, _>>()?
+        } else {
+            vec![lines.stub(fonts, family, size, &entry_label(entry)?)?]
+        };
         for label in labels {
-            let label = truncate_label(fonts, family, size, &label, true)?;
             widest = widest.max(fonts.measure_shaped(&label, family, size)?);
         }
     }
@@ -1447,8 +1240,8 @@ pub fn label_period_keep(dates: &[Option<(i32, u8, u8)>], data_tu: TimeUnit, vis
 /// keeps fewer than the first and last candidate, and `WARN-SUPPORT-TABLE-CELL-OVERFLOW` fires
 /// only if those still collide. Each row's first carrying kept cell declares
 /// the unit ([`thinned`]), and its wider text is part of the clearance.
-pub fn skip_strip(chart_id: &str, rows: &mut Vec<ComposedRow>, labeled: Option<&[bool]>, row_padding_horizontal: f64, labels_at: Option<f64>) {
-    let (kept, gap) = thinned_strip(rows, labeled, row_padding_horizontal, labels_at);
+pub fn skip_strip(chart_id: &str, rows: &mut Vec<ComposedRow>, labeled: Option<&[bool]>, row_padding_horizontal: f64) {
+    let (kept, gap) = thinned_strip(rows, labeled, row_padding_horizontal);
     if gap < row_padding_horizontal {
         warn_cell_overflow(chart_id, row_padding_horizontal, gap);
     }
@@ -1458,11 +1251,11 @@ pub fn skip_strip(chart_id: &str, rows: &mut Vec<ComposedRow>, labeled: Option<&
 /// [`skip_strip`]'s verdict without its side effects: the rows it keeps and the
 /// narrowest gap between their kept cells. A fit that reads the strip's ink
 /// calls this before it measures, so it sizes what the strip will paint.
-pub fn thinned_strip(rows: &[ComposedRow], labeled: Option<&[bool]>, row_padding_horizontal: f64, labels_at: Option<f64>) -> (Vec<ComposedRow>, f64) {
+pub fn thinned_strip(rows: &[ComposedRow], labeled: Option<&[bool]>, row_padding_horizontal: f64) -> (Vec<ComposedRow>, f64) {
     let clearance = row_padding_horizontal;
     let candidates = columns_kept(rows.first().map_or(0, |row| row.cells.len()), labeled);
     let widest_step = candidates.len().saturating_sub(1).max(1);
-    let thinned_at = |step: usize| thinned(rows, &candidates.iter().copied().step_by(step).collect::<Vec<_>>(), labels_at);
+    let thinned_at = |step: usize| thinned(rows, &candidates.iter().copied().step_by(step).collect::<Vec<_>>());
     let gap_of = |kept: &[ComposedRow]| narrowest_gap(kept.iter(), &(0..kept.first().map_or(0, |r| r.cells.len())).collect::<Vec<_>>());
     let step = (1..widest_step).find(|&step| gap_of(&thinned_at(step)) >= clearance).unwrap_or(widest_step);
     let kept = thinned_at(step);
@@ -1478,7 +1271,7 @@ pub fn thinned_strip(rows: &[ComposedRow], labeled: Option<&[bool]>, row_padding
 /// edge is not a bucket past it.
 pub fn gutter_holds(chart_id: &str, rows: &[ComposedRow], reserved_left: f64, plot_w: f64) -> bool {
     let left = composed_left_overhang(rows);
-    let past_plot = rows.iter().flat_map(|row| &row.cells).any(|cell| cell.x - cell.hang - cell.align_dx > plot_w + 0.01);
+    let past_plot = rows.iter().flat_map(|row| &row.cells).any(|cell| cell.x - cell.align_dx > plot_w + 0.01);
     let detail = if left > reserved_left + 0.01 {
         format!("the first cell reaches {left:.0}px left of the plot, the gutter holds {reserved_left:.0}px")
     } else if past_plot {
@@ -1525,28 +1318,12 @@ pub fn clear_right_stubs(rows: &mut [ComposedRow], plot_w: f64) {
     rows.iter_mut().for_each(|row| row.stub_dx += reach);
 }
 
-/// `rows` reduced to the `kept` buckets. A row's first carrying kept cell takes
-/// its declaring form: the unit sits on the first number the row shows, even
-/// when the stride passed the bucket the row first carried it on, and it hangs
-/// past the digit edge like any anchor's. `labels_at` is where the row labels on the
-/// strip's right begin: an anchor promoted onto the last kept bucket whose hung
-/// unit would reach them keeps it inside its digits instead.
-fn thinned(rows: &[ComposedRow], kept: &[usize], labels_at: Option<f64>) -> Vec<ComposedRow> {
+/// `rows` reduced to the `kept` buckets.
+fn thinned(rows: &[ComposedRow], kept: &[usize]) -> Vec<ComposedRow> {
     rows.iter()
         .map(|row| {
             let mut row = row.clone();
-            let mut cells: Vec<ComposedCell> = kept.iter().map(|&i| row.cells[i].clone()).collect();
-            let last = cells.len().saturating_sub(1);
-            if let Some((i, cell)) = cells.iter_mut().enumerate().find(|(_, cell)| cell.declaring.is_some()) {
-                let anchor = cell.declaring.take().expect("found by its declaring form");
-                (cell.text, cell.w, cell.hang) = (anchor.text, anchor.w, anchor.hang);
-                cell.x += anchor.dx;
-                if i == last && labels_at.is_some_and(|at| cell.x + row.dx > at + row.stub_dx) {
-                    cell.x -= cell.hang;
-                    cell.hang = 0.0;
-                }
-            }
-            row.cells = cells;
+            row.cells = kept.iter().map(|&i| row.cells[i].clone()).collect();
             row
         })
         .collect()
@@ -2014,288 +1791,102 @@ pub(crate) fn assert_legend_clears_strip(svg: &str, fonts: &FontBook) {
 mod numerals_tests {
     use super::*;
 
-    /// Trimmed currency (`$,.0f`): the anchor cell keeps the `$`, every
-    /// other cell has the repeated affix removed from the formatted string
-    /// (production's `strip_numerals_for_values` trimmed path). Oracle:
-    /// product_bar's Revenue row paints `$75,404  68,400  62,070 …`.
+    /// Rule 3: a row's cells print digits alone and the row label carries the unit, in
+    /// the analytic register (`$K`), whichever way the format would have declared it.
     #[test]
-    fn trimmed_currency_declares_the_dollar_once() {
-        let vals = [75404.0, 68400.0, 62070.0];
-        let n = strip_numerals_for_values(&vals, "$,.0f", false, false).unwrap();
-        assert_eq!(n.cell_text(75404.0, true).unwrap(), "$75,404");
-        assert_eq!(n.cell_text(68400.0, false).unwrap(), "68,400");
-        assert_eq!(n.cell_text(62070.0, false).unwrap(), "62,070");
+    fn a_bare_row_prints_digits_and_names_its_unit() {
+        let row = |vals: &[f64], spec: &str| StripNumerals::for_values(vals, spec).unwrap();
+        let money = row(&[412_000.0, 388_000.0, 406_000.0], "$.3~s");
+        assert_eq!(money.labeled("Pipeline"), "Pipeline, $K");
+        assert_eq!(money.cell_text(412_000.0).unwrap(), "412");
+        assert_eq!(money.cell_text(388_000.0).unwrap(), "388");
+        assert_eq!(money.cell_text(0.0).unwrap(), "0");
+        assert_eq!(row(&[1_200_000.0, 3_400_000.0], ".3~s").labeled("Units"), "Units, M");
+        let percent = row(&[0.232, 0.22], ".1%");
+        assert_eq!(percent.labeled("Share"), "Share, %");
+        assert_eq!(percent.cell_text(0.232).unwrap(), "23.2");
+        let whole = row(&[75404.0, 68400.0], "$,.0f");
+        assert_eq!(whole.labeled("Revenue"), "Revenue, $");
+        assert_eq!(whole.cell_text(75404.0).unwrap(), "75,404");
+        let count = row(&[12.0, 9.0], ",d");
+        assert_eq!(count.labeled("Deals"), "Deals");
+        assert_eq!(count.cell_text(12.0).unwrap(), "12");
     }
 
-    /// Trimmed percent (`.1%`): `%` on the anchor only. Oracle:
-    /// weekly_bar_compact_formats' Share row paints `23.2%  22.0  19.5 …`.
+    /// A label that already names part of the unit gets only the rest; one that names it all stays.
     #[test]
-    fn trimmed_percent_declares_the_percent_once() {
-        let vals = [0.232, 0.22, 0.195];
-        let n = strip_numerals_for_values(&vals, ".1%", false, false).unwrap();
-        assert_eq!(n.cell_text(0.232, true).unwrap(), "23.2%");
-        assert_eq!(n.cell_text(0.22, false).unwrap(), "22.0");
-        assert_eq!(n.cell_text(0.195, false).unwrap(), "19.5");
+    fn a_row_label_is_given_only_the_unit_it_is_missing() {
+        let money = StripNumerals::for_values(&[412_000.0, 388_000.0], "$.3~s").unwrap();
+        assert_eq!(money.labeled("Total $"), "Total $, K");
+        assert_eq!(money.labeled("Pipeline, $K"), "Pipeline, $K");
+        assert_eq!(money.labeled("Kids"), "Kids, $K", "a word that merely contains the letter names nothing");
+        let mut euros = StripNumerals::for_values(&[412_000.0, 388_000.0], ".3~s").unwrap();
+        euros.wrap_unit("EUR ", "");
+        assert_eq!(euros.labeled("Net"), "Net, EUR K");
     }
 
-    /// Composed SI (`$.3~s`): the row divides by one shared magnitude and
-    /// rebuilds a fixed-point digit spec; the anchor carries `$` and the
-    /// narrative suffix, siblings are bare scaled digits. Oracle:
-    /// weekly_bar_compact_formats' Revenue row paints `$102.8k  97.5 …`
-    /// (thousands tier; precision 1 from the finest value's 2 integer
-    /// digits at sig-figs 3; 102.85's exact double is 102.849… so the cell
-    /// rounds DOWN — the committed production golden pins `$102.8k`).
+    /// A row that cannot share one tier prints full digits and names no tier: no cell carries a
+    /// magnitude letter the label leaves out.
     #[test]
-    fn composed_si_divides_by_one_shared_magnitude() {
-        let vals = [102850.0, 97469.0, 86180.0, 111122.0, 45402.0];
-        let n = strip_numerals_for_values(&vals, "$.3~s", false, false).unwrap();
-        assert_eq!(n.cell_text(102850.0, true).unwrap(), "$102.8k");
-        assert_eq!(n.cell_text(97469.0, false).unwrap(), "97.5");
-        assert_eq!(n.cell_text(45402.0, false).unwrap(), "45.4");
+    fn a_mixed_tier_row_prints_full_digits_under_a_label_with_no_tier() {
+        let row = StripNumerals::for_values(&[950_000.0, 120.0], "$.3~s").unwrap();
+        assert_eq!(row.cell_text(950_000.0).unwrap(), "950,000");
+        assert_eq!(row.cell_text(120.0).unwrap(), "120");
+        assert_eq!(row.labeled("Revenue"), "Revenue, $");
+        let spread = StripNumerals::for_values(&[1_200_000.0, 3.0], ".3~s").unwrap();
+        assert_eq!(spread.cell_text(1_200_000.0).unwrap(), "1,200,000");
+        assert_eq!(spread.labeled("Units"), "Units");
     }
 
-    /// A magnitude suffix never rides a zero cell ("0k" is meaningless) and
-    /// the anchor skips zero cells — the first non-zero cell declares. No cell
-    /// carries a pad: a zero beside `97.5` is a bare `0`.
+    /// A mixed-tier row prints each value exactly: a rounded `951,000` would read as exact.
     #[test]
-    fn composed_zero_cell_is_never_the_anchor_and_never_suffixed() {
-        let vals = [0.0, 102850.0, 97469.0];
-        let n = strip_numerals_for_values(&vals, "$.3~s", false, false).unwrap();
-        assert!(!n.carries(0.0), "zero cannot carry the unit");
-        assert!(n.carries(102850.0), "first non-zero cell declares");
-        assert_eq!(n.cell_text(0.0, false).unwrap(), "0");
+    fn a_mixed_tier_row_prints_its_values_unrounded() {
+        let row = StripNumerals::for_values(&[951_234.0, 120.0], ".3~s").unwrap();
+        assert_eq!(row.cell_text(951_234.0).unwrap(), "951,234");
+        let spread = StripNumerals::for_values(&[1_234_567.0, 3.0], "$.3~s").unwrap();
+        assert_eq!(spread.cell_text(1_234_567.0).unwrap(), "1,234,567");
+        assert_eq!(spread.cell_text(3.0).unwrap(), "3");
+        let sliver = StripNumerals::for_values(&[4e-7, 2e-7], ".3~s").unwrap();
+        assert_eq!(sliver.cell_text(4e-7).unwrap(), "0.0000004");
+        let fine = StripNumerals::for_values(&[1.23456789, 2_000_000.0], ".3~s").unwrap();
+        assert_eq!(fine.cell_text(1.23456789).unwrap(), "1.23456789");
+        assert_eq!(fine.cell_text(2_000_000.0).unwrap(), "2,000,000");
     }
 
-    /// A signed compacted row keeps one sign per cell: `+` on the positives, the
-    /// locale's minus on the negatives, never both (`−+14m`).
+    /// A signed row keeps one sign per cell, and a sliver is not rounded to a zero cell.
     #[test]
-    fn a_signed_composed_row_prints_one_sign_per_cell() {
-        let vals = [14_000_000.0, -14_000_000.0, 2_500_000.0, -2_500_000.0, 0.0];
-        let n = strip_numerals_for_values(&vals, "+.3~s", false, false).unwrap();
-        assert_eq!(n.cell_text(14_000_000.0, true).unwrap(), "+14m");
-        assert_eq!(n.cell_text(-14_000_000.0, true).unwrap(), "\u{2212}14m");
-        assert_eq!(n.cell_text(2_500_000.0, false).unwrap(), "+2.5");
-        assert_eq!(n.cell_text(-2_500_000.0, false).unwrap(), "\u{2212}2.5");
-        assert_eq!(n.cell_text(0.0, false).unwrap(), "+0");
+    fn a_signed_row_prints_one_sign_per_cell() {
+        let row = StripNumerals::for_values(&[14_000_000.0, -14_000_000.0, 2_500_000.0, 0.0], "+.3~s").unwrap();
+        assert_eq!(row.cell_text(14_000_000.0).unwrap(), "+14");
+        assert_eq!(row.cell_text(-14_000_000.0).unwrap(), "\u{2212}14");
+        assert_eq!(row.cell_text(2_500_000.0).unwrap(), "+2.5");
+        assert_eq!(row.cell_text(0.0).unwrap(), "+0");
+        let sliver = StripNumerals::for_values(&[5_000_000.0, 40.0], ".3~s").unwrap();
+        assert_eq!(sliver.cell_text(40.0).unwrap(), "40");
     }
 
-    /// A set whose extreme stays under six written integer digits does not
-    /// compact — the author's spec paints every cell unchanged (production's
-    /// `shared_scale_for_column` compaction threshold).
+    /// The board's words and decimal are the locale's: the unit names the analytic word.
     #[test]
-    fn composed_below_compaction_threshold_keeps_the_author_spec() {
-        let vals = [75404.0, 68400.0];
-        let n = strip_numerals_for_values(&vals, "$.3~s", false, false).unwrap();
-        assert_eq!(n.cell_text(75404.0, true).unwrap(), "$75.4k");
-        assert_eq!(
-            n.cell_text(68400.0, false).unwrap(),
-            "$68.4k",
-            "no shared magnitude declared — every cell formats through the author's own spec"
-        );
-    }
-
-    /// Un-anchored rows (production's `StripAnchor.nowhere()` / plain
-    /// numerals: an unpinned sort, quantitative x) repeat the full format on
-    /// every cell — the pre-feature output.
-    #[test]
-    fn unanchored_rows_format_every_cell_in_full() {
-        let n = StripNumerals::plain("$,.0f");
-        assert_eq!(n.cell_text(75404.0, true).unwrap(), "$75,404");
-        assert_eq!(n.cell_text(68400.0, false).unwrap(), "$68,400");
-    }
-
-    fn affixed(prefix: &str, suffix: &str, repeat: Option<&str>) -> FormatSlot {
-        FormatSlot {
-            prefix: prefix.into(),
-            suffix: suffix.into(),
-            repeat: repeat.map(Into::into),
-            ..FormatSlot::from(",.0f")
-        }
-    }
-
-    /// `_authored_affix_numerals`: `repeat: anchor` declares the affix on the
-    /// anchor cell alone and the anchor leads its sign with the prefix (`US$`
-    /// then `\u{2212}`); `repeat: every`, a literal spec with no `repeat`, and
-    /// an unanchored strip paint the full affix on every cell, zero included,
-    /// placing the sign by the prefix (`CHF \u{2212}10`).
-    #[test]
-    fn an_authored_affix_declares_on_the_anchor_for_repeat_anchor_and_on_every_cell_otherwise() {
-        let anchor = StripNumerals::authored(&affixed("US$", "", Some("anchor")), true, false, "p").unwrap();
-        assert_eq!(anchor.cell_text(-40.0, true).unwrap(), "US$\u{2212}40");
-        assert_eq!(anchor.cell_text(-40.0, false).unwrap(), "\u{2212}40");
-        assert_eq!(anchor.cell_text(0.0, false).unwrap(), "0");
-        let trailing = StripNumerals::authored(&affixed("", " CHF", Some("anchor")), true, false, "p").unwrap();
-        assert_eq!(trailing.cell_text(10.0, true).unwrap(), "10 CHF", "the suffix is part of the anchor's right-aligned text");
-        for numerals in [
-            StripNumerals::authored(&affixed("CHF ", "", Some("every")), true, false, "p").unwrap(),
-            StripNumerals::authored(&affixed("CHF ", "", None), true, false, "p").unwrap(),
-            StripNumerals::authored(&affixed("CHF ", "", Some("anchor")), false, false, "p").unwrap(),
-        ] {
-            assert_eq!(numerals.cell_text(-10.0, true).unwrap(), "CHF \u{2212}10");
-            assert_eq!(numerals.cell_text(-10.0, false).unwrap(), "CHF \u{2212}10");
-            assert_eq!(numerals.cell_text(0.0, false).unwrap(), "CHF 0");
-        }
-        // A glued prefix signs before itself on an undeclared row: the sign
-        // placement is the slot's own, not the anchor's `after_prefix`.
-        let glued = StripNumerals::authored(&affixed("US$", "", Some("every")), true, false, "p").unwrap();
-        assert_eq!(glued.cell_text(-10.0, false).unwrap(), "\u{2212}US$10");
-        assert_eq!(glued.cell_text(-10.0, true).unwrap(), "\u{2212}US$10");
-    }
-
-    /// A `repeat` or `sign_placement` on a format with no authored affix
-    /// changes nothing (`_authored_affix_numerals` returns `None`): the strip
-    /// paints the spec.
-    #[test]
-    fn a_repeat_or_sign_placement_without_an_authored_affix_paints_the_spec() {
-        for slot in [
-            FormatSlot { repeat: Some("every".into()), ..FormatSlot::from(",.0f") },
-            FormatSlot { sign_placement: Some(SignPlacement::AfterPrefix), ..FormatSlot::from(",.0f") },
-        ] {
-            let entry = SupportTableEntry {
-                source: Some("units".into()),
-                aggregate: None,
-                format: Some(slot),
-                label: None,
-                per_series: None,
-                by_measure: false,
-                ink: None,
-            };
-            let rows: Vec<serde_json::Map<String, Value>> =
-                vec![serde_json::json!({"week": "2024-01-01", "units": 1500.0}).as_object().unwrap().clone()];
-            let domain = vec!["2024-01-01".to_string()];
-            let lines = entry_lines(&entry, &rows, "week", &domain, true, true, false, None, &[], "c", 0).unwrap();
-            assert_eq!(lines.numerals.expect("a spec paints").cell_text(1500.0, true).unwrap(), "1,500");
-        }
-    }
-
-    /// A house format's default declares its affix once, whichever side the
-    /// value axis is on: every cell ends at the lane's right edge, so a leading
-    /// prefix on the anchor only grows it leftward.
-    #[test]
-    fn a_house_prefix_declares_once() {
-        let house = FormatSlot { raw: Some("number".into()), ..affixed("US$", "", None) };
-        assert!(house.is_house());
-        let n = StripNumerals::authored(&house, true, false, "p").unwrap();
-        assert!(n.declares_once);
-        assert_eq!(n.cell_text(5.0, true).unwrap(), "US$5");
-        assert_eq!(n.cell_text(6.0, false).unwrap(), "6");
-    }
-
-    /// A house prefix that leads its sign (`before_prefix`) cannot be declared once: on a
-    /// left axis it stays on every cell, as it always has, and on a right axis the anchor
-    /// it would lead is refused by name.
-    #[test]
-    fn a_before_prefix_house_prefix_repeats_on_a_left_axis_and_refuses_on_a_right_one() {
-        let house = FormatSlot { raw: Some("integer".into()), sign_placement: Some(SignPlacement::BeforePrefix), ..affixed("€", "", None) };
-        assert!(house.is_house());
-        let left = StripNumerals::authored(&house, true, true, "p").unwrap();
-        assert!(!left.declares_once);
-        assert_eq!(left.cell_text(-50.0, false).unwrap(), "\u{2212}€50");
-        assert_eq!(left.cell_text(-50.0, true).unwrap(), "\u{2212}€50");
-        assert!(StripNumerals::authored(&house, true, false, "p").is_err());
-        let plain = FormatSlot { raw: Some("integer".into()), ..affixed("€", "", None) };
-        assert!(StripNumerals::authored(&plain, true, true, "p").unwrap().declares_once, "no sign placement: a left axis declares once");
-    }
-
-    #[test]
-    fn an_authored_affix_declares_once_and_pads_nothing() {
-        let slot = affixed("", " pts", Some("anchor"));
-        let n = StripNumerals::authored(&slot, true, false, "p").unwrap();
-        assert_eq!(n.cell_text(5.0, true).unwrap(), "5 pts");
-        assert_eq!(n.cell_text(6.0, false).unwrap(), "6");
-        let padded = FormatSlot { spec: ",.2~f".into(), ..affixed("US$", "", Some("anchor")) };
-        let aligned = StripNumerals::authored(&padded, true, false, "p").unwrap();
-        assert_eq!(aligned.cell_text(1.5, true).unwrap(), "US$1.5", "a trimmed spec's decimals are not padded to a fixed depth");
-        assert_eq!(aligned.cell_text(2.0, false).unwrap(), "2");
-        // A `$` spec keeps its symbol on the declaring cell and drops it from the rest.
-        let symbol = FormatSlot { spec: "$,.0f".into(), ..affixed("", " pts", Some("anchor")) };
-        let symbol = StripNumerals::authored(&symbol, true, false, "p").unwrap();
-        assert_eq!(symbol.cell_text(1500.0, true).unwrap(), "$1,500 pts");
-        assert_eq!(symbol.cell_text(900.0, false).unwrap(), "900");
-    }
-
-    /// A fill-and-align format is just a spec: the anchor machinery reads its
-    /// type and symbol, and the fill paints through d3.
-    #[test]
-    fn a_padded_format_paints_its_fill_in_every_cell() {
-        let n = strip_numerals_for_values(&[100.0, 90.0], "*>10,.0f", false, false).unwrap();
-        assert_eq!(n.cell_text(100.0, true).unwrap(), "*******100");
-        assert_eq!(n.cell_text(90.0, false).unwrap(), "********90");
-    }
-
-    /// A trimmed percent anchor is the author's own spelling (`55%*****`): the
-    /// suffix sits where the spec puts it, in the right-aligned text.
-    #[test]
-    fn a_padded_percent_anchor_keeps_the_specs_own_spelling() {
-        let n = strip_numerals_for_values(&[0.55, 0.09], "*<8.0%", false, false).unwrap();
-        assert_eq!(n.cell_text(0.55, true).unwrap(), "55%*****");
-        assert_eq!(n.cell_text(0.09, false).unwrap(), "9******");
-    }
-
-    /// No affix in the spec (`,d`): nothing to declare; identical output on
-    /// every cell, anchored or not.
-    #[test]
-    fn affix_free_specs_are_unchanged() {
-        let n = strip_numerals_for_values(&[2693.0, 2280.0], ",d", false, false).unwrap();
-        assert_eq!(n.cell_text(2693.0, true).unwrap(), "2,693");
-        assert_eq!(n.cell_text(2280.0, false).unwrap(), "2,280");
-    }
-
-    /// A column block speaks `SharedScale.register`: the analytic word (glued
-    /// to the digits for en-US) while the suffix declares once; a horizontal row
-    /// is always narrative.
-    #[test]
-    fn a_vertical_block_declares_its_magnitude_in_the_analytic_register() {
-        let vals = [1_200_000.0, 3_400_000.0, 5_600_000.0];
-        let n = strip_numerals_for_values(&vals, ".3~s", true, false).unwrap();
-        assert_eq!(n.cell_text(1_200_000.0, true).unwrap(), "1.2M");
-        assert_eq!(n.cell_text(3_400_000.0, false).unwrap(), "3.4");
-        let row = strip_numerals_for_values(&vals, ".3~s", false, false).unwrap();
-        assert_eq!(row.cell_text(1_200_000.0, true).unwrap(), "1.2m");
-    }
-
-    /// The declared magnitude is the active locale's word. Oracle:
-    /// `strip_numerals_for_values` under `Regional(locale="de-DE")`, whose
-    /// analytic words are `k M Mrd Bio` behind a no-break space and whose
-    /// decimal separator is a comma.
-    #[test]
-    fn a_vertical_block_speaks_the_boards_words_and_decimal() {
+    fn a_row_speaks_the_boards_words_and_decimal() {
         let mut wire = ::bind::formats::locale::en_us_wire();
         wire["decimal"] = serde_json::json!(",");
         wire["thousands"] = serde_json::json!(".");
         wire["analytic"] = serde_json::json!(["\u{a0}k", "\u{a0}M", "\u{a0}Mrd", "\u{a0}Bio"]);
         let de: ::bind::formats::locale::NumberLocale = serde_json::from_value(wire).unwrap();
         ::bind::formats::locale::with_number_locale(&de, || {
-            let vals = [1_200_000.0, 3_400_000.0, 5_600_000.0];
-            let n = strip_numerals_for_values(&vals, ".3~s", true, false).unwrap();
-            assert_eq!(n.cell_text(1_200_000.0, true).unwrap(), "1,2\u{a0}M");
-            assert_eq!(n.cell_text(3_400_000.0, false).unwrap(), "3,4");
+            let row = StripNumerals::for_values(&[1_200_000.0, 3_400_000.0], "$.3~s").unwrap();
+            assert_eq!(row.cell_text(1_200_000.0).unwrap(), "1,2");
+            assert_eq!(row.labeled("Umsatz"), "Umsatz, $\u{a0}M");
         });
     }
 
-    /// de-DE writes its currency after the digits (`["", "\u{a0}€"]`), so the
-    /// anchor declares it once, leading, and no other cell repeats it
-    /// (`_currency_affixes`).
+    /// A count compacted to a tier prints that tier's digits and names the tier in its label.
     #[test]
-    fn an_anchored_dollar_strip_leads_the_board_currency_under_a_suffix_currency_locale() {
-        let vals = [1_200_000.0, 3_400_000.0, 5_600_000.0];
-        ::bind::formats::locale::with_number_locale(&::bind::formats::locale::de_de(), || {
-            let n = strip_numerals_for_values(&vals, "$.3~s", false, false).unwrap();
-            assert!(n.cell_text(1_200_000.0, true).unwrap().starts_with('€'));
-            assert!(!n.cell_text(3_400_000.0, false).unwrap().contains('€'));
-        });
-        let n = strip_numerals_for_values(&vals, "$.3~s", false, false).unwrap();
-        assert!(n.cell_text(1_200_000.0, true).unwrap().starts_with('$'));
-    }
-
-    /// A suffix every cell paints (`SuffixMode.REPEAT`: the extreme scales to
-    /// four integer digits) is value-attached, so it reads narrative even in
-    /// a column.
-    #[test]
-    fn a_repeating_vertical_suffix_reads_narrative() {
-        let vals = [1_500_000.0, 2_500_000.0, 1_200_500_000.0];
-        let n = strip_numerals_for_values(&vals, ".3~s", true, false).unwrap();
-        assert_eq!(n.cell_text(1_500_000.0, false).unwrap(), "1.5m");
+    fn a_compacted_count_row_names_its_tier_in_its_label() {
+        let units = StripNumerals::for_values(&[9511.0, 9691.0, 10924.0], ".3~s").unwrap();
+        assert_eq!(units.labeled("Units"), "Units, K");
+        assert_eq!(units.cell_text(9511.0).unwrap(), "9.51");
+        assert_eq!(units.cell_text(9691.0).unwrap(), "9.69");
     }
 }
 
@@ -2369,8 +1960,7 @@ mod tests {
         series_order: &[String],
         series_ink: &[String],
     ) -> Result<Vec<TestRow>, Diagnostic> {
-        build_rows_composed(
-            "test", config, rows, x_field, domain, &centered(x_positions), fonts, style, false, false, color_field,
+        build_rows_composed( config, rows, x_field, domain, &centered(x_positions), fonts, style, color_field,
             series_order, series_ink, None, false)
         .map(|rows| {
             rows.into_iter()
@@ -2399,6 +1989,20 @@ mod tests {
     // Real font family present in InterVariable.ttf; "sans-serif" is skipped
     // by `face_for()` (mirrors `bar.rs`'s `TEST_FONT`).
     const TEST_FONT: &str = "'Inter Variable', Inter, sans-serif";
+
+    /// A row label cut to fit is given the unit its kept text is missing, not the unit the
+    /// whole name was missing: a `$` past the cut is named again after it.
+    #[test]
+    fn a_cut_row_label_never_loses_a_unit_named_past_the_cut() {
+        let lines = EntryLines {
+            spec: Some("$.3~s"),
+            lines: Vec::new(),
+            numerals: Some(StripNumerals::for_values(&[412_000.0, 388_000.0], "$.3~s").unwrap()),
+            nums: Vec::new(),
+        };
+        let stub = lines.stub(&test_fonts(), TEST_FONT, 11.0, "Pipeline value across every region in $").unwrap();
+        assert!(stub.contains('\u{2026}') && stub.ends_with(", $K"), "{stub}");
+    }
 
     /// `build_rows`'s style param needs a full `SupportTableStyle` (not just the
     /// label font) since `label_font_resolved` falls back to the body font.
@@ -2701,7 +2305,7 @@ mod tests {
         let strip_rows =
             build_rows(&config, &rows, "week", &domain, &[10.0, 20.0], &test_fonts(), &label_style(), None, &[], &[]).unwrap();
         assert_eq!(strip_rows.len(), 1);
-        assert_eq!(strip_rows[0].painted(), vec![(10.0, "$150".to_string()), (20.0, "$20".to_string())]);
+        assert_eq!(strip_rows[0].painted(), vec![(10.0, "150".to_string()), (20.0, "20".to_string())]);
     }
 
     #[test]
@@ -3130,7 +2734,7 @@ mod tests {
         let rows = vec![ComposedRow {
             label: "Revenue".into(),
             label_w: 40.0,
-            cells: vec![ComposedCell { x: 50.0, text: "$1".into(), w: 12.0, hang: 0.0, align_dx: 0.0, aria: String::new(), href: None, declaring: None }],
+            cells: vec![ComposedCell { x: 50.0, text: "$1".into(), w: 12.0, align_dx: 0.0, aria: String::new(), href: None }],
             dx: 7.0,
             label_color: None,
             stub_dx: 0.0,
@@ -3176,8 +2780,7 @@ mod tests {
             ],
             fold: None,
         };
-        let out = build_rows_composed("c", &config, &rows, "week", &domain, &centered(&[40.0, 120.0, 200.0]), &test_fonts(), &label_style(),
-            true, false, None, &[], &[], None, true)
+        let out = build_rows_composed( &config, &rows, "week", &domain, &centered(&[40.0, 120.0, 200.0]), &test_fonts(), &label_style(), None, &[], &[], None, true)
         .unwrap();
         for row in &out {
             for cell in &row.cells {
@@ -3199,17 +2802,13 @@ mod tests {
             assert_eq!(cells.len(), 9);
             assert!(cells.iter().all(|(_, anchor)| anchor == "end"), "stubs_on_right {stubs_on_right}: {cells:?}");
             for band in 0..3 {
-                let edges: Vec<f64> = (0..3).map(|row| cells[row * 3 + band].0 - out[row].cells[band].hang).collect();
+                let edges: Vec<f64> = (0..3).map(|row| cells[row * 3 + band].0).collect();
                 assert!(edges.windows(2).all(|w| (w[0] - w[1]).abs() < 0.01), "band {band} digit edges differ: {edges:?}");
             }
         }
-        // The anchor declares its unit: the digits end where the bare cells' end and the `k` hangs past.
-        let anchor = &out[0].cells[0];
-        assert_eq!(anchor.text, "$280k");
-        assert!(anchor.w > out[0].cells[1].w);
-        assert!(anchor.hang > 0.0);
-        assert_eq!(anchor.x - anchor.hang, 40.0, "the digits sit on the band's edge, the unit past it");
-        assert!(out[0].cells[1..].iter().all(|c| c.hang == 0.0));
+        // A row's cells carry no unit: the row label names it.
+        assert_eq!(out[0].cells[0].text, "280");
+        assert_eq!(out[0].label, "rev, $K");
     }
 
     fn per_series_config(label: Option<&str>) -> SupportTableConfig {
@@ -3257,7 +2856,7 @@ mod tests {
         let domain = vec!["2024-01-01".to_string(), "2024-01-08".to_string()];
         let series_order = vec!["A".to_string(), "B".to_string()];
         let series_ink = vec!["#111111".to_string(), "#222222".to_string()];
-        let out = build_rows_composed("c",
+        let out = build_rows_composed(
             &config,
             &rows,
             "week",
@@ -3265,8 +2864,6 @@ mod tests {
             &centered(&[10.0, 20.0]),
             &test_fonts(),
             &label_style(),
-            true,
-            false,
             Some("category"),
             &series_order,
             &series_ink, None, false)
@@ -3300,7 +2897,7 @@ mod tests {
         let series_order = vec!["A".to_string(), "B".to_string()];
         let series_ink = vec!["#111111".to_string(), "#222222".to_string()];
         let fonts = test_fonts();
-        let out = build_rows_composed("c",
+        let out = build_rows_composed(
             &config,
             &rows,
             "week",
@@ -3308,8 +2905,6 @@ mod tests {
             &centered(&[10.0, 20.0]),
             &fonts,
             &label_style(),
-            true,
-            false,
             Some("category"),
             &series_order,
             &series_ink, None, false)
@@ -3345,8 +2940,7 @@ mod tests {
         ];
         let domain = vec!["2024-01-01".to_string(), "2024-01-08".to_string()];
         let fonts = test_fonts();
-        let out = build_rows_composed("c", &config, &rows, "week", &domain, &centered(&[10.0, 20.0]), &fonts, &label_style(),
-            true, false, None, &[], &[], None, false)
+        let out = build_rows_composed( &config, &rows, "week", &domain, &centered(&[10.0, 20.0]), &fonts, &label_style(), None, &[], &[], None, false)
         .unwrap();
         assert_eq!(out[0].dx, out[1].dx, "one lane for the column, not one per row");
         let widest = fonts.measure("1,234,567", TEST_FONT, 11.0).unwrap();
@@ -3358,7 +2952,7 @@ mod tests {
     /// unit. Each cell is centered on its column, so a row's digits end at the cell's
     /// right edge less the slot, with or without a band under it.
     #[test]
-    fn one_cell_width_centers_every_row_on_its_column_and_leaves_a_slot_for_the_unit() {
+    fn one_cell_width_centers_every_row_on_its_column() {
         let config = SupportTableConfig {
             entries: vec![
                 SupportTableEntry { format: Some(house("currency_compact")), ..source_entry("rev") },
@@ -3371,49 +2965,13 @@ mod tests {
             .map(|(d, rev, units)| serde_json::json!({"week": d, "rev": rev, "units": units}).as_object().unwrap().clone())
             .collect();
         let domain = vec!["2024-01-01".to_string(), "2024-01-08".to_string()];
-        let out = build_rows_composed("c", &config, &rows, "week", &domain, &centered(&[10.0, 20.0]), &test_fonts(), &label_style(),
-            true, false, None, &[], &[], None, true)
+        let out = build_rows_composed( &config, &rows, "week", &domain, &centered(&[10.0, 20.0]), &test_fonts(), &label_style(), None, &[], &[], None, true)
         .unwrap();
         let anchor = &out[0].cells[0];
-        assert_eq!(anchor.text, "$280k");
-        let slot = anchor.hang;
-        let digits = anchor.w - anchor.hang;
+        assert_eq!(anchor.text, "280");
+        let digits = anchor.w;
         assert_eq!(out[0].dx, out[1].dx, "one cell width for the strip");
-        assert!((out[0].dx - (digits - slot) / 2.0).abs() < 0.01, "dx {} vs {}", out[0].dx, (digits - slot) / 2.0);
-    }
-
-    /// A strip is a table: every cell's digits end at one edge, and whatever follows a
-    /// cell's last digit, its own unit (`9.51k`) or the row's declared one (`$280k`), sits
-    /// in the unit column past that edge. A bare `206` ends where the `1` of `9.51k` does.
-    #[test]
-    fn every_cells_own_unit_sits_in_the_unit_column() {
-        let config = SupportTableConfig {
-            entries: vec![
-                SupportTableEntry { format: Some(house("number")), ..source_entry("units") },
-                SupportTableEntry { format: Some(house("number")), ..source_entry("orders") },
-            ],
-            fold: None,
-        };
-        let rows: Vec<serde_json::Map<String, Value>> = [("2024-01-01", 9_511.0, 206.0), ("2024-01-08", 9_691.0, 211.0), ("2024-01-15", 10_924.0, 223.0)]
-            .iter()
-            .map(|(d, units, orders)| serde_json::json!({"week": d, "units": units, "orders": orders}).as_object().unwrap().clone())
-            .collect();
-        let domain: Vec<String> = rows.iter().map(|row| row["week"].as_str().unwrap().to_string()).collect();
-        let out = build_rows_composed("c", &config, &rows, "week", &domain, &centered(&[50.0, 150.0, 250.0]), &test_fonts(), &label_style(),
-            true, false, None, &[], &[], None, true)
-        .unwrap();
-        let texts: Vec<&str> = out[0].cells.iter().map(|c| c.text.as_str()).collect();
-        assert!(texts.iter().all(|t| t.ends_with('k')), "every Units cell carries its own unit: {texts:?}");
-        for column in 0..3 {
-            let digit_edge = |row: &ComposedRow| row.cells[column].x + row.dx - row.cells[column].hang;
-            assert!(out[0].cells[column].hang > 0.0, "{} hangs its own unit", out[0].cells[column].text);
-            assert!(
-                (digit_edge(&out[0]) - digit_edge(&out[1])).abs() < 0.01,
-                "{} and {} end their digits at one edge",
-                out[0].cells[column].text,
-                out[1].cells[column].text
-            );
-        }
+        assert!((out[0].dx - digits / 2.0).abs() < 0.01, "dx {} vs {}", out[0].dx, digits / 2.0);
     }
 
     /// A column aligns as its axis label does: the cell under a label flushed to the
@@ -3433,7 +2991,7 @@ mod tests {
             Column { x: 200.0, align: Align::Right },
         ];
         let fonts = test_fonts();
-        let out = build_rows_composed("c", &config, &rows, "month", &domain, &columns, &fonts, &label_style(), true, false, None, &[], &[], None, true)
+        let out = build_rows_composed( &config, &rows, "month", &domain, &columns, &fonts, &label_style(), None, &[], &[], None, true)
             .unwrap();
         let cell_w = fonts.measure("1,234", TEST_FONT, 11.0).unwrap();
         let ends: Vec<f64> = out[0].cells.iter().map(|cell| cell.x + out[0].dx).collect();
@@ -3445,7 +3003,7 @@ mod tests {
             "a column flushed to the plot's end counts as centered: it never comes near the plot's start"
         );
         let starts = [Column { x: 0.0, align: Align::Left }, Column { x: 100.0, align: Align::Left }, Column { x: 200.0, align: Align::Left }];
-        let out = build_rows_composed("c", &config, &rows, "month", &domain, &starts, &fonts, &label_style(), true, false, None, &[], &[], None, true)
+        let out = build_rows_composed( &config, &rows, "month", &domain, &starts, &fonts, &label_style(), None, &[], &[], None, true)
             .unwrap();
         assert!(composed_left_bound(&out, 0.0) <= 1e-9, "cells that start at their labels reach nothing left of the plot");
     }
@@ -3462,7 +3020,7 @@ mod tests {
         let positions: Vec<f64> = (0..12).map(|i| pitch * (i as f64 + 0.5)).collect();
         let config = SupportTableConfig { entries: vec![SupportTableEntry { format: Some(house("number")), ..source_entry("rev") }], fold: None };
         let (fonts, style) = (test_fonts(), label_style());
-        let composed = build_rows_composed("c", &config, &rows, "region", &domain, &centered(&positions), &fonts, &style, true, false, None, &[], &[], None, ordered_x)
+        let composed = build_rows_composed( &config, &rows, "region", &domain, &centered(&positions), &fonts, &style, None, &[], &[], None, ordered_x)
             .unwrap();
         fit_strip("c", composed, style.row.padding.horizontal, ordered_x)
     }
@@ -3481,7 +3039,7 @@ mod tests {
         let mut out = rows.expect("an ordered strip is never hidden");
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(out[0].cells.len(), 12);
-        skip_strip("c", &mut out, None, 4.0, None);
+        skip_strip("c", &mut out, None, 4.0);
         assert!(out[0].cells.len() < 12, "{:?}", out[0].cells.len());
     }
 
@@ -3524,28 +3082,11 @@ mod tests {
         let domain: Vec<String> = rows.iter().map(|row| row["month"].as_str().unwrap().to_string()).collect();
         let plot_w = 100.0;
         let columns = [Column { x: 0.0, align: Align::Left }, Column { x: plot_w - 1.0, align: Align::Left }];
-        let out = build_rows_composed("c", &config, &rows, "month", &domain, &columns, &fonts, &label_style(), true, false, None, &[], &[], None, true)
+        let out = build_rows_composed( &config, &rows, "month", &domain, &columns, &fonts, &label_style(), None, &[], &[], None, true)
             .unwrap();
         assert!(out[0].cells[1].x > plot_w, "the last cell centers past the plot: {}", out[0].cells[1].x);
         let (holds, warnings) = diagnostic::collect(|| gutter_holds("c", &out, f64::INFINITY, plot_w));
         assert!(holds && warnings.is_empty(), "its bucket is on the plot: {warnings:?}");
-    }
-
-    /// An anchor promoted onto the last kept bucket hangs its unit past the digit edge,
-    /// unless that would reach the row labels on the strip's right: it keeps the unit
-    /// inside its digits instead.
-    #[test]
-    fn a_promoted_anchor_on_the_last_bucket_keeps_its_unit_off_the_row_label() {
-        let mut row = strip_row(30.0, &[10.0, 10.0, 10.0]);
-        row.cells[2].declaring = Some(Declaring { text: "$1k".into(), w: 30.0, hang: 8.0, dx: 8.0 });
-        let rows = [row];
-        let kept = [0, 1, 2];
-        let hung = &thinned(&rows, &kept, Some(100.0))[0].cells[2];
-        assert_eq!((hung.x, hung.hang, hung.w), (68.0, 8.0, 30.0), "room to hang: the unit sits past the digit edge");
-        let inside = &thinned(&rows, &kept, Some(65.0))[0].cells[2];
-        assert_eq!((inside.x, inside.hang, inside.text.as_str()), (60.0, 0.0, "$1k"), "no room: the whole text ends at the digit edge");
-        let free = &thinned(&rows, &kept, None)[0].cells[2];
-        assert_eq!(free.hang, 8.0, "no label on the right: nothing to reach");
     }
 
     /// Fourteen daily buckets at 14px, rows in `values` order; `None` is no row at all.
@@ -3562,104 +3103,10 @@ mod tests {
             .collect();
         let order: Vec<String> = series.iter().map(|(name, _)| name.to_string()).collect();
         let ink = vec!["#111111".to_string(); order.len()];
-        let mut out = build_rows_composed("c", config, &rows, "week", &domain, &centered(&positions), &test_fonts(), &label_style(),
-            true, false, Some("category"), &order, &ink, None, true)
+        let mut out = build_rows_composed( config, &rows, "week", &domain, &centered(&positions), &test_fonts(), &label_style(), Some("category"), &order, &ink, None, true)
         .unwrap();
-        skip_strip("c", &mut out, None, 4.0, None);
+        skip_strip("c", &mut out, None, 4.0);
         out
-    }
-
-    fn unit_cells(row: &ComposedRow) -> usize {
-        row.cells.iter().filter(|c| c.text.contains('k')).count()
-    }
-
-    /// Skipping must leave each row's unit on its first carrying kept cell: a
-    /// row that opens on zero anchors on a later bucket the stride may pass.
-    #[test]
-    fn a_skipped_row_that_opens_on_zero_still_declares_its_unit() {
-        let values: Vec<Option<f64>> = (0..14).map(|i| Some(if i == 0 { 0.0 } else { 283_000.0 + 1_000.0 * i as f64 })).collect();
-        let config = SupportTableConfig { entries: vec![SupportTableEntry { format: Some(house("currency_compact")), ..source_entry("revenue") }], fold: None };
-        let rows = skipped_strip(&config, &[("A", values)]);
-        assert!(rows[0].cells.len() < 14, "the strip skipped");
-        assert_eq!(unit_cells(&rows[0]), 1, "{:?}", rows[0].cells.iter().map(|c| &c.text).collect::<Vec<_>>());
-        // The promoted anchor is wider than a bare cell: the kept cells still clear it.
-        let kept: Vec<usize> = (0..rows[0].cells.len()).collect();
-        assert!(narrowest_gap(rows.iter(), &kept) >= 4.0);
-    }
-
-    /// The promoted cell is still the bucket's own: its description, link and any
-    /// offset the caller moved it by stay, and its unit hangs past its digit edge.
-    #[test]
-    fn a_promoted_anchor_keeps_its_description_and_its_offset() {
-        let domain: Vec<String> = (1..=14).map(|d| format!("2024-01-{d:02}")).collect();
-        let positions: Vec<f64> = (0..14).map(|i| 14.0 * i as f64).collect();
-        let rows: Vec<serde_json::Map<String, Value>> = domain
-            .iter()
-            .enumerate()
-            .map(|(i, d)| serde_json::json!({"week": d, "revenue": if i == 0 { 0.0 } else { 283_000.0 + i as f64 }}).as_object().unwrap().clone())
-            .collect();
-        let config = SupportTableConfig { entries: vec![SupportTableEntry { format: Some(house("currency_compact")), ..source_entry("revenue") }], fold: None };
-        let mut out = build_rows_composed("c", &config, &rows, "week", &domain, &centered(&positions), &test_fonts(), &label_style(),
-            true, false, None, &[], &[], None, true)
-        .unwrap();
-        for (i, cell) in out[0].cells.iter_mut().enumerate() {
-            cell.aria = format!("bucket {i}");
-            cell.x += 7.0;
-        }
-        skip_strip("c", &mut out, None, 4.0, None);
-        let promoted = out[0].cells.iter().find(|c| c.text.contains('k')).expect("the unit survives");
-        let bucket: usize = promoted.aria.trim_start_matches("bucket ").parse().unwrap();
-        assert!(bucket > 0 && promoted.x - promoted.hang == 14.0 * bucket as f64 + 7.0, "{} at {}", promoted.aria, promoted.x);
-    }
-
-    /// A promoted anchor's digits end on its band's digit edge, bare cells' and all,
-    /// with its unit hanging past, on either axis side.
-    #[test]
-    fn a_promoted_cells_digits_end_at_the_bare_cells_digit_edge_on_both_axis_sides() {
-        let values: Vec<Option<f64>> = (0..14).map(|i| Some(if i == 0 { 0.0 } else { 283_000.0 + 1_000.0 * i as f64 })).collect();
-        let config = SupportTableConfig { entries: vec![SupportTableEntry { format: Some(house("currency_compact")), ..source_entry("revenue") }], fold: None };
-        let rows = skipped_strip(&config, &[("A", values)]);
-        let promoted = rows[0].cells.iter().position(|c| c.text.contains('k')).expect("the unit survives");
-        assert!(promoted > 0 && rows[0].cells[promoted].w > rows[0].cells[promoted + 1].w, "the promoted cell is the wider one");
-        assert!(rows[0].cells[promoted].hang > 0.0, "its unit hangs");
-        for cell in &rows[0].cells {
-            let bands = (cell.x - cell.hang) / 14.0;
-            assert!((bands - bands.round()).abs() < 1e-9, "digits end on a band's edge: {:?} at {}", cell.text, cell.x);
-        }
-        for stubs_on_right in [true, false] {
-            let svg = print::print(&composed_rows_nodes(&rows, &label_style(), 6.0, 200.0, 0.0, 0.0, stubs_on_right, 0.0, None).unwrap());
-            let xs: Vec<f64> = svg
-                .split("<g class=\"mark-text role-mark strip\"")
-                .nth(1)
-                .unwrap()
-                .split("</g>")
-                .next()
-                .unwrap()
-                .split("<text ")
-                .skip(1)
-                .map(|tag| {
-                    assert!(tag.contains("text-anchor=\"end\""), "stubs_on_right {stubs_on_right}: {tag}");
-                    tag.split("x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
-                })
-                .collect();
-            for (cell, x) in rows[0].cells.iter().zip(&xs) {
-                assert!((*x - (cell.x + rows[0].dx)).abs() < 0.01, "the text ends at its digit edge plus its hang");
-            }
-        }
-    }
-
-    #[test]
-    fn a_per_series_row_that_starts_later_declares_its_own_unit_after_skipping() {
-        let full: Vec<Option<f64>> = (0..14).map(|i| Some(283_000.0 + 1_000.0 * i as f64)).collect();
-        let late: Vec<Option<f64>> = (0..14).map(|i| (i >= 2).then_some(100_000.0 + 1_000.0 * i as f64)).collect();
-        let mut config = per_series_config(None);
-        config.entries[0].format = Some(house("currency_compact"));
-        let rows = skipped_strip(&config, &[("A", full), ("B", late)]);
-        assert!(rows[0].cells.len() < 14, "the strip skipped");
-        for row in &rows {
-            assert_eq!(unit_cells(row), 1, "{}: {:?}", row.label, row.cells.iter().map(|c| &c.text).collect::<Vec<_>>());
-        }
-        assert_eq!(rows[0].cells.len(), rows[1].cells.len(), "every row keeps the same buckets");
     }
 
     fn house(name: &str) -> FormatSlot {
@@ -3682,8 +3129,7 @@ mod tests {
             serde_json::json!({"week": "2024-01-01", "a": 232.0, "b": 7852.0, "c": 29.5}).as_object().unwrap().clone(),
         ];
         let domain = vec!["2024-01-01".to_string()];
-        let out = build_rows_composed("c", &config, &rows, "week", &domain, &centered(&[10.0]), &test_fonts(), &label_style(),
-            false, false, None, &[], &[], None, false)
+        let out = build_rows_composed( &config, &rows, "week", &domain, &centered(&[10.0]), &test_fonts(), &label_style(), None, &[], &[], None, false)
         .unwrap();
         let texts: Vec<&str> = out.iter().map(|row| row.cells[0].text.as_str()).collect();
         assert_eq!(texts, ["232", "7,852", "29.50"]);
@@ -3699,7 +3145,7 @@ mod tests {
             cells: widths
                 .iter()
                 .enumerate()
-                .map(|(i, &w)| ComposedCell { x: pitch * i as f64, text: "$280,000".into(), w, hang: 0.0, align_dx: 0.0, aria: String::new(), href: None, declaring: None })
+                .map(|(i, &w)| ComposedCell { x: pitch * i as f64, text: "$280,000".into(), w, align_dx: 0.0, aria: String::new(), href: None })
                 .collect(),
             dx: 0.0,
             label_color: None,
@@ -3715,7 +3161,7 @@ mod tests {
     }
 
     fn skipped(rows: &mut Vec<ComposedRow>, labeled: Option<&[bool]>) -> Vec<Diagnostic> {
-        diagnostic::collect(|| skip_strip("c", rows, labeled, 4.0, None)).1
+        diagnostic::collect(|| skip_strip("c", rows, labeled, 4.0)).1
     }
 
     #[test]
@@ -3841,7 +3287,7 @@ mod tests {
         let series_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
         let series_ink = vec!["#111".to_string(), "#222".to_string(), "#333".to_string()];
         let s = style(8.0, 4.0, 2.0, 0.0, 1.0);
-        let out = build_rows_composed("c",
+        let out = build_rows_composed(
             &config,
             &rows,
             "week",
@@ -3849,8 +3295,6 @@ mod tests {
             &centered(&[10.0, 20.0]),
             &test_fonts(),
             &s,
-            true,
-            false,
             Some("category"),
             &series_order,
             &series_ink, None, false)
@@ -3869,7 +3313,7 @@ mod tests {
         let config = per_series_config(None);
         let rows = per_series_rows();
         let domain = vec!["2024-01-01".to_string(), "2024-01-08".to_string()];
-        let err = build_rows_composed("c",
+        let err = build_rows_composed(
             &config,
             &rows,
             "week",
@@ -3877,8 +3321,6 @@ mod tests {
             &centered(&[10.0, 20.0]),
             &test_fonts(),
             &label_style(),
-            true,
-            false,
             None,
             &[],
             &[], None, false)
@@ -3891,7 +3333,7 @@ mod tests {
         let config = per_series_config(None);
         let rows = per_series_rows();
         let domain = vec!["2024-01-01".to_string(), "2024-01-08".to_string()];
-        let err = build_rows_composed("c",
+        let err = build_rows_composed(
             &config,
             &rows,
             "week",
@@ -3899,8 +3341,6 @@ mod tests {
             &centered(&[10.0, 20.0]),
             &test_fonts(),
             &label_style(),
-            true,
-            false,
             Some("category"),
             &[],
             &[], None, false)
@@ -3933,7 +3373,7 @@ mod tests {
     fn build_share_row(entry: SupportTableEntry, values: &[f64]) -> Vec<ComposedRow> {
         let (rows, domain) = share_rows(values);
         let xs: Vec<f64> = (0..values.len()).map(|i| 100.0 * i as f64).collect();
-        build_rows_composed("c",
+        build_rows_composed(
             &SupportTableConfig { entries: vec![entry], fold: None },
             &rows,
             "q",
@@ -3941,52 +3381,30 @@ mod tests {
             &centered(&xs),
             &test_fonts(),
             &label_style(),
-            true,
-            false,
             None,
             &[],
             &[], None, false)
         .unwrap()
     }
 
-    /// A right-aligned row paints its trailing affix on the anchor only, so the
-    /// anchor's digits end where every bare cell's digits end and its suffix hangs
-    /// one suffix-width past that edge (`_hung_anchor_layers`).
+    /// A source row's cells hang nothing and stay on their bands: the unit is in the row
+    /// label (`_hung_anchor_layers` only ever moves a `per_series:` row's anchor).
     #[test]
-    fn an_anchors_digits_end_at_the_bare_digits_edge_and_its_suffix_hangs_past_it() {
-        let out = build_share_row(house_entry("percent_whole", ".0%"), &[0.03, 0.05, 0.07]);
-        let cells = &out[0].cells;
-        assert_eq!(cells[0].text, "3%");
-        let suffix_w = test_fonts().measure("%", TEST_FONT, 11.0).unwrap();
-        assert_eq!(cells[0].hang, suffix_w);
-        assert_eq!(cells[0].x, 0.0 + suffix_w, "the anchor shifts by the measured suffix");
-        assert_eq!([cells[1].x, cells[2].x], [100.0, 200.0], "a bare cell stays on its band");
-        assert!(cells[1..].iter().all(|c| c.hang == 0.0));
-    }
-
-    /// A prefix leads the digits and hangs nothing; a row where every cell carries its
-    /// own suffix hangs each cell's own, so its digits end at the column's one edge.
-    #[test]
-    fn a_prefix_hangs_nothing_and_a_per_cell_suffix_hangs_on_every_cell() {
-        let fonts = test_fonts();
-        let out = build_share_row(house_entry("currency_whole", "$,.0f"), &[3.0, 5.0]);
-        assert!(out[0].cells.iter().enumerate().all(|(i, c)| c.x == 100.0 * i as f64 && c.hang == 0.0), "{:?}", out[0].cells);
-        let literal = SupportTableEntry { format: Some(".0%".into()), ..house_entry("percent_whole", ".0%") };
-        let out = build_share_row(literal, &[0.03, 0.05]);
-        let pct = fonts.measure("%", TEST_FONT, 11.0).unwrap();
-        for (i, c) in out[0].cells.iter().enumerate() {
-            assert_eq!((c.x, c.hang), (100.0 * i as f64 + pct, pct), "{} hangs its own %: {:?}", c.text, out[0].cells);
+    fn a_source_rows_cells_carry_no_unit_and_hang_nothing() {
+        let cases: [(&str, &[f64], &[&str], &str); 4] = [
+            ("percent_whole", &[0.03, 0.05, 0.07], &["3", "5", "7"], "%"),
+            ("currency_whole", &[3.0, 5.0, 7.0], &["3", "5", "7"], "$"),
+            ("currency", &[1_100_000.0, 2_200_000.0, 3_300_000.0], &["1.1", "2.2", "3.3"], "$M"),
+            ("number", &[3.0, 5.0, 7.0], &["3", "5", "7"], ""),
+        ];
+        for (name, values, texts, unit) in cases {
+            let spec = predefined_number_spec(name).unwrap();
+            let out = build_share_row(house_entry(name, spec), values);
+            let cells = &out[0].cells;
+            assert_eq!(cells.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), texts, "{name}");
+            assert!(cells.iter().enumerate().all(|(i, c)| c.x == 100.0 * i as f64), "{name}: {cells:?}");
+            let expected = if unit.is_empty() { "Share".to_string() } else { format!("Share, {unit}") };
+            assert_eq!(out[0].label, expected, "{name}");
         }
-    }
-
-    /// The composed magnitude row's anchor carries its "m" the same way.
-    #[test]
-    fn a_magnitude_anchor_hangs_its_suffix() {
-        let out = build_share_row(house_entry("currency", "$.3~s"), &[1_100_000.0, 2_200_000.0, 3_300_000.0]);
-        assert_eq!(out[0].cells[0].text, "$1.1m");
-        assert_eq!(out[0].cells[1].text, "2.2");
-        let suffix_w = test_fonts().measure("m", TEST_FONT, 11.0).unwrap();
-        assert_eq!(out[0].cells[0].x, suffix_w);
-        assert_eq!(out[0].cells[1].x, 100.0);
     }
 }

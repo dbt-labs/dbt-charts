@@ -50,7 +50,11 @@ from dbt_charts.core.compile.models.style.resolved.table import (
     ResolvedColumnScaleTargetConfig,
     ResolvedNamedPaletteColumnScaleTargetConfig,
 )
+from dbt_charts.core.compile.models.style.theme import TableChartStyle
 from dbt_charts.core.compile.resolve.chart._channels import _channels_for
+from dbt_charts.core.compile.resolve.chart._conditional import (
+    validate_mark_conditional,
+)
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
@@ -93,7 +97,6 @@ from dbt_charts.core.text.numeral_scale import (
     fractional_digit_count,
     prints_si_suffix,
     shared_scale_for_column,
-    tier_distance,
 )
 from dbt_charts.core.text.predefined_formats import PREDEFINED_TEXT_NAMES
 from dbt_charts.core.utils import coerce_numeric_cell
@@ -158,6 +161,93 @@ def _style_input_columns(
             specs.append(cfg.font.color)
             specs.append(cfg.font.weight)
     return frozenset(s for s in specs if isinstance(s, str) and s in query_keys)
+
+
+def _validate_conditional(
+    columns: Mapping[str, TableColumnConfig],
+    data: Sequence[Mapping[str, Any]],  # type-state: explicit_any — query rows
+    is_pivot: bool,
+) -> None:
+    """Raise ValueError for a column rule the table cannot paint.
+
+    A rule's column must be a query column; a pivot's leaf names only exist after
+    render's pivot, so render finds them. A ``tone`` or ``glyph_color`` needs a
+    glyph, which a rule can take from its own key or the column.
+    """
+    available = set(data[0]) if data else set()
+    for column, config in columns.items():
+        rules = config.conditional
+        if not rules:
+            continue
+        if available and not is_pivot and column not in available:
+            raise ValueError(
+                f"style.columns.{column}.conditional targets column '{column}' "
+                f"which is not in the query result. Available: {sorted(available)}"
+            )
+        has_glyph = config.glyph or any(rule.glyph is not None for rule in rules)
+        if not has_glyph and any(r.glyph_color or r.tone for r in rules):
+            raise ValueError(
+                f"style.columns.{column}.conditional sets tone or glyph_color "
+                f"without a glyph: set glyph in a rule or in style.columns.{column}."
+            )
+
+
+def _validate_row_conditional(
+    table: TableChartStyle,
+    columns: Mapping[str, TableColumnConfig] | None,
+    data: Sequence[Mapping[str, Any]],  # type-state: explicit_any — query rows
+    is_pivot: bool,
+    glyph_columns: Collection[str],
+) -> None:
+    """Raise ValueError for a row rule the table cannot paint.
+
+    The pivot and transposed layouts rename their columns after resolve, so a rule
+    could not find its cells. A tested column may be any query column; a
+    ``columns.<col>`` target must be a visible one, and a ``tone`` needs a glyph
+    from its own rule or the column (``glyph_columns``).
+    """
+    rules = table.row.conditional
+    if not rules:
+        return
+    if is_pivot:
+        raise ValueError(
+            "style.row.conditional is not supported on a pivot table: its columns "
+            "are named after the pivoted values. Use style.columns.<col>.conditional."
+        )
+    if table.transpose:
+        raise ValueError(
+            "style.row.conditional is not supported with transpose: true: the rows "
+            "become columns. Use style.columns.<col>.conditional."
+        )
+    validate_mark_conditional(rules, data, where="style.row.conditional")
+    if not data:
+        return
+    shown = {
+        name
+        for name in data[0]
+        if columns is not None
+        and name in columns
+        and columns[name].visible is not False
+    }
+    for tested, column_rules in rules.items():
+        for rule in column_rules:
+            if rule.columns is None:
+                continue
+            for target, cell in rule.columns.items():
+                where = f"style.row.conditional.{tested} targets columns.{target}"
+                if target not in shown:
+                    raise ValueError(
+                        f"{where}, which is not a visible query column. "
+                        f"Visible: {sorted(shown)}"
+                    )
+                ink = (
+                    "tone" if cell.tone else "glyph_color" if cell.glyph_color else None
+                )
+                if ink and not (cell.glyph or target in glyph_columns):
+                    raise ValueError(
+                        f"{where} with a {ink} but no glyph: set glyph in the "
+                        f"rule's columns.{target} or in style.columns.{target}."
+                    )
 
 
 def _materialize_table_columns(
@@ -526,69 +616,29 @@ def _bake_scale_stops(
         shared_scale: ResolvedColumnSharedScale | None = None
         if allow_shared_scale and coerced_values and is_d3_si_spec(si_check_fmt):
             raw_scale = shared_scale_for_column(coerced_values)
-            forced = raw_scale is None and force_one_unit
-            if forced:
+            if raw_scale is None and force_one_unit:
                 raw_scale = forced_shared_scale(coerced_values)
             if raw_scale is not None:
                 magnitude = 10.0**raw_scale.exponent
-                nonzero = [v for v in coerced_values if v != 0]
-                finest = min(nonzero, key=abs)
-                # Precision is derived from the finest (smallest, fewest
-                # integer digits) value's own decimal exponent -- that value
-                # needs the MOST decimals to hit the format's significant-
-                # figure count, so pinning precision to it guarantees no row
-                # undershoots its own sig figs (a row with more integer
-                # digits then shows more precision than it strictly needs,
-                # harmless). But that exponent is unbounded below zero: a
-                # value with no tier at all (nowhere near the column's
-                # majority) would force every other row to inherit far more
-                # precision than the format's own sig-fig count ever asked
-                # for (three sig figs asked, seven delivered, because one
-                # stray row sits three tiers below the rest). A value one
-                # tier below the majority (e.g. thousands inside a millions
-                # column) legitimately needs a few extra decimals and stays
-                # reasonable; anything further -- or a value with no SI tier
-                # at all -- refuses the whole bake instead, same as a column
-                # with no majority tier in the first place.
-                distance = tier_distance(finest, raw_scale.exponent)
-                if distance is None and forced and abs(finest) < 1_000:
-                    # A forced scale reads sub-thousand cells as fractions of
-                    # its unit (858 -> 0.858K), one tier below the unit.
-                    distance = 1
-                if distance is None or distance > 1:
-                    shared_scale = None
-                else:
-                    finest_scaled = abs(finest) / magnitude
-                    _, digit_spec = column_digit_format(
-                        si_check_fmt,
-                        finest_scaled,
-                        precision_floors.get(
-                            raw_scale.exponent, 0
-                        ),  # type-state: silent_fallback — no sibling on this exponent raises the floor
-                    )
-                    # Even within that bound, a low-enough authored
-                    # significant-figure count (e.g. an explicit `.0~s`)
-                    # can still leave zero decimals to lean on, rendering a
-                    # sub-tier row with no nonzero digit -- indistinguishable
-                    # from a real zero. Checked on digit content, not a
-                    # fixed glyph set: a signed spec (`+.0~s`) still needs
-                    # refusing on "+0", and this reads the same regardless
-                    # of which sign/symbol/separator flags the author's spec
-                    # carries.
-                    if any(
-                        not any(
-                            c.isdigit() and c != "0"
-                            for c in _d3_fmt(digit_spec, v / magnitude)
-                        )
-                        for v in nonzero
-                    ):
-                        shared_scale = None
-                    else:
-                        shared_scale = ResolvedColumnSharedScale(
-                            exponent=raw_scale.exponent,
-                            mode=raw_scale.mode,
-                            digit_spec=digit_spec,
-                        )
+                # Decimals come from the smallest value at or above the unit,
+                # so they stay within sig_figs - 1; a row further below prints
+                # on that grid or as its floor (format_kpi_parts).
+                majority_scaled = (
+                    min(abs(v) for v in coerced_values if abs(v) >= magnitude)
+                    / magnitude
+                )
+                _, digit_spec = column_digit_format(
+                    si_check_fmt,
+                    majority_scaled,
+                    precision_floors.get(
+                        raw_scale.exponent, 0
+                    ),  # type-state: silent_fallback — no sibling on this exponent raises the floor
+                )
+                shared_scale = ResolvedColumnSharedScale(
+                    exponent=raw_scale.exponent,
+                    mode=raw_scale.mode,
+                    digit_spec=digit_spec,
+                )
 
         baked_exact_digits = False
         # The vote declined to compact a column whose spec is the engine's
@@ -637,9 +687,25 @@ def _bake_scale_stops(
             # Gate on actual fractional depths (mirror the axis-side gate).
             # decimal_pad_table_for already validated the spec; it is a
             # trim-enabled fixed-point spec whose precision > 0.
-            actual_fracs = {
-                len(_d3_fmt(pad_fmt, v).partition(".")[2]) for v in pad_values
-            }
+            actual_fracs: set[int] = set()
+            for v in pad_values:
+                text = _d3_fmt(pad_fmt, v)
+                floored = (
+                    shared_scale is not None
+                    and v != 0
+                    and not any(c in "123456789" for c in text)
+                )
+                if floored:
+                    # format_kpi_parts prints `<` plus the smallest step here,
+                    # which is as deep as the spec.
+                    floor_depth = _d3_parse(pad_fmt).precision
+                    if floor_depth is None:
+                        raise ValueError(
+                            f"baked digit spec {pad_fmt!r} has no precision"
+                        )
+                    actual_fracs.add(floor_depth)
+                else:
+                    actual_fracs.add(len(text.partition(".")[2]))
             pad_table: tuple[str, ...]
             if len(actual_fracs) <= 1:
                 pad_table = ()
@@ -820,10 +886,18 @@ def _resolve_table(
     )
     # Cell body text sits on the scale fill, so the table carve must keep
     # fills that hold this color — light on dark themes, dark on light.
-    # sanitize_color falls back to table.font.color for an invalid/empty
-    # static override rather than feeding a non-hex string into the carve.
-    _table_color_static = table.color.static if table.color is not None else None
-    effective_table_ink = sanitize_color(_table_color_static, table.font.color or "")
+    # The column-default ink is the table's cell text color. A column-ID ink is
+    # per-row, so it names no single color for the carve; sanitize_color falls
+    # back to table.font.color for it and for an empty one.
+    default_font = column_defaults_val.font if column_defaults_val is not None else None
+    default_ink = default_font.color if default_font is not None else None
+    if data and default_ink in data[0]:
+        default_ink = None
+    effective_table_ink = sanitize_color(
+        default_ink,
+        table.font.color
+        or "",  # type-state: silent_fallback — an unset theme ink gives the carve no color to keep
+    )
 
     # Numeric table cells paint with dbt Sans Tabular on all non-serif themes;
     # Source Serif themes use the serif face for their numeric cells instead.
@@ -835,6 +909,7 @@ def _resolve_table(
     authored_columns = (
         primary.columns if primary is not None and primary.columns else {}
     )
+    _validate_conditional(authored_columns, data, is_pivot=bool(normalized.columns))
     table_columns = _materialize_table_columns(
         primary.columns if primary is not None else None,
         column_defaults_val,
@@ -844,6 +919,13 @@ def _resolve_table(
         table_column_links,
         table_column_rows,
         table.hide_underscore_columns,
+    )
+    _validate_row_conditional(
+        table,
+        table_columns,
+        data,
+        is_pivot=bool(normalized.columns),
+        glyph_columns={name for name, cfg in authored_columns.items() if cfg.glyph},
     )
 
     resolved_columns = _with_resolved_scale_stops(

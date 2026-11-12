@@ -14,6 +14,10 @@
 //! Node identity for the feedback order's tie-break is the caller's `ids`,
 //! compared by UTF-16 code unit as JS compares strings.
 
+#![allow(clippy::indexing_slicing, reason = "mirrors d3's array code; being taken off indexing module by module")]
+
+use crate::invariant::Invariant;
+
 use crate::js_sort::js_sort;
 use crate::sankey::Align;
 use crate::path::Command;
@@ -227,7 +231,7 @@ impl SankeyCircular {
                     if !d.target_links.is_empty() {
                         d.depth
                     } else if !d.source_links.is_empty() {
-                        d.source_links.iter().map(|&l| g.nodes[g.links[l].target].depth).min().unwrap() - 1
+                        d.source_links.iter().map(|&l| g.nodes[g.links[l].target].depth).min().held("a node with source links has a first link") - 1
                     } else {
                         0
                     }
@@ -298,7 +302,7 @@ impl SankeyCircular {
                         let w = g.links[l].width;
                         let small = base + w / 2.0 + offset;
                         let large = base + w / 2.0 + i as f64 * gap + offset;
-                        let p = g.links[l].circular_path.as_mut().unwrap();
+                        let p = g.links[l].circular_path.as_mut().held("a circular link has its path");
                         if source_end {
                             p.right_small_arc_radius = small;
                             p.right_large_arc_radius = large;
@@ -319,7 +323,7 @@ impl SankeyCircular {
             let gy1 = g.y1;
             let k = &mut g.links[l];
             let (w, y0, y1, side) = (k.width, k.y0, k.y1, k.circular_link_type);
-            let p = k.circular_path.as_mut().unwrap();
+            let p = k.circular_path.as_mut().held("a circular link has its path");
             p.source_x = sx0 + (sx1 - sx0);
             p.target_x = tx0;
             p.source_y = y0;
@@ -531,7 +535,7 @@ fn feedback_order(g: &Graph, ids: &[String]) -> Vec<usize> {
                 }
             });
         }
-        let v = best.expect("a live node remains");
+        let v = best.held("a live node remains");
         if out_deg[v] == 0 {
             right -= 1;
             rank[v] = right;
@@ -710,7 +714,7 @@ fn compute_node_breadths(g: &mut Graph) -> Result<(), String> {
         if ci > 0 {
             let bary: Vec<(usize, f64, usize)> =
                 nodes.iter().enumerate().map(|(idx, &v)| (v, barycenter(g, v), idx)).collect();
-            let info = |v: usize| *bary.iter().find(|b| b.0 == v).unwrap();
+            let info = |v: usize| *bary.iter().find(|b| b.0 == v).held("every node has barycenter info");
             js_sort(&mut nodes, |a, b| {
                 let (ta, tb) = (g.nodes[a].circular_link_type, g.nodes[b].circular_link_type);
                 if ta != tb {
@@ -1156,7 +1160,7 @@ fn calc_vertical_buffer(g: &mut Graph, mut links: Vec<usize>, isolated: &[bool],
         }
     }
     cols.sort();
-    let index = |c: i64| cols.iter().position(|&x| x == c).unwrap();
+    let index = |c: i64| cols.iter().position(|&x| x == c).held("every column is among the sorted columns");
     let mut occ = ColumnOccupancy::new(cols.len());
     for l in links {
         let s = index(g.nodes[g.links[l].source].column);
@@ -1164,7 +1168,7 @@ fn calc_vertical_buffer(g: &mut Graph, mut links: Vec<usize>, isolated: &[bool],
         let (lo, hi) = (s.min(t), s.max(t));
         let buffer = if isolated[l] { 0.0 } else { occ.query(lo, hi) };
         let w = g.links[l].width;
-        g.links[l].circular_path.as_mut().unwrap().vertical_buffer = buffer + w / 2.0;
+        g.links[l].circular_path.as_mut().held("a circular link has its path").vertical_buffer = buffer + w / 2.0;
         occ.reserve(lo, hi, buffer + w + gap);
     }
     Ok(())

@@ -174,9 +174,11 @@ def kpi_gradient_chart(
         "type": "kpi",
         "query": "q",
         "value": "v",
-        "background": {
-            "column": "v",
-            "scale": {"palette": palette, "min": low, "max": high},
+        "style": {
+            "background": {
+                "column": "v",
+                "scale": {"palette": palette, "min": low, "max": high},
+            }
         },
     }
     flat = normalize_chart("c1", chart_def, {"q": ValuesQuery(rows=rows)}, sources={})

@@ -174,3 +174,7 @@ style:
       color: *color_ink
     border:
       color: *color_ink
+    input:
+      # A button row's selected segment is the ink inverted: ink fill, canvas text.
+      selected_background: *color_ink
+      selected_color: dbt-grays.white

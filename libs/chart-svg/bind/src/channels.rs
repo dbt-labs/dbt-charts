@@ -11,7 +11,6 @@
 
 use std::collections::HashSet;
 
-use board_model::chart::kpi::KpiBackground;
 use board_model::chart::layer::CartesianLayer;
 use board_model::chart::{CartesianChartFields, Chart, ColorColumn, Columns};
 use board_model::facet::Channel as ColumnName;
@@ -20,13 +19,10 @@ use board_model::style::style::Style;
 use model_core::Patch;
 use column_types::Dataset;
 use diagnostic::Diagnostic;
-use serde_json::Value;
+use crate::temporal::{infer_vega_type, VegaType};
 
 use crate::style::set;
 use crate::wide::{WIDE_LABEL_FIELD, WIDE_SERIES_SEPARATOR};
-
-/// How many rows decide whether a color column is a magnitude ramp.
-const SAMPLE_ROWS: usize = 10;
 
 /// How a channel paints from its field.
 #[derive(Debug, Clone)]
@@ -51,7 +47,6 @@ pub struct Channel {
 #[derive(Debug, Default)]
 pub struct Channels {
     pub color: Option<Channel>,
-    pub background: Option<Channel>,
 }
 
 /// The gradient a chart's own `style.color` authors (`None`: it authors none). `own` is the
@@ -80,7 +75,6 @@ struct Authored<'a> {
     /// A wide `y: [...]` on a family that folds it.
     wide_measures: Option<Vec<&'a str>>,
     has_layers: bool,
-    background: Option<&'a KpiBackground>,
 }
 
 fn authored(chart: &Chart) -> Authored<'_> {
@@ -98,7 +92,6 @@ fn authored(chart: &Chart) -> Authored<'_> {
                 _ => None,
             },
             has_layers: !layers.is_empty(),
-            background: None,
         }
     }
     fn colored(color: &Option<ColorColumn>) -> Authored<'_> {
@@ -106,7 +99,6 @@ fn authored(chart: &Chart) -> Authored<'_> {
             color: color.as_ref().map(ColorColumn::as_str),
             wide_measures: None,
             has_layers: false,
-            background: None,
         }
     }
     match chart {
@@ -119,39 +111,19 @@ fn authored(chart: &Chart) -> Authored<'_> {
         Chart::Pie(c) | Chart::Donut(c) => colored(&c.radial.color),
         Chart::Geoshape(c) | Chart::Map(c) => colored(&c.geo.color),
         Chart::PointMap(c) | Chart::BubbleMap(c) => colored(&c.geo.color),
-        Chart::Kpi(c) => Authored {
+        Chart::Kpi(_) | Chart::SparkBar(_) | Chart::Table(_) | Chart::Callout(_) | Chart::Custom(_) => Authored {
             color: None,
             wide_measures: None,
             has_layers: false,
-            background: c.background.as_ref(),
-        },
-        Chart::SparkBar(_) | Chart::Table(_) | Chart::Callout(_) | Chart::Custom(_) => Authored {
-            color: None,
-            wide_measures: None,
-            has_layers: false,
-            background: None,
         },
     }
 }
 
-/// `_flag_quantitative_color`'s test (`core/utils.py::vega_infers_quantitative`): the
-/// first rows' present, non-null cells are all numbers or booleans. A field absent
-/// from the first row is not; an all-null sample is, vacuously.
-fn infers_quantitative(dataset: &Dataset, field: &str) -> bool {
-    if !dataset
-        .rows
-        .first()
-        .is_some_and(|row| row.contains_key(field))
-    {
-        return false;
-    }
-    dataset
-        .rows
-        .iter()
-        .take(SAMPLE_ROWS)
-        .filter_map(|row| row.get(field))
-        .filter(|cell| !cell.is_null())
-        .all(|cell| matches!(cell, Value::Number(_) | Value::Bool(_)))
+/// `_flag_quantitative_color`'s test (`core/utils.py::vega_infers_quantitative`): the verdict
+/// `infer_vega_type_from_data` returns first, over the first rows' cells.
+fn infers_quantitative(dataset: &Dataset, field: &str) -> Result<bool, Diagnostic> {
+    let kind = infer_vega_type(&dataset.schema, &dataset.rows, field).map_err(Diagnostic::refused)?;
+    Ok(kind == VegaType::Quantitative)
 }
 
 /// `channel.py::_validate_channel_field` against the declared columns: a name the
@@ -162,7 +134,7 @@ fn validate_field(channel: &str, field: &str, dataset: &Dataset) -> Result<(), D
     }
     if field.starts_with('#') {
         return Err(Diagnostic::refused(format!(
-            "Channel '{channel}': '{field}' looks like a literal color, but a channel binds a data column. Set a literal color in the chart's style:\n  style:\n    color:\n      static: \"{field}\""
+            "Channel '{channel}': '{field}' looks like a literal color, but a channel binds a data column. Set a literal color on the chart's mark, e.g. for a bar chart:\n  style:\n    marks:\n      bar:\n        color: \"{field}\""
         )));
     }
     let mut available: Vec<&str> = dataset.schema.0.keys().map(String::as_str).collect();
@@ -205,27 +177,10 @@ pub fn bind_channels(
             None => Channel {
                 data_field: field.to_string(),
                 mode: Mode::Series,
-                quantitative_data: !field.is_empty() && infers_quantitative(dataset, field),
+                quantitative_data: !field.is_empty() && infers_quantitative(dataset, field)?,
                 categorical: categorical_fields.contains(field),
             },
         });
-    }
-    match authored.background {
-        None => {}
-        Some(KpiBackground::Column(field)) => {
-            validate_field("background", field, dataset)?;
-            channels.background = Some(Channel {
-                data_field: field.clone(),
-                mode: Mode::Series,
-                quantitative_data: false,
-                categorical: false,
-            });
-        }
-        Some(KpiBackground::Channel(_)) => {
-            return Err(Diagnostic::refused(
-                "background channel literal/gradient/conditional binding is not bound",
-            ));
-        }
     }
     if let Some(measures) = authored.wide_measures {
         if gradient.is_some() {

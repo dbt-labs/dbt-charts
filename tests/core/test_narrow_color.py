@@ -92,7 +92,9 @@ class TestBannedColorShapes:
     def test_literal_hex_string_raises(self):
         from pydantic import ValidationError
 
-        with pytest.raises(ValidationError, match=r"literal color.*belongs in style"):
+        with pytest.raises(
+            ValidationError, match=r"literal color.*belongs on the chart's mark"
+        ):
             _patch(color="#0a0")
 
     def test_value_dict_raises(self):
@@ -116,7 +118,7 @@ class TestBannedColorShapes:
 
         with pytest.raises(
             ValidationError,
-            match=r"Inline conditional.*no longer accepted.*no longer supports rule-driven conditional_formatting.*gradient scale",
+            match=r"Inline conditional.*no longer accepted.*restyle a table or KPI only.*gradient scale",
         ):
             _patch(
                 color={
@@ -224,12 +226,13 @@ class TestLayerColorNarrowed:
 class TestColorStyle:
     """BarChartStylePatch.color accepts ColorStyle sub-fields."""
 
-    def test_style_color_static_accepted(self):
+    def test_style_color_static_is_rejected(self):
+        from pydantic import ValidationError
+
         from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 
-        patch = BarChartStylePatch.model_validate({"color": {"static": "#0a0"}})
-        assert patch.color is not None
-        assert patch.color.static == "#0a0"
+        with pytest.raises(ValidationError, match="static"):
+            BarChartStylePatch.model_validate({"color": {"static": "#0a0"}})
 
     def test_style_color_object_with_gradient_accepted(self):
         from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
@@ -300,7 +303,7 @@ class TestChannelScaleUpgrade:
         assert channels["color"].mode == "series"
 
     def test_literal_style_color_does_not_create_channel(self):
-        """style.color.static is static paint — no data channel created."""
+        """A style.color without a gradient is no data channel."""
         from dbt_charts.core.compile.models.primitives import ColorStyle
         from dbt_charts.core.compile.resolve.chart.channel import (
             normalize_chart_channels,
@@ -313,11 +316,10 @@ class TestChannelScaleUpgrade:
             opacity = None
             stroke = None
 
-        style_color = ColorStyle(static="#0a0")
         channels = normalize_chart_channels(
-            _FakeChart(), set(), style_color=style_color
+            _FakeChart(), set(), style_color=ColorStyle()
         )
-        assert "color" not in channels  # static paint, not a channel
+        assert "color" not in channels
 
     def test_scale_without_data_channel_raises(self):
         """style.color: {gradient: ...} without chart.color is a hard error."""
@@ -491,7 +493,7 @@ class TestColorErrorRemediationsParse:
         with pytest.raises(ValidationError) as excinfo:
             _chart_patch_adapter.validate_python({**_BAR_BASE, "color": bad_color})
 
-        assert "static: '#ff0000'" in self._hint_yaml(excinfo.value)
+        assert "color: '#ff0000'" in self._hint_yaml(excinfo.value)
 
     @pytest.mark.parametrize(
         "bad_color",

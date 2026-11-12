@@ -1,33 +1,18 @@
 //! Breaking plain text into lines that fit a width.
 
-use crate::fonts::{cached_measurer, wrap_text_precise};
-
-use crate::font_files::font_path;
+use crate::fonts::{wrap_text_precise, FontMeasurer};
 use crate::FontBook;
 
-/// `wrap_text_precise(..., ellipsis=True) or [text]` against the font
-/// `get_font_measurer(family)` loads.
-pub fn wrap_plain(
-    fonts_dir: &str,
-    text: &str,
-    width: f64,
-    size: f64,
-    family: &str,
-    max_lines: usize,
-) -> Result<Vec<String>, String> {
-    let path = font_path(fonts_dir, family);
-    // unweighted: its one caller, the callout placard, paints no `font-weight`, so the browser
-    // draws it at 400.
-    let measurer = cached_measurer(&path, 0, None);
-    if !measurer.is_available() {
-        return Err(format!("font file {path} cannot be read to measure text"));
-    }
-    let (lines, _) = wrap_text_precise(text, width, size, &measurer, Some(max_lines), true, true);
-    Ok(if lines.is_empty() {
+/// `wrap_text_precise(..., ellipsis=True) or [text]` against `measurer`, the font
+/// `get_font_measurer(family)` loads. Unweighted: its callers, the callout placard and the error
+/// card, paint no `font-weight`, so the browser draws it at 400.
+pub fn wrap_plain(measurer: &FontMeasurer, text: &str, width: f64, size: f64, max_lines: usize) -> Vec<String> {
+    let (lines, _) = wrap_text_precise(text, width, size, measurer, Some(max_lines), true, true);
+    if lines.is_empty() {
         vec![text.to_string()]
     } else {
         lines
-    })
+    }
 }
 
 /// `title_overflow.py::prepare_title_text`'s wrap (title_overflow.py:33-46,
@@ -35,6 +20,7 @@ pub fn wrap_plain(
 /// `weight` the text paints at, whitespace-normalized, at most
 /// `max_lines` lines with an ellipsis when `ellipsis`. Returns the lines and
 /// whether any text was cut.
+#[allow(clippy::too_many_arguments)]
 pub fn wrap_label(
     book: &FontBook,
     family: &str,

@@ -35,6 +35,9 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # implementer contract breach (engine and reader out of step): no board
         # YAML, CLI flag, or variable value can produce it.
         ("query_plan.py", "parse_query_plan"),
+        # planned.py — the engine refusing with a code the registry does not
+        # hold as an error is the same breach: engine and registry out of step.
+        ("planned.py", "plan_board"),
         # backends/databricks_connection_manager.py
         (
             "backends/databricks_connection_manager.py",

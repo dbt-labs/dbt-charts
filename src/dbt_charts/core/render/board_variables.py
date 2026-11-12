@@ -27,6 +27,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypedDict
+from urllib.parse import urlencode
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 
@@ -206,3 +207,21 @@ def committed_text(
             ]
         )
     return str(value)
+
+
+def variable_link(variables: VariableValues, name: str, value: str) -> str:
+    """A ``?`` link that sets one variable and keeps every other as it is.
+
+    Every set board variable rides along, never host-injected render context;
+    a preset daterange links its preset id, so the link stays rolling. An empty
+    ``value`` is how a link unsets ``name``.
+    """
+    presets = current_daterange_presets()
+    context = current_context_variables()
+    params = {
+        key: presets[key] if key in presets else committed_text(current)
+        for key, current in variables.items()
+        if current is not None and key not in context
+    }
+    params[name] = value
+    return "?" + urlencode(params)

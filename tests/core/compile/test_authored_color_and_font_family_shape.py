@@ -109,8 +109,9 @@ charts:
     x: month
     y: revenue
     style:
-      color:
-        static: notacolor
+      marks:
+        bar:
+          color: notacolor
 rows: [revenue]
 """
     rendered = _render(body, local_project)

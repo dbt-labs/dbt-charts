@@ -50,7 +50,7 @@ from collections.abc import Mapping
 from pydantic import BaseModel
 
 from dbt_charts.core.compile.models.board.normalized import Board
-from dbt_charts.core.compile.models.chart.normalized import Chart, KpiChart
+from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.resolve.style.tokens import expand_palette_refs
 
 
@@ -100,8 +100,5 @@ def _validate_board(
 def _validate_chart(
     chart: Chart, style: BaseModel | None
 ) -> None:  # type-state: optional — None when the chart authors no style
-    """Check one chart's palette-bearing surfaces: its own style patch, and,
-    for a KPI, its background channel."""
+    """Check one chart's palette-bearing surface: its own style patch."""
     expand_palette_refs(style, {}, path=f"charts.{chart.id}.style")
-    if isinstance(chart, KpiChart):
-        expand_palette_refs(chart.background, {}, path=f"charts.{chart.id}.background")

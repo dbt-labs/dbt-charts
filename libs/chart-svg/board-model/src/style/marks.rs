@@ -6,14 +6,14 @@
 //! a [`FormatSpec`]; the CSS border shorthand waits for struct alternates in `accept`. Jinja syntax of `template` and `where` is the
 //! template pass's check (spec § 8), not a newtype's.
 
-use crate::facet::{Color, FontFamily, FontWeightValue, LabelWhere};
+use crate::facet::{BorderColor, Color, FontFamily, FontWeightValue, LabelWhere};
 use crate::primitives::{
     BorderStyle, Curve, FontColorStrokeStyle, FormatSpec, LineCap, StrokeStyle,
 };
 use crate::rule::Auto;
 use crate::string_enum;
 use crate::style::font::{FontSlant, FontStyle, LetterCase, SymbolShape, TextDecoration};
-use crate::unit::Fraction;
+use crate::unit::{Fraction, Px};
 use model_core::{
     Cx, Engine, FromNode, Leaf, Merge, Node, Patch, ReadScalar, Scalar, Spell, TypeExpr,
 };
@@ -164,6 +164,160 @@ pub struct TextMarkStyle {
     /// Horizontal text alignment for text marks.
     #[model(fill = "center")]
     pub align: String,
+}
+
+/// The part of [`BorderStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct BorderStyleConditional {
+    /// Border width in pixels.
+    #[model(absent = "the bar's own border width")]
+    pub width: Option<f64>,
+    /// Border color as a CSS color string.
+    #[model(absent = "the bar's own border color")]
+    pub color: Option<BorderColor>,
+}
+
+/// The part of [`FontStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[model(shorthand = "extends")]
+pub struct FontStyleConditional {
+    /// Name of a `style.fonts` entry this slot starts from; the fields set beside it override that entry.
+    #[model(absent = "no named font")]
+    pub extends: Option<String>,
+    /// Text color as a CSS color string.
+    #[model(absent = "the text's own color")]
+    pub color: Option<Color>,
+    /// How heavy the type is drawn (e.g., 'bold', 400, 700).
+    #[model(absent = "the text's own weight")]
+    pub weight: Option<FontWeightValue>,
+}
+
+/// The part of [`BarMarkStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct BarMarkStyleConditional {
+    /// Bar fill color when the chart has no `color:` channel; over `single_series_palette` and the palette.
+    #[model(absent = "the bar's own color")]
+    pub color: Option<Color>,
+    /// Bar border style (color/width also serve as the bar stroke).
+    #[model(absent = "the bar's own border")]
+    pub border: Option<BorderStyleConditional>,
+    /// Bar fill opacity (0 to 1).
+    #[model(absent = "the bar's own opacity")]
+    pub opacity: Option<f64>,
+}
+
+/// The part of [`PointMarkStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct PointMarkStyleConditional {
+    /// Point size in square pixels; 0 disables points on line charts.
+    #[model(absent = "the point's own size")]
+    pub size: Option<f64>,
+    /// Point color. On a single-series scatter or point map it recolors the dots, over `single_series_palette` and the palette.
+    #[model(absent = "the point's own color")]
+    pub color: Option<Color>,
+    /// Point shape (e.g. 'circle', 'square').
+    #[model(absent = "the point's own shape")]
+    pub shape: Option<SymbolShape>,
+    /// Point opacity, 0 to 1.
+    #[model(absent = "the point's own opacity")]
+    pub opacity: Option<f64>,
+    /// Whether points are filled.
+    #[model(absent = "the point's own filled state")]
+    pub filled: Option<bool>,
+    /// Point interior fill color; only applied when filled=false.
+    #[model(absent = "the point's own fill")]
+    pub fill: Option<Color>,
+    /// Stroke width in pixels for hollow point rings.
+    #[model(absent = "the point's own stroke width")]
+    pub stroke_width: Option<f64>,
+}
+
+/// The part of [`StrokeStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct StrokeStyleConditional {
+    /// Stroke color as a CSS color string.
+    #[model(absent = "the stroke's own color")]
+    pub color: Option<Color>,
+    /// Stroke width in pixels.
+    #[model(absent = "the stroke's own width")]
+    pub width: Option<Px>,
+    /// Lengths of the dashes and the blanks between them (e.g. '4 2').
+    #[model(absent = "solid line")]
+    pub dasharray: Option<String>,
+}
+
+/// The part of [`LineMarkStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct LineMarkStyleConditional {
+    /// Line stroke style.
+    #[model(absent = "the line's own stroke")]
+    pub stroke: Option<StrokeStyleConditional>,
+}
+
+/// The part of [`AreaMarkStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct AreaMarkStyleConditional {
+    /// Area fill color when the chart has no `color:` channel; over `single_series_palette` and the palette.
+    #[model(absent = "the area's own color")]
+    pub color: Option<Color>,
+    /// Area fill opacity (0 to 1).
+    #[model(absent = "the area's own opacity")]
+    pub opacity: Option<Fraction>,
+}
+
+/// The part of [`AreaLineStyle`](crate::style::area::AreaLineStyle) a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct AreaLineStyleConditional {
+    /// Area top-edge line stroke style.
+    #[model(absent = "the edge's own stroke")]
+    pub stroke: Option<StrokeStyleConditional>,
+}
+
+/// The part of [`TextMarkStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct TextMarkStyleConditional {
+    /// Text mark font style overrides.
+    #[model(absent = "the text's own font")]
+    pub font: Option<FontStyleConditional>,
+}
+
+/// The part of [`SliceMarkStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct SliceMarkStyleConditional {
+    /// Slice fill color.
+    #[model(absent = "the slice's own color")]
+    pub color: Option<Color>,
+    /// Arc slice opacity (0 to 1).
+    #[model(absent = "the slice's own opacity")]
+    pub opacity: Option<f64>,
+    /// Arc slice stroke style.
+    #[model(absent = "the slice's own stroke")]
+    pub stroke: Option<StrokeStyleConditional>,
+}
+
+/// The part of [`RectMarkStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct RectMarkStyleConditional {
+    /// Rect fill color.
+    #[model(absent = "the rect's own color")]
+    pub color: Option<Color>,
+    /// Mark opacity (0 to 1).
+    #[model(absent = "the rect's own opacity")]
+    pub opacity: Option<Fraction>,
+    /// Mark stroke style.
+    #[model(absent = "no stroke")]
+    pub stroke: Option<StrokeStyleConditional>,
+}
+
+/// The part of [`GeoshapeMarkStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct GeoshapeMarkStyleConditional {
+    /// Geoshape fill color.
+    #[model(absent = "the region's own fill")]
+    pub fill: Option<Color>,
+    /// Geoshape boundary stroke style.
+    #[model(absent = "no stroke")]
+    pub stroke: Option<StrokeStyleConditional>,
 }
 
 /// Series-label typography with a compact width-tier size.
@@ -408,6 +562,10 @@ pub struct PointLabelsStyle {
 /// Bar mark geometry and stroke. Chart-level bar fields live on the bar chart style.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct BarMarkStyle {
+    /// Bar fill color when the chart has no `color:` channel; over `single_series_palette` and the palette. 'auto' takes the palette color.
+    #[model(fill = "auto")]
+    pub color: Engine<Color, Auto>,
+
     /// Bar border style (color/width also serve as the bar stroke).
     pub border: BorderStyle,
     /// Padding around bar marks in pixels.
@@ -485,6 +643,10 @@ pub struct AreaStackedMarkStyle {
 /// Area mark fill opacity and shape. The edge line is `LineMarkStyle`.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct AreaMarkStyle {
+    /// Area fill color when the chart has no `color:` channel; over `single_series_palette` and the palette. 'auto' takes the palette color.
+    #[model(fill = "auto")]
+    pub color: Engine<Color, Auto>,
+
     /// Area fill opacity (0 to 1).
     #[model(fill = 0.16)]
     pub opacity: Fraction,
@@ -503,7 +665,7 @@ pub struct AreaMarkStyle {
 pub struct PointMarkStyle {
     /// Point size in square pixels; 0 disables points on line charts.
     pub size: Engine<f64, Auto>,
-    /// Point color; 'auto' inherits the series color.
+    /// Point color. On a single-series scatter or point map it recolors the dots, over `single_series_palette` and the palette; 'auto' inherits the series color.
     #[model(fill = "auto")]
     pub color: Engine<Color, Auto>,
     /// Point shape (e.g. 'circle', 'square'); 'auto' uses VL default.
@@ -527,6 +689,10 @@ pub struct PointMarkStyle {
 /// Pie/donut slice mark: paint and layout only.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct SliceMarkStyle {
+    /// Slice fill color when the chart has no `color:` channel; over `single_series_palette` and the palette. 'auto' takes the palette color.
+    #[model(fill = "auto")]
+    pub color: Engine<Color, Auto>,
+
     /// Arc slice opacity (0 to 1); 'auto' uses the board opacity.
     #[model(fill = "auto")]
     pub opacity: Engine<f64, Auto>,
@@ -555,6 +721,10 @@ pub struct RuleMarkStyle {
 /// Rect mark opacity and stroke.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct RectMarkStyle {
+    /// Rect fill color when the chart has no `color:` channel; over `single_series_palette` and the palette. 'auto' takes the palette color.
+    #[model(fill = "auto")]
+    pub color: Engine<Color, Auto>,
+
     /// Mark opacity (0 to 1); 'auto' uses the board opacity.
     #[model(fill = "auto")]
     pub opacity: Engine<Fraction, Auto>,

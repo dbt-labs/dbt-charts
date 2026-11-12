@@ -19,7 +19,8 @@ use board_model::style::style::Style;
 use diagnostic::{diag, refuse, Diagnostic};
 use mdsvg::renderer::SVGRenderer;
 use mdsvg::style::Style as MdsvgStyle;
-use measure::font_files::{font_path, mono_font_path};
+use measure::font_files::{font_file, MONO_FILE};
+use measure::shaped::FontBook;
 use measure::fonts::{css_weight_axis, FontSlot, FontSlots};
 use scene::{Attrs, Extent, Node, Role, Shape};
 
@@ -133,7 +134,7 @@ pub struct Plan {
 /// callout.rs:`callout_md_renderer`. Bold paints from the same variable file at `bold_font_weight`;
 /// without that slot mdsvg estimates bold by a width ratio and every run after it lands beside its
 /// painted glyphs.
-fn markdown_renderer(fonts_dir: &str, style: &CalloutStyle, element: &Element, link_color: &str) -> Result<SVGRenderer, String> {
+fn markdown_renderer(book: &FontBook, style: &CalloutStyle, element: &Element, link_color: &str) -> Result<SVGRenderer, String> {
     let face = &element.face;
     let weight = face.weight.attr();
     // `None if str(coerced_fw).lower() in {"400", "normal"} else coerced_fw`
@@ -155,9 +156,9 @@ fn markdown_renderer(fonts_dir: &str, style: &CalloutStyle, element: &Element, l
         list_item_spacing: 2.0,
         ..Default::default()
     };
-    let regular = FontSlot::new(font_path(fonts_dir, &face.family));
+    let regular = FontSlot::of(book.file(font_file(&face.family))?);
     let bold = FontSlot { weight: css_weight_axis(&style.bold_font_weight)?, ..regular.clone() };
-    SVGRenderer::new(md_style, FontSlots { bold: Some(bold), mono: Some(FontSlot::new(mono_font_path(fonts_dir))), ..FontSlots::new(regular) })
+    SVGRenderer::new(md_style, FontSlots { bold: Some(bold), mono: Some(FontSlot::of(book.file(MONO_FILE)?)), ..FontSlots::new(regular) })
 }
 
 /// callout.rs:`markdown_block`, with the cap `compose` holds it to: a text taller than its cap is
@@ -175,8 +176,8 @@ fn markdown_block(renderer: &SVGRenderer, text: &str, content_width: f64, face: 
 }
 
 /// The card at `width` (floored at the minimum card width): both texts laid out in the content
-/// width. `fonts_dir` holds the served faces.
-pub fn plan(card: &CalloutCard, fonts_dir: &str, width: f64) -> Result<Plan, Diagnostic> {
+/// width. `book` holds the served faces.
+pub fn plan(card: &CalloutCard, book: &FontBook, width: f64) -> Result<Plan, Diagnostic> {
     let style = card.style;
     let pad = &style.padding;
     let w = width.max(MIN_WIDTH);
@@ -185,12 +186,12 @@ pub fn plan(card: &CalloutCard, fonts_dir: &str, width: f64) -> Result<Plan, Dia
     let link = &style.title.face.color;
     let title = match &card.callout.title {
         Some(text) => {
-            let renderer = markdown_renderer(fonts_dir, style, &style.title, link)?;
+            let renderer = markdown_renderer(book, style, &style.title, link)?;
             Some(markdown_block(&renderer, text, content_width, &style.title.face, MAX_TITLE_LINES, "title")?)
         }
         None => None,
     };
-    let renderer = markdown_renderer(fonts_dir, style, &style.message, link)?;
+    let renderer = markdown_renderer(book, style, &style.message, link)?;
     let message = markdown_block(&renderer, &card.callout.message, content_width, &style.message.face, MAX_MESSAGE_LINES, "message")?;
     let title_height = title.as_ref().map_or(0.0, |block| block.height + style.section_gap);
     let natural_height = (pad.top + pad.bottom + title_height + message.height).max(MIN_HEIGHT);
@@ -225,4 +226,16 @@ pub fn draw(card: &CalloutCard, plan: Plan, height: f64) -> Vec<Node> {
     children.extend(body);
     let extent = Extent { width: plan.width, height: h };
     vec![Node::new(Role::Chrome, Attrs::new().quick("class", "dbt-chart-callout"), Shape::Svg { extent, children })]
+}
+
+impl crate::family::Family for CalloutCard<'_> {
+    type Plan = Plan;
+
+    fn plan(&self, env: &crate::family::Env, width: f64) -> Result<Plan, Diagnostic> {
+        plan(self, env.book, width)
+    }
+
+    fn draw(&self, plan: Plan, height: f64) -> Result<Vec<Node>, Diagnostic> {
+        Ok(draw(self, plan, height))
+    }
 }

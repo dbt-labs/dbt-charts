@@ -229,27 +229,21 @@ rows:
 """
 
 
-@pytest.mark.parametrize("strip", {**_ANCHORING_STRIPS, **_SORTED_STRIPS})
-def test_before_prefix_on_an_anchoring_strip_fails_render(strip) -> None:
-    board = {**_ANCHORING_STRIPS, **_SORTED_STRIPS}[strip]
-    svg = html.unescape(render_board_to_svg(_strip_board(*board, "before_prefix")))
-    assert _CODE in svg, svg
-    assert "charts.c.support_table.entries[0].format" in svg
-
-
 @pytest.mark.parametrize("strip", _ANCHORING_STRIPS)
-def test_an_anchoring_strip_leads_the_sign_with_the_prefix(strip) -> None:
+def test_an_anchoring_strip_prints_bare_signed_cells_and_names_the_prefix(
+    strip,
+) -> None:
     svg = html.unescape(
         render_board_to_svg(_strip_board(*_ANCHORING_STRIPS[strip], None))
     )
-    assert ">€−50<" in svg and ">−40<" in svg, svg
+    assert ">−50<" in svg and ">−40<" in svg and ">Net, €<" in svg, svg
     assert "ERR-" not in svg
 
 
 @pytest.mark.parametrize("strip", _SORTED_STRIPS)
-def test_a_sorted_strip_leads_its_first_sorted_cell_with_the_prefix(strip) -> None:
+def test_a_sorted_strip_prints_bare_signed_cells_and_names_the_prefix(strip) -> None:
     svg = html.unescape(render_board_to_svg(_strip_board(*_SORTED_STRIPS[strip], None)))
-    assert ">€−40<" in svg and ">−50<" in svg, svg
+    assert ">−40<" in svg and ">−50<" in svg and ">Net, €<" in svg, svg
     assert "ERR-" not in svg
 
 
@@ -259,4 +253,4 @@ def test_before_prefix_on_a_repeating_strip_renders(strip) -> None:
         render_board_to_svg(_strip_board(*_REPEATING_STRIPS[strip], "before_prefix"))
     )
     assert "ERR-" not in svg, svg
-    assert ">−€50<" in svg and ">−€40<" in svg, svg
+    assert ">−50<" in svg and ">−40<" in svg and ">Net, €<" in svg, svg

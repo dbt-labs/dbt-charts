@@ -1714,6 +1714,7 @@ def compute_board_content_box(
     variables_height: float,
     inline_band_height: float,
     gap: float,
+    variables_gap: float,
     has_layout_items: bool,
     opens_with_text: bool,
     card_padding: float,
@@ -1729,8 +1730,8 @@ def compute_board_content_box(
       opening its document as ``text_height + margin_bottom`` (the top margin
       collapses), so heading_margin_bottom_px IS baked into title_height.
       Adding a board gap on top double-counts it.
-    - All other adjacent pairs (inline_band→text, text→variables, title→variables
-      when no text, inline_band→variables): full ``gap``.
+    - inline_band→text: full ``gap``. Whatever sits above the variables band
+      (text, a title with no text, the inline band): ``variables_gap``.
     - gap_before_layout: ``gap`` iff has_layout_items AND non_layout_height > 0.
       A title above a leading text row is title→text by another spelling: no gap,
       and the row's own ``card_padding`` inset is taken back so the two forms match.
@@ -1743,7 +1744,11 @@ def compute_board_content_box(
         inline_band_height: Pre-measured title+variables inline band height (0 if
             not using inline band).  When > 0, title_height and variables_height
             are 0.
-        gap: Board-level gap (used for all inter-element spacing except title→text).
+        gap: Board-level gap (used for all inter-element spacing except title→text
+            and the space above the variables band).
+        variables_gap: The space above the variables band. A nested board takes
+            ``style.variables.gap``, which sets a band apart from its header
+            the same on every board; the root takes its board gap.
         has_layout_items: True when the board has layout items following the
             non-layout elements.
         opens_with_text: True when the first drawn layout item is a text block.
@@ -1775,7 +1780,7 @@ def compute_board_content_box(
 
     if variables_height > 0.0:
         if has_prev:
-            height += gap
+            height += variables_gap
         height += variables_height
         has_prev = True
         prev_is_title = False
@@ -1881,6 +1886,7 @@ def nested_board_sizing_context(
         variables_height=variables_h,
         inline_band_height=inline_band_h,
         gap=effective_child_gap,
+        variables_gap=float(nrs.variables.gap),
         has_layout_items=bool(nested_board.layout.items),
         opens_with_text=opens_with_text(
             nested_board,

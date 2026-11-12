@@ -55,6 +55,7 @@ def test_the_facts_carry_each_query_chart_link_and_suppression(
     got = facts(tmp_path)
     assert got["version"] == HOST_FACTS_VERSION
     assert got["queries"]["q"] == {
+        "label": "q",
         "authored": True,
         "type": "sql",
         "source": "wh",
@@ -64,7 +65,9 @@ def test_the_facts_carry_each_query_chart_link_and_suppression(
         "ignore": ["WARN-FANOUT-RISK"],
     }
     assert got["column_refs"] == {"bars": [["q", "x", "a"], ["q", "y", "b"]]}
-    assert got["unbound_charts"] == [{"chart": "bare", "type": "pie", "query": "q"}]
+    assert got["unbound_charts"] == [
+        {"chart": "bare", "type": "pie", "query": "q", "side_columns": {}}
+    ]
     assert got["links"] == [["charts.bars.link", "/boards/x", False]]
     assert got["warnings_ignore"] == {"bars": ["WARN-DOUBLE-HEADER"]}
 

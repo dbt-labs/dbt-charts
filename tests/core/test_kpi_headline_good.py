@@ -110,8 +110,10 @@ def test_headline_and_support_good_are_independent() -> None:
 
 def test_authored_headline_color_rule_wins_over_the_derived_tone() -> None:
     chart = _chart(
-        conditional_formatting={
-            "total": {"when": [{"gt": 0, "font": {"color": "#123456"}}]}
+        style={
+            "conditional": {
+                "total": [{"gt": 0, "value": {"font": {"color": "#123456"}}}]
+            }
         }
     )
     fills = _tspan_fills(_render(chart, 5))
@@ -146,38 +148,27 @@ def test_headline_good_with_an_unset_glyph_names_the_glyph_slot() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    ("kwargs", "match"),
-    [
-        ({"glyph": "▲"}, "good.*glyph|glyph.*good"),
-        (
-            {
-                "conditional_formatting": {
-                    "total": {"when": [{"default": True, "background": "#eee"}]}
-                }
-            },
-            "default",
-        ),
-    ],
-)
-def test_invalid_headline_good_shapes_are_rejected(
-    kwargs: dict[str, Any], match: str
-) -> None:
-    with pytest.raises(ValidationError, match=match):
+def test_good_and_a_chart_root_glyph_are_exclusive() -> None:
+    with pytest.raises(ValidationError, match="good.*glyph|glyph.*good"):
         AuthoredKpiChart(
-            id="k", query="select 1", type="kpi", value="total", good="up", **kwargs
+            id="k",
+            query="select 1",
+            type="kpi",
+            value="total",
+            good="up",
+            glyph="▲",
         )
 
 
-def test_an_authored_glyph_or_tone_rule_on_the_headline_stays_rejected() -> None:
-    chart = _chart(
-        None,
-        conditional_formatting={
-            "total": {"when": [{"gt": 0, "glyph": "↑", "tone": "positive"}]}
-        },
-    )
-    with pytest.raises(ValueError, match="chart-root `good:`"):
-        _render(chart, 1)
+def test_a_rule_cannot_set_a_headline_glyph_or_tone() -> None:
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        AuthoredKpiChart(
+            id="k",
+            query="select 1",
+            type="kpi",
+            value="total",
+            style={"conditional": {"total": [{"gt": 0, "glyph": "↑"}]}},
+        )
 
 
 def test_ordinary_headline_shapes_beside_good_are_accepted() -> None:
@@ -187,8 +178,15 @@ def test_ordinary_headline_shapes_beside_good_are_accepted() -> None:
         type="kpi",
         value="total",
         good="down",
-        conditional_formatting={"total": {"when": [{"gt": 0, "background": "#eee"}]}},
-        style={"value": {"format": ",.0f"}},
+        style={
+            "value": {"format": ",.0f"},
+            "conditional": {
+                "total": [
+                    {"gt": 0, "background": "#eee"},
+                    {"default": True, "background": "#fff"},
+                ]
+            },
+        },
     )
 
 

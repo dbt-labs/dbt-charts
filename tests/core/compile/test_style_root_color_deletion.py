@@ -103,8 +103,17 @@ def test_chart_style_color_survives_the_strip(catalog: YamlSchemaCatalog) -> Non
     migrated = _migrate(raw, catalog)
 
     assert "style" not in migrated
-    assert migrated["charts"]["k"]["style"]["color"] == {"static": "#123456"}
-    assert migrated["rows"][1]["style"]["color"] == {"static": "#654321"}
+    # The chart's `color.static` is live, so it moves to the line's mark.
+    line_stroke = "marks", "line", "stroke", "color"
+
+    def paint(chart: dict[str, Any]) -> Any:
+        node = chart["style"]
+        for step in line_stroke:
+            node = node[step]
+        return node
+
+    assert paint(migrated["charts"]["k"]) == "#123456"
+    assert paint(migrated["rows"][1]) == "#654321"
 
 
 @pytest.mark.parametrize("position", ["root", "nested"])
@@ -176,5 +185,5 @@ rows:
 
     assert "'#bf8700'" not in migrated
     assert "'#abcdef'" not in migrated
-    assert "static: '#123456'" in migrated
+    assert "#123456" in migrated
     assert "background: '#ffffff'" in migrated

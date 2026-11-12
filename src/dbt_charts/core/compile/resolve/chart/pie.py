@@ -40,6 +40,9 @@ from dbt_charts.core.compile.resolve.chart._channels import (
     _channels_for,
     _column_numeric_values,
 )
+from dbt_charts.core.compile.resolve.chart._conditional import (
+    validate_mark_conditional,
+)
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
@@ -52,6 +55,7 @@ from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_requested_alias_palette,
     _effective_single_series_fill,
     _pin_companions,
+    _unchanneled_fill,
     _with_color_tokens,
 )
 from dbt_charts.core.compile.resolve.chart._pattern import (
@@ -137,7 +141,7 @@ def _resolve_pie(
     if theta is None:
         # The rows bind theta before dispatch; only a resolve with none (a
         # zero-row result, the data-free skeleton) still arrives without it.
-        raise unbound_error(normalized, ())
+        raise unbound_error(normalized.id, normalized.type, ())
     authored_color = normalized.color
     normalized = pattern_series(normalized)
     validate_theta_values(normalized.id, theta, data)
@@ -147,6 +151,7 @@ def _resolve_pie(
     primary = _with_color_tokens(normalized.style, chart_style_context)
     board_pie = board_family_style(chart_style_context, normalized)
     pie = merge_unset(board_pie, primary)
+    validate_mark_conditional(pie.conditional, data)
     # The center total and every slice tooltip vote on one set (theta values
     # plus their sum) so they never disagree about the same sub-$1 value --
     # see resolve_format_parts_for_values's per-set contract.
@@ -162,7 +167,10 @@ def _resolve_pie(
         chart_style_context,
         pie.pattern,
         _effective_single_series_fill(
-            chart_style_context, primary, rhythm_slot=normalized.rhythm_slot
+            chart_style_context,
+            primary,
+            ("marks", "slice", "color"),
+            rhythm_slot=normalized.rhythm_slot,
         ),
         primary,
     )
@@ -467,8 +475,12 @@ def _resolve_pie(
         format=slice_format,
         style=ResolvedPieStyle(
             inner_radius=pie.inner_radius,
+            single_series_fill=_unchanneled_fill(
+                chart_style_context, pie, ("marks", "slice", "color")
+            ),
             slice_mark=effective_slice_mark,
             tooltip_format=tooltip_format,
+            conditional=pie.conditional,
             total_style=total_style,
             title_font=_tf,
         ),

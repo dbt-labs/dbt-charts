@@ -73,10 +73,21 @@ def test_table_conditional_glyph_reads_board_level_tones_override(make_chart) ->
     chart = make_chart(
         "table",
         title="Growth",
-        conditional_formatting={
-            "growth": {"when": [{"gt": 0, "glyph": "▲", "tone": "positive"}]}
+        style={
+            "columns": {
+                "company": {},
+                "growth": {
+                    "format": ".0%",
+                    "conditional": [
+                        {
+                            "gt": 0,
+                            "glyph": "▲",
+                            "tone": "positive",
+                        }
+                    ],
+                },
+            },
         },
-        style={"columns": {"company": {}, "growth": {"format": ".0%"}}},
     )
     data = [{"company": "Apex", "growth": 0.12}]
     resolved = resolve(chart, data, chart_style_context=board_ctx)

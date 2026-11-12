@@ -25,11 +25,14 @@ use super::PivotResult;
 use super::Resolved;
 use super::Rows;
 use super::RowRole;
+use super::RowRules;
 use super::RuleOverrides;
 use super::Source;
 use super::Spanner;
 use super::SuffixMode;
 use super::WhenRule;
+use crate::conditional;
+use crate::conditional::coerce_numeric_cell;
 use super::BOARD_FORMATS;
 use super::NULL_DISPLAY;
 use super::PIVOT_LEAF_SEP;
@@ -62,7 +65,6 @@ use serde_json::json;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::fmt::Write as _;
 
 /// What the board redefined `name` to (`style.formats`), if it did.
 pub(super) fn board_alias_format(name: &str) -> Result<Option<FormatSlot>, String> {
@@ -175,88 +177,6 @@ pub(super) fn apply_rule_outputs(
     Ok(())
 }
 
-/// Whether `a` and `b` compare equal — a scalar-only port of Python's `==`:
-/// numbers compare by value (`1 == 1.0`), everything else must match type
-/// AND value. `value` is `None` for both a missing key and an explicit JSON
-/// `null` (production's `row.get(col)`), so a `None` operand is treated as
-/// `Value::Null`.
-pub(super) fn json_loose_eq(value: Option<&Value>, want: &Value) -> bool {
-    let value = value.unwrap_or(&Value::Null);
-    match (value, want) {
-        (Value::Null, Value::Null) => true,
-        (Value::Bool(a), Value::Bool(b)) => a == b,
-        (Value::Number(a), Value::Number(b)) => a.as_f64() == b.as_f64(),
-        (Value::String(a), Value::String(b)) => a == b,
-        (Value::Array(a), Value::Array(b)) => a == b,
-        (Value::Object(a), Value::Object(b)) => a == b,
-        _ => false,
-    }
-}
-
-pub(super) fn is_bool_value(v: Option<&Value>) -> bool {
-    matches!(v, Some(Value::Bool(_)))
-}
-
-/// `match_predicate` — the single active predicate on `rule` against
-/// `value`. Errors only on a rule with no predicate op set (unreachable on
-/// a Pydantic-validated payload; `_validate_exactly_one_predicate` requires
-/// exactly one) and an `in` list holding a non-scalar candidate (JS/Python
-/// equality on nested arrays/objects is not modeled here).
-pub(super) fn match_predicate(rule: &WhenRule, value: Option<&Value>) -> Result<bool, String> {
-    if rule.default == Some(true) {
-        return Ok(true);
-    }
-    if let Some(want_null) = rule.is_null {
-        return Ok(value.is_none() == want_null);
-    }
-    if let Some(eq) = &rule.eq {
-        if is_bool_value(value) != matches!(eq, Value::Bool(_)) {
-            return Ok(false);
-        }
-        return Ok(json_loose_eq(value, eq));
-    }
-    if let Some(ne) = &rule.ne {
-        if is_bool_value(value) != matches!(ne, Value::Bool(_)) {
-            return Ok(true);
-        }
-        return Ok(!json_loose_eq(value, ne));
-    }
-    if let Some(candidates) = &rule.in_ {
-        for c in candidates {
-            if !matches!(
-                c,
-                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)
-            ) {
-                return Err(
-                    "conditional rule 'in' with a non-scalar candidate not supported".into(),
-                );
-            }
-        }
-        return Ok(candidates.iter().any(|c| {
-            is_bool_value(value) == matches!(c, Value::Bool(_)) && json_loose_eq(value, c)
-        }));
-    }
-    let Some(v) = coerce_numeric_cell(value) else {
-        return Ok(false);
-    };
-    if let Some(lt) = rule.lt {
-        return Ok(v < lt);
-    }
-    if let Some(lte) = rule.lte {
-        return Ok(v <= lte);
-    }
-    if let Some(gt) = rule.gt {
-        return Ok(v > gt);
-    }
-    if let Some(gte) = rule.gte {
-        return Ok(v >= gte);
-    }
-    if let Some((lo, hi)) = rule.between {
-        return Ok(lo <= v && v <= hi);
-    }
-    Err("conditional rule has no active predicate".into())
-}
-
 /// `resolve_conditional_styles`: every non-default rule that matches
 /// contributes (last-match-wins per key); a trailing `default: true` rule
 /// fires only when nothing else matched. Empty `rules` short-circuits to
@@ -267,42 +187,78 @@ pub(crate) fn resolve_conditional_styles(
     tones: Option<&TonesStyle>,
 ) -> Result<RuleOverrides, String> {
     let mut result = RuleOverrides::default();
-    let mut matched_any = false;
-    let mut default_rule: Option<&WhenRule> = None;
-    for rule in rules {
-        if rule.default == Some(true) {
-            default_rule = Some(rule);
-            continue;
-        }
-        if match_predicate(rule, value)? {
-            matched_any = true;
-            apply_rule_outputs(rule, &mut result, tones)?;
-        }
-    }
-    if !matched_any {
-        if let Some(rule) = default_rule {
-            apply_rule_outputs(rule, &mut result, tones)?;
-        }
+    for rule in conditional::matching(rules, |r| &r.predicate, value)? {
+        apply_rule_outputs(rule, &mut result, tones)?;
     }
     Ok(result)
 }
 
+/// What `style.row.conditional` sets on `column`'s cell of `row`: every matching rule applies,
+/// the later winning per key, and a rule's patch for this cell beats its row-level paint.
+/// Names that match a column of the row (`background`, `font.color`, `font.weight`) read that
+/// row's value, as a column's static paint does.
+pub(super) fn resolve_row_cell_style(
+    rules: &RowRules,
+    column: &str,
+    row: &serde_json::Map<String, Value>,
+    tones: Option<&TonesStyle>,
+) -> Result<RuleOverrides, String> {
+    let mut paint = RuleOverrides::default();
+    let mut cell = RuleOverrides::default();
+    for (tested, column_rules) in rules {
+        let value = row.get(tested).filter(|v| !v.is_null());
+        for rule in conditional::matching(column_rules, |r| &r.row.predicate, value)? {
+            apply_rule_outputs(&rule.row, &mut paint, tones)?;
+            if let Some(patch) = rule.cell(column) {
+                apply_rule_outputs(patch, &mut cell, tones)?;
+            }
+        }
+    }
+    let resolved = |own: Option<String>, under: Option<String>| own.or(under);
+    let mut merged = RuleOverrides {
+        background: resolved(cell.background, paint.background),
+        color: resolved(cell.color, paint.color),
+        weight: resolved(cell.weight, paint.weight),
+        style: resolved(cell.style, paint.style),
+        decoration: resolved(cell.decoration, paint.decoration),
+        glyph: cell.glyph,
+        glyph_color: cell.glyph_color,
+        tone_color: cell.tone_color,
+        tone_needs_board_tones: cell.tone_needs_board_tones || paint.tone_needs_board_tones,
+    };
+    merged.background = merged
+        .background
+        .and_then(|spec| resolve_style_input(&spec, row))
+        .and_then(|raw| sanitized_color(&raw));
+    merged.color = merged
+        .color
+        .and_then(|spec| resolve_style_input(&spec, row))
+        .and_then(|raw| sanitized_color(&raw));
+    merged.weight = merged
+        .weight
+        .and_then(|spec| resolve_style_input(&spec, row))
+        .filter(|w| VALID_FONT_WEIGHTS.contains(&w.as_str()));
+    Ok(merged)
+}
+
 /// `resolve_cell_glyph_from_overrides`: a matched rule's `glyph` wins
-/// (with its own `glyph_color`, possibly `None`); otherwise the column's
-/// static `glyph`/`glyph_color`. `tones` is `None` here — glyph-only
-/// callers (the two measurement sites) never need a tone-resolved color,
+/// (with its own `glyph_color`, possibly `None`), then a row rule's patch for the cell;
+/// otherwise the column's static `glyph`/`glyph_color`. `tones` is `None` here — glyph-only
+/// callers (the measurement sites) never need a tone-resolved color,
 /// only the glyph string itself.
 pub(super) fn resolve_cell_glyph(
-    cfg: &ColConfig,
-    when_rules: &[WhenRule],
+    col: &ColMeta,
+    row: &serde_json::Map<String, Value>,
     value: Option<&Value>,
 ) -> Result<Option<String>, String> {
     let overrides =
-        resolve_conditional_styles(when_rules, value, None).map_err(|e| format!("table: {e}"))?;
+        resolve_conditional_styles(&col.when_rules, value, None).map_err(|e| format!("table: {e}"))?;
     if overrides.glyph.is_some() {
         return Ok(overrides.glyph);
     }
-    Ok(cfg.glyph.clone())
+    let row_style = resolve_row_cell_style(&col.row_rules, col.name.as_str(), row, None)
+        .map_err(|e| format!("table: {e}"))?;
+    Ok(row_style.glyph.or_else(|| col.cfg.glyph.clone()))
 }
 
 /// `glyph_run`: the run painted ahead of a text cell's value — the glyph
@@ -317,7 +273,13 @@ pub(super) fn glyph_run(glyph: Option<&str>) -> String {
 /// `when` rule against every sampled value at each of this file's five
 /// glyph-aware measurement sites.
 pub(super) fn glyph_possible(col: &ColMeta) -> bool {
-    !col.when_rules.is_empty() || col.cfg.glyph.is_some()
+    !col.when_rules.is_empty()
+        || col.cfg.glyph.is_some()
+        || col
+            .row_rules
+            .values()
+            .flatten()
+            .any(|rule| rule.cell(&col.name).is_some_and(|patch| patch.glyph.is_some()))
 }
 
 /// A cell's glyph run composed in front of `rendered`: the string every
@@ -327,13 +289,14 @@ pub(super) fn glyph_possible(col: &ColMeta) -> bool {
 /// `column_inputs`' word floors, which compose it locally instead.
 pub(super) fn cell_text_with_glyph(
     col: &ColMeta,
+    row: &serde_json::Map<String, Value>,
     raw_value: Option<&Value>,
     rendered: &str,
 ) -> Result<String, String> {
     if !glyph_possible(col) {
         return Ok(rendered.to_string());
     }
-    let glyph = resolve_cell_glyph(&col.cfg, &col.when_rules, raw_value)?;
+    let glyph = resolve_cell_glyph(col, row, raw_value)?;
     Ok(format!("{}{rendered}", glyph_run(glyph.as_deref())))
 }
 
@@ -589,6 +552,18 @@ pub(super) fn resolve_cell_style(
     let mut scaled_color: Option<String> = scale
         .and_then(|_| col.cfg.font.as_ref()?.color.as_deref())
         .and_then(sanitized_color);
+    // Row rules sit over the static paint and under the scale and the column's own rules.
+    let row_style = resolve_row_cell_style(&col.row_rules, col.name.as_str(), row, tones)
+        .map_err(|e| format!("table: {e}"))?;
+    if row_style.tone_needs_board_tones {
+        return Err("table: conditional rule tone with no board tones".into());
+    }
+    if row_style.background.is_some() {
+        background.clone_from(&row_style.background);
+    }
+    if row_style.color.is_some() {
+        scaled_color.clone_from(&row_style.color);
+    }
     if let (Some(scale), false) = (scale, is_summary_role(row_role)) {
         for (target, slot) in [
             (scale.background.as_ref(), &mut background),
@@ -647,16 +622,19 @@ pub(super) fn resolve_cell_style(
     }
     let (glyph, glyph_color) = if overrides.glyph.is_some() {
         (overrides.glyph, overrides.glyph_color)
+    } else if row_style.glyph.is_some() {
+        (row_style.glyph, row_style.glyph_color)
     } else {
-        (col.cfg.glyph.clone(), col.cfg.glyph_color.clone())
+        let color = row_style.glyph_color.or_else(|| col.cfg.glyph_color.clone());
+        (col.cfg.glyph.clone(), color)
     };
 
     Ok(RuleOverrides {
         background,
         color: overrides.color.or(scaled_color),
-        weight: overrides.weight,
-        style: overrides.style,
-        decoration: overrides.decoration,
+        weight: overrides.weight.or(row_style.weight),
+        style: overrides.style.or(row_style.style),
+        decoration: overrides.decoration.or(row_style.decoration),
         glyph,
         glyph_color,
         tone_color: None,
@@ -690,31 +668,12 @@ pub(super) fn parse_template_inner(inner: &str) -> Option<(String, Option<String
     }
 }
 
-/// Python's `urllib.parse.quote_plus` for a UTF-8 string with the default
-/// (empty) `safe` set: RFC 3986 unreserved bytes (`A-Za-z0-9_.-~`) pass
-/// through, a space becomes `+`, everything else percent-encodes per byte.
-pub(super) fn urlencode_plus(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'-' | b'~' => {
-                out.push(b as char)
-            }
-            b' ' => out.push('+'),
-            _ => {
-                let _ = write!(out, "%{b:02X}");
-            }
-        }
-    }
-    out
-}
-
 /// An explicit
 /// `link:` string that names a data column verbatim substitutes that
 /// column's own value for THIS row (`None`/absent → no link). Otherwise
 /// every `{{ col }}` / `{{ col | urlencode }}` placeholder substitutes
 /// `row[col]`'s string form — `urlencode` percent-encodes it
-/// (`urlencode_plus`, matching `quote_plus`), any other filter name is an
+/// (`quote_plus`), any other filter name is an
 /// `Err` (never a silent pass-through), and a `None` placeholder anywhere
 /// makes the WHOLE row's link `None` (production's `has_none` short-
 /// circuit). A template-free string with no `{{ }}` match anywhere is the
@@ -753,7 +712,7 @@ pub(super) fn resolve_cell_link(
                             let raw = py_str(v);
                             match filter_name.as_deref() {
                                 None => out.push_str(&raw),
-                                Some("urlencode") => out.push_str(&urlencode_plus(&raw)),
+                                Some("urlencode") => out.push_str(&crate::href::quote_plus(&raw)),
                                 Some(other) => {
                                     return Err(Diagnostic::new(
                                         &codes::ERR_TABLE_LINK_FILTER_UNKNOWN,
@@ -832,13 +791,6 @@ pub(crate) fn decimal_pad_for<'a>(
 
 pub(super) fn is_summary_role(role: RowRole) -> bool {
     matches!(role, RowRole::Summary | RowRole::Total)
-}
-
-/// A JSON number coerces to `f64`; anything else (a string whatever it reads
-/// like, `null`) is not numeric. JSON cannot encode NaN/±Infinity, so every
-/// number here is finite.
-pub(crate) fn coerce_numeric_cell(value: Option<&Value>) -> Option<f64> {
-    value?.as_f64()
 }
 
 /// `row_role` names the query column that marks each row; a name the query
@@ -1450,7 +1402,6 @@ pub(super) fn transposed_inputs(
         "__metric__": {"label": display_text::language::tr("table.metric", None, &[])?, "width": "40%", "link_open": "page", "header_link_open": "page"},
         "__value__": {"label": display_text::language::tr("table.value", None, &[])?, "align": "right", "link_open": "page", "header_link_open": "page"},
     });
-    flat["conditional_formatting"] = Value::Null;
     flat["spanners"] = Value::Null;
     flat["row_role"] = Value::Null;
     Ok((flat, pivoted))
@@ -2211,6 +2162,8 @@ pub(super) fn visible_columns<'a>(
     }
     check_visible_addressable(chart_id, &r.columns, rows, row_role, &fanned_measures)?;
 
+    let row_rules = std::rc::Rc::new(r.style.table.row.conditional.clone().unwrap_or_default());
+
     // Build column metadata.
     let cols: Vec<ColMeta> = col_names
         .iter()
@@ -2322,16 +2275,14 @@ pub(super) fn visible_columns<'a>(
                 }
             }
 
-            // Chart-level `conditional_formatting` looks itself up under the
-            // same key `cfg` did (`config_key`) — a pivot leaf's own
-            // measure/dimension suffix, mirroring production's measure-keyed
-            // remap for the shapes this corpus exercises.
-            let when_rules: Vec<WhenRule> = r
-                .conditional_formatting
-                .as_ref()
-                .and_then(|m| m.get(config_key))
-                .map(|f| f.when.clone())
-                .unwrap_or_default();
+            // A column's rules sit on its own entry: a pivot leaf finds them
+            // under its `config_key` (the measure/dimension suffix) and never
+            // inherits a fanned measure's.
+            let when_rules: Vec<WhenRule> = if fan_out_via_measure {
+                Vec::new()
+            } else {
+                cfg.conditional.take().unwrap_or_default()
+            };
 
             // A column has a numeric lane when some cell is a magnitude;
             // a text or date cell beside them is painted on its own terms.
@@ -2389,6 +2340,7 @@ pub(super) fn visible_columns<'a>(
                 is_date,
                 is_day,
                 when_rules,
+                row_rules: row_rules.clone(),
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -2505,6 +2457,10 @@ pub(super) fn bind_chart(src: Source) -> Result<Chart, Diagnostic> {
     let r: Resolved =
         Deserialize::deserialize(src.resolved).map_err(|e| format!("table payload: {e}"))?;
     check_row_role(&r, src.rows)?;
+    let has_row_rules = r.style.table.row.conditional.as_ref().is_some_and(|rules| !rules.is_empty());
+    if has_row_rules && r.style.table.transpose {
+        return Err("table: style.row.conditional is not supported with transpose".into());
+    }
     if r.style.table.transpose && !src.rows.is_empty() {
         let (resolved, rows) = transposed_inputs(src.resolved, src.rows, src.types)?;
         return bind_chart(Source {
@@ -2516,6 +2472,9 @@ pub(super) fn bind_chart(src: Source) -> Result<Chart, Diagnostic> {
     }
 
     let pivot = pivot_for(&r, src.rows, src.types, src.cell_text)?;
+    if has_row_rules && pivot.is_some() {
+        return Err("table: style.row.conditional is not supported on a pivot table".into());
+    }
     let (rows, types) = table_rows(src.rows, src.types, &pivot);
     let (cols, pivot_n_row_dims, pivot_levels_visible) = visible_columns(&r, rows, types, &pivot)?;
     let pivoted = pivot.is_some();
@@ -2631,9 +2590,15 @@ pub(super) fn bind_drawn(chart: &Chart, payload: &Payload) -> Result<Drawn, Diag
         .as_ref()
         .and_then(|b| b.numeral_family.clone())
         .ok_or("table: board_style.numeral_family (style.fonts.numeral) is missing")?;
-    // A static `color` replaces the font's; every authored table color is
-    // validated up front.
-    let body_color = sanitize_color(th.color.as_ref().and_then(|c| c.static_color.as_deref()))?
+    // The column-default font color replaces the font's; every authored table
+    // color is validated up front. A column ID there is per-row paint, not an ink.
+    let default_ink = th
+        .column_defaults
+        .as_ref()
+        .and_then(|d| d.font.as_ref())
+        .and_then(|f| f.color.as_deref())
+        .filter(|c| !chart.rows.first().is_some_and(|row| row.contains_key(*c)));
+    let body_color = sanitize_color(default_ink)?
         .or(th.font.color.as_deref())
         .unwrap_or("#222222");
     sanitize_color(th.row.stripe.as_ref().and_then(|s| s.color.as_deref()))?;

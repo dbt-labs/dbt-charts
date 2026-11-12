@@ -1,15 +1,54 @@
 //! The 0.11.0 -> 0.12.0 boundary: `endpoint_labels.visible` becomes the legend
 //! position's `endpoints` edge. `label_offset` and `height` stay under
 //! `endpoint_labels`; `successor_edges` holds the scope rules.
+//!
+//! - **`style.color.static` becomes the paint of the chart's primary mark.** The
+//!   constant paint a chart has with no `color:` channel is authored on its mark:
+//!   `bar` and `histogram` to `style.marks.bar.color`, `area` to
+//!   `style.marks.area.color`, `line` to `style.marks.line.stroke.color`, `scatter`,
+//!   `point_map` and `bubble_map` to `style.marks.point.color`, `pie` and `donut` to
+//!   `style.marks.slice.color`, `heatmap` to `style.marks.rect.color`, `map` and
+//!   `geoshape` to `style.marks.geoshape.fill`, and a `table` to the cell text color,
+//!   `style.column_defaults.font.color`. One `Move` per chart `type:`, and the same
+//!   move under `style.charts.<family>` on the theme and board tiers. A retired
+//!   color token is respelled on the way. A destination the author already set
+//!   refuses the move.
+//! - **A table's conditional formatting is on the column it paints.** The
+//!   chart-root `conditional_formatting: {col: {when: [rule]}}` becomes
+//!   `style.columns.<col>.conditional: [rule]`, merged into the column's
+//!   `style.columns.<col>` entry when it has one; a leaf both hold refuses. A
+//!   rule's cell style keeps its keys (`background`, `font`, `glyph`,
+//!   `glyph_color`, `tone`): they are the column's own `style.columns.<col>`
+//!   fields. Rule order and semantics are unchanged: every matching rule applies
+//!   and the later one wins per key, so a board that lists a general rule after
+//!   a specific one needs the two swapped by hand.
+//! - **A KPI's conditional formatting is `style.conditional`, and its background is
+//!   `style.background`.** `conditional_formatting: {col: {when: [rule]}}` becomes
+//!   `style.conditional: {col: [rule]}`. A rule on the `support.value` column styles the
+//!   support row (`font.color` becomes `support.font.color`); a rule on any other column styles
+//!   the headline (`font.color` becomes `value.font.color`, `background` stays). Evaluation is
+//!   one ordered list per column: every matching rule applies and the later one wins per key,
+//!   and `default` applies only when no rule in its column matched, so a `default` that relied
+//!   on the old per-key split repaints. A support rule's `tone` becomes `support.tone`. A rule
+//!   that set `glyph` or `glyph_color`, or a headline `tone`, refuses: draw those with `good`.
+//!   The chart-root `background:` becomes `style.background:`, and refuses when
+//!   `style.background` is also authored.
+//! - **A board's `style.title.font.size` is removed**: one `Deletion`, on the root
+//!   and every nested board. A board, section or prose title sizes from the heading
+//!   ramp (`style.fonts.heading.sizes`, `style.fonts.section.sizes`); the key set
+//!   no painted size. A chart's own `style.title.font.size` is a live override and
+//!   stays.
 
 use std::sync::Arc;
 
 use indexmap::{IndexMap, IndexSet};
 use serde_json::Value as Json;
 
-use crate::decl::{path, Declarations, DocumentRewrite, Grammars, KeyPath, Rewrote};
+use crate::decl::{path, Declarations, Deletion, DocumentRewrite, Grammars, KeyPath, Move, Rewritten, Rewrote};
 use crate::pyrepr::repr_json;
+use crate::v0_11_0::{respell_secondary_ink, retired_scaffold_token_map};
 
+const TITLE_SIZE_REASON: &str = "A board title's size comes from the heading ramp, so this key set none. Set `style.fonts.heading.sizes` (or `style.fonts.section.sizes`) to size board and section titles, or a chart's own `style.title.font.size`.";
 const RAIL_FAMILIES: [&str; 3] = ["line", "area", "bar"];
 const CONCRETE_EDGES: [&str; 4] = ["top", "bottom", "left", "right"];
 const LEGEND_EDGE: [&str; 3] = ["legend", "position", "edge"];
@@ -23,6 +62,30 @@ const POSITION_PLACEMENT: [[&str; 3]; 2] = [
 const CAVEAT: &str = "Legend settings in other files (meta.yml, `extends:`, a board this file styles) can change how this combines, so check the charts it styles.";
 const LAYERED_LEAVES: &str =
     "a legend shown beside the labels (as on a layered chart) no longer stays at";
+
+/// A chart `type:` to the mark path (under `marks`) holding its constant paint.
+const STATIC_COLOR_MARK_PAINT: [(&str, &[&str]); 12] = [
+    ("bar", &["bar", "color"]),
+    ("histogram", &["bar", "color"]),
+    ("area", &["area", "color"]),
+    ("line", &["line", "stroke", "color"]),
+    ("scatter", &["point", "color"]),
+    ("point_map", &["point", "color"]),
+    ("bubble_map", &["point", "color"]),
+    ("pie", &["slice", "color"]),
+    ("donut", &["slice", "color"]),
+    ("heatmap", &["rect", "color"]),
+    ("map", &["geoshape", "fill"]),
+    ("geoshape", &["geoshape", "fill"]),
+];
+/// The `style.charts.<family>` keys; `donut`, `bubble_map` and `map` share
+/// `pie`, `point_map` and `geoshape`.
+const STATIC_COLOR_THEME_FAMILIES: [&str; 9] = [
+    "bar", "histogram", "area", "line", "scatter", "point_map", "pie", "heatmap", "geoshape",
+];
+/// A table's constant paint is its cell text color: the column default font.
+const TABLE_INK: [&str; 3] = ["column_defaults", "font", "color"];
+const STATIC_COLOR: [&str; 2] = ["color", "static"];
 
 type Path = Vec<String>;
 
@@ -735,6 +798,176 @@ fn visible_to_edge(doc: &Json, source: &[String], _value: &Json) -> Result<Rewro
     Ok(rewrote(striking_placement(doc, &holder, found)))
 }
 
+fn tail<'a>(head: &[&'a str], rest: &[&'a str]) -> Vec<&'a str> {
+    [head, rest].concat()
+}
+
+fn static_color_moves(g: &Grammars) -> Vec<Move> {
+    let rename = |new: &[&str], old: &[&str], chart_type: Option<&str>| {
+        g.suffix_rename_moves(&[(new, old)], None, chart_type)
+    };
+    let mut moves = Vec::new();
+    for (chart_type, paint) in STATIC_COLOR_MARK_PAINT {
+        moves.extend(rename(
+            &tail(&["style", "marks"], paint),
+            &tail(&["style"], &STATIC_COLOR),
+            Some(chart_type),
+        ));
+    }
+    for family in STATIC_COLOR_THEME_FAMILIES {
+        let Some((_, paint)) = STATIC_COLOR_MARK_PAINT.iter().find(|(t, _)| *t == family) else {
+            continue;
+        };
+        moves.extend(rename(
+            &tail(&["charts", family, "marks"], paint),
+            &tail(&["charts", family], &STATIC_COLOR),
+            None,
+        ));
+    }
+    moves.extend(rename(
+        &tail(&["style"], &TABLE_INK),
+        &tail(&["style"], &STATIC_COLOR),
+        Some("table"),
+    ));
+    moves.extend(rename(
+        &tail(&["charts", "table"], &TABLE_INK),
+        &tail(&["charts", "table"], &STATIC_COLOR),
+        None,
+    ));
+    let value_map = Arc::new(retired_scaffold_token_map());
+    for m in &mut moves {
+        let map = value_map.clone();
+        m.rewrite = Some(Arc::new(move |v| respell_secondary_ink(&map, v)));
+    }
+    moves
+}
+
+/// `{col: {when: [rule]}}` as `{col: {conditional: [rule]}}`; a rule keeps its keys.
+/// A value that is not that shape is left for the grammar to refuse.
+fn table_conditional_rules(value: &Json) -> Rewritten {
+    let Json::Object(columns) = value else {
+        return Rewritten::Value(value.clone());
+    };
+    let mut moved = serde_json::Map::new();
+    for (column, entry) in columns {
+        let Some(when) = entry.get("when").filter(|w| w.is_array()) else {
+            return Rewritten::Value(value.clone());
+        };
+        moved.insert(column.clone(), serde_json::json!({ "conditional": when }));
+    }
+    Rewritten::Value(Json::Object(moved))
+}
+
+fn table_rule_moves(g: &Grammars) -> Vec<Move> {
+    g.suffix_rename_moves(
+        &[(&["style", "columns"], &["conditional_formatting"])],
+        None,
+        Some("table"),
+    )
+    .into_iter()
+    .map(|mut m| {
+        m.rewrite = Some(Arc::new(table_conditional_rules));
+        m.merge = true;
+        m
+    })
+    .collect()
+}
+
+const RULE_PREDICATES: [&str; 10] = [
+    "eq", "ne", "lt", "lte", "gt", "gte", "between", "in", "is_null", "default",
+];
+
+/// A KPI's `{col: {when: [rule]}}` as `{col: [rule]}`, each rule's paint under the row it styles.
+///
+/// A rule on the `support.value` column styles the support row; a rule on any other column styles
+/// the headline. Paint the old grammar never drew (a headline rule's `font.weight`) is dropped. A
+/// support rule's `tone` moves to `support.tone`; a glyph, or a headline tone, has no successor in
+/// a rule, so it refuses. A value that is not that shape is left for the grammar to refuse.
+fn kpi_conditional_rules(doc: &Json, source: &[String], value: &Json) -> Result<Rewrote, String> {
+    let kept = || Ok(Rewrote { value: Some(value.clone()), ..Rewrote::default() });
+    let Json::Object(columns) = value else {
+        return kept();
+    };
+    let chart = holder(source, 1);
+    let chart_value = value_at(doc, &chart).and_then(Json::as_object);
+    let field = |key: &str| chart_value.and_then(|c| c.get(key));
+    let support_column = field("support")
+        .and_then(|s| s.get("value"))
+        .filter(|support| Some(*support) != field("value"))
+        .and_then(Json::as_str);
+    let mut moved = serde_json::Map::new();
+    for (column, entry) in columns {
+        let Some(when) = entry.get("when").and_then(Json::as_array) else {
+            return kept();
+        };
+        let row = if Some(column.as_str()) == support_column { "support" } else { "value" };
+        let mut rules = Vec::new();
+        for rule in when {
+            let Json::Object(rule) = rule else {
+                return kept();
+            };
+            if rule.contains_key("glyph") || rule.contains_key("glyph_color") {
+                return Err(format!(
+                    "conditional_formatting.{column} sets glyph or glyph_color, which a style.conditional rule cannot. Draw the glyph from the sign with `good` (`support.good` for the support row)."
+                ));
+            }
+            if rule.contains_key("tone") && row != "support" {
+                return Err(format!(
+                    "conditional_formatting.{column} sets tone on the headline, which a style.conditional rule cannot. Color the headline from the sign with `good`."
+                ));
+            }
+            let mut moved_rule: serde_json::Map<String, Json> = rule
+                .iter()
+                .filter(|(k, _)| RULE_PREDICATES.contains(&k.as_str()))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            let predicates = moved_rule.len();
+            if let Some(background) = rule.get("background") {
+                moved_rule.insert("background".into(), background.clone());
+            }
+            let mut row_style = serde_json::Map::new();
+            if let Some(color) = rule.get("font").and_then(|f| f.get("color")) {
+                row_style.insert("font".into(), serde_json::json!({ "color": color }));
+            }
+            if let Some(tone) = rule.get("tone") {
+                row_style.insert("tone".into(), tone.clone());
+            }
+            if !row_style.is_empty() {
+                moved_rule.insert(row.into(), Json::Object(row_style));
+            }
+            if moved_rule.len() > predicates {
+                rules.push(Json::Object(moved_rule));
+            }
+        }
+        if !rules.is_empty() {
+            moved.insert(column.clone(), Json::Array(rules));
+        }
+    }
+    Ok(Rewrote {
+        value: (!moved.is_empty()).then(|| Json::Object(moved)),
+        ..Rewrote::default()
+    })
+}
+
+fn kpi_moves(g: &Grammars) -> Vec<Move> {
+    let conditional = g
+        .suffix_rename_moves(&[(&["style", "conditional"], &["conditional_formatting"])], None, Some("kpi"))
+        .into_iter()
+        .map(|mut m| {
+            m.rewrite_in_document = Some(Arc::new(kpi_conditional_rules));
+            m.conflicts_with = vec![path(&["style", "conditional"])];
+            m
+        });
+    let background = g
+        .suffix_rename_moves(&[(&["style", "background"], &["background"])], None, Some("kpi"))
+        .into_iter()
+        .map(|mut m| {
+            m.conflicts_with = vec![path(&["style", "background"])];
+            m
+        });
+    conditional.chain(background).collect()
+}
+
 pub fn declarations(g: &Grammars) -> Declarations {
     let edge_rewrite: DocumentRewrite = Arc::new(edge_in_document);
     let visible_rewrite: DocumentRewrite = Arc::new(visible_to_edge);
@@ -755,6 +988,12 @@ pub fn declarations(g: &Grammars) -> Declarations {
             } else {
                 visible_rewrite.clone()
             });
+            m
+        })
+        .chain(table_rule_moves(g))
+        .chain(kpi_moves(g))
+        .chain(static_color_moves(g))
+        .map(|mut m| {
             // A tab item is its own model, not a board, so the board nesting
             // walk never steps into one; following it as a prefix reaches tabs
             // nested to any depth.
@@ -764,8 +1003,11 @@ pub fn declarations(g: &Grammars) -> Declarations {
             m
         })
         .collect();
+    let mut title_size = Deletion::new(g.source, g.target, &["style", "title", "font", "size"]);
+    title_size.reason = Some(TITLE_SIZE_REASON.into());
     Declarations {
         moves,
+        deletions: vec![title_size],
         ..Declarations::default()
     }
 }

@@ -4,6 +4,7 @@
 //! here skips it, and no bin takes it.
 //! References: https://github.com/d3/d3-array/blob/v3.2.4/src/bin.js
 
+use crate::invariant::Invariant;
 use crate::js_math::{js_max, js_round, js_truthy, pow};
 use crate::ticks::{d3_ticks_fractional, d3_nice_fractional, tick_increment};
 
@@ -53,14 +54,17 @@ fn quantile(values: &[f64], p: f64) -> Option<f64> {
         return None;
     }
     if p <= 0.0 || n < 2 {
-        return Some(sorted[0]);
+        return sorted.first().copied();
     }
     if p >= 1.0 {
-        return Some(sorted[n - 1]);
+        return sorted.last().copied();
     }
     let i = (n - 1) as f64 * p;
     let i0 = i.floor();
-    let (value0, value1) = (sorted[i0 as usize], sorted[i0 as usize + 1]);
+    let (value0, value1) = (
+        *sorted.get(i0 as usize).held("0 < p < 1 puts i0 inside the sorted values"),
+        *sorted.get(i0 as usize + 1).held("0 < p < 1 puts i0 + 1 inside the sorted values"),
+    );
     Some(value0 + (value1 - value0) * (i - i0))
 }
 
@@ -149,17 +153,23 @@ pub fn bin(values: &[f64], thresholds: Thresholds, domain: Option<[f64; 2]>) -> 
 
     // Thresholds outside the domain go.
     let (mut a, mut b) = (0, tz.len());
-    while a < tz.len() && tz[a] <= x0 {
+    while tz.get(a).is_some_and(|t| *t <= x0) {
         a += 1;
     }
-    while b > 0 && tz[b - 1] > x1 {
+    while b > 0 && tz.get(b - 1).is_some_and(|t| *t > x1) {
         b -= 1;
     }
-    tz = tz[a..b].to_vec();
+    // A reversed domain can leave `a > b`; d3 sizes its bins with `new Array(b - a + 1)`, which throws once two or
+    // more thresholds fall inside it, so this fails too instead of inventing a bin.
+    tz = tz.get(a..b).held("the trimmed thresholds are an ordered range").to_vec();
     let m = tz.len();
 
     let mut bins: Vec<Bin> = (0..=m)
-        .map(|i| Bin { x0: if i > 0 { tz[i - 1] } else { x0 }, x1: if i < m { tz[i] } else { x1 }, members: Vec::new() })
+        .map(|i| Bin {
+            x0: i.checked_sub(1).and_then(|j| tz.get(j)).copied().unwrap_or(x0),
+            x1: tz.get(i).copied().unwrap_or(x1),
+            members: Vec::new(),
+        })
         .collect();
     for (index, &x) in values.iter().enumerate() {
         if !(x0 <= x && x <= x1) {
@@ -174,10 +184,10 @@ pub fn bin(values: &[f64], thresholds: Thresholds, domain: Option<[f64; 2]>) -> 
             }
             // A zero step is finite and neither sign: d3 bins nothing.
             Some(_) => None,
-            None => Some(tz[..m].partition_point(|t| *t <= x)),
+            None => Some(tz.partition_point(|t| *t <= x)),
         };
         if let Some(at) = at {
-            bins[at].members.push(index);
+            bins.get_mut(at).held("`at` is at most the threshold count").members.push(index);
         }
     }
     bins
@@ -209,4 +219,17 @@ pub fn vega_constant_extent(value: f64, maxbins: f64) -> [f64; 2] {
     let start = if value < floored { floored - step } else { floored };
     let stop = (value / step).ceil() * step;
     [start, if stop == start { start + step } else { stop }]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// d3 sizes its bins with `new Array(b - a + 1)` after trimming, which throws a `RangeError` when a reversed domain
+    /// leaves two or more thresholds past each other; it never returns a plausible-looking bin, so neither does this port.
+    #[test]
+    #[should_panic(expected = "the trimmed thresholds are an ordered range")]
+    fn a_reversed_domain_that_trims_past_itself_fails_loudly() {
+        bin(&[1.0, 5.0, 9.0], Thresholds::Values(&[3.0, 5.0]), Some([10.0, 0.0]));
+    }
 }

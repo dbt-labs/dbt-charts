@@ -178,7 +178,6 @@ _NOT_DESIGN = frozenset(
         # structural rather than design.
         "chart_focus",
         "layers",
-        "conditional_formatting",
         # Authoring sugar for `extends:`, desugared before the panel ever sees
         # an instance -- `getattr(instance, "theme", None)` always finds
         # nothing, so a control here renders empty. A writable control would

@@ -46,6 +46,9 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     ChartRows,
     LayerDatasets,
 )
+from dbt_charts.core.compile.resolve.chart._conditional import (
+    validate_mark_conditional,
+)
 from dbt_charts.core.compile.resolve.chart._domain import (
     _bake_y_zero,
     _bake_zero_flag,
@@ -210,6 +213,7 @@ def _resolve_line(
         temporal_band_axes=frozenset(),
     )
     line = chart_local_style_context.line
+    validate_mark_conditional(line.conditional, data, y=normalized.y)
     primary = plan.primary
     channels = plan.channels
     tooltip_format_values = quantitative_channel_values(data, normalized.y)
@@ -219,6 +223,7 @@ def _resolve_line(
     single_series_fill = _effective_single_series_fill(
         chart_style_context,
         primary,
+        ("marks", "line", "stroke", "color"),
         rhythm_slot=normalized.rhythm_slot,
         has_layers=bool(normalized.layers),
     )
@@ -598,6 +603,7 @@ def _resolve_line(
             ),
             line_mark=resolved_line_mark,
             point_mark=line_point_mark,
+            conditional=line.conditional,
             endpoint_labels=endpoint_labels,
             single_series_fill=single_series_fill,
             label_usable_ratio=chart_style_context.label_usable_ratio,

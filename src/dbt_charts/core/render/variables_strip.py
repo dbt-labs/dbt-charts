@@ -34,7 +34,7 @@ from dbt_charts.core.compile.template.daterange import (
     current_board_clock,
     parse_daterange_preset,
 )
-from dbt_charts.core.font_measure import centered_baseline_offset
+from dbt_charts.core.font_measure import centered_baseline_offset, get_font_measurer
 from dbt_charts.core.render.board_variables import (
     LEGEND_VIEW_PREFIX,
     committed_text,
@@ -49,9 +49,14 @@ from dbt_charts.core.render.svg_utils import (
     attr_name,
     authored_attrs,
     authored_kind_attr,
+    checked_href,
     css_color,
     escape_attr,
     px,
+)
+from dbt_charts.core.render.variables_buttons_overflow import (
+    ButtonsOverflow,
+    record_buttons_overflow,
 )
 from dbt_charts.core.render.variables_layout import (
     lay_out_variables,
@@ -128,11 +133,28 @@ def render_variables_strip_svg(
         [control.spec for control in controls], width, variables_style
     )
 
+    for box in layout.boxes:
+        if box.overflowed:
+            record_buttons_overflow(
+                ButtonsOverflow(
+                    variable=box.name,
+                    path=f"{variables_path}.{box.name}" if variables_path else None,
+                    needed=box.buttons_width,
+                    available=width,
+                )
+            )
+
     offsets = _row_offsets(layout, width, align)
     formats = resolved_style.chart_defaults.formats
     drawn = [
         _draw_control(
-            control, box, offsets[box.y], variables_style, variables_path, formats
+            control,
+            box,
+            offsets[box.y],
+            variables_style,
+            variables_path,
+            align,
+            formats,
         )
         for control, box in zip(controls, layout.boxes, strict=True)
     ]
@@ -218,6 +240,7 @@ def _draw_control(
     dx: float,
     variables_style: VariablesStyle,
     variables_path: str,
+    align: StripAlign,
     formats: FormatTable | None,
 ) -> str:
     """One control: its label, its field, and whatever ornament marks its type."""
@@ -229,14 +252,16 @@ def _draw_control(
     weight = font_weight_as_css(label_font.weight)
 
     x = box.x + dx
-    field_x = x + box.label_width + float(variables_style.control_gap)
-    field_width = max(
-        box.width - box.label_width - float(variables_style.control_gap), 0.0
-    )
+    lead = box.label_width + float(variables_style.control_gap) if box.labeled else 0.0
+    field_x = x + lead
+    field_width = max(box.width - lead, 0.0)
     field_height = float(variables_style.input.height)
-    field_y = box.y + (box.height - field_height) / 2
+    # A wrapped button row is taller than one row; its label and at-rest value
+    # belong to the first.
+    row_height = float(variables_style.container_height)
+    field_y = box.y + (row_height - field_height) / 2
     baseline = (
-        box.y + box.height / 2 + centered_baseline_offset(label_font.family, font_size)
+        box.y + row_height / 2 + centered_baseline_offset(label_font.family, font_size)
     )
 
     # A variable is scoped to the board that declares it, so its handle is that
@@ -256,15 +281,26 @@ def _draw_control(
     # control is value surface.
     label_kind = authored_kind_attr("label") if authored else ""
 
-    parts = [
-        f'<text{label_kind} x="{px(x)}" y="{px(baseline)}" '
-        f'font-size="{px(font_size)}" '
-        f'font-weight="{escape_attr(weight)}" font-family="{escape_attr(family)}" '
-        f'fill="{escape_attr(variables_style.label.font.color)}">{html.escape(board_word("controls.field_label", label=box.label))}</text>'
-    ]
+    parts = (
+        [
+            f'<text{label_kind} x="{px(x)}" y="{px(baseline)}" '
+            f'font-size="{px(font_size)}" '
+            f'font-weight="{escape_attr(weight)}" font-family="{escape_attr(family)}" '
+            f'fill="{escape_attr(variables_style.label.font.color)}">{html.escape(board_word("controls.field_label", label=box.label))}</text>'
+        ]
+        if box.labeled
+        else []
+    )
     parts.extend(
         _draw_field(
-            control, box, field_x, field_y, field_width, field_height, variables_style
+            control,
+            box,
+            field_x,
+            field_y,
+            field_width,
+            field_height,
+            variables_style,
+            align,
         )
     )
 
@@ -391,9 +427,10 @@ def _draw_control(
             [n, format_value(n, "integer", formats)] for n in control.option_counts
         ]
         counts = f' data-dbt-option-counts="{escape_attr(json.dumps(pairs))}"'
+    form = ' data-dbt-form="buttons"' if box.segment_rows else ""
     return (
         f'<g data-dbt-variable="{escape_attr(box.name)}"{handle} '
-        f'data-dbt-input="{escape_attr(box.input)}"{checked}{disabled}{value_attr}{bounds}{unset}{time_locale}{presets}{options}{counts} '
+        f'data-dbt-input="{escape_attr(box.input)}"{form}{checked}{disabled}{value_attr}{bounds}{unset}{time_locale}{presets}{options}{counts} '
         f'data-dbt-x="{px(x)}" data-dbt-y="{px(box.y)}" '
         f'data-dbt-width="{px(box.width)}" data-dbt-height="{px(box.height)}">'
         f"{''.join(parts)}</g>"
@@ -459,8 +496,11 @@ def _draw_field(
     width: float,
     height: float,
     variables_style: VariablesStyle,
+    align: StripAlign,
 ) -> list[str]:
     """The input itself — a checkbox and a slider are shapes, the rest are fields."""
+    if box.segment_rows:
+        return _draw_buttons(control, box, x, y, width, variables_style, align)
     sizing = traits_of(box.input).sizing
     if sizing == "checkbox":
         return _draw_checkbox(control, x, y, variables_style)
@@ -479,6 +519,8 @@ def _draw_text_field(
     height: float,
     variables_style: VariablesStyle,
     hint: bool,
+    ornamented: bool = True,
+    text_at: float | None = None,
 ) -> list[str]:
     """A rounded field showing the committed value (or, muted, the hint standing
     in for one), plus its type ornament."""
@@ -487,17 +529,21 @@ def _draw_text_field(
     assert value_font.family is not None, _CASCADE_GAP
     family = str(value_font.family)
     input_style = variables_style.input
-    text_x = x + float(input_style.padding.left)
+    text_x = x + float(input_style.padding.left) if text_at is None else text_at
     baseline = y + height / 2 + centered_baseline_offset(value_font.family, font_size)
     color = variables_style.placeholder.font.color if hint else value_font.color
 
-    parts = [
-        _field_rect(x, y, width, height, variables_style),
+    parts = (
+        []
+        if text_at is not None
+        else [_field_rect(x, y, width, height, variables_style)]
+    )
+    parts += [
         f'<text x="{px(text_x)}" y="{px(baseline)}" font-size="{px(font_size)}" '
         f'font-family="{escape_attr(family)}" fill="{escape_attr(color)}">'
         f"{html.escape(box.value)}</text>",
     ]
-    ornament = traits_of(box.input).ornament
+    ornament = traits_of(box.input).ornament if ornamented else "none"
     if ornament == "arrow":
         parts.append(_draw_arrow(x + width, y + height / 2, font_size, variables_style))
     elif ornament == "calendar":
@@ -505,6 +551,148 @@ def _draw_text_field(
             _draw_calendar(x + width, y + height / 2, font_size, variables_style)
         )
     return parts
+
+
+def _segment_path(
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    radius: float,
+    left: bool,
+    right: bool,
+) -> str:
+    """A segment's outline, rounded only on the corners the button row's border rounds."""
+    rl = radius if left else 0.0
+    rr = radius if right else 0.0
+    return (
+        f"M{px(x + rl)} {px(y)} L{px(x + width - rr)} {px(y)} "
+        f"{_corner(x + width, y + rr, rr)} L{px(x + width)} {px(y + height - rr)} "
+        f"{_corner(x + width - rr, y + height, rr)} L{px(x + rl)} {px(y + height)} "
+        f"{_corner(x, y + height - rl, rl)} L{px(x)} {px(y + rl)} "
+        f"{_corner(x + rl, y, rl)} Z"
+    )
+
+
+def _corner(x: float, y: float, radius: float) -> str:
+    return f"A{px(radius)} {px(radius)} 0 0 1 {px(x)} {px(y)}" if radius else ""
+
+
+def _draw_buttons(
+    control: ResolvedControl,
+    box: ControlBox,
+    x: float,
+    y: float,
+    width: float,
+    variables_style: VariablesStyle,
+    align: StripAlign,
+) -> list[str]:
+    """The button row, and the selected value standing in for it at rest.
+
+    Both are laid out in the same box: the button row is hidden and the value shown
+    until a host's stylesheet swaps them (opacity, like the chevron, takes no
+    part in layout), so mounting moves nothing and an export reads as the value
+    alone. The border and dividers are ``data-dbt-field`` strokes the host
+    paints, as it does a field's.
+
+    A button row packed against the right edge (the title-inline band) shows its
+    value against that edge too, so the value sits under where the button row ends.
+    """
+    font_size = _font_size(variables_style)
+    value_font = variables_style.value.font
+    assert value_font.family is not None, _CASCADE_GAP
+    family = str(value_font.family)
+    input_style = variables_style.input
+    field_height = float(input_style.height)
+    radius = float(input_style.border.radius)
+    pad_y = (float(variables_style.container_height) - field_height) / 2
+    pitch = float(variables_style.container_height) + float(variables_style.gap)
+    label_ink = variables_style.label.font.color
+    selected_ink = input_style.selected_color
+    selected_weight = font_weight_as_css(input_style.selected_weight)
+    assert value_font.weight is not None, _CASCADE_GAP
+    resting_weight = font_weight_as_css(value_font.weight)
+    label_end = x - float(variables_style.control_gap)
+    run_on = (
+        label_end + _space_width(font_size) if box.labeled and align != "end" else None
+    )
+    at_rest = _draw_text_field(
+        box,
+        x + width - box.value_width if align == "end" else x,
+        y,
+        box.value_width,
+        field_height,
+        variables_style,
+        False,
+        ornamented=False,
+        text_at=run_on,
+    )
+    drawn: list[str] = []
+    segments = iter(control.segments)
+    for index, widths in enumerate(box.segment_rows):
+        row_y = box.y + index * pitch + pad_y
+        row_width = sum(widths)
+        drawn.append(
+            f'<rect data-dbt-field="buttons" x="{px(x)}" y="{px(row_y)}" '
+            f'width="{px(row_width)}" height="{px(field_height)}" rx="{px(radius)}" '
+            f'fill="{escape_attr(input_style.background)}" stroke="none"/>'
+        )
+        left = x
+        baseline = (
+            row_y
+            + field_height / 2
+            + centered_baseline_offset(value_font.family, font_size)
+        )
+        for position, width in enumerate(widths):
+            segment = next(segments)
+            first, last = position == 0, position == len(widths) - 1
+            if segment.selected:
+                weight, ink = selected_weight, selected_ink
+                tint = (
+                    ""
+                    if input_style.selected_background
+                    else f' fill-opacity="{input_style.selected_tint:g}"'
+                )
+                fill = (
+                    f'<path d="{escape_attr(_segment_path(left, row_y, width, field_height, radius, first, last))}" '
+                    f'fill="{escape_attr(input_style.selected_background or label_ink)}"{tint}/>'
+                )
+            else:
+                weight, ink, fill = resting_weight, label_ink, ""
+            divider = (
+                ""
+                if first
+                else f'<line data-dbt-field="divider" x1="{px(left)}" y1="{px(row_y)}" '
+                f'x2="{px(left)}" y2="{px(row_y + field_height)}" stroke="none"/>'
+            )
+            inverse = (
+                ' data-dbt-inverse="true"'
+                if segment.selected and input_style.selected_background
+                else ""
+            )
+            href = (
+                f' href="{escape_attr(checked_href(segment.href))}"'
+                if segment.href
+                else ""
+            )
+            drawn.append(
+                f'<a data-dbt-segment="{escape_attr(segment.value)}"{href}{inverse} '
+                f'role="radio" aria-checked="{"true" if segment.selected else "false"}">'
+                f'<rect x="{px(left)}" y="{px(row_y)}" width="{px(width)}" '
+                f'height="{px(field_height)}" fill="transparent"/>{fill}{divider}'
+                f'<rect data-dbt-segment-ring="true" x="{px(left + 2)}" y="{px(row_y + 2)}" '
+                f'width="{px(width - 4)}" height="{px(field_height - 4)}" '
+                f'rx="{px(max(radius - 2, 0))}" fill="none" stroke="none"/>'
+                f'<text x="{px(left + width / 2)}" y="{px(baseline)}" text-anchor="middle" '
+                f'font-size="{px(font_size)}" font-weight="{escape_attr(weight)}" '
+                f'font-family="{escape_attr(family)}" fill="{escape_attr(ink)}">'
+                f"{html.escape(segment.label)}</text></a>"
+            )
+            left += width
+    return [
+        f'<g data-dbt-buttons-value="true" class="dbt-pointer-inert">{"".join(at_rest)}</g>',
+        f'<g data-dbt-buttons="true" opacity="0">{"".join(drawn)}</g>',
+    ]
 
 
 def _draw_checkbox(
@@ -570,7 +758,8 @@ def _draw_slider(
         f'fill="{escape_attr(variables_style.input.background)}" stroke="none"/>',
         f'<circle data-dbt-ornament="slider-thumb" cx="{px(thumb)}" cy="{px(mid)}" r="6" '
         f'fill="{escape_attr(variables_style.value.font.color)}"/>',
-        f'<text x="{px(x + track_width + float(variables_style.control_gap))}" '
+        f'<text data-dbt-ornament="slider-value" '
+        f'x="{px(x + track_width + float(variables_style.control_gap))}" '
         f'y="{px(mid + centered_baseline_offset(value_font.family, font_size))}" font-size="{px(font_size)}" '
         f'font-family="{escape_attr(family)}" fill="{escape_attr(variables_style.value.font.color)}">'
         f"{html.escape(box.value)}</text>",
@@ -653,6 +842,11 @@ def _draw_calendar(
         f'<line x1="{px(x)}" y1="{px(top + size * 0.4)}" x2="{px(x + size)}" '
         f'y2="{px(top + size * 0.4)}"/></g>'
     )
+
+
+def _space_width(font_size: float) -> float:
+    """One word space at ``font_size``, measured like every other run of text."""
+    return float(get_font_measurer().measure(" ", font_size))
 
 
 def _font_size(variables_style: VariablesStyle) -> float:

@@ -236,22 +236,104 @@ pub fn unmapped_advance_em(codepoint: u32) -> f64 {
     }
 }
 
+/// A measurer within a font file: its `(font_number, weight)`.
+type MeasurerKey = (u32, Option<u32>);
+
+/// A font file's bytes and the measurers cut from it, one per `(font_number, weight)`.
+/// `FontMeasurer` is read-only after construction, so a render shares one instance, and a weighted
+/// one is built once: it computes every glyph's `HVAR` delta up front.
+pub struct FontFile {
+    pub name: String,
+    bytes: std::sync::Arc<[u8]>,
+    measurers: std::sync::Mutex<HashMap<MeasurerKey, std::sync::Arc<FontMeasurer>>>,
+}
+
+impl FontFile {
+    /// The file `name` holding `bytes`; a host reads them, this does no I/O.
+    pub fn new(name: impl Into<String>, bytes: impl Into<std::sync::Arc<[u8]>>) -> Self {
+        FontFile { name: name.into(), bytes: bytes.into(), measurers: Default::default() }
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// The measurer of this file's face `font_number`, instanced at `weight` when given.
+    pub fn measurer(&self, font_number: u32, weight: Option<f32>) -> std::sync::Arc<FontMeasurer> {
+        let key = (font_number, weight.map(f32::to_bits));
+        let mut cache = self.measurers.lock().unwrap();
+        cache
+            .entry(key)
+            .or_insert_with(|| {
+                std::sync::Arc::new(FontMeasurer::from_bytes(&self.name, self.bytes.clone(), font_number, weight))
+            })
+            .clone()
+    }
+}
+
+impl std::fmt::Debug for FontFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FontFile({}, {} bytes)", self.name, self.bytes.len())
+    }
+}
+
+impl PartialEq for FontFile {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.bytes == other.bytes
+    }
+}
+
 /// One concrete font file, optionally instanced at a variable-font weight.
 /// Renamed from Python's `FontFace` (guarded token).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(from = "FontSlotWire", into = "FontSlotWire")]
 pub struct FontSlot {
-    pub path: String,
+    pub file: std::sync::Arc<FontFile>,
     pub weight: Option<f32>,
     pub font_number: u32,
 }
 
+/// A slot on the wire (`mdsvg_cli`'s input): the file named by its path.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct FontSlotWire {
+    path: String,
+    weight: Option<f32>,
+    font_number: u32,
+}
+
+impl From<FontSlotWire> for FontSlot {
+    fn from(wire: FontSlotWire) -> Self {
+        FontSlot { weight: wire.weight, font_number: wire.font_number, ..FontSlot::new(wire.path) }
+    }
+}
+
+impl From<FontSlot> for FontSlotWire {
+    fn from(slot: FontSlot) -> Self {
+        FontSlotWire { path: slot.file.name.clone(), weight: slot.weight, font_number: slot.font_number }
+    }
+}
+
 impl FontSlot {
+    /// A slot on a file the host handed over (a `FontBook`'s): the engine's only constructor.
+    pub fn of(file: std::sync::Arc<FontFile>) -> Self {
+        FontSlot { file, weight: None, font_number: 0 }
+    }
+
+    // legacy: the path-based slot of the production chart-renderer and the mdsvg CLI; the file is
+    // read through the process-global `font_file_at` cache, and an unreadable path is an
+    // unavailable measurer.
     pub fn new(path: impl Into<String>) -> Self {
-        FontSlot {
-            path: path.into(),
-            weight: None,
-            font_number: 0,
-        }
+        FontSlot::of(font_file_at(&path.into()))
+    }
+
+    /// This slot's measurer, at its own weight.
+    pub fn measurer(&self) -> std::sync::Arc<FontMeasurer> {
+        self.file.measurer(self.font_number, self.weight)
+    }
+
+    /// This slot's file re-instanced at `weight`.
+    pub fn measurer_at(&self, weight: f32) -> std::sync::Arc<FontMeasurer> {
+        self.file.measurer(self.font_number, Some(weight))
     }
 }
 
@@ -662,34 +744,29 @@ pub fn css_weight_axis(css_weight: &str) -> Result<Option<f32>, String> {
     Ok(Some(axis.trunc() as f32))
 }
 
-/// Process-global cache of `FontMeasurer`s, keyed by `(font_path,
-/// font_number, weight)`. Mirrors Python's `_cached_measurer` (an
-/// `lru_cache`): `FontMeasurer` is read-only after construction, so sharing
-/// one instance across many `SVGRenderer` calls is safe and avoids
-/// repeated file reads, TTF parsing, and — now that advance deltas are
-/// computed exactly for every glyph up front — a full `HVAR` walk on every
-/// weighted measurement. Eviction (Python bounds this at `maxsize=32`) is
-/// not ported: a render touches only a handful of distinct `(path,
-/// weight)` pairs, so unbounded growth here is not a practical concern.
-type MeasurerCacheKey = (String, u32, Option<u32>);
-type MeasurerCache = std::sync::Mutex<HashMap<MeasurerCacheKey, std::sync::Arc<FontMeasurer>>>;
+// legacy: the process-global cache of files read by path, for the production chart-renderer and
+// the path-based `FontSlot::new`. The engine and layout take a `FontBook`'s files and never reach it.
+// An unreadable path caches an empty file, whose measurers are unavailable.
+type FileCache = std::sync::Mutex<HashMap<String, std::sync::Arc<FontFile>>>;
 
-static MEASURER_CACHE: once_cell::sync::Lazy<MeasurerCache> =
+static FILE_CACHE: once_cell::sync::Lazy<FileCache> =
     once_cell::sync::Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
 
+fn font_file_at(path: &str) -> std::sync::Arc<FontFile> {
+    let mut cache = FILE_CACHE.lock().unwrap();
+    cache
+        .entry(path.to_string())
+        .or_insert_with(|| std::sync::Arc::new(FontFile::new(path, std::fs::read(path).unwrap_or_default())))
+        .clone()
+}
+
+// legacy: see `FILE_CACHE`.
 pub fn cached_measurer(
     font_path: &str,
     font_number: u32,
     weight: Option<f32>,
 ) -> std::sync::Arc<FontMeasurer> {
-    let key = (font_path.to_string(), font_number, weight.map(f32::to_bits));
-    let mut cache = MEASURER_CACHE.lock().unwrap();
-    if let Some(measurer) = cache.get(&key) {
-        return measurer.clone();
-    }
-    let measurer = std::sync::Arc::new(FontMeasurer::new(font_path, font_number, weight));
-    cache.insert(key, measurer.clone());
-    measurer
+    font_file_at(font_path).measurer(font_number, weight)
 }
 
 /// Measure text width using actual font metrics via ttf-parser.
@@ -697,7 +774,7 @@ pub struct FontMeasurer {
     pub font_path: String,
     pub font_number: u32,
     pub weight: Option<f32>,
-    data: Vec<u8>,
+    data: std::sync::Arc<[u8]>,
     available: bool,
     units_per_em: u16,
     ascent_raw: i16,
@@ -710,13 +787,28 @@ pub struct FontMeasurer {
 }
 
 impl FontMeasurer {
+    // legacy: reads `font_path` itself; the engine's measurers come from `FontFile::measurer`.
     pub fn new(font_path: impl Into<String>, font_number: u32, weight: Option<f32>) -> Self {
         let font_path = font_path.into();
+        let data = std::fs::read(&font_path).unwrap_or_default();
+        Self::from_bytes(font_path, data, font_number, weight)
+    }
+
+    /// The measurer of face `font_number` of the font `data`, named `font_path` in errors; empty or
+    /// unparseable bytes make an unavailable one.
+    pub fn from_bytes(
+        font_path: impl Into<String>,
+        data: impl Into<std::sync::Arc<[u8]>>,
+        font_number: u32,
+        weight: Option<f32>,
+    ) -> Self {
+        let font_path = font_path.into();
+        let data = data.into();
         let unavailable = |font_path: String| FontMeasurer {
             font_path,
             font_number,
             weight,
-            data: Vec::new(),
+            data: std::sync::Arc::from([]),
             available: false,
             units_per_em: 1000,
             ascent_raw: 0,
@@ -724,10 +816,9 @@ impl FontMeasurer {
             supports_weight: false,
             advance_deltas: None,
         };
-        let data = match std::fs::read(&font_path) {
-            Ok(d) => d,
-            Err(_) => return unavailable(font_path),
-        };
+        if data.is_empty() {
+            return unavailable(font_path);
+        }
         let Ok(font) = TtfFont::parse(&data, font_number) else {
             return unavailable(font_path);
         };

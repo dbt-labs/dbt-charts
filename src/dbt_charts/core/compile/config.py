@@ -1284,6 +1284,10 @@ def get_project_locked_schema_version(project: Project) -> str | None:
     return read_locked_schema_version(config, filename)
 
 
+# Authored source declarations by name, as the project holds them.
+RawSources = Mapping[str, dict[str, Any]]  # type-state: explicit_any — raw config
+
+
 class ProjectSourcesConfig:
     """Project-level sources configuration.
 

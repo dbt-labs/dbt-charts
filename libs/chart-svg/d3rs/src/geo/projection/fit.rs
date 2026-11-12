@@ -2,6 +2,8 @@
 //! scale and translate that put a GeoJSON object's projected bounds in a box. d3 hangs them on the projection
 //! (`projection.fitSize`) and `identity` shares them, so they are the provided methods of [`Fit`].
 
+use crate::invariant::Invariant;
+
 use super::Projection;
 use crate::geo::path::bounds::Bounds;
 use crate::geo::stream::GeoStream;
@@ -64,7 +66,7 @@ pub trait Fit: Sized {
     fn fit_bounds(&mut self, object: &GeoJson) -> Result<[[f64; 2]; 2], String> {
         let mut measured = None;
         self.fit(object, |_, b| measured = Some(b))?;
-        Ok(measured.expect("fit succeeded, so its bounds were finite"))
+        Ok(measured.held("fit succeeded, so its bounds were finite"))
     }
 
     /// [`Fit::fit_extent`] with the bounds already measured by [`Fit::fit_bounds`] on this configuration.

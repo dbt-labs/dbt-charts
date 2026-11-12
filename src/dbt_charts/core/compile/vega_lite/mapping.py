@@ -155,8 +155,6 @@ def style_to_vega_lite(
         title_data["color"] = tf.color
     if tf.family is not None:
         title_data["font"] = tf.family
-    if tf.size is not None:
-        title_data["fontSize"] = tf.size
     if tf.weight is not None:
         title_data["fontWeight"] = tf.weight
     title_data["anchor"] = title.position.anchor

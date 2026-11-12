@@ -16,6 +16,16 @@ string_enum!(
     VariablesPosition { Top = "top", Bottom = "bottom", TitleInline = "title-inline" }
 );
 
+string_enum!(
+    /// How a daterange offers its presets.
+    PresetsDisplay { Buttons = "buttons", Menu = "menu" }
+);
+
+string_enum!(
+    /// What a button row does when it is wider than its slot.
+    ButtonsOverflow { Menu = "menu", Wrap = "wrap" }
+);
+
 /// Per-label font substyle for variable controls.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct VariablesLabelStyle {
@@ -92,6 +102,7 @@ model_core::build_leaf!(Presets);
 /// Variable controls chrome. `input.background` styles the inputs only: the
 /// strip itself is transparent and sits on the board canvas.
 #[derive(Debug, Clone, PartialEq, Model)]
+#[model(constraint(range(compact_height, gt = 0)))]
 pub struct VariablesStyle {
     /// Show the variables control panel.
     pub visible: bool,
@@ -117,6 +128,10 @@ pub struct VariablesStyle {
     pub placeholder: VariablesPlaceholderStyle,
     /// Height of the variables panel container in pixels.
     pub container_height: f64,
+    /// Height in pixels of every control, and of each row of controls, in a
+    /// nested board's variable band; a board's own band keeps `input.height`
+    /// and `container_height`.
+    pub compact_height: f64,
     /// Variables panel border style.
     pub border: BorderStyle,
     /// Gap between label and input within a single control in pixels.
@@ -126,4 +141,12 @@ pub struct VariablesStyle {
     /// The preset menu every daterange picker offers, in order; a variable's
     /// own `presets:` replaces it.
     pub presets: Presets,
+    /// How a daterange offers its presets: `menu` keeps them in the picker's
+    /// rail behind the field; `buttons` draws them inline as a row of compact
+    /// buttons, so every preset is visible without opening anything.
+    pub presets_display: PresetsDisplay,
+    /// What a button row does when it is wider than its slot: `menu` draws the
+    /// dropdown form instead and reports a render warning; `wrap` flows the
+    /// buttons onto further rows.
+    pub overflow: ButtonsOverflow,
 }

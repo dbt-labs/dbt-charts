@@ -15,8 +15,9 @@ use board_model::style::font::LetterCase;
 use board_model::style::style::Style;
 use diagnostic::{diag, refuse, Diagnostic};
 use mdsvg::style::{Style as MdsvgStyle, TextAlign as MdAlign};
-use measure::font_files::{font_path, italic_font_path, mono_font_path};
-use measure::fonts::{cached_measurer, css_weight_axis, FontSlot, FontSlots};
+use measure::font_files::{font_file, italic_font_file, MONO_FILE};
+use measure::fonts::{css_weight_axis, FontSlot, FontSlots};
+use measure::shaped::FontBook;
 use model_core::Engine;
 
 use crate::families::failed::{code_family, Weight};
@@ -274,11 +275,11 @@ pub fn compact_style(style: &Style, overrides: &Overrides) -> Result<MdsvgStyle,
 
 /// `markdown_font_faces`: the files each run of `style` is measured against, instanced at the weight
 /// it paints at. A family with no vendored italic file has no italic slot ([`has_italic`]).
-pub fn font_slots(fonts_dir: &str, style: &MdsvgStyle) -> Result<FontSlots, Diagnostic> {
+pub fn font_slots(book: &FontBook, style: &MdsvgStyle) -> Result<FontSlots, Diagnostic> {
     let slot = |family: &str, weight: &str| {
         Ok::<_, Diagnostic>(FontSlot {
             weight: css_weight_axis(weight).map_err(diag::err_internal)?,
-            ..FontSlot::new(font_path(fonts_dir, family))
+            ..FontSlot::of(book.file(font_file(family)).map_err(diag::err_internal)?)
         })
     };
     let regular = slot(
@@ -292,22 +293,23 @@ pub fn font_slots(fonts_dir: &str, style: &MdsvgStyle) -> Result<FontSlots, Diag
     };
     // `_face_for(primary, "italic", text_axis)` and, at the bold axis, the bold italic.
     let italic = |weight: &str| -> Result<Option<FontSlot>, Diagnostic> {
-        let Some(path) = italic_font_path(fonts_dir, &style.font_family) else { return Ok(None) };
-        Ok(Some(FontSlot { weight: css_weight_axis(weight).map_err(diag::err_internal)?, ..FontSlot::new(path) }))
+        let Some(name) = italic_font_file(&style.font_family) else { return Ok(None) };
+        let file = book.file(name).map_err(diag::err_internal)?;
+        Ok(Some(FontSlot { weight: css_weight_axis(weight).map_err(diag::err_internal)?, ..FontSlot::of(file) }))
     };
     Ok(FontSlots {
         italic: italic(style.font_weight.as_deref().unwrap_or("400"))?,
         bold_italic: italic(&style.bold_font_weight)?,
         bold: Some(slot(&style.font_family, &style.bold_font_weight)?),
         heading: Some(slot(heading_family, &style.heading_font_weight)?),
-        mono: Some(FontSlot::new(mono_font_path(fonts_dir))),
+        mono: Some(FontSlot::of(book.file(MONO_FILE).map_err(diag::err_internal)?)),
         ..FontSlots::new(regular)
     })
 }
 
 /// Whether runs of `style` can be italic: the family ships an italic file to measure them against.
-pub fn has_italic(fonts_dir: &str, style: &MdsvgStyle) -> bool {
-    italic_font_path(fonts_dir, &style.font_family).is_some()
+pub fn has_italic(style: &MdsvgStyle) -> bool {
+    italic_font_file(&style.font_family).is_some()
 }
 
 /// `board_title_spec` for the root title (level 1): the H1 size of the ramp and the title weight.
@@ -329,13 +331,8 @@ pub fn root_title_overrides(style: &Style) -> Result<Overrides, Diagnostic> {
 }
 
 /// `_prose_char_ratio`: the mean width of real prose in the body face, as a fraction of its size.
-pub fn char_ratio(fonts_dir: &str, style: &MdsvgStyle) -> Result<f64, Diagnostic> {
-    let slots = font_slots(fonts_dir, style)?;
-    let measurer = cached_measurer(
-        &slots.regular.path,
-        slots.regular.font_number,
-        slots.regular.weight,
-    );
+pub fn char_ratio(book: &FontBook, style: &MdsvgStyle) -> Result<f64, Diagnostic> {
+    let measurer = font_slots(book, style)?.regular.measurer();
     Ok(measurer.measure(PROSE_SAMPLE, 1.0) / PROSE_SAMPLE.chars().count() as f64)
 }
 

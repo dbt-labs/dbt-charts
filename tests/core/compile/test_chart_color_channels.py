@@ -335,27 +335,6 @@ def test_unknown_dict_channel_raises():
         normalize_chart_channels(chart, {"arr"})
 
 
-def test_table_conditional_formatting_unknown_column_raises():
-    """table's unknown-CF-column guard survives the mark-fill branch collapse.
-
-    validate_conditional_formatting_columns runs unconditionally ahead of the
-    _project_conditional_formatting_inputs branch — table is the only family
-    that depends on it (every other family it once fired for is now a hard
-    parse-time ValidationError, never reaching this projector at all).
-    """
-    from dbt_charts.core.compile.resolve.chart.channel import normalize_chart_channels
-
-    chart = _FakeChart(
-        type="table",
-        columns=None,
-        conditional_formatting={
-            "nonexistent": {"when": [{"gt": 100, "background": "#ff0000"}]}
-        },
-    )
-    with pytest.raises(ValueError, match="conditional_formatting targets column"):
-        normalize_chart_channels(chart, {"arr", "segment"})
-
-
 def test_parse_style_channel_extra_key_rejected():
     """A dict with a valid key plus a typo raises on the extra key."""
     from dbt_charts.core.compile.resolve.chart.channel import parse_style_channel

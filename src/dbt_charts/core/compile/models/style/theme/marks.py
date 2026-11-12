@@ -18,6 +18,8 @@ from dbt_charts.core.compile.models.markers import (
     Absent,
     AutoUnset,
     Color,
+    ColumnRef,
+    Conditionable,
     Format,
     InheritSlot,
     SkipInheritSlots,
@@ -53,9 +55,11 @@ class TextMarkStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # InheritSlot: text mark font fills from charts.font (same as axis/legend font cascade).
-    font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.font")] = Field(
-        default_factory=FontStyle, description="Text mark font style overrides."
-    )
+    font: Annotated[
+        FontStyle,
+        InheritSlot(from_path="Style.charts.font"),
+        Conditionable(only=("color", "weight")),
+    ] = Field(default_factory=FontStyle, description="Text mark font style overrides.")
     # Cascade tier sentinel: None means "not specified at this tier".
     align: str | None = Field(
         default=None, description="Horizontal text alignment for text marks."
@@ -322,7 +326,7 @@ class MarkLabelsStyle(BaseModel):
     # label text from instead of the chart's y-field. Lets the axis keep the true y
     # unit (e.g. "200M") while the label shows a pre-computed column from the query
     # (e.g. a value already scaled to millions → bare "190"). None = label the y-field.
-    field: Annotated[str | None, Absent("the chart's y-field")] = Field(
+    field: Annotated[ColumnRef | None, Absent("the chart's y-field")] = Field(
         default=None,
         description="Column whose text labels each mark; `''` where unlabeled, never NULL. Default: the y column.",
     )
@@ -461,11 +465,25 @@ class BarMarkStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    color: Annotated[
+        str | None, Color(keywords=(AUTO,)), AutoUnset(), Conditionable()
+    ] = Field(
+        default=None,
+        description=(
+            "Bar fill color when the chart has no `color:` channel; over "
+            "`single_series_palette` and the palette. 'auto' takes the palette color."
+        ),
+    )
+
     # Cascade tier sentinel: None means "not specified at this tier".
     # SkipInheritSlots(cascade=True): apply_inherit copies the entire border object
     # from the parent slot when border is None; _set cannot navigate through a None
     # intermediate container.
-    border: Annotated[BorderStyle | None, SkipInheritSlots(cascade=True)] = Field(
+    border: Annotated[
+        BorderStyle | None,
+        SkipInheritSlots(cascade=True),
+        Conditionable(only=("color", "width")),
+    ] = Field(
         default=None,
         description="Bar border style (color/width also serve as the bar stroke).",
     )
@@ -515,7 +533,7 @@ class BarMarkStyle(BaseModel):
         ),
     )
     # Cascade tier sentinel: None means "not specified at this tier".
-    opacity: Annotated[float | None, AutoUnset()] = Field(
+    opacity: Annotated[float | None, AutoUnset(), Conditionable()] = Field(
         default=None, description="Bar fill opacity (0 to 1); 'auto' uses VL default."
     )
     # SkipInheritSlots(cascade=True): leaf fields inside labels inherit individually
@@ -547,9 +565,11 @@ class LineMarkStyle(BaseModel):
     # Cascade tier sentinel: None means "not specified at this tier".
     # SkipInheritSlots(cascade=True): apply_inherit copies the entire stroke object
     # from the parent slot when stroke is None.
-    stroke: Annotated[StrokeStyle | None, SkipInheritSlots(cascade=True)] = Field(
-        default=None, description="Line stroke style."
-    )
+    stroke: Annotated[
+        StrokeStyle | None,
+        SkipInheritSlots(cascade=True),
+        Conditionable(only=("color", "width", "dasharray")),
+    ] = Field(default=None, description="Line stroke style.")
     # Cascade tier sentinel: None means "not specified at this tier".
     curve: Curve | None = Field(
         default=None,
@@ -678,8 +698,18 @@ class AreaMarkStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    color: Annotated[
+        str | None, Color(keywords=(AUTO,)), AutoUnset(), Conditionable()
+    ] = Field(
+        default=None,
+        description=(
+            "Area fill color when the chart has no `color:` channel; over "
+            "`single_series_palette` and the palette. 'auto' takes the palette color."
+        ),
+    )
+
     # Cascade tier sentinel: None means "not specified at this tier".
-    opacity: float | None = Field(
+    opacity: Annotated[float | None, Conditionable()] = Field(
         default=None, ge=0, le=1, description="Area fill opacity (0–1)."
     )
     # Cascade tier sentinel: None means "not specified at this tier".
@@ -738,28 +768,35 @@ class PointMarkStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    size: Annotated[float | None, AutoUnset()] = Field(
+    size: Annotated[float | None, AutoUnset(), Conditionable()] = Field(
         default=None,
         description="Point size in square pixels; 0 disables points on line charts; 'auto' sizes by data density.",
     )
-    color: Annotated[str | None, Color(keywords=(AUTO,)), AutoUnset()] = Field(
+    color: Annotated[
+        str | None, Color(keywords=(AUTO,)), AutoUnset(), Conditionable()
+    ] = Field(
         default=None,
         description=(
-            "Point color. On a single-series scatter it recolors the dots, over "
-            "color.static and the palette; 'auto' inherits the series color."
+            "Point color. On a single-series scatter or point map it recolors the "
+            "dots, over `single_series_palette` and the palette; 'auto' inherits "
+            "the series color."
         ),
     )
-    shape: Annotated[SymbolShape | None, AutoUnset()] = Field(
+    shape: Annotated[SymbolShape | None, AutoUnset(), Conditionable()] = Field(
         default=None,
         description="Point shape (e.g. 'circle', 'square'); 'auto' uses VL default.",
     )
-    opacity: float | None = Field(default=None, description="Point opacity, 0 to 1.")
-    filled: bool | None = Field(default=None, description="Whether points are filled.")
-    fill: Annotated[str | None, Color()] = Field(
+    opacity: Annotated[float | None, Conditionable()] = Field(
+        default=None, description="Point opacity, 0 to 1."
+    )
+    filled: Annotated[bool | None, Conditionable()] = Field(
+        default=None, description="Whether points are filled."
+    )
+    fill: Annotated[str | None, Color(), Conditionable()] = Field(
         default=None,
         description="Point interior fill color; only applied when filled=false.",
     )
-    stroke_width: Annotated[float | None, AutoUnset()] = Field(
+    stroke_width: Annotated[float | None, AutoUnset(), Conditionable()] = Field(
         default=None,
         description="Stroke width in pixels for hollow point rings; 'auto' uses VL default.",
     )
@@ -783,8 +820,18 @@ class SliceMarkStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    color: Annotated[
+        str | None, Color(keywords=(AUTO,)), AutoUnset(), Conditionable()
+    ] = Field(
+        default=None,
+        description=(
+            "Slice fill color when the chart has no `color:` channel; over "
+            "`single_series_palette` and the palette. 'auto' takes the palette color."
+        ),
+    )
+
     # Cascade tier sentinel: None means "not specified at this tier".
-    opacity: Annotated[float | None, AutoUnset()] = Field(
+    opacity: Annotated[float | None, AutoUnset(), Conditionable()] = Field(
         default=None,
         description="Arc slice opacity (0 to 1); 'auto' uses the board opacity.",
     )
@@ -799,9 +846,11 @@ class SliceMarkStyle(BaseModel):
     # Cascade tier sentinel: None means "not specified at this tier".
     # SkipInheritSlots(cascade=True): apply_inherit copies the entire stroke object
     # from the parent slot when stroke is None.
-    stroke: Annotated[StrokeStyle | None, SkipInheritSlots(cascade=True)] = Field(
-        default=None, description="Arc slice stroke style."
-    )
+    stroke: Annotated[
+        StrokeStyle | None,
+        SkipInheritSlots(cascade=True),
+        Conditionable(only=("color", "width", "dasharray")),
+    ] = Field(default=None, description="Arc slice stroke style.")
     # Cascade tier sentinel: None means "not set at this tier; inherit whole object".
     # SkipInheritSlots(cascade=True): apply_inherit copies the entire labels object
     # from the parent slot when labels is None (SliceLabelsStyle | None, so None is
@@ -833,7 +882,17 @@ class RectMarkStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    opacity: Annotated[float | None, AutoUnset()] = Field(
+    color: Annotated[
+        str | None, Color(keywords=(AUTO,)), AutoUnset(), Conditionable()
+    ] = Field(
+        default=None,
+        description=(
+            "Rect fill color when the chart has no `color:` channel; over "
+            "`single_series_palette` and the palette. 'auto' takes the palette color."
+        ),
+    )
+
+    opacity: Annotated[float | None, AutoUnset(), Conditionable()] = Field(
         default=None,
         ge=0,
         le=1,
@@ -842,7 +901,10 @@ class RectMarkStyle(BaseModel):
     # SkipInheritSlots(cascade=True): apply_inherit copies the entire stroke object
     # from the parent slot when stroke is None (heatmap.marks.rect slot).
     stroke: Annotated[
-        StrokeStyle | None, SkipInheritSlots(cascade=True), Absent("no stroke")
+        StrokeStyle | None,
+        SkipInheritSlots(cascade=True),
+        Absent("no stroke"),
+        Conditionable(only=("color", "width", "dasharray")),
     ] = Field(
         default=None,
         description="Mark stroke style; None means not overridden at this level.",
@@ -878,13 +940,16 @@ class GeoshapeMarkStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # Cascade tier sentinel: None means "not specified at this tier".
-    fill: Annotated[str | None, Color()] = Field(
+    fill: Annotated[str | None, Color(), Conditionable()] = Field(
         default=None, description="Neutral geoshape fill color."
     )
     # SkipInheritSlots(cascade=True): apply_inherit copies the entire stroke object
     # from the parent slot when stroke is None (geoshape.marks.geoshape slot).
     stroke: Annotated[
-        StrokeStyle | None, SkipInheritSlots(cascade=True), Absent("no stroke")
+        StrokeStyle | None,
+        SkipInheritSlots(cascade=True),
+        Absent("no stroke"),
+        Conditionable(only=("color", "width", "dasharray")),
     ] = Field(default=None, description="Geoshape boundary stroke style.")
 
 

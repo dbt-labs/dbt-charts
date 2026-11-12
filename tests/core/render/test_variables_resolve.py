@@ -712,3 +712,10 @@ def test_a_multiselect_with_one_value_shows_that_value() -> None:
     var = Variable(input="multiselect")
 
     assert format_variable_display_value(var, ["North"], "multiselect") == "North"
+
+
+def test_an_options_query_value_column_is_found_ignoring_case() -> None:
+    from dbt_charts.core.render.variables_resolve import _option_cells
+
+    rows = [{"Label": "East", "Value": "e"}, {"Label": "West", "Value": "w"}]
+    assert _option_cells(rows, "regions") == ["e", "w"]

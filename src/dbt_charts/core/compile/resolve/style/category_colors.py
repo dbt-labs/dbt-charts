@@ -104,7 +104,7 @@ def categorical_channel_fields(chart: _BaseChartFields) -> tuple[str, ...]:
     Only an authored `color:` channel counts. A field on `x`/`y` identifies a
     position, and turning it into a fill is a *new* color channel the author
     never asked for — which broke authored `conditional_formatting` and
-    `style.color.static`, split line marks into one-point groups, and leaked
+    a mark color, split line marks into one-point groups, and leaked
     into label layers. The binding now re-scales a channel that already
     exists; it never invents one.
 

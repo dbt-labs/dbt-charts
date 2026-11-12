@@ -107,38 +107,39 @@ def test_glyph_set_replaces_the_theme_pair_key_by_key() -> None:
     assert _tspan_fills(_render(chart, -5))["▼"] == _NEGATIVE
 
 
-def test_authored_rule_wins_where_it_matches_and_derived_rules_cover_the_rest() -> None:
+def test_authored_tone_wins_where_it_matches_and_good_covers_the_rest() -> None:
     chart = _chart(
-        conditional_formatting={
-            "change": {"when": [{"between": [-1, 1], "glyph": "●", "tone": "warning"}]}
+        style={
+            "conditional": {
+                "change": [{"between": [-1, 1], "support": {"tone": "warning"}}]
+            }
         }
     )
     flat = _tspan_fills(_render(chart, 0.5))
-    assert flat["●"] == _WARNING
+    assert flat["▲"] == _WARNING
     assert flat["+0.5"] == _WARNING
     assert _tspan_fills(_render(chart, 5))["▲"] == _POSITIVE
 
 
 def test_authored_rule_leaving_tone_unset_keeps_the_derived_tone() -> None:
     chart = _chart(
-        conditional_formatting={"change": {"when": [{"gt": 0, "glyph": "↑"}]}}
-    )
-    assert _tspan_fills(_render(chart, 5))["↑"] == _POSITIVE
-
-
-def test_tone_rule_colors_the_value_as_well_as_the_glyph() -> None:
-    chart = _chart(support={"good": None})
-    chart = KpiChart(
-        **{
-            **chart.model_dump(exclude_none=True),
-            "conditional_formatting": {
-                "change": {"when": [{"gt": 0, "glyph": "▲", "tone": "warning"}]}
-            },
+        style={
+            "conditional": {
+                "change": [{"gt": 0, "support": {"font": {"weight": "bold"}}}]
+            }
         }
     )
-    fills = _tspan_fills(_render(chart, 5))
-    assert fills["▲"] == _WARNING
-    assert fills["+5.0"] == _WARNING
+    svg = _render(chart, 5)
+    assert _tspan_fills(svg)["▲"] == _POSITIVE
+    assert 'font-weight="bold"' in svg
+
+
+def test_a_tone_rule_colors_the_value_without_good() -> None:
+    chart = _chart(
+        support={"good": None},
+        style={"conditional": {"change": [{"gt": 0, "support": {"tone": "warning"}}]}},
+    )
+    assert _tspan_fills(_render(chart, 5))["+5.0"] == _WARNING
 
 
 def test_non_numeric_support_cell_raises_naming_chart_and_column() -> None:
@@ -152,14 +153,6 @@ def test_non_numeric_support_cell_raises_naming_chart_and_column() -> None:
         ({"style": {"support": {"tone": "positive"}}}, "good.*tone|tone.*good"),
         ({"support": {"glyph": "▲"}}, "good.*glyph|glyph.*good"),
         ({"support": {"value": None, "label": "x"}}, "good.*value|value.*good"),
-        (
-            {
-                "conditional_formatting": {
-                    "change": {"when": [{"default": True, "glyph": "●"}]}
-                }
-            },
-            "default",
-        ),
     ],
 )
 def test_invalid_authored_shapes_are_rejected(
@@ -177,52 +170,17 @@ def test_invalid_authored_shapes_are_rejected(
         )
 
 
-@pytest.mark.parametrize(
-    ("value", "kwargs"),
-    [
-        ("total", {"style": {"value": {"format": ",.0f"}}}),
-        (
-            "change",
-            {
-                "conditional_formatting": {
-                    "change": {"when": [{"default": True, "background": "#eee"}]}
-                }
-            },
-        ),
-    ],
-    ids=["style_without_support", "headline_default_rule_on_shared_column"],
-)
-def test_ordinary_shapes_beside_good_are_accepted(
-    value: str, kwargs: dict[str, Any]
-) -> None:
+def test_ordinary_shapes_beside_good_are_accepted() -> None:
     AuthoredKpiChart(
         id="k",
         query="select 1",
         type="kpi",
-        value=value,
+        value="change",
         support={"value": "change", "good": "up"},
-        **kwargs,
-    )
-
-
-def test_tone_rule_on_a_non_support_column_raises_without_good() -> None:
-    chart = KpiChart(
-        id="k",
-        query=SqlQuery(sql="SELECT 1", source="test"),
-        query_name="q",
-        type="kpi",
-        value="total",
-        support={"value": "change"},
-        conditional_formatting={
-            "total": {"when": [{"gt": 0, "glyph": "▲", "tone": "positive"}]}
+        style={
+            "conditional": {"change": [{"default": True, "background": "#eee"}]},
         },
     )
-    with pytest.raises(ValueError, match="support"):
-        resolve(
-            chart,
-            [{"total": 1, "change": 1}],
-            chart_style_context=resolve_chart_style_context(get_theme_style()),
-        )
 
 
 def test_literal_glyph_without_good_renders_as_before() -> None:

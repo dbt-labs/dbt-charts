@@ -5,6 +5,17 @@
 //! are pinned against the Python library; see `docs/laws-board.md`'s
 //! `## mdsvg crate` section for the module/function mapping table.
 
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::indexing_slicing
+    )
+)]
+
 pub mod css;
 pub mod highlight;
 pub mod images;

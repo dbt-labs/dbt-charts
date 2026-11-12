@@ -190,6 +190,7 @@ def merge_chart_style(
             base_charts.palettes,
             base_charts.roles,
             single_series_palette=base_charts.single_series_palette,
+            categorical_palette=base_charts.palette,
         )
 
     # A board-tier family background sits between the global background and the
@@ -242,7 +243,8 @@ def merge_chart_style(
     _background = getattr(
         primary, "background", None
     )  # type-state: silent_fallback — the patch is a per-family union; families without the slot legitimately lack the attribute
-    if _background is None:
+    # A KPI's `{column, scale}` background paints per value and names no canvas.
+    if not isinstance(_background, str):
         _background = _family_background
     # Composite over board_canvas, not ink_canvas (the CHART canvas) --
     # see ChartStyleContext.board_canvas's own comment for why.
@@ -309,8 +311,7 @@ def merge_chart_style(
             overrides[_key] = _fam
 
     # --- Palette + Color ---
-    # chart-local style.color carries three sub-fields:
-    #   .static   → ChartStyleContext.color (static ink, render reads it)
+    # chart-local style.color carries these sub-fields:
     #   .categorical.palette → ChartStyleContext.palette (categorical stops list)
     #   .categorical.single_series_palette → ChartStyleContext.single_series_palette
     #   .gradient → consumed by normalize_chart_channels; not stored in cascade
@@ -321,8 +322,6 @@ def merge_chart_style(
         primary, "color", None
     )  # type-state: silent_fallback — the patch is a per-family union; families without the slot legitimately lack the attribute
     if _color is not None:
-        if _color.static is not None:
-            overrides["color"] = _color.static
         _categorical = getattr(
             _color, "categorical", None
         )  # type-state: silent_fallback — the patch is a per-family union; families without the slot legitimately lack the attribute

@@ -60,7 +60,7 @@ def test_a_retired_alias_respells_wherever_a_color_is_authored(
 ) -> None:
     result = prepare_board_mapping(_board(old))
 
-    assert result["charts"]["c"]["style"]["color"]["static"] == new
+    assert result["charts"]["c"]["style"]["marks"]["bar"]["color"] == new
     assert result["style"]["charts"]["category_colors"]["region"]["values"]["A"] == new
 
 
@@ -71,11 +71,12 @@ def test_a_retired_alias_in_a_nested_boards_chart_respells(old: str, new: str) -
 
     result = prepare_board_mapping(mapping)
 
-    assert result["rows"][0]["charts"]["n"]["style"]["color"]["static"] == new
+    assert result["rows"][0]["charts"]["n"]["style"]["marks"]["bar"]["color"] == new
 
 
 def test_a_ladder_step_is_left_alone() -> None:
     mapping = _board("dbt-grays.4")
+    mapping["charts"]["c"]["style"] = {"marks": {"bar": {"color": "dbt-grays.4"}}}
 
     assert prepare_board_mapping(mapping) == mapping
 

@@ -45,6 +45,7 @@ from dbt_charts.core.compile.models.constraints import (
     IsSet,
     Requires,
 )
+from dbt_charts.core.compile.models.markers import ColumnRef
 from dbt_charts.core.compile.models.primitives import VariableDependencies
 from dbt_charts.core.compile.models.query.authored import (
     AuthoredQuery,
@@ -104,7 +105,7 @@ class Query(BaseModel, ABC):
         default=None, description="Maximum number of rows to return."
     )
 
-    formats: dict[str, str] | None = Field(
+    formats: dict[ColumnRef, str] | None = Field(
         default=None,
         description=(
             "Column -> format name, from the query's `formats:`. Names are "

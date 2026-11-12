@@ -6,12 +6,17 @@ compile/sizing.py rather than render/sizing.py.
 """
 
 import dataclasses
+import types
 
 import pytest
 
-from dbt_charts.core.compile import compile
+from dbt_charts.core.compile import compile, sizing
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.board.normalized import Board, Layout
+from dbt_charts.core.compile.resolve.style.chart_context import (
+    build_chart_style_context,
+)
+from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.sizing import (
     _one_line_title_width,
     board_container_width,
@@ -21,6 +26,7 @@ from dbt_charts.core.compile.sizing import (
 )
 
 from .._board_utils import make_test_board
+from .._svg_render import render_board_svg_result
 
 
 def _with_gap_override(layout_type: str, gap: float) -> Board:
@@ -130,10 +136,11 @@ _ENCODINGS = {
     "line": "    x: month\n    y: n\n",
     "donut": "    theta: n\n    color: month\n",
 }
+_ENGINE_TITLE = "A chart title of ordinary length that fits a normal dashboard card"
 _SHORT_TITLE = "Revenue"
 _LONG_TITLE = (
-    "A chart title of ordinary length that fits a normal dashboard card"
-    " and then some more words"
+    "A chart title of ordinary length that fits a normal dashboard card, "
+    "followed by a second clause that runs it well past one card"
 )
 
 
@@ -208,3 +215,62 @@ class TestChartTitleWidensHug:
         width = config_chart_width(chart, board.resolved_style, ctx).preferred
         assert width is not None
         assert width >= _one_line_title_width(chart, ctx, width)
+
+    def test_measures_the_size_the_title_is_painted_at(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        measured: list[float] = []
+        real = sizing.get_font_measurer
+
+        def record(family: str) -> types.SimpleNamespace:
+            measurer = real(family)
+            inner = measurer.measure
+
+            def measure(text: str, size: float) -> float:
+                measured.append(size)
+                return inner(text, size)
+
+            return types.SimpleNamespace(measure=measure)
+
+        monkeypatch.setattr(sizing, "get_font_measurer", record)
+        board = _compile_lone_chart(_LONG_TITLE)
+        chart = board.layout.items[0].chart
+        assert chart is not None
+        ctx = board.chart_style_context
+        painted = resolve_title_font(build_chart_style_context(ctx, chart), 200.0).size
+        _one_line_title_width(chart, ctx, 200.0)
+        assert painted != 18
+        assert measured == [float(painted)]
+
+    @pytest.mark.parametrize(
+        "board_extra",
+        ["", "style:\n  charts:\n    title:\n      font:\n        size: 24\n"],
+        ids=["ramp", "explicit_24"],
+    )
+    def test_a_title_the_hug_fits_is_not_cut_by_the_engine(
+        self, board_extra: str
+    ) -> None:
+        # Both sides of the boundary must read one painted size: the narrowest
+        # card Python says holds the title on one line must not truncate it.
+        board = _compile_lone_chart(_ENGINE_TITLE, board_extra=board_extra)
+        chart = board.layout.items[0].chart
+        assert chart is not None
+        ctx = board.chart_style_context
+        fit = next(
+            w for w in range(200, 1200) if _one_line_title_width(chart, ctx, w) <= w
+        )
+
+        def codes(width: int) -> list[str]:
+            text = _LONE_CHART.format(
+                title=_ENGINE_TITLE,
+                chart_type="bar",
+                encoding=_ENCODINGS["bar"],
+                chart_extra=f"    width: {width}\n",
+                board_extra=board_extra,
+            )
+            result = render_board_svg_result(text)
+            assert not result.chart_errors
+            return [w.code for w in result.warnings]
+
+        assert "WARN-CHART-TITLE-TRUNCATED" not in codes(fit)
+        assert "WARN-CHART-TITLE-TRUNCATED" in codes(fit // 2)

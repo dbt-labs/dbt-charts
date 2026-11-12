@@ -221,6 +221,7 @@ pub struct ChartTitleFontStyle {
     /// Text color as a CSS color string.
     pub color: Color,
     /// Font size in pixels, or 'auto' to follow the card width.
+    #[model(local)]
     pub size: Engine<f64, Auto>,
     /// How heavy the type is drawn (e.g., 'bold', 400, 700), or 'auto' to follow the card width.
     pub weight: Engine<FontWeightValue, Auto>,
@@ -255,6 +256,32 @@ pub struct TitleBase {
     pub subtitle: TitleSubtitleStyle,
 }
 
+/// The font of a board, section or prose title. It has no `size`: a title's size
+/// comes from the heading ramp (`style.fonts.heading.sizes`, `style.fonts.section.sizes`).
+///
+/// A copy of `FontStyle` less `size`: a flatten cannot drop a field.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[model(shorthand = "extends")]
+pub struct TitleFontStyle {
+    /// Name of a `style.fonts` entry this slot starts from; the fields set beside it override that entry.
+    #[model(absent = "no named font")]
+    pub extends: Option<String>,
+    /// Font family or CSS stack; single-quote multiword names: "'Source Serif 4', serif".
+    pub family: FontFamily,
+    /// Text color as a CSS color string.
+    pub color: Color,
+    /// How heavy the type is drawn (e.g., 'bold', 400, 700).
+    pub weight: FontWeightValue,
+    /// Upright or slanted type (normal or italic).
+    pub style: FontSlant,
+    /// Line drawn on the text (underline, line-through, or none).
+    pub decoration: TextDecoration,
+    /// Letter-case transform applied at render time.
+    pub case: LetterCase,
+    /// Line height as a unitless multiple of font size.
+    pub line_height: f64,
+}
+
 /// Typography shared by every heading: board, prose, chart, table and spark titles.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct TitleStyle {
@@ -262,7 +289,7 @@ pub struct TitleStyle {
     pub base: TitleBase,
     /// Title font style overrides.
     #[model(inherit_slot = "Style.font")]
-    pub font: FontStyle,
+    pub font: TitleFontStyle,
 }
 
 /// A chart's title style, whose font also takes `auto`.

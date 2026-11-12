@@ -639,16 +639,22 @@
         return RECEDE_ROLES.indexOf(role) !== -1;
     }
 
-    /*{# A mark translucent at rest keeps its paint: its color on screen #}*/
-    /*{# already includes whatever lies behind it, which a blend toward the #}*/
-    /*{# background cannot know. opacity="0" is the degenerate case -- Vega's #}*/
-    /*{# marker for an invisible hit target (bar_hover_band.py's bands), whose #}*/
-    /*{# paint is never on screen at all. #}*/
-    function isOpaqueAtRest(el) {
-        return ['opacity', 'fill-opacity'].every(function (attr) {
+    /*{# opacity="0" is Vega's marker for an invisible hit target #}*/
+    /*{# (bar_hover_band.py's bands), whose paint is never on screen. #}*/
+    function isVisibleAtRest(el) {
+        const v = el.getAttribute('opacity');
+        return v === null || parseFloat(v) > 0;
+    }
+
+    /*{# The share of `prop`'s paint a translucent mark puts on screen. A #}*/
+    /*{# recede plans against that on-screen color, so a translucent bar #}*/
+    /*{# reads at the same recede contrast as an opaque one. Assumes the #}*/
+    /*{# canvas lies behind the mark, true for every recedable family. #}*/
+    function paintAlpha(el, prop) {
+        return ['opacity', prop + '-opacity'].reduce(function (alpha, attr) {
             const v = el.getAttribute(attr);
-            return v === null || parseFloat(v) >= 1;
-        });
+            return v === null ? alpha : alpha * parseFloat(v);
+        }, 1);
     }
 
     /*{# The color receded marks mix toward: the chart's own opaque canvas, #}*/
@@ -742,18 +748,19 @@
     /*{# child paint mixed toward the background by the same rule as a flat #}*/
     /*{# mark's (recededPaint), swapped in as the mark's fill and dropped on #}*/
     /*{# clear: still solid colors only, never an opacity. One clone per #}*/
-    /*{# (pattern, background), in the same <defs>, found again by its id. #}*/
-    function recededPattern(el, paint, background) {
+    /*{# (pattern, background, alpha), in the same <defs>, found again by #}*/
+    /*{# its id. #}*/
+    function recededPattern(el, paint, background, alpha) {
         const source = el.ownerDocument.getElementById(patternPaint(paint).id);
         if (!source) return null;
-        const id = source.id + '-recede-' + background.replace(/[^\w]/g, '');
+        const id = source.id + '-recede-' + background.replace(/[^\w]/g, '') + (alpha === 1 ? '' : '-' + String(alpha).replace(/\W/g, ''));
         if (!el.ownerDocument.getElementById(id)) {
             const clone = source.cloneNode(true);
             clone.id = id;
             clone.querySelectorAll('*').forEach(function (child) {
                 RECEDABLE_PAINT.forEach(function (prop) {
                     const value = child.getAttribute(prop);
-                    if (isColor(value)) child.style.setProperty(prop, recededPaint(value, background));
+                    if (isColor(value)) child.style.setProperty(prop, recededPaint(value, background, alpha));
                 });
             });
             source.parentNode.appendChild(clone);
@@ -815,22 +822,24 @@
     }
 
     /*{# The share of `paint` that stays when it recedes toward `background`: #}*/
-    /*{# the largest whose straight sRGB mix (what color-mix computes) reads at #}*/
-    /*{# no more than the theme's recede contrast against the background, WCAG #}*/
-    /*{# ratio. A paint already at or below it keeps everything -- receding #}*/
-    /*{# never makes a mark louder. The scan runs from the full color down, so #}*/
-    /*{# a mix whose channels move in opposite directions cannot land on a far #}*/
-    /*{# branch of the curve. Same algorithm as the engine's baked recede. #}*/
+    /*{# the largest whose straight sRGB mix (what color-mix computes), drawn #}*/
+    /*{# at `alpha`, reads at no more than the theme's recede contrast #}*/
+    /*{# against the background, WCAG ratio. A paint already at or below it #}*/
+    /*{# keeps everything -- receding never makes a mark louder. The scan #}*/
+    /*{# runs from the full color down, so a mix whose channels move in #}*/
+    /*{# opposite directions cannot land on a far branch of the curve. Same #}*/
+    /*{# algorithm as the engine's baked recede, which takes no alpha. #}*/
     const recedeShares = {};
-    function recedeShare(paint, background) {
-        const key = paint + '|' + background;
+    function recedeShare(paint, background, alpha) {
+        const key = paint + '|' + background + '|' + alpha;
         if (key in recedeShares) return recedeShares[key];
         const mark = rgbOf(paint);
         const ground = rgbOf(background);
         const groundLuminance = luminanceOf(ground);
         const target = active.hoverEmphasis.recedeContrast;
         const contrastAt = function (share) {
-            const lum = luminanceOf(mark.map(function (v, i) { return share * v + (1 - share) * ground[i]; }));
+            const kept = share * alpha;
+            const lum = luminanceOf(mark.map(function (v, i) { return kept * v + (1 - kept) * ground[i]; }));
             return (Math.max(lum, groundLuminance) + 0.05) / (Math.min(lum, groundLuminance) + 0.05);
         };
         let share = 1;
@@ -853,8 +862,8 @@
         return share;
     }
 
-    function recededPaint(paint, background) {
-        const share = recedeShare(paint, background);
+    function recededPaint(paint, background, alpha) {
+        const share = recedeShare(paint, background, alpha);
         return share === 1 ? paint : 'color-mix(in srgb, ' + paint + ' ' + Number((share * 100).toFixed(2)) + '%, ' + background + ')';
     }
 
@@ -866,13 +875,14 @@
         const paints = {};
         RECEDABLE_PAINT.forEach(function (prop) {
             const paint = baked ? restPaint(el, prop) : el.getAttribute(prop);
+            const alpha = paintAlpha(el, prop);
             if (prop === 'fill' && isPatternUrl(paint)) {
-                const receded = kept ? paint : recededPattern(el, paint, background);
+                const receded = kept ? paint : recededPattern(el, paint, background, alpha);
                 if (receded) paints[prop] = receded;
                 return;
             }
             if (!isColor(paint)) return;
-            paints[prop] = kept ? paint : recededPaint(paint, background);
+            paints[prop] = kept ? paint : recededPaint(paint, background, alpha);
         });
         if (!Object.keys(paints).length) return false;
         next.set(el, paints);
@@ -979,14 +989,14 @@
         /*{# too, not just the ones the tooltip isn't describing. #}*/
         const inked = [];
         markIndex(panelScope(mark, chartEl)).recedable.forEach(function (el) {
-            if (!isOpaqueAtRest(el)) return;
+            if (!isVisibleAtRest(el)) return;
             const kept = !!keptLabels[el.getAttribute('aria-label')];
             const inkedMark = el.hasAttribute('data-dbt-ink');
             if (kept && inkedMark) inked.push(el);
             if (!emphasize(next, el, background, kept)) return;
             if (!kept && inkedMark) {
                 outlineNodes(el).forEach(function (outline) {
-                    next.set(outline, { stroke: recededPaint(outline.getAttribute('stroke'), background) });
+                    next.set(outline, { stroke: recededPaint(outline.getAttribute('stroke'), background, paintAlpha(outline, 'stroke')) });
                 });
             }
         });
@@ -1040,7 +1050,7 @@
         markIndex(chartEl).recedable.forEach(function (el) {
             const entries = parseAriaLabel(el.getAttribute('aria-label'));
             const series = markSeriesEntry(entries) || entries.find(function (e) { return e.role === 'header' && e.swatch; });
-            if (series && isOpaqueAtRest(el)) ink.push({ el: el, key: series.value });
+            if (series && isVisibleAtRest(el)) ink.push({ el: el, key: series.value });
         });
         chartEl.querySelectorAll('[data-dbt-series]').forEach(function (el) {
             if (!el.closest('.role-legend') && !el.hasAttribute('data-dbt-legend-hidden')) {

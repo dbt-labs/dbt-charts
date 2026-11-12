@@ -7,18 +7,54 @@ use project::ProjectPath;
 use std::collections::BTreeMap;
 use yaml::{Kind, Value};
 
+/// The host failed to answer: a permission error, an I/O failure, text that is not UTF-8. A file
+/// that is simply not there is not an error (`read` is `Ok(None)`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadError {
+    pub path: String,
+    pub reason: String,
+}
+
+impl ReadError {
+    pub fn new(path: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            reason: reason.into(),
+        }
+    }
+
+    pub(crate) fn diagnostic(&self) -> diagnostic::Diagnostic {
+        diagnostic::diag::err_project_file_unreadable(self.path.as_str(), self.reason.as_str())
+    }
+}
+
+impl std::fmt::Display for ReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "could not read {}: {}", self.path, self.reason)
+    }
+}
+
+impl std::error::Error for ReadError {}
+
 pub trait ProjectFiles {
-    /// The text of a file, `None` when it does not exist (or is not UTF-8).
-    fn read(&self, path: &ProjectPath) -> Option<String>;
+    /// The text of a file: `Ok(None)` when it does not exist, an error when it does but cannot be
+    /// read.
+    fn read(&self, path: &ProjectPath) -> Result<Option<String>, ReadError>;
     /// The files directly under `dir` (`""` is the project root).
-    fn list(&self, dir: &str) -> Vec<ProjectPath>;
+    fn list(&self, dir: &str) -> Result<Vec<ProjectPath>, ReadError>;
     /// Whether anything is at `path`, as Python's `Project.exists` says: a file of any content (a
     /// data file such as `d.parquet` is not UTF-8 text, so `read` cannot answer for it) or a
     /// directory. A host on a case-insensitive file system answers case-insensitively, as Python
     /// does there; a host that prefetches must too, or `D.csv` beside `sub/d.csv` is missed as
     /// ambiguous. Symlinks are followed: a dangling link is absent, a link to a directory is
     /// present.
-    fn exists(&self, path: &ProjectPath) -> bool;
+    fn exists(&self, path: &ProjectPath) -> Result<bool, ReadError>;
+    /// Whether the board compiled against these files sits at a project location. A board that
+    /// does not (Python's `compile(yaml)` with no `base_dir`) has no file name in its findings
+    /// and anchors no relative reference.
+    fn located(&self) -> bool {
+        true
+    }
 }
 
 /// An in-memory project: what a host prefetches into, and what tests build.
@@ -32,20 +68,21 @@ impl MemoryFiles {
 }
 
 impl ProjectFiles for MemoryFiles {
-    fn read(&self, path: &ProjectPath) -> Option<String> {
-        self.0.get(path).cloned()
+    fn read(&self, path: &ProjectPath) -> Result<Option<String>, ReadError> {
+        Ok(self.0.get(path).cloned())
     }
-    fn exists(&self, path: &ProjectPath) -> bool {
+    fn exists(&self, path: &ProjectPath) -> Result<bool, ReadError> {
         let below = format!("{path}/");
-        self.0.contains_key(path) || self.0.keys().any(|p| p.as_str().starts_with(&below))
+        Ok(self.0.contains_key(path) || self.0.keys().any(|p| p.as_str().starts_with(&below)))
     }
-    fn list(&self, dir: &str) -> Vec<ProjectPath> {
+    fn list(&self, dir: &str) -> Result<Vec<ProjectPath>, ReadError> {
         let prefix = if dir.is_empty() {
             String::new()
         } else {
             format!("{}/", dir.trim_end_matches('/'))
         };
-        self.0
+        Ok(self
+            .0
             .keys()
             .filter(|p| {
                 p.as_str()
@@ -53,7 +90,7 @@ impl ProjectFiles for MemoryFiles {
                     .is_some_and(|rest| !rest.contains('/'))
             })
             .cloned()
-            .collect()
+            .collect())
     }
 }
 

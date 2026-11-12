@@ -8,7 +8,13 @@ use crate::style::chart_base::{
     QuantitativeAxisChartStyleMixin,
 };
 use crate::style::endpoint_labels::EndpointLabelsConfig;
-use crate::style::marks::{BarMarkStyle, TextMarkStyle};
+use crate::style::marks::{
+    BarMarkStyle, BarMarkStyleConditional, TextMarkStyle, TextMarkStyleConditional,
+};
+use crate::chart::conditional_formatting::Predicate;
+use diagnostic::{diag, Diagnostic};
+use model_core::{Authored, Tri};
+use indexmap::IndexMap;
 use model_core::Engine;
 use model_derive::Model;
 
@@ -42,6 +48,36 @@ pub struct BarChartMarksStyle {
     pub bar: BarMarkStyle,
     /// Text mark overrides for bar endpoint labels; inherits from global.
     pub text: TextMarkStyle,
+}
+
+/// The part of [`BarChartMarksStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct BarChartMarksStyleConditional {
+    /// Bar mark overrides for bar charts; inherits from global.
+    #[model(absent = "the bar mark's own style")]
+    pub bar: Option<BarMarkStyleConditional>,
+    /// Text mark overrides for bar endpoint labels; inherits from global.
+    #[model(absent = "the text mark's own style")]
+    pub text: Option<TextMarkStyleConditional>,
+}
+
+/// The part of [`BarChartStyle`] a conditional rule may set: one predicate plus the mark style
+/// that varies per row.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[allow(clippy::duplicated_attributes)]
+#[model(
+    constraint(at_least_one_of(eq, ne, lt, lte, gt, gte, between, "in", is_null, default,
+        message = "A conditional rule requires exactly one condition operator"
+    )),
+    constraint(at_most_one_of(eq, ne, lt, lte, gt, gte, between, "in", is_null, default,
+        message = "A conditional rule requires exactly one condition operator, got: {set}"
+    ))
+)]
+pub struct BarChartStyleConditional {
+    #[flatten]
+    pub predicate: Predicate,
+    /// Bar-family mark overrides; a rule that restyles nothing is a mistake, so they are required.
+    pub marks: BarChartMarksStyleConditional,
 }
 
 /// Band-scale padding for grouped (side-by-side) bars.
@@ -97,4 +133,39 @@ pub struct BarChartStyle {
     /// Bar-family mark overrides.
     #[model(inherit_slot = "Style.charts.marks")]
     pub marks: BarChartMarksStyle,
+    /// Rules that restyle a bar by its row's value, keyed by column name. Each rule is one condition (eq, ne, lt, lte, gt, gte, between, in, is_null, or default) plus the style it applies: marks.bar color, opacity and border, and marks.text font color and weight. Every matching rule applies; where two set the same key the later one wins, so list the more specific rule last. A `default: true` rule applies only when no other rule matched. Two columns cannot patch the same property. Rules style the base layer, not `layers:`.
+    #[model(fill = fill_empty)]
+    pub conditional: IndexMap<String, Vec<BarChartStyleConditional>>,
+}
+
+impl BarChartStyle {
+    /// A `default: true` rule is allowed only last in a column's rule list: a positional rule
+    /// over an element field, which no `constraint` kind tests.
+    pub fn default_position(style: &Authored<BarChartStyle>) -> Vec<Diagnostic> {
+        style
+            .conditional
+            .iter()
+            .flat_map(|(column, rules)| {
+                let rules = rules.as_deref().unwrap_or_default();
+                let defaults: Vec<bool> = rules.iter().map(|r| matches!(r.predicate.default, Tri::Value(_))).collect();
+                misplaced_defaults(column, &defaults)
+            })
+            .collect()
+    }
+}
+
+/// One diagnostic per `default: true` rule (`is_default[i]`) that is not last in `column`'s list.
+pub(crate) fn misplaced_defaults(column: &str, is_default: &[bool]) -> Vec<Diagnostic> {
+    let len = is_default.len();
+    is_default
+        .iter()
+        .enumerate()
+        .filter(|&(i, &default)| default && i + 1 != len)
+        .map(|(i, _)| {
+            diag::err_validation_field(
+                format!("conditional.{column}"),
+                format!("Value error, A rule with default: true must be the last entry in a column's rules (found at position {i} of {len})"),
+            )
+        })
+        .collect()
 }

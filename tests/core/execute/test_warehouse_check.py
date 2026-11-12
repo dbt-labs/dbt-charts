@@ -8,6 +8,7 @@ fixture is exactly what hid the earlier variable- and semicolon-handling bugs.
 
 from __future__ import annotations
 
+import datetime as dt
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,7 +21,8 @@ from google.api_core.exceptions import BadRequest, Forbidden, NotFound
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.column_types import ColumnType, literal_schema
-from dbt_charts.core.compile.compiler import compile_file
+from dbt_charts.core.compile.config import ProjectSourcesConfig
+from dbt_charts.core.compile.engine import engine_compile
 from dbt_charts.core.compile.models.source import (
     BigQuerySourceConfig,
     DbtTargetSourceConfig,
@@ -36,19 +38,24 @@ from dbt_charts.core.execute import (
 )
 from dbt_charts.core.execute.compose import ResolvedQuery
 from dbt_charts.core.execute.env import ExecEnv, build_exec_env, make_exec_env
+from dbt_charts.core.execute.plan_reader import resolve_planned_source
+from dbt_charts.core.execute.planned import plan_board
+from dbt_charts.core.execute.query_plan import QueryPlan
 from dbt_charts.core.execute.query_result import (
     QueryResult,
     resolve_effective_row_limit,
 )
-from dbt_charts.core.execute.run import run_query
+from dbt_charts.core.execute.run import run_planned
 from dbt_charts.core.execute.warehouse_check import (
     WarehouseCheckColumn,
     _strip_trailing_semicolon_for_script_join,
     warehouse_check,
 )
+from dbt_charts.core.project import Project
 from dbt_charts.core.text.time_zones import UTC
 
 from ..._scripted_env import ScriptedBackend, backend_of, scripted_env
+from ...conftest import InMemoryProject
 from .test_metricflow import _project, needs_metricflow
 
 _CHART = """\
@@ -85,43 +92,56 @@ def _duckdb_project(
     (tmp_path / "charts" / "board.yml").write_text(board_yml)
 
     project = FilesystemProject(tmp_path)
-    result = compile_file(project.path("charts/board.yml").read_board())
-    assert result.board is not None, result.errors
-    return result, build_exec_env(project, profile_type="duckdb")
+    return _plan_of(project), build_exec_env(project, profile_type="duckdb")
 
 
-def _check(compiled, registry, query_name: str = "my_query"):
-    return warehouse_check(
-        compiled.query_registry[query_name],
-        board=compiled.board,
-        env=registry,
-        query_name=query_name,
-        query_registry=compiled.query_registry,
+def _plan_of(project: Project, relpath: str = "charts/board.yml") -> QueryPlan:
+    """The plan `dct validate --warehouse` reads: every SQL query, placed or not."""
+    compiled = engine_compile(project.path(relpath))
+    return plan_board(
+        compiled,
+        None,
+        builtins=None,
+        now=dt.datetime.now(dt.UTC),
+        strict=False,
+        active_tab_only=False,
+        only_charts=None,
+        all_queries=True,
     )
+
+
+def _with_sql(plan: QueryPlan, name: str, sql: str) -> QueryPlan:
+    """*plan* with the SQL of query *name* replaced."""
+    entry = plan["queries"][name]
+    assert entry["type"] == "sql"
+    return {**plan, "queries": {**plan["queries"], name: {**entry, "sql": sql}}}
+
+
+def _check(plan: QueryPlan, registry, query_name: str = "my_query"):
+    return warehouse_check(plan, query_name, env=registry)
+
+
+def _plan_of_board(board: dict[str, Any], *, source: str = "s") -> QueryPlan:
+    """The plan of an in-memory board whose source *source* the project declares."""
+    import yaml
+
+    project = InMemoryProject(Path("/project"), {"charts/board.yml": yaml.dump(board)})
+    project.__dict__["sources"] = ProjectSourcesConfig(
+        sources={source: {"type": "duckdb", "path": ":memory:"}}
+    )
+    return _plan_of(project)
 
 
 def _check_sql(sql: str, registry):
-    """Check one SQL string against a stubbed registry, via a real compiled board.
-
-    The board is real even where the registry is a double: the check reads
-    variables and query metadata off it, and a hand-built stand-in would not
-    have them.
-    """
-    import yaml
-
-    from dbt_charts.core.compile import compile as compile_board
-
-    compiled = compile_board(
-        yaml.dump(
-            {
-                "source": "s",
-                "queries": {"q": sql},
-                "charts": {"c": {"query": "q", "type": "table"}},
-            }
-        )
+    """Check one SQL string against a stubbed registry, via a real planned board."""
+    plan = _plan_of_board(
+        {
+            "source": "s",
+            "queries": {"q": sql},
+            "charts": {"c": {"query": "q", "type": "table"}},
+        }
     )
-    assert compiled.board is not None, compiled.errors
-    return _check(compiled, registry, query_name="q")
+    return _check(plan, registry, query_name="q")
 
 
 class TestWarehouseCheckDuckDB:
@@ -162,8 +182,7 @@ class TestWarehouseCheckDuckDB:
         (tmp_path / "charts").mkdir()
         (tmp_path / "charts" / "board.yml").write_text(_BOARD)
         project = FilesystemProject(tmp_path)
-        compiled = compile_file(project.path("charts/board.yml").read_board())
-        assert compiled.board is not None, compiled.errors
+        compiled = _plan_of(project)
         registry = build_exec_env(project, profile_type="duckdb")
 
         result = _check(compiled, registry)
@@ -171,16 +190,15 @@ class TestWarehouseCheckDuckDB:
         assert result.status == "unchecked"
         # DuckDB's "does not exist" text has no finer classifier rule, so this
         # hits the generic bucket; the path moves to .detail.
-        assert result.error == (
-            "Could not open the warehouse: Could not connect to the "
-            "warehouse. Check your connection details and try again."
-        )
+        assert result.error is not None
+        assert result.error.startswith("Could not open the warehouse for source ")
+        assert "Check the source's `path`." in result.error
 
-        query_result = run_query(
+        query_result = run_planned(
             registry,
-            compiled.query_registry["my_query"],
-            variables={},
-            board=compiled.board,
+            compiled,
+            "my_query",
+            source_config=resolve_planned_source(compiled, "my_query", registry),
         )
         assert query_result.error is not None
         assert query_result.error.detail is not None
@@ -238,13 +256,9 @@ class TestWarehouseCheckDuckDB:
         # scalar, and the YAML shape is not what this test is about.
         compiled, registry = _duckdb_project(tmp_path)
         result = warehouse_check(
-            compiled.query_registry["my_query"].model_copy(
-                update={"sql": f"SELECT a, b FROM t{trailing}"}
-            ),
-            board=compiled.board,
+            _with_sql(compiled, "my_query", f"SELECT a, b FROM t{trailing}"),
+            "my_query",
             env=registry,
-            query_name="my_query",
-            query_registry=compiled.query_registry,
         )
         assert result.status == "valid", result.error
 
@@ -282,16 +296,14 @@ class TestWarehouseCheckDuckDB:
             run_stage, "run_route", MagicMock(wraps=run_stage.run_route)
         )
         result = warehouse_check(
-            compiled.query_registry["my_query"].model_copy(update={"sql": sql}),
-            board=compiled.board,
+            _with_sql(compiled, "my_query", sql),
+            "my_query",
             env=registry,
-            query_name="my_query",
-            query_registry=compiled.query_registry,
         )
         assert result.status == "unchecked", result.error
         assert result.reason
         run_stage.run_route.assert_not_called()
-        warehouse_check_module.execute_resolved.assert_not_called()
+        warehouse_check_module.execute_on_backend.assert_not_called()
 
     @pytest.mark.parametrize(
         "sql",
@@ -323,37 +335,12 @@ class TestWarehouseCheckDuckDB:
         """
         compiled, registry = _duckdb_project(tmp_path)
         result = warehouse_check(
-            compiled.query_registry["my_query"].model_copy(update={"sql": sql}),
-            board=compiled.board,
+            _with_sql(compiled, "my_query", sql),
+            "my_query",
             env=registry,
-            query_name="my_query",
-            query_registry=compiled.query_registry,
         )
         assert result.status == "invalid", result.reason
         assert result.error
-
-    def test_a_query_limit_does_not_truncate_the_columns(self, tmp_path):
-        """`limit: 2` bounds rows of the real query — DESCRIBE's rows are columns.
-
-        Carrying the limit into the wrap makes a 3-column query report 2 columns,
-        and the sweep then reports the third as missing from the result. The
-        limit is set on the compiled query because that is where the check
-        receives it.
-        """
-        compiled, registry = _duckdb_project(
-            tmp_path,
-            board_yml=_BOARD.replace("SELECT a, b FROM t", "SELECT a, b, c FROM t"),
-            sql_setup="CREATE TABLE t (a INTEGER, b VARCHAR, c INTEGER)",
-        )
-        result = warehouse_check(
-            compiled.query_registry["my_query"].model_copy(update={"limit": 2}),
-            board=compiled.board,
-            env=registry,
-            query_name="my_query",
-            query_registry=compiled.query_registry,
-        )
-        assert result.status == "valid", result.error
-        assert {c.name for c in result.columns} == {"a", "b", "c"}
 
     def test_a_dbt_profile_source_resolves_to_its_real_adapter(self, tmp_path):
         """A source reachable only through a dbt profile still gets DESCRIBEd.
@@ -389,8 +376,7 @@ class TestWarehouseCheckDuckDB:
             _BOARD.replace("source: testdb", "source: warehouse")
         )
         project = FilesystemProject(tmp_path)
-        compiled = compile_file(project.path("charts/board.yml").read_board())
-        assert compiled.board is not None, compiled.errors
+        compiled = _plan_of(project)
 
         result = _check(compiled, build_exec_env(project, profile_type="duckdb"))
         assert result.adapter_type == "duckdb"
@@ -472,8 +458,8 @@ class TestWarehouseCheckDuckDB:
 
 @pytest.fixture(autouse=True)
 def spied_prepare_and_send(monkeypatch):
-    """compose_query and execute_resolved run for real unless a test scripts them."""
-    for name in ("compose_query", "execute_resolved"):
+    """compose_query and execute_on_backend run for real unless a test scripts them."""
+    for name in ("compose_query", "execute_on_backend"):
         real = getattr(warehouse_check_module, name)
         monkeypatch.setattr(warehouse_check_module, name, MagicMock(wraps=real))
 
@@ -659,14 +645,8 @@ class TestWarehouseCheckBigQuery:
 
         assert fake_bigquery_client.query.call_args.kwargs["location"] == "EU"
 
-    def test_columns_are_lowercased_to_match_what_execution_returns(
-        self, fake_bigquery_client
-    ):
-        """the dbt backend lowercases every result column, so lowercase is the only
-        spelling that renders. Reporting the dry run's verbatim casing would
-        reject `y: Revenue`'s working sibling `y: revenue` and accept the one
-        that fails at render.
-        """
+    def test_columns_keep_the_spelling_execution_returns(self, fake_bigquery_client):
+        """BigQuery returns an alias as written, and so does the dry run."""
         field = MagicMock()
         field.name = "Revenue"
         field.field_type = "FLOAT"
@@ -674,7 +654,7 @@ class TestWarehouseCheckBigQuery:
 
         result = _check_sql("SELECT SUM(x) AS Revenue FROM t", _bigquery_registry())
 
-        assert result.columns == [WarehouseCheckColumn(name="revenue", type="FLOAT")]
+        assert result.columns == [WarehouseCheckColumn(name="Revenue", type="FLOAT")]
 
     def test_a_dropped_table_is_invalid_not_unchecked(self, fake_bigquery_client):
         """BigQuery raises NotFound — a sibling of BadRequest, not a subclass.
@@ -775,8 +755,7 @@ class TestWarehouseCheckBigQuery:
             _BOARD.replace("source: testdb", "source: warehouse")
         )
         project = FilesystemProject(tmp_path)
-        compiled = compile_file(project.path("charts/board.yml").read_board())
-        assert compiled.board is not None, compiled.errors
+        compiled = _plan_of(project)
 
         result = _check(compiled, build_exec_env(project, profile_type="bigquery"))
         assert result.adapter_type == "bigquery"
@@ -818,8 +797,7 @@ class TestWarehouseCheckBigQuery:
             _BOARD.replace("source: testdb", "source: warehouse")
         )
         project = FilesystemProject(tmp_path)
-        compiled = compile_file(project.path("charts/board.yml").read_board())
-        assert compiled.board is not None, compiled.errors
+        compiled = _plan_of(project)
 
         result = _check(compiled, build_exec_env(project, profile_type="bigquery"))
 
@@ -942,7 +920,7 @@ class TestWarehouseCheckExplain:
         # so an empty one would leave it nothing to say.
         assert "no result schema" in result.reason
 
-    def test_sends_the_explain_prefixed_sql_with_no_limit(self):
+    def test_sends_the_explain_prefixed_sql_with_the_default_row_limit(self):
         registry = self._registry("postgres", _result([]))
         _check_sql("SELECT a FROM t", registry)
         sent = backend_of(registry).execute.call_args.args[1]
@@ -1019,7 +997,7 @@ class TestWarehouseCheckFileSource:
         assert result.columns_checked is True
         assert result.columns == [WarehouseCheckColumn(name="region", type="VARCHAR")]
 
-    def test_sends_the_describe_prefixed_sql_with_no_limit(self):
+    def test_sends_the_describe_prefixed_sql_with_the_default_row_limit(self):
         registry = self._csv_registry(_result([]))
         _check_sql("SELECT region FROM orders", registry)
         (sent_sql,) = registry.materializer.materializer.sqls
@@ -1070,7 +1048,7 @@ class TestWarehouseCheckClickHouse:
             WarehouseCheckColumn(name="revenue", type="Float64"),
         ]
 
-    def test_sends_the_describe_prefixed_sql_with_no_limit(self):
+    def test_sends_the_describe_prefixed_sql_with_the_default_row_limit(self):
         registry = self._registry(_result([]))
         _check_sql("SELECT month FROM orders", registry)
         sent = backend_of(registry).execute.call_args.args[1]
@@ -1138,7 +1116,7 @@ def _sqlserver_registry(
         limit=resolve_effective_row_limit(None),
         time_zone=UTC,
     )
-    warehouse_check_module.execute_resolved.return_value = result
+    warehouse_check_module.execute_on_backend.return_value = result
     return registry
 
 
@@ -1202,9 +1180,8 @@ class TestWarehouseCheckSqlServer:
         assert result.mechanism == "sys.dm_exec_describe_first_result_set"
         assert result.adapter_type == "sqlserver"
         assert result.columns_checked is True
-        # Lowercased like the dbt backend's results.
         assert result.columns == [
-            WarehouseCheckColumn(name="month", type="date"),
+            WarehouseCheckColumn(name="Month", type="date"),
             WarehouseCheckColumn(name="revenue", type="decimal(18,2)"),
         ]
 
@@ -1216,7 +1193,7 @@ class TestWarehouseCheckSqlServer:
             prepared_sql="SELECT 1 WHERE n = 'O''Brien'",
         )
         _check_sql("SELECT 1 FROM orders WHERE n = 'x'", registry)
-        wrapped = warehouse_check_module.execute_resolved.call_args.args[1]
+        wrapped = warehouse_check_module.execute_on_backend.call_args.args[3](None)
         assert wrapped.sql.startswith("SELECT name, system_type_name")
         assert (
             "sys.dm_exec_describe_first_result_set("
@@ -1265,35 +1242,6 @@ class TestWarehouseCheckSqlServer:
         assert result.status == "unchecked"
         assert "metadata could not be determined" in result.reason
 
-    def test_the_authored_limit_does_not_truncate_the_schema(self):
-        """The describe's rows are columns: a KPI query with `limit: 1` must
-        still report every column."""
-        import yaml
-
-        from dbt_charts.core.compile import compile as compile_board
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
-
-        compiled = compile_board(
-            yaml.dump(
-                {
-                    "source": "s",
-                    "queries": {"q": "SELECT a, b FROM t"},
-                    "charts": {"c": {"query": "q", "type": "table"}},
-                }
-            )
-        )
-        assert compiled.board is not None, compiled.errors
-        registry = _sqlserver_registry(_result([]))
-        warehouse_check(
-            SqlQuery(sql="SELECT a, b FROM t", source="s", limit=1),
-            board=compiled.board,
-            env=registry,
-            query_name="q",
-            query_registry=compiled.query_registry,
-        )
-        sent = warehouse_check_module.compose_query.call_args.args[0]
-        assert sent.limit is None
-
     def test_a_connection_failure_is_unchecked(self):
         from dbt_charts.core.diagnostics.codes_execute import ERR_WAREHOUSE_CONNECTION
 
@@ -1323,13 +1271,13 @@ class TestWarehouseCheckSqlServer:
         result = _check_sql("SELECT * FROM #t", registry)
         assert result.status == "unchecked"
         assert "setup_sql" in result.reason
-        warehouse_check_module.execute_resolved.assert_not_called()
+        warehouse_check_module.execute_on_backend.assert_not_called()
 
     def test_a_multi_statement_query_is_unchecked(self):
-        registry = _sqlserver_registry(_result([]))
+        registry = _sqlserver_registry(_result([]), prepared_sql="SELECT 1; SELECT 2")
         result = _check_sql("SELECT 1; SELECT 2", registry)
         assert result.status == "unchecked"
-        warehouse_check_module.execute_resolved.assert_not_called()
+        warehouse_check_module.execute_on_backend.assert_not_called()
 
 
 class TestWarehouseCheckCacheRef:
@@ -1337,7 +1285,17 @@ class TestWarehouseCheckCacheRef:
 
     def test_jinja_cache_ref_is_unchecked_with_a_reason(self):
         registry = scripted_env(ScriptedBackend())
-        result = _check_sql("SELECT {{ queries.myquery.cache }} AS x", registry)
+        plan = _plan_of_board(
+            {
+                "source": "s",
+                "queries": {
+                    "myquery": "SELECT 1 AS n",
+                    "q": "SELECT {{ queries.myquery.cache }} AS x",
+                },
+                "charts": {"c": {"query": "q", "type": "table"}},
+            }
+        )
+        result = _check(plan, registry, query_name="q")
         assert result.status == "unchecked"
         assert result.mechanism == "cache-ref"
         assert "cached result" in result.reason
@@ -1363,8 +1321,7 @@ class TestWarehouseCheckConnectionFailures:
         (tmp_path / "charts").mkdir()
         (tmp_path / "charts" / "board.yml").write_text(_BOARD)
         project = FilesystemProject(tmp_path)
-        compiled = compile_file(project.path("charts/board.yml").read_board())
-        assert compiled.board is not None, compiled.errors
+        compiled = _plan_of(project)
 
         result = _check(compiled, build_exec_env(project, profile_type="duckdb"))
 
@@ -1437,9 +1394,9 @@ class TestWarehouseCheckDbtManifestFallback:
         )
 
         project = FilesystemProject(tmp_path)
-        result = compile_file(project.path("charts/count.yml").read_board())
-        assert result.board is not None, result.errors
-        return result, build_exec_env(project, profile_type="duckdb")
+        return _plan_of(project, "charts/count.yml"), build_exec_env(
+            project, profile_type="duckdb"
+        )
 
     def test_dbt_jinja_query_is_checked_via_the_dbt_adapter(
         self, tmp_path, monkeypatch
@@ -1486,39 +1443,27 @@ class TestWarehouseCheckResolvesTheComposedQuery:
         """A `ref()` reachable only through `{{ queries.base }}` must reach source
         resolution: resolving before composition would hand a query whose own SQL
         carries no jinja to the local DuckDB instead of the dbt target."""
-        import yaml
-
-        from dbt_charts.core.compile import compile as compile_board
-
-        compiled = compile_board(
-            yaml.dump(
-                {
-                    "source": "repro",
-                    "queries": {
-                        "base": "select * from {{ ref('dim_makers') }}",
-                        "agg": "select * from ({{ queries.base }}) t",
-                    },
-                    "charts": {"c": {"query": "agg", "type": "table"}},
-                }
-            )
+        compiled = _plan_of_board(
+            {
+                "source": "repro",
+                "queries": {
+                    "base": "select * from {{ ref('dim_makers') }}",
+                    "agg": "select * from ({{ queries.base }}) t",
+                },
+                "charts": {"c": {"query": "agg", "type": "table"}},
+            },
+            source="repro",
         )
-        assert compiled.board is not None, compiled.errors
 
         registry = scripted_env(ScriptedBackend(side_effect=_answering(_result([]))))
 
         with patch(
-            "dbt_charts.core.execute.warehouse_check.resolve_query_source",
+            "dbt_charts.core.execute.plan_reader.resolve_authored_source",
             return_value=DbtTargetSourceConfig(type="postgres"),
         ) as resolve:
-            result = warehouse_check(
-                compiled.query_registry["agg"],
-                board=compiled.board,
-                env=registry,
-                query_name="agg",
-                query_registry=compiled.query_registry,
-            )
+            result = warehouse_check(compiled, "agg", env=registry)
 
-        resolved_sql = resolve.call_args.args[0].sql
+        resolved_sql = resolve.call_args.args[1]
         assert "{{ queries" not in resolved_sql
         assert "dim_makers" in resolved_sql
         assert result.adapter_type == "postgres"
@@ -1532,9 +1477,6 @@ class TestWarehouseCheckOnABrokenDbtProfile:
     def test_a_missing_profile_is_unchecked_with_the_reason(
         self, tmp_path, monkeypatch
     ):
-        import yaml
-
-        from dbt_charts.core.compile import compile as compile_board
         from dbt_charts.core.execute.source_resolver import DbtContext
 
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
@@ -1545,16 +1487,17 @@ class TestWarehouseCheckOnABrokenDbtProfile:
             project=FilesystemProject(tmp_path),
             dbt_context=DbtContext(dbt_project_path=tmp_path, target=None),
         )
-        compiled = compile_board(
-            yaml.dump(
-                {
-                    "source": "unknown",
-                    "queries": {"q": "select * from {{ ref('orders') }}"},
-                    "charts": {"c": {"query": "q", "type": "table"}},
-                }
-            )
+        compiled = _plan_of_board(
+            {
+                "source": "unknown",
+                "queries": {"q": "select * from {{ ref('orders') }}"},
+                "charts": {"c": {"query": "q", "type": "table"}},
+            },
+            source="unknown",
         )
-        assert compiled.board is not None, compiled.errors
+        # The engine only plans sources the project declares; the source this
+        # test is about is the one only a dbt profile could name.
+        compiled = {**compiled, "sources": {"project": {}, "inline": {}}}
 
         result = _check(compiled, registry, query_name="q")
 
@@ -1582,8 +1525,7 @@ class TestComposeQueryThroughARealRegistry:
         (tmp_path / "charts").mkdir()
         (tmp_path / "charts" / "board.yml").write_text(board_yml)
         project = FilesystemProject(tmp_path)
-        compiled = compile_file(project.path("charts/board.yml").read_board())
-        assert compiled.board is not None, compiled.errors
+        compiled = _plan_of(project)
         return compiled, build_exec_env(project, profile_type="bigquery")
 
     def test_a_query_chain_is_composed_into_the_dry_run(
@@ -1707,8 +1649,7 @@ class TestWarehouseCheckDialectQuery:
             _dialect_board("SELECT id FROM orders")
         )
         project = FilesystemProject(tmp_path)
-        compiled = compile_file(project.path("charts/board.yml").read_board())
-        assert compiled.board is not None, compiled.errors
+        compiled = _plan_of(project)
         registry = build_exec_env(project, profile_type="duckdb")
 
         result = _check(compiled, registry)
@@ -1719,16 +1660,14 @@ class TestWarehouseCheckDialectQuery:
 
     @staticmethod
     def _bundle_check(tmp_path: Path):
-        from dbt_charts.core.compile import compile as compile_board
-
         project = _project(tmp_path)
-        compiled = compile_board(
+        (tmp_path / "charts").mkdir(exist_ok=True)
+        (tmp_path / "charts" / "board.yml").write_text(
             "queries:\n  q:\n    source: db\n    dialect: bigquery\n"
             "    sql: SELECT AGG(invoiced_total) AS total FROM invoices\n"
-            "charts:\n  c:\n    type: table\n    query: q\n",
-            project_sources=project.sources,
+            "charts:\n  c:\n    type: table\n    query: q\n"
         )
-        assert compiled.board is not None, compiled.errors
+        compiled = _plan_of(project)
         return _check(compiled, build_exec_env(project, profile_type="duckdb"), "q")
 
     @needs_metricflow

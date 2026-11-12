@@ -1,4 +1,4 @@
-"""Structural rejection: ColorStyle vs StaticGradientColorStyle family enforcement."""
+"""Structural rejection: ColorStyle vs GradientColorStyle family enforcement."""
 
 from __future__ import annotations
 
@@ -9,20 +9,20 @@ from pydantic import ValidationError
 def test_geoshape_rejects_categorical() -> None:
     from dbt_charts.core.compile.models.style.theme.geoshape import GeoshapeChartStyle
 
-    # Must fail: GeoshapeChartStyle.color is StaticGradientColorStyle, no categorical arm
+    # Must fail: GeoshapeChartStyle.color is GradientColorStyle, no categorical arm
     with pytest.raises(ValidationError, match="categorical"):
         GeoshapeChartStyle.model_validate({"color": {"categorical": ["#ff0000"]}})
 
 
 def test_table_rejects_categorical() -> None:
-    # TableChartStylePatch.color is StaticGradientColorStylePatch — no categorical arm.
+    # TableChartStylePatch.color is GradientColorStylePatch — no categorical arm.
     # Uses the all-Optional Patch (not the theme class) so the error is isolated to
     # the color field, not drowned out by unrelated required-field errors.
-    from dbt_charts.core.compile.models.primitives import StaticGradientColorStyle
+    from dbt_charts.core.compile.models.primitives import GradientColorStyle
     from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
 
     with pytest.raises(ValidationError, match="categorical"):
-        StaticGradientColorStyle.model_validate({"categorical": ["#ff0000"]})
+        GradientColorStyle.model_validate({"categorical": ["#ff0000"]})
     with pytest.raises(ValidationError, match="categorical"):
         TableChartStylePatch.model_validate({"color": {"categorical": ["#ff0000"]}})
 
@@ -49,7 +49,6 @@ def test_cartesian_accepts_categorical() -> None:
     cs = ColorStyle(categorical={"palette": ["#ff0000", "#0000ff"]})
     assert cs.categorical is not None
     assert cs.categorical.palette == ["#ff0000", "#0000ff"]
-    assert cs.static is None
     assert cs.gradient is None
 
 
@@ -62,13 +61,13 @@ def test_color_style_palette_name_expanded() -> None:
     assert len(cs.categorical.palette) == 10
 
 
-def test_color_style_inherits_static_gradient_color_style() -> None:
+def test_color_style_inherits_gradient_color_style() -> None:
     from dbt_charts.core.compile.models.primitives import (
         ColorStyle,
-        StaticGradientColorStyle,
+        GradientColorStyle,
     )
 
-    assert issubclass(ColorStyle, StaticGradientColorStyle)
+    assert issubclass(ColorStyle, GradientColorStyle)
 
 
 def test_categorical_color_style_holds_palette_and_ssp() -> None:
@@ -79,18 +78,16 @@ def test_categorical_color_style_holds_palette_and_ssp() -> None:
     assert c.single_series_palette == ["#0000ff"]
 
 
-def test_static_gradient_accepts_static_and_gradient() -> None:
+def test_gradient_color_style_accepts_gradient_and_rejects_static() -> None:
     from dbt_charts.core.compile.models.primitives import (
+        GradientColorStyle,
         ScaleTargetConfig,
-        StaticGradientColorStyle,
     )
 
-    sg = StaticGradientColorStyle(
-        static="#ff0000",
-        gradient=ScaleTargetConfig(palette=["#fff", "#000"]),
-    )
-    assert sg.static == "#ff0000"
+    sg = GradientColorStyle(gradient=ScaleTargetConfig(palette=["#fff", "#000"]))
     assert sg.gradient is not None
+    with pytest.raises(ValidationError, match="static"):
+        GradientColorStyle.model_validate({"static": "#ff0000"})
 
 
 def test_categorical_color_style_records_requested_alias_palette() -> None:

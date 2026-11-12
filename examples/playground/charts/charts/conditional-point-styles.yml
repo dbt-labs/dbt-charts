@@ -1,0 +1,53 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Conditional point styles
+width: 900
+notes: Points restyled by the value in their own row, with no color, size or shape channel.
+
+queries:
+  deals:
+    columns: [spend, revenue, is_outlier, lat, lon]
+    values:
+      - [10, 100, false, 40.7, -74.0]
+      - [20, 180, false, 34.0, -118.2]
+      - [30, 220, false, 41.9, -87.6]
+      - [40, 390, true, 29.8, -95.4]
+      - [50, 260, false, 47.6, -122.3]
+
+rows:
+  - cols: [c_scatter, c_map]
+
+charts:
+  c_scatter:
+    query: deals
+    type: scatter
+    x: spend
+    y: revenue
+    title: Outliers in red diamonds
+    style:
+      conditional:
+        is_outlier:
+          - eq: true
+            marks:
+              point:
+                color: "#c62828"
+                size: 160
+                shape: diamond
+          - default: true
+            marks:
+              point:
+                opacity: 0.4
+  c_map:
+    query: deals
+    type: point_map
+    latitude: lat
+    longitude: lon
+    projection: albersUsa
+    title: Outlier cities
+    style:
+      conditional:
+        is_outlier:
+          - eq: true
+            marks:
+              point:
+                color: "#c62828"
+                size: 160

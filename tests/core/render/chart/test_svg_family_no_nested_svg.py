@@ -397,7 +397,9 @@ def _clip_resolved_style() -> tuple[ResolvedStyle, Any]:
         _RESOLVED_STYLE.chart_defaults, title=new_title
     )
     clip_rs = dataclasses.replace(_RESOLVED_STYLE, chart_defaults=new_chart_defaults)
-    clip_ctx = dataclasses.replace(_CHART_CTX, title=new_title)
+    clip_ctx = dataclasses.replace(
+        _CHART_CTX, title=_CHART_CTX.title.model_copy(update={"overflow": "clip"})
+    )
     return clip_rs, clip_ctx
 
 

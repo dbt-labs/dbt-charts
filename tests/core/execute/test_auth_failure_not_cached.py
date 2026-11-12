@@ -13,6 +13,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_UNKNOWN_RELATION,
     ERR_WAREHOUSE_AUTH,
     ERR_WAREHOUSE_CONNECTION,
+    ERR_WAREHOUSE_PERMISSION,
     ERR_WAREHOUSE_RUNTIME,
 )
 from dbt_charts.core.diagnostics.execution import QueryError
@@ -52,7 +53,9 @@ def _executor(backend: ScriptedBackend, cache: TrivialDuckDBCache) -> Run:
 
 
 def _failure(text: str, dialect: str) -> QueryResult:
-    return classify_warehouse_error("dbt SQL execution", Exception(text), dialect)
+    return classify_warehouse_error(
+        "dbt SQL execution", Exception(text), dialect, source="wh"
+    )
 
 
 @pytest.mark.parametrize(
@@ -63,8 +66,17 @@ def _failure(text: str, dialect: str) -> QueryResult:
             ERR_WAREHOUSE_AUTH,
         ),
         (
-            connection_failure("bigquery", Exception("could not connect")),
+            connection_failure(
+                "bigquery",
+                Exception("could not connect"),
+                source="wh",
+                origin="bigquery",
+            ),
             ERR_WAREHOUSE_CONNECTION,
+        ),
+        (
+            _failure("permission denied for table orders", "postgres"),
+            ERR_WAREHOUSE_PERMISSION,
         ),
         (
             QueryResult(

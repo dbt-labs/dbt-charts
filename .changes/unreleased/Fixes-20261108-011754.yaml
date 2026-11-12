@@ -1,0 +1,3 @@
+kind: Fixes
+body: Warehouse permission-denied and credential failures now tell you to fix access or credentials instead of the SQL, and connection and unknown-table errors name the source and the next command to run.
+time: 2026-11-08T01:17:54.191577-08:00

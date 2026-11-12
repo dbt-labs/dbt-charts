@@ -115,6 +115,14 @@ style:
         )
         assert re.search(pattern, svg) is not None
 
+    def test_every_run_carries_the_footer_role_token(self):
+        """The equivalence comparator's quirk classes find footer text by this token."""
+        svg = render_board_to_svg()
+        for content in ("made with", "dbt Charts"):
+            run = re.search(rf"<text [^>]*>{content}</text>", svg)
+            assert run is not None, content
+            assert ' data-dct-role="footer-text"' in run.group(0), content
+
     def test_run_positions_are_snapped_to_whole_pixels(self):
         """Snapping is what makes the Python and Rust engines byte-equal.
 

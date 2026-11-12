@@ -398,14 +398,26 @@ ERR_WAREHOUSE_AUTH = REGISTRY.register(
     )
 )
 
+ERR_WAREHOUSE_PERMISSION = REGISTRY.register(
+    ErrorCode(
+        code="ERR-WAREHOUSE-PERMISSION",
+        domain="execute",
+        title="Warehouse denied access to a relation",
+        message_template="Warehouse denied access for source {source!r}: {detail}. The credentials were accepted and the SQL was read; the role or account behind them lacks permission on a relation the query uses. Grant that access, or switch the source to a role or credentials that have it, then run it again. The SQL is not at fault.",
+        doc="Fired when a query reaches the warehouse and fails because the connected role or account lacks a grant on a relation: Postgres and Redshift `permission denied for ...` (SQLSTATE 42501), Snowflake `Insufficient privileges` (003001), BigQuery `Access Denied` (accessDenied), Databricks `INSUFFICIENT_PERMISSIONS` / `PERMISSION_DENIED`. Matched only on those known driver texts. The detail carries the warehouse's original message, which names the relation. Grant access or switch credentials and re-run; the failure is never written to the result cache, so no `--no-cache` is needed.",
+        summary="Fired when the warehouse rejects a query because the connected role lacks a grant on a relation it reads.",
+        docs_topic="queries",
+    )
+)
+
 ERR_WAREHOUSE_CONNECTION = REGISTRY.register(
     ErrorCode(
         code="ERR-WAREHOUSE-CONNECTION",
         domain="execute",
         title="Could not open the warehouse",
-        message_template="Could not open the warehouse: {reason}",
+        message_template="Could not open the warehouse for source {source!r} ({origin}): {reason} Run `dct doctor --with-warehouse` to test each connection.",
         fix_template="Check the source's credentials, host, and network reachability in `dbt_charts.yml` or `profiles.yml`; for a database file, check that it exists and no other process holds its lock.",
-        doc="Fired when opening the connection fails, before any SQL is sent: a database file that is missing, unreadable, or lock-held by another process (DuckDB, SQLite), or bad credentials, an unreachable host, or a missing database/role on a network warehouse (Postgres, Snowflake, BigQuery, Databricks, …). Distinct from ERR-WAREHOUSE-RUNTIME because nothing ever read the SQL: the query may be perfectly good, so callers that judge queries (`dct validate --warehouse`) must not report it as a query defect. `{reason}` names the classified cause; the driver's own text (which may carry hostnames, PIDs, or usernames) is not shown here but is available in `dct`'s diagnostics output and server logs. Check the source's credentials, host, and network reachability in `dbt_charts.yml` or `profiles.yml`.",
+        doc="Fired when opening the connection fails, before any SQL is sent: a database file that is missing, unreadable, or lock-held by another process (DuckDB, SQLite), or bad credentials, an unreachable host, or a missing database/role on a network warehouse (Postgres, Snowflake, BigQuery, Databricks, …). Distinct from ERR-WAREHOUSE-RUNTIME because nothing ever read the SQL: the query may be perfectly good, so callers that judge queries (`dct validate --warehouse`) must not report it as a query defect. `{reason}` names the classified cause; the driver's own text (which may carry hostnames, PIDs, or usernames) is not shown here but is available in `dct`'s diagnostics output and server logs. Check the source's credentials, host, and network reachability in `dbt_charts.yml` or `profiles.yml`. `{source}` is the source name; `{origin}` is its warehouse type and, for a dbt profile, the dbt project.",
         docs_topic="queries",
     )
 )
@@ -679,7 +691,7 @@ ERR_SQL_DIALECT_UNSUPPORTED = REGISTRY.register(
         title="SQL cannot be translated to the warehouse dialect",
         message_template="Cannot translate this {read} SQL to {write}: {reason}",
         fix_template="Rewrite the statement with constructs both dialects share, or remove `dialect:` from the query and write it in the warehouse's own SQL.",
-        doc="Fired when a query sets `dialect:` to something other than its source's warehouse and its SQL cannot be translated safely: it calls a function the translator does not know, uses a construct with no equivalent in the warehouse, holds more than one statement, or does not parse. It also covers paths that do not translate at all (file sources, `{{ queries.X.cache }}` references, incremental queries) when `dialect:` differs from the warehouse.",
+        doc="Fired when a query sets `dialect:` to something other than its source's warehouse and its SQL cannot be translated safely: it calls a function the translator does not know, uses a construct with no equivalent in the warehouse, holds more than one statement, or does not parse. It also covers paths that do not translate at all (file sources, incremental queries) when `dialect:` differs from the warehouse.",
         docs_topic="queries",
     )
 )
@@ -808,6 +820,19 @@ ERR_UNKNOWN_VARIABLE_OVERRIDE = REGISTRY.register(
         summary="Fired when a caller sets a variable the board does not declare.",
         docs_topic="variables",
         hint_generator=suggest_close_variable,
+    )
+)
+
+ERR_BUILTIN_SHADOWS_VARIABLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BUILTIN-SHADOWS-VARIABLE",
+        domain="execute",
+        title="A built-in variable has the name of a board variable",
+        message_template="The built-in {name!r} has the same name as the variable {name!r} that {origin}. A built-in name belongs to the host and cannot be renamed, so one of the two would silently win.",
+        fix_template="Rename the board's variable. For a variable a tabs layout or a details board generates, set an `id:` on that tabs layout or details board to give it another name.",
+        doc="Fired when a run is given a built-in value (the directory-navigation variables a host supplies) under a name that a variable of the board already has, either declared under `variables:` or generated for a tabs layout or a details board. Built-ins are not checked against the board, so a shared name would hide the board's own value.",
+        summary="Fired when a built-in variable has the name of a variable of the board.",
+        docs_topic="variables",
     )
 )
 

@@ -194,16 +194,17 @@ def test_redefined_currency_reaches_a_data_table_strip() -> None:
     svg = _currency_svg(
         "    support_table:\n      - source: revenue\n        format: currency\n"
     )
-    assert svg.count("$1,234,567") > _currency_svg("").count("$1,234,567")
+    assert ">1,234,567<" in svg and ">Revenue, $<" in svg
 
 
 def test_a_redefined_full_digit_name_keeps_its_digits_in_a_strip() -> None:
-    """A redefined name prints exactly its own spec: the strip never compacts it."""
+    """A redefined name prints exactly its own digits: the strip never compacts it."""
     style = "style:\n  formats:\n    currency_whole: '$,.1f'"
     strip = (
         "    support_table:\n      - source: revenue\n        format: currency_whole\n"
     )
-    assert "$1,234,567.0" in render_board_to_svg(_board(style, _BAR + strip))
+    svg = render_board_to_svg(_board(style, _BAR + strip))
+    assert ">1,234,567.0<" in svg and ">Revenue, $<" in svg
 
 
 def test_a_redefined_number_reaches_table_cells_and_kpis_with_its_affix() -> None:

@@ -3,6 +3,7 @@
 //! jiff's `compatible` does (a gap moves forward, a fold takes the earlier instant). Instants are epoch
 //! milliseconds, a JS `Date`'s value.
 
+use crate::invariant::{self, at, at_mut};
 use jiff::civil::{Date, DateTime, Time};
 use jiff::tz::TimeZone;
 use jiff::{Span, Timestamp};
@@ -140,7 +141,7 @@ impl Unit {
                 let (start, end) = (self.floor(zone, 0)?, self.floor(zone, t)?);
                 (end - start + offset_ms(zone, end)? - offset_ms(zone, start)?).div_euclid(WEEK)
             }
-            Unit::Millisecond | Unit::Year => unreachable!("a millisecond or year step floors on its own multiples"),
+            Unit::Millisecond | Unit::Year => invariant::broken("a millisecond or year step floors on its own multiples"),
         })
     }
 }
@@ -205,8 +206,8 @@ impl Interval {
     pub fn nice(&self, domain: [i64; 2]) -> Result<[i64; 2], String> {
         let (low, high) = if domain[1] < domain[0] { (1, 0) } else { (0, 1) };
         let mut niced = domain;
-        niced[low] = self.floor(domain[low])?;
-        niced[high] = self.ceil(domain[high])?;
+        *at_mut(&mut niced, low) = self.floor(*at(&domain, low))?;
+        *at_mut(&mut niced, high) = self.ceil(*at(&domain, high))?;
         Ok(niced)
     }
 
@@ -273,8 +274,8 @@ fn ladder(start: i64, stop: i64, count: usize, zone: &TimeZone, week: Unit, day:
         let step = d3_tick_step(start as f64, stop as f64, count);
         return Interval::every(Unit::Millisecond, if step.is_nan() { step } else { step.max(1.0) }, zone);
     }
-    let (below, above) = (rungs[i - 1].2 as f64, rungs[i].2 as f64);
-    let (unit, step, _) = rungs[if target / below < above / target { i - 1 } else { i }];
+    let (below, above) = (at(&rungs, i - 1).2 as f64, at(&rungs, i).2 as f64);
+    let (unit, step, _) = *at(&rungs, if target / below < above / target { i - 1 } else { i });
     Interval::every(unit, step, zone)
 }
 

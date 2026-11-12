@@ -334,6 +334,7 @@ impl Walk {
         let mut context = folded.clone();
         context.palettes.extend(resolve.palettes.clone());
         context.roles.extend(resolve.roles.clone());
+        board_model::palette::adopt_board_palette(&mut context, &resolve);
         folded.merge(resolve);
         let resolved = Resolved::base_in(&cascade::TABLES, folded, &context).map_err(|e| {
             ScopeError::Invalid(cascade_diagnostics(

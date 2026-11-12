@@ -25,6 +25,7 @@
 use std::collections::BTreeMap;
 
 use bind::board::ChartStyles;
+use bind::failed::FailedText;
 use bind::bound::{self, Failure, Family, Frame, Sizing};
 use board_model::board::layout::LayoutItem;
 use board_model::board::{items, Board, BoardBody};
@@ -41,11 +42,14 @@ use layout::board::height::NaturalPlan;
 use layout::board::prose;
 use layout::board::tree::{Chart, Spare};
 use layout::board::width::IntrinsicWidth;
-use layout::families::callout::{self, CalloutCard, CalloutStyle};
+use layout::families::callout::{CalloutCard, CalloutStyle};
+use layout::families::failed::{ErrorCard, ErrorTile};
+use layout::families::kpi::{KpiCard, KpiFaces};
+use layout::family::{Env, Family as _};
 use layout::families::spark_bar;
 use layout::families::table::{self, TableCard, TableFaces};
 
-use crate::compose::title_text;
+use crate::compose::{px, title_text};
 use crate::EngineFacts;
 
 /// What the engine knows of one drawn chart before layout asks.
@@ -60,8 +64,9 @@ pub(crate) struct Slot<'a> {
     drawn: &'a Result<Family, Failure>,
     /// The sizing and padding facts of a drawn plot.
     frame: Option<&'a Frame>,
-    /// A drawn plot's authored title, which its title band is laid out from.
+    /// A drawn plot's authored title and subtitle, which its title band is laid out from.
     title: Option<&'a str>,
+    subtitle: Option<&'a str>,
     pub facts: Chart,
     /// The slot height every width gets: the family's estimate, not its card.
     pub estimate: f64,
@@ -186,7 +191,7 @@ fn slot<'a>(body: &'a BoardBody, chart: &'a ModelChart, placed: &'a Style, at: &
     // callout's title are drawn inside their cards.
     let failed = matches!(drawn, Err(_));
     let (preferred, title, notes, content, table) = match chart {
-        ModelChart::Kpi(k) => (Some(placed.charts.kpi.base.preferred_width), failed && k.label.is_some(), &k.base.notes, leaf(style.charts.kpi.default_height, "style.charts.kpi.default_height")?, false),
+        ModelChart::Kpi(k) => (Some(placed.charts.kpi.preferred_width), failed && k.label.is_some(), &k.base.notes, leaf(style.charts.kpi.default_height, "style.charts.kpi.default_height")?, false),
         ModelChart::Table(t) => (Some(placed.charts.table.preferred_width), failed && t.shared.title.is_some(), &t.shared.base.notes, leaf(style.charts.default_table_height, "style.charts.default_table_height")?, true),
         ModelChart::Callout(c) => (Some(placed.charts.callout.preferred_width), failed && c.title.is_some(), &None, 0.0, false),
         ModelChart::Pie(c) | ModelChart::Donut(c) => (None, failed && c.radial.shared.title.is_some(), &c.radial.shared.base.notes, 0.0, false),
@@ -198,6 +203,8 @@ fn slot<'a>(body: &'a BoardBody, chart: &'a ModelChart, placed: &'a Style, at: &
             (Some(placed.charts.spark_bar.preferred_width), false, &s.shared.base.notes, content, false)
         }
         ModelChart::Scatter(s) if matches!(drawn, Ok(Family::Cartesian(_))) => (Some(placed.charts.scatter.cartesian.painted.base.preferred_width), false, &s.cartesian.shared.base.notes, 0.0, false),
+        ModelChart::Bar(b) if matches!(drawn, Ok(Family::Cartesian(bound::Cartesian::Plane(_)))) => (Some(placed.charts.bar.cartesian.painted.base.preferred_width), false, &b.cartesian.shared.base.notes, 0.0, false),
+        ModelChart::Line(l) if matches!(drawn, Ok(Family::Cartesian(bound::Cartesian::Plane(_)))) => (Some(placed.charts.line.cartesian.painted.base.preferred_width), false, &l.cartesian.shared.base.notes, 0.0, false),
         ModelChart::Histogram(h) if matches!(drawn, Ok(Family::Cartesian(_))) => (Some(placed.charts.histogram.cartesian.painted.base.preferred_width), false, &h.cartesian.shared.base.notes, 0.0, false),
         _ if matches!(drawn, Ok(Family::Cartesian(bound::Cartesian::Plane(_)))) => return Err(Diagnostic::refused(refuse!("sizing the slot of the plot of chart {id} is not supported"))),
         _ => return Err(Diagnostic::refused(refuse!("sizing the slot of a failed {id} chart of this family is not supported"))),
@@ -205,7 +212,7 @@ fn slot<'a>(body: &'a BoardBody, chart: &'a ModelChart, placed: &'a Style, at: &
     if title {
         return Err(Diagnostic::refused(refuse!("drawing the title of a failed chart is not supported")));
     }
-    if matches!(chart, ModelChart::Scatter(ScatterChart { cartesian, .. }) | ModelChart::Histogram(BarChart { cartesian, .. }) if cartesian.width.is_some()) {
+    if matches!(chart, ModelChart::Scatter(ScatterChart { cartesian, .. }) | ModelChart::Histogram(BarChart { cartesian, .. }) | ModelChart::Bar(BarChart { cartesian, .. }) if cartesian.width.is_some()) || matches!(chart, ModelChart::Line(l) if l.cartesian.width.is_some()) {
         return Err(Diagnostic::refused(refuse!("a cartesian chart's `width:` is not supported")));
     }
     if notes.is_some() {
@@ -216,11 +223,11 @@ fn slot<'a>(body: &'a BoardBody, chart: &'a ModelChart, placed: &'a Style, at: &
     }
     let card_padding = leaf(style.frame.card_padding, "style.frame.card_padding")?;
     let padding = match chart {
-        ModelChart::Kpi(k) if !failed => (placed.charts.kpi.base.padding.top, placed.charts.kpi.base.padding.bottom),
+        ModelChart::Kpi(k) if !failed => (placed.charts.kpi.padding.top, placed.charts.kpi.padding.bottom),
         ModelChart::Table(_) if !failed => (placed.charts.table.padding.top, placed.charts.table.padding.bottom),
         ModelChart::SparkBar(_) => (placed.charts.spark_bar.padding.top, placed.charts.spark_bar.padding.bottom),
         ModelChart::Pie(_) | ModelChart::Donut(_) if !failed => (placed.charts.pie.base.padding.top, placed.charts.pie.base.padding.bottom),
-        ModelChart::Scatter(_) | ModelChart::Histogram(_) => {
+        ModelChart::Scatter(_) | ModelChart::Line(_) | ModelChart::Histogram(_) | ModelChart::Bar(_) => {
             let frame = bound.frame.as_ref().ok_or_else(|| diag::err_internal("a plot carries its frame"))?;
             (frame.padding.top, frame.padding.bottom)
         }
@@ -229,7 +236,7 @@ fn slot<'a>(body: &'a BoardBody, chart: &'a ModelChart, placed: &'a Style, at: &
     let width = IntrinsicWidth { min: None, preferred };
     let pie = matches!(drawn, Ok(Family::Pie(_)));
     let (content_sized, spare) = match (chart, bound.frame.as_ref()) {
-        (ModelChart::Scatter(_) | ModelChart::Histogram(_), Some(frame)) => plot_sizing(&frame.sizing),
+        (ModelChart::Scatter(_) | ModelChart::Line(_) | ModelChart::Histogram(_) | ModelChart::Bar(_), Some(frame)) => plot_sizing(&frame.sizing),
         _ if pie => (false, Spare::Never),
         _ => (true, Spare::WhenAlone),
     };
@@ -240,6 +247,7 @@ fn slot<'a>(body: &'a BoardBody, chart: &'a ModelChart, placed: &'a Style, at: &
         drawn,
         frame: bound.frame.as_ref(),
         title: bound.title.as_deref(),
+        subtitle: bound.subtitle.as_deref(),
         // kpi, table and callout draw to their content and take spare height only alone
         // (`NON_ASPECT_RATIO_TYPES`, `_takes_spare_height`).
         facts: Chart { at: at.clone(), id: id.as_str().to_string(), width: None, intrinsic: width, without_data: width, content_sized, table, spare, floor: None },
@@ -341,7 +349,7 @@ impl<F: EngineFacts> Facts for Adapter<'_, '_, F> {
         if self.slots.width_authored || (title_text(body).is_none() && body.text.is_none()) {
             return Ok(own);
         }
-        let ask = prose::own_width(total_style(body)?, title_text(body), body.text.as_ref().map(|text| text.as_str()), self.facts.fonts_dir())?;
+        let ask = prose::own_width(total_style(body)?, title_text(body), body.text.as_ref().map(|text| text.as_str()), self.book)?;
         Ok(Own { width: own.width.combine_max(ask), ..own })
     }
 
@@ -349,7 +357,7 @@ impl<F: EngineFacts> Facts for Adapter<'_, '_, F> {
         let Some(title) = title_text(body) else { return Ok(0.0) };
         let style = total_style(body)?;
         let width = (content_width - 2.0 * style.frame.card_padding).max(0.0);
-        Ok(prose::title(style, title, self.facts.fonts_dir(), width)?.height)
+        Ok(prose::title(style, title, self.book, width)?.height)
     }
 
     fn chart(&mut self, at: &ItemId, _id: &ChartId) -> Result<Chart, Diagnostic> {
@@ -370,6 +378,10 @@ impl<F: EngineFacts> Facts for Adapter<'_, '_, F> {
         chrome::summary_height(total_style(body)?)
     }
 
+    fn details_offset(&mut self, body: &BoardBody) -> Result<f64, Diagnostic> {
+        Ok(total_style(body)?.layout.details.content_y_offset)
+    }
+
     fn natural(&mut self, chart: &Chart, width: f64) -> Result<NaturalPlan, Diagnostic> {
         // `plan` filled a slot for every placement the layout asks about.
         let slot = &self.slots.by_placement[&chart.at];
@@ -378,7 +390,7 @@ impl<F: EngineFacts> Facts for Adapter<'_, '_, F> {
             // takes its natural height, with no card padding.
             (Ok(Family::Callout(callout)), ModelChart::Callout(_)) => {
                 let style = CalloutStyle::of(&slot.placed.charts.callout, total_style(slot.body)?)?;
-                callout::plan(&CalloutCard { callout, style: &style }, self.facts.fonts_dir(), width)?.natural_height
+                CalloutCard { callout, style: &style }.plan(&Env { book: self.book }, width)?.natural_height
             }
             // A table's slot is the height the engine draws it at, unbounded, in the width its
             // padding leaves (`_get_table_height_from_data`), plus that padding (`_vertical_inset`).
@@ -391,38 +403,76 @@ impl<F: EngineFacts> Facts for Adapter<'_, '_, F> {
                 let card = TableCard { table: bound_table, style: chart_style, faces: &faces };
                 let planned = table::plan(&card, self.book, (width - left - right).max(0.0))?;
                 let title = planned.title_metrics().map(|(ascent, tail)| TitleMetrics { ascent: top + ascent, tail });
-                return Ok(NaturalPlan { height: planned.height + top + bottom, title });
+                // The card draws inside whole-pixel padding (`compose::px`), so the cell holds the same.
+                return Ok(NaturalPlan { height: planned.height + px(top) + px(bottom), title });
             }
             // A pie's slot is its content height (`pie_content_height`) inside the card and chart padding.
             (Ok(Family::Pie(bound_pie)), ModelChart::Pie(_) | ModelChart::Donut(_)) => {
                 let style = self.facts.style(slot.body)?;
                 let height = pie_height(slot, style, width)?;
                 let (left, right, top, _) = additive_padding(leaf(style.frame.card_padding, "style.frame.card_padding")?, &slot.placed.charts.pie.base.padding);
-                let id = slot.facts.id.as_str();
-                let title = match bound_pie.title.as_deref() {
-                    Some(text) => layout::title::chart_title(id, text, slot.placed, width, width - left - right, self.book)?.map(|t| TitleMetrics { ascent: top + t.metrics.ascent, tail: t.metrics.tail }),
-                    None => None,
-                };
+                let title = chart_title_metrics(slot, bound_pie.title.as_deref(), bound_pie.subtitle.as_deref(), width, (left, right, top), self.book)?;
                 return Ok(NaturalPlan { height, title });
             }
-            (Err(_), ModelChart::Pie(_) | ModelChart::Donut(_)) => failed_pie_height(slot, self.facts.style(slot.body)?, width)?,
+            // A failed pie draws the error card too, which is at least its own natural height.
+            (Err(failure), ModelChart::Pie(_) | ModelChart::Donut(_)) => {
+                let card = error_card(self.facts, slot.body, failure)?.plan(&Env { book: self.book }, width)?.natural_height;
+                failed_pie_height(slot, self.facts.style(slot.body)?, width)?.max(card)
+            }
             // `get_chart_content_height`: the authored height, else the aspect ratio's at this width
             // clamped, under the card and chart padding the slot carries.
-            (Ok(Family::Cartesian(_)), ModelChart::Scatter(_) | ModelChart::Histogram(_)) => {
+            (Ok(Family::Cartesian(cartesian)), ModelChart::Scatter(_) | ModelChart::Histogram(_) | ModelChart::Bar(_) | ModelChart::Line(_)) if matches!(slot.chart, ModelChart::Scatter(_) | ModelChart::Histogram(_)) || matches!(cartesian, bound::Cartesian::Plane(_)) => {
                 let frame = plot_frame(slot)?;
                 let height = content_height(&frame.sizing, width)? + slot.estimate;
                 let card_padding = leaf(self.facts.style(slot.body)?.frame.card_padding, "style.frame.card_padding")?;
                 let (left, right, top) = (card_padding + frame.padding.left, card_padding + frame.padding.right, card_padding + frame.padding.top);
-                let title = match slot.title {
-                    Some(text) => layout::title::chart_title(slot.facts.id.as_str(), text, slot.placed, width, width - left - right, self.book)?.map(|t| TitleMetrics { ascent: top + t.metrics.ascent, tail: t.metrics.tail }),
-                    None => None,
-                };
+                let title = chart_title_metrics(slot, slot.title, slot.subtitle, width, (left, right, top), self.book)?;
                 return Ok(NaturalPlan { height, title });
+            }
+            // A failed chart's slot is its error card (`_render_chart_resolve_failure`), which draws
+            // at least its natural height.
+            (Err(failure), _) => {
+                let natural = error_card(self.facts, slot.body, failure)?.plan(&Env { book: self.book }, width)?.natural_height;
+                natural.max(slot.estimate)
+            }
+            // A KPI's slot holds its card's natural height inside the card and chart padding: the
+            // card draws at least that (`kpi::draw`), and production stacks by what it drew.
+            (Ok(Family::Kpi(kpi)), ModelChart::Kpi(_)) => {
+                let chart_style = &slot.placed.charts.kpi;
+                let faces = KpiFaces::of(chart_style, &total_style(slot.body)?.font.emoji);
+                let card = KpiCard { kpi, style: chart_style, faces: &faces };
+                let card_padding = leaf(self.facts.style(slot.body)?.frame.card_padding, "style.frame.card_padding")?;
+                let (left, right, top, bottom) = additive_padding(card_padding, &chart_style.padding);
+                let natural = card.plan(&Env { book: self.book }, (width - left - right).max(0.0))?.natural_height;
+                (natural + px(top) + px(bottom)).max(slot.estimate)
+            }
+            // A spark_bar's slot holds its rows inside the whole-pixel padding it draws in.
+            (Ok(Family::SparkBar(spark)), ModelChart::SparkBar(_)) => {
+                let (_, _, top, bottom) = additive_padding(leaf(self.facts.style(slot.body)?.frame.card_padding, "style.frame.card_padding")?, &slot.placed.charts.spark_bar.padding);
+                (spark_bar::natural_height(spark, &slot.placed.charts.spark_bar) + px(top) + px(bottom)).max(slot.estimate)
             }
             _ => slot.estimate,
         };
         Ok(NaturalPlan { height, title: None })
     }
+}
+
+/// A failed chart's card: no padding inset, no card border or shadow, its text from the failure.
+pub(crate) fn error_card(facts: &impl EngineFacts, body: &BoardBody, failure: &Failure) -> Result<ErrorCard, Diagnostic> {
+    Ok(ErrorCard {
+        text: FailedText::of(failure, facts.docs_site())?,
+        tile: ErrorTile::of(total_style(body)?)?,
+        content_left: leaf(facts.style(body)?.frame.card_padding, "style.frame.card_padding")?,
+        title: None,
+    })
+}
+
+/// What a `cols` row aligns a drawn chart's title by: production's sizing block (`vega_title_block`)
+/// at `top` under the card's edge, in the `width` the padding's `left` and `right` leave.
+fn chart_title_metrics(slot: &Slot, text: Option<&str>, subtitle: Option<&str>, width: f64, (left, right, top): (f64, f64, f64), book: &FontBook) -> Result<Option<TitleMetrics>, Diagnostic> {
+    let Some(text) = text else { return Ok(None) };
+    let title = layout::title::chart_title(slot.facts.id.as_str(), text, subtitle, slot.placed, width, width - left - right, book)?;
+    Ok(title.map(|t| TitleMetrics { ascent: top + t.metrics.ascent, tail: t.metrics.tail }))
 }
 
 fn plot_frame<'a>(slot: &Slot<'a>) -> Result<&'a Frame, Diagnostic> {

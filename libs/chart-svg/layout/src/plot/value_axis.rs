@@ -704,7 +704,7 @@ impl<'a> ValueAxis<'a> {
         let title = self
             .labels
             .title
-            .map(|title| self.place_title(title, plot, label_baseline, below))
+            .map(|title| place_across_title(self.book, title, plot, label_baseline, below))
             .transpose()?;
         // Production's title band (`x_title_extra`): the padding and the title's Vega line, below
         // its top anchor.
@@ -754,63 +754,62 @@ impl<'a> ValueAxis<'a> {
             },
         })
     }
+}
 
-    /// A bottom or top axis title centered on the plot: its baseline the label
-    /// size plus `padding` past the labels' (`label_baseline`, with their size), or,
-    /// when nothing is rung, its near edge (the top of a bottom axis's title, the
-    /// bottom of a top axis's) `padding` off the plot edge. Its anchor is where
-    /// Vega's baseline offset puts that baseline; its ink is the face's own.
-    /// A title wider than the plot is refused: production wraps it at the chart's
-    /// width, which this axis does not see. A line break never reaches here, since
-    /// production joins an authored one.
-    fn place_title(
-        &self,
-        title: AxisTitle,
-        plot: Size,
-        label_baseline: Option<(f64, f64)>,
-        below: bool,
-    ) -> Result<PlacedTitle, Diagnostic> {
-        if title.text.contains('\n') || title.text.contains(measure::LINE_SEP) {
-            return Err(diag::err_internal(
-                "an axis title reached layout on more than one line: production joins an authored break",
-            ));
-        }
-        let run = self
-            .book
-            .run(title.text, &title.font)
-            .map_err(diag::err_internal)?;
-        if run.advance > plot.width {
-            return Err(Diagnostic::refused(refuse!("a value axis title wider than its plot is not supported")));
-        }
-        let height = run.ascent + run.descent;
-        let sign = if below { 1.0 } else { -1.0 };
-        let baseline = if below {
-            Baseline::Top
-        } else {
-            Baseline::Bottom
-        };
-        let edge = if below { plot.height } else { 0.0 };
-        let y = match label_baseline {
-            None => edge + sign * title.padding,
-            Some((at, size)) => {
-                let title_baseline = at + sign * (size + title.padding);
-                title_baseline - vega_baseline(0.0, baseline, title.font.size)
-            }
-        };
-        let y1 = if below { y } else { y - height };
-        let x = plot.width / 2.0;
-        Ok(PlacedTitle {
-            text: title.text.to_string(),
-            x,
-            y,
-            baseline,
-            turn: None,
-            ink: Bounds {
-                x1: x - run.advance / 2.0,
-                y1,
-                x2: x + run.advance / 2.0,
-                y2: y1 + height,
-            },
-        })
+/// A bottom or top axis title centered on the plot: its baseline the label
+/// size plus `padding` past the labels' (`label_baseline`, with their size), or,
+/// when nothing is rung, its near edge (the top of a bottom axis's title, the
+/// bottom of a top axis's) `padding` off the plot edge. Its anchor is where
+/// Vega's baseline offset puts that baseline; its ink is the face's own.
+/// A title wider than the plot is refused: production wraps it at the chart's
+/// width, which this axis does not see. A line break never reaches here, since
+/// production joins an authored one.
+pub(crate) fn place_across_title(
+    book: &FontBook,
+    title: AxisTitle,
+    plot: Size,
+    label_baseline: Option<(f64, f64)>,
+    below: bool,
+) -> Result<PlacedTitle, Diagnostic> {
+    if title.text.contains('\n') || title.text.contains(measure::LINE_SEP) {
+        return Err(diag::err_internal(
+            "an axis title reached layout on more than one line: production joins an authored break",
+        ));
     }
+    let run = book
+        .run(title.text, &title.font)
+        .map_err(diag::err_internal)?;
+    if run.advance > plot.width {
+        return Err(Diagnostic::refused(refuse!("a value axis title wider than its plot is not supported")));
+    }
+    let height = run.ascent + run.descent;
+    let sign = if below { 1.0 } else { -1.0 };
+    let baseline = if below {
+        Baseline::Top
+    } else {
+        Baseline::Bottom
+    };
+    let edge = if below { plot.height } else { 0.0 };
+    let y = match label_baseline {
+        None => edge + sign * title.padding,
+        Some((at, size)) => {
+            let title_baseline = at + sign * (size + title.padding);
+            title_baseline - vega_baseline(0.0, baseline, title.font.size)
+        }
+    };
+    let y1 = if below { y } else { y - height };
+    let x = plot.width / 2.0;
+    Ok(PlacedTitle {
+        text: title.text.to_string(),
+        x,
+        y,
+        baseline,
+        turn: None,
+        ink: Bounds {
+            x1: x - run.advance / 2.0,
+            y1,
+            x2: x + run.advance / 2.0,
+            y2: y1 + height,
+        },
+    })
 }

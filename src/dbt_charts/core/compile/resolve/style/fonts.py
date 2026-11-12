@@ -15,9 +15,13 @@ from pydantic import BaseModel
 
 from dbt_charts.core.colors import is_unknown_color_name
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.models.factories import FontSlotBase
 from dbt_charts.core.compile.models.primitives import NamedFont, SingleLineFontStyle
 from dbt_charts.core.compile.models.style.theme.annotations import AnnotationFontStyle
-from dbt_charts.core.compile.models.style.theme.board import ChartTitleFontStyle
+from dbt_charts.core.compile.models.style.theme.board import (
+    ChartTitleFontStyle,
+    TitleFontStyle,
+)
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_COLOR_TOKEN,
     ERR_FONT_REGISTRY,
@@ -28,6 +32,16 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.theme.style import Style
 
 T = TypeVar("T", bound=BaseModel)
+
+FontSlot = (
+    SingleLineFontStyle | ChartTitleFontStyle | AnnotationFontStyle | TitleFontStyle
+)
+FONT_SLOT_TYPES = (
+    SingleLineFontStyle,
+    ChartTitleFontStyle,
+    AnnotationFontStyle,
+    TitleFontStyle,
+)
 
 # `sizes` is a heading ramp, read from the registry; a slot never carries it.
 _REGISTRY_ONLY = frozenset({"extends", "sizes"})
@@ -101,9 +115,7 @@ def expand_named_fonts(
     ``path`` is the dotted authored location of ``node``, used in errors.
     """
     node_cls = type(node)
-    if isinstance(
-        node, (SingleLineFontStyle, ChartTitleFontStyle, AnnotationFontStyle)
-    ):
+    if isinstance(node, FontSlotBase) and "extends" in node_cls.model_fields:
         if node.extends is None:
             return node
         _check_known(node.extends, registry, path)
@@ -151,9 +163,7 @@ def _slot_graph() -> Mapping[str, str]:
     return build_slot_graph(Style)
 
 
-def _slot_at(
-    style: BaseModel, path: str
-) -> SingleLineFontStyle | ChartTitleFontStyle | AnnotationFontStyle | None:
+def _slot_at(style: BaseModel, path: str) -> FontSlot | None:
     node: object = style  # type-state: object_annotation — a walk down model attributes
     for segment in path.split("."):
         node = getattr(
@@ -161,13 +171,7 @@ def _slot_at(
         )  # type-state: silent_fallback — a path off the model has no slot
         if node is None:
             return None
-    return (
-        node
-        if isinstance(
-            node, (SingleLineFontStyle, ChartTitleFontStyle, AnnotationFontStyle)
-        )
-        else None
-    )
+    return node if isinstance(node, FONT_SLOT_TYPES) else None
 
 
 def inherited_font_name(

@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from dbt_charts.core.compile.models.markers import ColumnRef
 from dbt_charts.core.compile.template.custom_template import (
     CustomTemplateHeader,
     OptionValue,
@@ -25,7 +26,7 @@ class CustomChart(_SharedChartFields):
     template_header: CustomTemplateHeader = Field(
         description="Parsed template header (declared channels and options)."
     )
-    channels: dict[str, str | list[str] | None] = Field(
+    channels: dict[str, ColumnRef | list[ColumnRef] | None] = Field(
         description=(
             "Declared channel name -> column, or a list for a `multiple` "
             "channel; an unset optional channel is None."

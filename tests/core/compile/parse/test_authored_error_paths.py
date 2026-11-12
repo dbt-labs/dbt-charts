@@ -136,4 +136,4 @@ rows: [c]
 """
     )
 
-    assert error.message.splitlines()[-1].strip() == "static: '#ff0000'"
+    assert error.message.splitlines()[-1].strip() == "color: '#ff0000'"

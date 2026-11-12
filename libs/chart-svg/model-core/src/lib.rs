@@ -69,15 +69,17 @@ pub use inherit::{
     fill_literal, FillDefault, FillFrom, FillTry, InheritError, Refused, TokenBlock, TokenListSlot,
     TokenSlot,
 };
-pub use law::{first_violation, satisfied, Keyed, State, Unanswerable};
+pub use law::{
+    bad_item, clash, first_violation, satisfied, set_keys, Clash, Doc, Keyed, State, Unanswerable,
+};
 pub use leaf::{
     merge_map_deep, merge_nullable, merge_patch_slot, spell_leaves, tri_drop_nulls, tri_to_authored,
     tri_to_patch, DropNulls, Empty, Fold, Leaf, LeafValues, Lift, SetLeaves, Slot, Spell,
     ToAuthored, ToPatch,
 };
 pub use parse::{
-    nearest, render_path, Cx, Hint, MapRead, Parse, ParseError, Retired, Retirement, Seg,
-    SourceMap, Walk,
+    nearest, render_path, variant_keys, Cx, Hint, MapRead, Parse, ParseError, Retired, Retirement,
+    Seg, SourceMap, Walk,
 };
 pub use serde_json;
 pub use table::{

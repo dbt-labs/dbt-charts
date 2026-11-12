@@ -13,10 +13,11 @@ use std::sync::OnceLock;
 
 use crate::types::{
     AnyBlock, Blockquote, CodeBlock, Document, Heading, HorizontalRule, ImageBlock, ListItem,
-    OrderedList, Paragraph, RawHtmlBlock, Span, SpanType, Table, TableCell, TableRow,
+    OrderedList, Paragraph, RawHtmlBlock, Span, SpanType, Start, Table, TableCell, TableRow,
     UnorderedList,
 };
 use crate::utils::split_lines;
+use d3rs::invariant::{broken, Invariant};
 use d3rs::py_str::is_py_space;
 use d3rs::py_str::normalize_whitespace;
 
@@ -29,7 +30,7 @@ macro_rules! regex_field {
     ($name:ident, $pat:expr) => {
         fn $name() -> &'static Regex {
             static RE: OnceLock<Regex> = OnceLock::new();
-            RE.get_or_init(|| Regex::new($pat).unwrap())
+            RE.get_or_init(|| Regex::new($pat).held("static pattern"))
         }
     };
 }
@@ -99,7 +100,7 @@ fn ascii_digits(text: &str) -> String {
             while char::from_u32(zero - 1).is_some_and(is_digit) {
                 zero -= 1;
             }
-            char::from_digit((c as u32 - zero) % 10, 10).expect("a digit below ten")
+            char::from_digit((c as u32 - zero) % 10, 10).held("a digit below ten")
         })
         .collect()
 }
@@ -109,7 +110,7 @@ fn ascii_digits(text: &str) -> String {
 fn parse_image_attrs(attrs: Option<&str>) -> (Option<f64>, Option<f64>) {
     let (mut width, mut height) = (None, None);
     for caps in image_attr().captures_iter(attrs.unwrap_or_default()) {
-        let value: f64 = ascii_digits(&caps[2]).parse().unwrap();
+        let value: f64 = ascii_digits(&caps[2]).parse().held("the pattern matched digits");
         match caps[1].to_lowercase().as_str() {
             "width" => width = Some(value),
             "height" => height = Some(value),
@@ -140,8 +141,7 @@ impl MarkdownParser {
         let mut blocks: Document = Vec::new();
         let mut i = 0usize;
 
-        while i < lines.len() {
-            let line = &lines[i];
+        while let Some(line) = lines.get(i) {
 
             if line.chars().all(is_py_space) {
                 i += 1;
@@ -169,7 +169,9 @@ impl MarkdownParser {
 
     /// Try to parse a block starting at the given line index.
     fn try_parse_block(&self, lines: &[String], start: usize) -> (Option<AnyBlock>, usize) {
-        let line = &lines[start];
+        let line = lines
+            .get(start)
+            .held("parse_blocks passes a start inside lines");
 
         // Heading
         if let Some(caps) = heading_pattern().captures(line) {
@@ -193,12 +195,12 @@ impl MarkdownParser {
                 .map(str::to_string);
             let mut code_lines: Vec<String> = Vec::new();
             let mut i = start + 1;
-            while i < lines.len() {
-                if fenced_code_end().is_match(&lines[i]) {
+            while let Some(current) = lines.get(i) {
+                if fenced_code_end().is_match(current) {
                     i += 1;
                     break;
                 }
-                code_lines.push(lines[i].clone());
+                code_lines.push(current.clone());
                 i += 1;
             }
             let code = code_lines.join("\n");
@@ -212,8 +214,7 @@ impl MarkdownParser {
         if line.starts_with("    ") || line.starts_with('\t') {
             let mut code_lines_indented: Vec<String> = Vec::new();
             let mut i = start;
-            while i < lines.len() {
-                let current = &lines[i];
+            while let Some(current) = lines.get(i) {
                 if let Some(rest) = current.strip_prefix("    ") {
                     code_lines_indented.push(rest.to_string());
                 } else if let Some(rest) = current.strip_prefix('\t') {
@@ -243,11 +244,11 @@ impl MarkdownParser {
         if blockquote_re().is_match(line) {
             let mut quote_lines: Vec<String> = Vec::new();
             let mut i = start;
-            while i < lines.len() {
-                if let Some(caps) = blockquote_re().captures(&lines[i]) {
+            while let Some(current) = lines.get(i) {
+                if let Some(caps) = blockquote_re().captures(current) {
                     quote_lines.push(caps[1].to_string());
-                } else if lines[i].chars().all(is_py_space) {
-                    if i + 1 < lines.len() && blockquote_re().is_match(&lines[i + 1]) {
+                } else if current.chars().all(is_py_space) {
+                    if lines.get(i + 1).is_some_and(|next| blockquote_re().is_match(next)) {
                         quote_lines.push(String::new());
                     } else {
                         break;
@@ -308,12 +309,12 @@ impl MarkdownParser {
         if fenced_html_start().is_match(line) {
             let mut html_lines: Vec<String> = Vec::new();
             let mut i = start + 1;
-            while i < lines.len() {
-                if fenced_html_end().is_match(&lines[i]) {
+            while let Some(current) = lines.get(i) {
+                if fenced_html_end().is_match(current) {
                     i += 1;
                     break;
                 }
-                html_lines.push(lines[i].clone());
+                html_lines.push(current.clone());
                 i += 1;
             }
             return (
@@ -338,8 +339,7 @@ impl MarkdownParser {
         let mut para_lines: Vec<String> = Vec::new();
         let mut i = start;
 
-        while i < lines.len() {
-            let line = &lines[i];
+        while let Some(line) = lines.get(i) {
 
             if line.chars().all(is_py_space) {
                 break;
@@ -352,7 +352,7 @@ impl MarkdownParser {
                 || blockquote_re().is_match(line)
                 || unordered_list_item().is_match(line)
                 || ordered_list_item().is_match(line)
-                || table_row().is_match(line)
+                || (table_row().is_match(line) && !para_lines.is_empty())
                 || (line.starts_with("    ") && para_lines.is_empty())
                 || html_block_start().is_match(line)
             {
@@ -377,7 +377,9 @@ impl MarkdownParser {
         tag_name: &str,
     ) -> (Option<AnyBlock>, usize) {
         let tag_lower = tag_name.to_lowercase();
-        let first_line = &lines[start];
+        let first_line = lines
+            .get(start)
+            .held("parse_blocks passes a start inside lines");
 
         let closing = format!("</{tag_name}>");
         if HTML_VOID_TAGS.contains(&tag_lower.as_str()) || first_line.contains(&closing) {
@@ -392,9 +394,9 @@ impl MarkdownParser {
         let closing_lower = closing.to_lowercase();
         let mut html_lines: Vec<String> = vec![first_line.clone()];
         let mut i = start + 1;
-        while i < lines.len() {
-            html_lines.push(lines[i].clone());
-            if lines[i].to_lowercase().contains(&closing_lower) {
+        while let Some(current) = lines.get(i) {
+            html_lines.push(current.clone());
+            if current.to_lowercase().contains(&closing_lower) {
                 i += 1;
                 break;
             }
@@ -428,10 +430,9 @@ impl MarkdownParser {
     ) -> (Vec<String>, usize) {
         let mut body: Vec<String> = Vec::new();
         let mut i = start;
-        while i < lines.len() {
-            let line = &lines[i];
+        while let Some(line) = lines.get(i) {
             if line.chars().all(is_py_space) {
-                let next = lines[i + 1..].iter().find(|l| !l.chars().all(is_py_space));
+                let next = lines.iter().skip(i + 1).find(|l| !l.chars().all(is_py_space));
                 if next.is_some_and(|l| {
                     l.len() - l.trim_start_matches(is_py_space).len() > base_indent
                 }) {
@@ -488,10 +489,9 @@ impl MarkdownParser {
         let mut items: Vec<ListItem> = Vec::new();
         let mut i = start;
         let mut base_indent: Option<usize> = None;
-        let mut start_num: i64 = 1;
+        let mut start_num = Start::Number(1);
 
-        while i < lines.len() {
-            let line = &lines[i];
+        while let Some(line) = lines.get(i) {
 
             if line.chars().all(is_py_space) {
                 i += 1;
@@ -511,7 +511,11 @@ impl MarkdownParser {
                     None => {
                         base_indent = Some(indent);
                         if is_ordered {
-                            start_num = caps[2].parse().unwrap();
+                            let digits = ascii_digits(&caps[2]);
+                            start_num = match digits.parse() {
+                                Ok(number) => Start::Number(number),
+                                Err(_) => Start::TooLarge(digits),
+                            };
                         }
                     }
                     Some(b) if indent < b => break,
@@ -526,7 +530,9 @@ impl MarkdownParser {
                     }
                     _ => {}
                 }
-                let base_indent_val = base_indent.unwrap();
+                // The match above breaks on a shallower marker and skips a deeper one, so every marker reaching here sits
+                // at the base indent.
+                let base_indent_val = indent;
 
                 let marker_text = caps[3].to_string();
                 let (body_lines, body_consumed) =
@@ -607,12 +613,10 @@ impl MarkdownParser {
 
     /// Parse a GFM-style table.
     fn parse_table(&self, lines: &[String], start: usize) -> (Option<Table>, usize) {
-        if start + 1 >= lines.len() {
+        let (Some(header_line), Some(separator_line)) = (lines.get(start), lines.get(start + 1))
+        else {
             return (None, 0);
-        }
-
-        let header_line = &lines[start];
-        let separator_line = &lines[start + 1];
+        };
 
         if !table_row().is_match(header_line) {
             return (None, 0);
@@ -631,8 +635,7 @@ impl MarkdownParser {
         let mut rows: Vec<TableRow> = Vec::new();
         let mut i = start + 2;
 
-        while i < lines.len() {
-            let line = &lines[i];
+        while let Some(line) = lines.get(i) {
             if !table_row().is_match(line) {
                 break;
             }
@@ -713,7 +716,7 @@ impl MarkdownParser {
             macro_rules! consider {
                 ($re:expr, $kind:literal) => {
                     if let Some(caps) = $re.captures(remaining) {
-                        let m = caps.get(0).unwrap();
+                        let m = caps.get(0).held("group 0 always participates");
                         if m.start() < earliest_pos {
                             earliest_pos = m.start();
                             earliest_end = m.end();
@@ -749,36 +752,49 @@ impl MarkdownParser {
 
             match kind {
                 "code" => {
-                    let code_text = groups[0].clone().unwrap();
-                    spans.push(Span::new(code_text, SpanType::Code, None, None));
+                    let [Some(code_text)] = groups.as_slice() else {
+                        broken("the code pattern has one group, and it participates")
+                    };
+                    spans.push(Span::new(code_text.clone(), SpanType::Code, None, None));
                 }
                 "image" => {
-                    let alt = groups[0].clone().unwrap_or_default();
-                    let url = groups[1].clone().unwrap();
-                    let title = groups.get(2).cloned().flatten();
-                    let (width, height) = parse_image_attrs(groups[3].as_deref());
+                    let [alt, Some(url), title, attrs] = groups.as_slice() else {
+                        broken("the image pattern has four groups, and the url participates")
+                    };
+                    let (width, height) = parse_image_attrs(attrs.as_deref());
                     spans.push(Span {
                         width,
                         height,
-                        ..Span::new(alt, SpanType::Image, Some(url), title)
+                        ..Span::new(
+                            alt.clone().unwrap_or_default(),
+                            SpanType::Image,
+                            Some(url.clone()),
+                            title.clone(),
+                        )
                     });
                 }
                 "link" => {
-                    let link_text = groups[0].clone().unwrap();
-                    let url = groups[1].clone().unwrap();
-                    let title = groups.get(2).cloned().flatten();
-                    spans.extend(link_spans(&link_text, &url, title));
+                    let [Some(link_text), Some(url), title] = groups.as_slice() else {
+                        broken("the link pattern has three groups, and the text and url participate")
+                    };
+                    spans.extend(link_spans(link_text, url, title.clone()));
                 }
                 "bold_italic" | "bold" | "italic" => {
-                    let inner = groups[0].clone().or(groups[1].clone()).unwrap();
+                    let [first, second] = groups.as_slice() else {
+                        broken("an emphasis pattern has two groups")
+                    };
+                    let inner = first
+                        .as_ref()
+                        .or(second.as_ref())
+                        .held("one of the two emphasis groups participates");
                     let span_type = match kind {
                         "bold_italic" => SpanType::BoldItalic,
                         "bold" => SpanType::Bold,
                         _ => SpanType::Italic,
                     };
-                    spans.extend(emphasis_spans(&inner, span_type));
+                    spans.extend(emphasis_spans(inner, span_type));
                 }
-                _ => unreachable!(),
+                _ => broken("`kind` is one of the six patterns considered above"),
             }
 
             remaining = &remaining[earliest_end..];
@@ -798,7 +814,7 @@ fn link_spans(label: &str, url: &str, title: Option<String>) -> Vec<Span> {
     let mut spans = Vec::new();
     let mut cursor = 0;
     for caps in inline_code().captures_iter(label) {
-        let run = caps.get(0).unwrap();
+        let run = caps.get(0).held("group 0 always participates");
         if run.start() > cursor {
             spans.push(link(&label[cursor..run.start()], false));
         }
@@ -819,7 +835,7 @@ fn emphasis_spans(inner: &str, span_type: SpanType) -> Vec<Span> {
     let mut spans = Vec::new();
     let mut cursor = 0;
     for caps in inline_code().captures_iter(inner) {
-        let run = caps.get(0).unwrap();
+        let run = caps.get(0).held("group 0 always participates");
         if run.start() > cursor {
             spans.push(Span::new(&inner[cursor..run.start()], span_type, None, None));
         }

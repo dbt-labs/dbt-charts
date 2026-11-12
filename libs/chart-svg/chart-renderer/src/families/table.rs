@@ -2,7 +2,7 @@
 //! Renders title, header row, N data rows with alternating stripes,
 //! text columns left-aligned, numeric columns center-aligned on a common midpoint.
 //!
-//! Conditional formatting (chart-level `conditional_formatting` when-rules,
+//! Conditional formatting (`style.columns.<col>.conditional` rules,
 //! and a column's `scale.background`) is ported — see the `WhenRule`/
 //! `resolve_conditional_styles`/`interpolate_scale_color` cluster below.
 //! A column's per-cell `link:` (verbatim column name or a `{{ col }}` /
@@ -134,15 +134,6 @@ struct Resolved {
     /// Never a display column, even when `style.columns` doesn't list it.
     #[serde(default)]
     row_role: Option<String>,
-    // Chart-level `conditional_formatting: {col: {when: [rule, ...]}}` —
-    // Keyed by the AUTHORED column
-    // name; a pivot leaf looks itself up the same way `ColMeta` looks up
-    // its own `ColConfig` (`config_key`, the leaf's measure/dimension
-    // suffix) — production's own measure-keyed pivot remap
-    // is a narrower special case of that same lookup,
-    // not ported separately since no corpus row combines pivot + CF.
-    #[serde(default)]
-    conditional_formatting: Option<BTreeMap<String, FieldConditionalFormatting>>,
     #[serde(default)]
     column_defaults: Option<ColumnDefaults>,
     // Chart-level header overflow, promoted from the authored patch
@@ -245,9 +236,9 @@ struct TableTheme {
     // only consulted when a subtitle is present.
     #[serde(default)]
     title_subtitle_gap: f64,
-    /// `table.color`: a static text color replaces the font's.
+    /// `table.column_defaults`: its `font.color` replaces the font's.
     #[serde(default)]
-    color: Option<TableColor>,
+    column_defaults: Option<TableColumnDefaults>,
     /// `table.row_numbers`: a leading index column.
     #[serde(default)]
     row_numbers: RowNumbersTheme,
@@ -429,9 +420,8 @@ struct HeaderTheme {
 }
 
 #[derive(Deserialize)]
-struct TableColor {
-    #[serde(rename = "static")]
-    static_color: Option<String>,
+struct TableColumnDefaults {
+    font: Option<ColumnFont>,
 }
 
 /// `colors.sanitize_color`: a hex color, `transparent` or `none` (as
@@ -517,6 +507,9 @@ struct RowTheme {
     /// Per-role style (divider, background, font weight) for summary/total
     /// rows.
     roles: RowRolesTheme,
+    /// `style.row.conditional`: the rules of each tested column.
+    #[serde(default)]
+    conditional: Option<RowRules>,
 }
 
 #[derive(Deserialize)]
@@ -707,6 +700,9 @@ struct ColConfig {
     glyph: Option<String>,
     #[serde(default)]
     glyph_color: Option<String>,
+    /// `style.columns.<col>.conditional`: this column's ordered rules.
+    #[serde(default)]
+    conditional: Option<Vec<WhenRule>>,
     // Named engine format (e.g. "currency_whole"), an inline d3 spec, or the
     // `{spec, prefix, suffix, notation}` object form (`column_format`). With a
     // baked decimal_pad_table, a column that HAS a format paints at the
@@ -865,43 +861,12 @@ struct ColumnScale {
     color: Option<ScaleTarget>,
 }
 
-/// `FieldConditionalFormatting` — a column's ordered `when:` rule list.
-#[derive(Deserialize, Clone, Default)]
-struct FieldConditionalFormatting {
-    #[serde(default)]
-    when: Vec<WhenRule>,
-}
-
-/// A single `when` rule — `ConditionalRule`
-/// (`compile/models/chart/authored/_conditional_formatting.py`). Every
-/// predicate/output field always serializes (Pydantic's `model_dump`), so
-/// every field here is a plain `Option`, no `#[serde(default)]` needed —
-/// but it's kept anyway so a hand-built test payload may omit a key.
-/// Read directly off `conditional_formatting` (table) and `support.rules`
-/// (kpi), with the full rule-output set (font/glyph/tone included); both
-/// families share this struct and `resolve_conditional_styles`'s merge law.
+/// One conditional rule's condition: exactly one operator, a table's and a
+/// KPI's alike (`ConditionalPredicate`).
 #[derive(Deserialize, Clone, Default)]
 pub(crate) struct WhenRule {
-    #[serde(default)]
-    eq: Option<Value>,
-    #[serde(default)]
-    ne: Option<Value>,
-    #[serde(default)]
-    lt: Option<f64>,
-    #[serde(default)]
-    lte: Option<f64>,
-    #[serde(default)]
-    gt: Option<f64>,
-    #[serde(default)]
-    gte: Option<f64>,
-    #[serde(default)]
-    between: Option<(f64, f64)>,
-    #[serde(default, rename = "in")]
-    in_: Option<Vec<Value>>,
-    #[serde(default)]
-    is_null: Option<bool>,
-    #[serde(default)]
-    default: Option<bool>,
+    #[serde(flatten)]
+    pub(crate) predicate: crate::conditional::Predicate,
     #[serde(default)]
     background: Option<String>,
     #[serde(default)]
@@ -913,6 +878,26 @@ pub(crate) struct WhenRule {
     #[serde(default)]
     tone: Option<String>,
 }
+
+/// One `style.row.conditional` rule: a predicate beside the paint of every visible cell in the
+/// row (`background`, `font`) and, under `columns`, of named cells.
+#[derive(Deserialize, Clone, Default)]
+pub(crate) struct RowRule {
+    #[serde(flatten)]
+    row: WhenRule,
+    #[serde(default)]
+    columns: Option<BTreeMap<String, WhenRule>>,
+}
+
+impl RowRule {
+    /// This rule's patch for `column`'s cell.
+    fn cell(&self, column: &str) -> Option<&WhenRule> {
+        self.columns.as_ref()?.get(column)
+    }
+}
+
+/// `style.row.conditional`: each tested column's ordered rules.
+pub(crate) type RowRules = BTreeMap<String, Vec<RowRule>>;
 
 /// `ConditionalRule.font` (`FontStyle`), narrowed to the four attributes
 /// `_apply_rule_outputs` reads.
@@ -1129,9 +1114,11 @@ struct ColMeta {
     // Every non-blank cell is an ISO date or timestamp: the in-page menu sorts
     // it by date and filters it by a range of days.
     is_day: bool,
-    // This column's chart-level `conditional_formatting` when-rules, empty
-    // when none are authored.
+    // This column's `style.columns.<col>.conditional` rules, empty when none
+    // are authored.
     when_rules: Vec<WhenRule>,
+    /// The table's `style.row.conditional`, shared by every column.
+    row_rules: std::rc::Rc<RowRules>,
 }
 
 /// Per-row semantic role from `style.row.role`, collapsed to the two bits
@@ -1579,7 +1566,7 @@ pub(crate) mod tests {
     use super::layout::embed_table_pagination_script;
     use super::bind::resolve_row_roles;
     use super::bind::format_numeric_col;
-    use super::bind::coerce_numeric_cell;
+    use crate::conditional::coerce_numeric_cell;
     use d3rs::py_float::float_repr;
     use crate::common::TAB_FONT;
     use serde_json::json;
@@ -1631,6 +1618,15 @@ pub(crate) mod tests {
                 "font": {"family": "sans-serif", "size": 11.0, "color": "#8A8C8F"}
             }
         })
+    }
+
+    /// `columns` with each `{column: [rule]}` entry of `rules` set as that
+    /// column's `conditional`.
+    pub(crate) fn with_rules(mut columns: Value, rules: Value) -> Value {
+        for (name, column_rules) in rules.as_object().into_iter().flatten() {
+            columns[name]["conditional"] = column_rules.clone();
+        }
+        columns
     }
 
     pub(crate) fn base_table_theme() -> Value {
@@ -1693,7 +1689,6 @@ pub(crate) mod tests {
                 "columns": columns,
                 "style": {"table": theme, "title_font": resolved_title_font()},
                 "pivot_columns": null,
-                "conditional_formatting": null,
             },
             "rows": rows,
             "width": width,
@@ -1758,7 +1753,6 @@ pub(crate) mod tests {
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
             "row_role": row_role,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -1842,12 +1836,12 @@ pub(crate) mod tests {
         assert!(!svg.contains("\u{2007}"), "no decimal pad on a left-anchored column:\n{svg}");
         assert!(!svg.contains("text-anchor=\"end\""), "no end-anchored lane tspan:\n{svg}");
         assert_eq!(
-            svg.split("<text x=\"312.14\" y=\"").filter(|rest| rest.split_once('"').is_some_and(|(_, after)| after.starts_with(" text-anchor=\"start\" font-size"))).count(),
+            svg.split("<text x=\"312.14\" y=\"").filter(|rest| rest.split_once('"').is_some_and(|(_, after)| after.starts_with(" data-dct-role=\"table-cell\" text-anchor=\"start\" font-size"))).count(),
             2,
             "each body run starts at the cell's left padding:\n{svg}"
         );
         assert!(
-            svg.contains("<text x=\"312.14\" y=\"66\" font-size=\"11\" font-weight=\"600\" fill=\"#222222\" text-anchor=\"start\" font-family=\"Inter, sans-serif\">Docs</text>"),
+            svg.contains("<text x=\"312.14\" y=\"66\" data-dct-role=\"table-header\" font-size=\"11\" font-weight=\"600\" fill=\"#222222\" text-anchor=\"start\" font-family=\"Inter, sans-serif\">Docs</text>"),
             "the header takes the same left x, start-anchored:\n{svg}"
         );
         assert!(
@@ -2134,7 +2128,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -2171,7 +2164,6 @@ pub(crate) mod tests {
             "rows": pivot_rows,
             "pivot_columns": pivot_columns,
             "values": pivot_values,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -2348,7 +2340,6 @@ pub(crate) mod tests {
             "rows": ["region"],
             "pivot_columns": ["category"],
             "values": ["revenue", "units"],
-            "conditional_formatting": null,
         });
         // table_w set to the exact natural-width sum (surplus = 0), so
         // col_ws == natural for every leaf and the equality below is exact.
@@ -2418,7 +2409,6 @@ pub(crate) mod tests {
             "rows": ["region"],
             "pivot_columns": ["category"],
             "values": ["revenue", "units"],
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -2470,7 +2460,6 @@ pub(crate) mod tests {
                 "title": null,
                 "title_style": resolved_title_style(),
                 "style": {"table": theme.clone(), "title_font": resolved_title_font()},
-                "conditional_formatting": null,
             });
             for (k, v) in resolved_extra.as_object().unwrap() {
                 resolved[k] = v.clone();
@@ -2802,7 +2791,6 @@ pub(crate) mod tests {
                 "column_defaults": {"format": "integer"},
                 "style": {"table": theme, "title_font": resolved_title_font()},
                 "pivot_columns": null,
-                "conditional_formatting": null,
             },
             "rows": rows,
             "width": 600.0,
@@ -2843,7 +2831,6 @@ pub(crate) mod tests {
                 "column_defaults": {"width": 200},
                 "style": {"table": theme, "title_font": resolved_title_font()},
                 "pivot_columns": null,
-                "conditional_formatting": null,
             },
             "rows": rows,
             "width": 900.0,
@@ -3007,7 +2994,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -3410,8 +3396,8 @@ pub(crate) mod tests {
         for (row, value) in payload.rows.iter_mut().zip([-3.5, 4.0, -1.0, 7.0]) {
             row["revenue"] = json!(value);
         }
-        payload.resolved["conditional_formatting"] =
-            json!({"revenue": {"when": [{"lt": 0, "glyph": "\u{25bc}"}]}});
+        payload.resolved["columns"]["revenue"]["conditional"] =
+            json!([{"lt": 0, "glyph": "\u{25bc}"}]);
         payload
     }
 
@@ -3829,7 +3815,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -3890,7 +3875,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -4245,7 +4229,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -4309,7 +4292,6 @@ pub(crate) mod tests {
                     "columns": {"company": {"label": "Company"}},
                     "style": {"table": theme, "title_font": resolved_title_font()},
                     "pivot_columns": null,
-                    "conditional_formatting": null,
                 },
                 "rows": rows, "width": 300.0, "height": 400.0,
                 "background": "#ffffff", "fonts_dir": null, "padding": null,
@@ -4370,7 +4352,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": base_table_theme(), "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -4421,7 +4402,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": base_table_theme(), "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -4461,7 +4441,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": base_table_theme(), "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -4506,7 +4485,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": base_table_theme(), "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -4546,7 +4524,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": base_table_theme(), "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -4590,7 +4567,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": base_table_theme(), "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -4638,7 +4614,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": base_table_theme(), "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -4680,7 +4655,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -4731,7 +4705,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": {"size": size, "family": "serif", "weight": "500"}},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -4811,7 +4784,6 @@ pub(crate) mod tests {
                 "title_font": {"size": 18.0, "family": "serif", "weight": "500"}
             },
             "pivot_columns": null,
-            "conditional_formatting": null,
         })
     }
 
@@ -4954,7 +4926,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -5014,7 +4985,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         // Tall enough that the slot never constrains the page size below
         // `pagination.page_rows` (20) — the label reads the full page.
@@ -5052,7 +5022,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         // A narrow table leaves little room left of the right-anchored
         // pager sequence for "1–20 / 30" to fit.
@@ -5107,7 +5076,6 @@ pub(crate) mod tests {
                 "columns": {"a": {"label": "A"}},
                 "style": {"table": theme, "title_font": resolved_title_font()},
                 "pivot_columns": null,
-                "conditional_formatting": null,
             },
             "rows": rows,
             "width": width,
@@ -5151,7 +5119,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": {"size": 11.0, "family": "serif", "weight": "500"}},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -5205,7 +5172,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": {"size": 11.0, "family": "serif", "weight": "500"}},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -5453,7 +5419,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -5503,7 +5468,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -5549,7 +5513,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -5584,7 +5547,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -5622,7 +5584,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -5661,7 +5622,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -5715,7 +5675,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -5770,7 +5729,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -5800,7 +5758,6 @@ pub(crate) mod tests {
             },
             "style": {"table": theme11, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload11_json = json!({
             "resolved": resolved11,
@@ -5838,7 +5795,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -5875,7 +5831,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -5928,7 +5883,6 @@ pub(crate) mod tests {
                 "columns": columns,
                 "style": {"table": theme, "title_font": resolved_title_font()},
                 "pivot_columns": null,
-                "conditional_formatting": null,
             });
             let payload_json = json!({
                 "resolved": resolved,
@@ -5968,7 +5922,7 @@ pub(crate) mod tests {
                     "title": "T", "title_style": resolved_title_style(),
                     "columns": {"a": {"label": "A"}},
                     "style": {"table": theme, "title_font": resolved_title_font()},
-                    "pivot_columns": null, "conditional_formatting": null,
+                    "pivot_columns": null,
                 },
                 "rows": rows, "width": 300.0, "height": 400.0,
                 "background": "#ffffff", "fonts_dir": null, "padding": null,
@@ -6002,7 +5956,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -6061,7 +6014,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -6111,7 +6063,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         // outer_padding=12, table_w = 300 - 24 = 276; a single 50px pin
         // leaves `Σcol_ws=50` far short of `table_w`. The header divider keeps
@@ -6172,7 +6123,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         // outer_padding=12, table_w = 300 - 24 = 276; a single 50px pin
         // leaves `Σcol_ws=50` far short of `table_w`.
@@ -6221,7 +6171,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -6722,8 +6671,7 @@ pub(crate) mod tests {
         theme["header"].as_object_mut().unwrap().remove("divider");
         let payload_json = json!({
             "resolved": {"title": null, "title_style": resolved_title_style(), "columns": {"a": {"label": "A"}},
-                         "style": {"table": theme, "title_font": resolved_title_font()}, "pivot_columns": null,
-                         "conditional_formatting": null},
+                         "style": {"table": theme, "title_font": resolved_title_font()}, "pivot_columns": null},
             "rows": [{"a": "1"}], "width": 300.0, "height": 400.0,
             "background": "#ffffff", "fonts_dir": null, "padding": null,
         });
@@ -6767,7 +6715,6 @@ pub(crate) mod tests {
             "rows": ["region"],
             "pivot_columns": ["category"],
             "values": ["revenue", "units"],
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -6820,7 +6767,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -6874,7 +6820,6 @@ pub(crate) mod tests {
                 "columns": columns,
                 "style": {"table": theme, "title_font": resolved_title_font()},
                 "pivot_columns": null,
-                "conditional_formatting": null,
             });
             let payload_json = json!({
                 "resolved": resolved,
@@ -6936,7 +6881,6 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -7159,6 +7103,7 @@ pub(crate) mod tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let row_roles = [
             RowRole::Value,
@@ -7631,7 +7576,7 @@ mod conditional_formatting_tests {
     use super::bind::resolve_hinge;
     use super::bind::resolve_conditional_styles;
     use super::bind::resolve_cell_glyph;
-    use super::bind::match_predicate;
+    use crate::conditional::match_predicate;
     use super::bind::interpolate_scale_color;
     use super::bind::font_weight_as_css;
     use super::bind::compute_scale_domain;
@@ -7663,8 +7608,8 @@ mod conditional_formatting_tests {
     #[test]
     fn eq_matches_a_string_value() {
         let r = rule(json!({"eq": "urgent", "glyph": "x"}));
-        assert!(match_predicate(&r, Some(&json!("urgent"))).unwrap());
-        assert!(!match_predicate(&r, Some(&json!("normal"))).unwrap());
+        assert!(match_predicate(&r.predicate, Some(&json!("urgent"))).unwrap());
+        assert!(!match_predicate(&r.predicate, Some(&json!("normal"))).unwrap());
     }
 
     #[test]
@@ -7672,8 +7617,8 @@ mod conditional_formatting_tests {
         // isinstance(value, bool) != isinstance(rule.eq, bool) -> False,
         // even though 1 == True in Python.
         let r = rule(json!({"eq": true, "glyph": "x"}));
-        assert!(!match_predicate(&r, Some(&json!(1))).unwrap());
-        assert!(match_predicate(&r, Some(&json!(true))).unwrap());
+        assert!(!match_predicate(&r.predicate, Some(&json!(1))).unwrap());
+        assert!(match_predicate(&r.predicate, Some(&json!(true))).unwrap());
     }
 
     #[test]
@@ -7681,40 +7626,40 @@ mod conditional_formatting_tests {
         // A cross-type pair against `ne` always satisfies it (return True),
         // the mirror image of eq's guard.
         let r = rule(json!({"ne": true, "glyph": "x"}));
-        assert!(match_predicate(&r, Some(&json!(1))).unwrap());
-        assert!(!match_predicate(&r, Some(&json!(true))).unwrap());
+        assert!(match_predicate(&r.predicate, Some(&json!(1))).unwrap());
+        assert!(!match_predicate(&r.predicate, Some(&json!(true))).unwrap());
     }
 
     #[test]
     fn numeric_operators_never_coerce_a_numeric_string() {
         let lte = rule(json!({"lte": 30, "glyph": "x"}));
-        assert!(!match_predicate(&lte, Some(&json!("29.5"))).unwrap());
+        assert!(!match_predicate(&lte.predicate, Some(&json!("29.5"))).unwrap());
         let gt = rule(json!({"gt": 90, "glyph": "x"}));
-        assert!(match_predicate(&gt, Some(&json!(91))).unwrap());
+        assert!(match_predicate(&gt.predicate, Some(&json!(91))).unwrap());
         let between = rule(json!({"between": [10, 20], "glyph": "x"}));
-        assert!(match_predicate(&between, Some(&json!(15))).unwrap());
-        assert!(!match_predicate(&between, Some(&json!(21))).unwrap());
+        assert!(match_predicate(&between.predicate, Some(&json!(15))).unwrap());
+        assert!(!match_predicate(&between.predicate, Some(&json!(21))).unwrap());
     }
 
     #[test]
     fn numeric_operator_on_a_non_numeric_value_does_not_match() {
         let r = rule(json!({"gt": 1, "glyph": "x"}));
-        assert!(!match_predicate(&r, Some(&json!("Zed"))).unwrap());
-        assert!(!match_predicate(&r, None).unwrap());
+        assert!(!match_predicate(&r.predicate, Some(&json!("Zed"))).unwrap());
+        assert!(!match_predicate(&r.predicate, None).unwrap());
     }
 
     #[test]
     fn is_null_matches_a_missing_or_explicit_null_value() {
         let r = rule(json!({"is_null": true, "glyph": "x"}));
-        assert!(match_predicate(&r, None).unwrap());
-        assert!(!match_predicate(&r, Some(&json!(5))).unwrap());
+        assert!(match_predicate(&r.predicate, None).unwrap());
+        assert!(!match_predicate(&r.predicate, Some(&json!(5))).unwrap());
     }
 
     #[test]
     fn in_matches_any_scalar_candidate() {
         let r = rule(json!({"in": ["a", "b"], "glyph": "x"}));
-        assert!(match_predicate(&r, Some(&json!("b"))).unwrap());
-        assert!(!match_predicate(&r, Some(&json!("c"))).unwrap());
+        assert!(match_predicate(&r.predicate, Some(&json!("b"))).unwrap());
+        assert!(!match_predicate(&r.predicate, Some(&json!("c"))).unwrap());
     }
 
     /// `ConditionalRule.model_dump` writes the predicate as `in`.
@@ -7722,32 +7667,74 @@ mod conditional_formatting_tests {
     fn in_reads_the_key_the_python_model_dumps() {
         let rules: Vec<WhenRule> =
             serde_json::from_value(json!([{"in": ["a"], "glyph": "x"}])).unwrap();
-        assert!(match_predicate(&rules[0], Some(&json!("a"))).unwrap());
+        assert!(match_predicate(&rules[0].predicate, Some(&json!("a"))).unwrap());
     }
 
     #[test]
     fn in_with_a_non_scalar_candidate_is_not_supported() {
         let r = rule(json!({"in": [["nested"]], "glyph": "x"}));
-        let err = match_predicate(&r, Some(&json!("nested"))).unwrap_err();
+        let err = match_predicate(&r.predicate, Some(&json!("nested"))).unwrap_err();
         assert!(err.contains("non-scalar"), "{err}");
     }
 
     #[test]
     fn a_rule_with_no_active_predicate_is_not_supported() {
         let r = rule(json!({"glyph": "x"}));
-        let err = match_predicate(&r, Some(&json!(1))).unwrap_err();
+        let err = match_predicate(&r.predicate, Some(&json!(1))).unwrap_err();
         assert!(err.contains("no active predicate"), "{err}");
     }
 
     #[test]
     fn a_shared_evaluator_refusal_carries_the_table_prefix() {
-        let rules = vec![rule(json!({"in": [["nested"]], "glyph": "x"}))];
-        let err = resolve_cell_glyph(&ColConfig::default(), &rules, Some(&json!("nested")))
-            .unwrap_err();
+        let col = ColMeta {
+            name: "v".to_string(),
+            header: "V".to_string(),
+            cfg: ColConfig::default(),
+            kind: column_types::ColumnType::String,
+            is_numeric: false,
+            is_date: false,
+            is_day: false,
+            when_rules: vec![rule(json!({"in": [["nested"]], "glyph": "x"}))],
+            row_rules: Default::default(),
+        };
+        let row = serde_json::Map::new();
+        let err = resolve_cell_glyph(&col, &row, Some(&json!("nested"))).unwrap_err();
         assert!(
             err.starts_with("table: conditional rule 'in' with a non-scalar"),
             "{err}"
         );
+    }
+
+    // ── resolve_row_cell_style ─────────────────────────────────────────
+
+    fn row_rules(rules: Value) -> RowRules {
+        serde_json::from_value(rules).unwrap()
+    }
+
+    #[test]
+    fn a_row_rule_paints_the_row_and_its_cell_patch_beats_the_row_level_paint() {
+        use super::bind::resolve_row_cell_style;
+        let rules = row_rules(json!({"status": [
+            {"eq": "churned", "background": "#111111", "columns": {"name": {"background": "#222222", "glyph": "x"}}}
+        ]}));
+        let row = json!({"status": "churned", "name": "Acme"}).as_object().unwrap().clone();
+        let other = resolve_row_cell_style(&rules, "profit", &row, None).unwrap();
+        assert_eq!(other.background.as_deref(), Some("#111111"));
+        assert!(other.glyph.is_none());
+        let named = resolve_row_cell_style(&rules, "name", &row, None).unwrap();
+        assert_eq!(named.background.as_deref(), Some("#222222"));
+        assert_eq!(named.glyph.as_deref(), Some("x"));
+        let calm = json!({"status": "active"}).as_object().unwrap().clone();
+        assert!(resolve_row_cell_style(&rules, "name", &calm, None).unwrap().background.is_none());
+    }
+
+    #[test]
+    fn a_row_rule_color_names_a_column_of_the_row() {
+        use super::bind::resolve_row_cell_style;
+        let rules = row_rules(json!({"flag": [{"eq": true, "background": "tint"}]}));
+        let row = json!({"flag": true, "tint": "#abcdef"}).as_object().unwrap().clone();
+        let style = resolve_row_cell_style(&rules, "any", &row, None).unwrap();
+        assert_eq!(style.background.as_deref(), Some("#abcdef"));
     }
 
     // ── resolve_conditional_styles ─────────────────────────────────────
@@ -8040,10 +8027,9 @@ mod conditional_formatting_tests {
             "link_open": "page",
             "title": "CF Table",
             "title_style": resolved_title_style(),
-            "columns": columns,
+            "columns": super::tests::with_rules(columns, conditional_formatting),
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": conditional_formatting,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -8073,7 +8059,7 @@ mod conditional_formatting_tests {
     #[test]
     fn align_left_with_a_glyph_on_only_some_rows_warns_ragged_not_no_effect() {
         let rows = vec![json!({"days": 10}), json!({"days": 20})];
-        let cf = json!({"days": {"when": [{"lte": 10, "glyph": "\u{25b2}"}]}});
+        let cf = json!({"days": [{"lte": 10, "glyph": "\u{25b2}"}]});
         let codes = align_left_codes(rows, cf);
         assert!(codes.contains(&diagnostic::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id), "{codes:?}");
         assert!(!codes.contains(&diagnostic::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id), "{codes:?}");
@@ -8092,10 +8078,10 @@ mod conditional_formatting_tests {
     fn numeric_lane_glyph_replaces_the_prefix_and_carries_its_own_fill() {
         let rows = vec![json!({"days": 10}), json!({"days": 120})];
         let columns = json!({"days": {"label": "Days"}});
-        let cf = json!({"days": {"when": [
+        let cf = json!({"days": [
             {"lte": 30, "glyph": "A", "glyph_color": "#608470"},
             {"gt": 90, "glyph": "B", "glyph_color": "#d49656"}
-        ]}});
+        ]});
         let payload = cf_payload(columns, rows, cf);
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(
@@ -8122,10 +8108,10 @@ mod conditional_formatting_tests {
         // wrap measurement sites, unlike the pinned columns every other
         // render-level glyph test in this module uses.
         let columns = json!({"days": {"label": "Days"}});
-        let cf = json!({"days": {"when": [
+        let cf = json!({"days": [
             {"lte": 30, "glyph": "A", "tone": "info"},
             {"gt": 90, "glyph": "B", "tone": "warning"}
-        ]}});
+        ]});
         let payload = cf_payload(columns, rows, cf);
         let svg = render(&payload, &test_fonts()).expect("board tones are present; must render");
         assert!(
@@ -8142,9 +8128,9 @@ mod conditional_formatting_tests {
     fn text_cell_glyph_paints_a_leading_tspan_with_its_own_fill() {
         let rows = vec![json!({"priority": "urgent"})];
         let columns = json!({"priority": {"label": "Priority", "width": 200}});
-        let cf = json!({"priority": {"when": [
+        let cf = json!({"priority": [
             {"eq": "urgent", "glyph": "\u{25a0}", "glyph_color": "#a8423a"}
-        ]}});
+        ]});
         let payload = cf_payload(columns, rows, cf);
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(
@@ -8157,7 +8143,7 @@ mod conditional_formatting_tests {
     fn a_background_rect_paints_before_the_cell_text_from_a_when_rule() {
         let rows = vec![json!({"days": 120})];
         let columns = json!({"days": {"label": "Days", "width": 100}});
-        let cf = json!({"days": {"when": [{"gt": 90, "background": "#ffe0e0", "glyph": "x"}]}});
+        let cf = json!({"days": [{"gt": 90, "background": "#ffe0e0", "glyph": "x"}]});
         let payload = cf_payload(columns, rows, cf);
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(svg.contains("fill=\"#ffe0e0\""), "when-rule background rect missing:\n{svg}");
@@ -8273,7 +8259,6 @@ mod conditional_formatting_tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": Value::Null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -8322,7 +8307,6 @@ mod conditional_formatting_tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": Value::Null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -8371,7 +8355,6 @@ mod conditional_formatting_tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": Value::Null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -8409,7 +8392,7 @@ mod conditional_formatting_tests {
         let plain_lines = svg_plain.matches("<tspan x=\"20\" y=\"").count();
         assert_eq!(plain_lines, 0, "the label must fit on one line with no glyph:\n{svg_plain}");
 
-        let cf = json!({"label": {"when": [{"is_null": false, "glyph": "\u{25cf}\u{25cf}\u{25cf}\u{25cf}\u{25cf}"}]}});
+        let cf = json!({"label": [{"is_null": false, "glyph": "\u{25cf}\u{25cf}\u{25cf}\u{25cf}\u{25cf}"}]});
         let payload_glyph = cf_payload(columns, rows, cf);
         let svg_glyph = render(&payload_glyph, &test_fonts()).unwrap();
         let glyph_lines = svg_glyph.matches("<tspan x=\"20\" y=\"").count();
@@ -8436,7 +8419,7 @@ mod conditional_formatting_tests {
         let svg_plain = render(&payload_plain, &test_fonts()).unwrap();
         let plain_number_x = number_tspan_x(&svg_plain, "5");
 
-        let cf = json!({"amt": {"when": [{"is_null": false, "glyph": "\u{25cf}\u{25cf}\u{25cf}\u{25cf}\u{25cf}"}]}});
+        let cf = json!({"amt": [{"is_null": false, "glyph": "\u{25cf}\u{25cf}\u{25cf}\u{25cf}\u{25cf}"}]});
         let payload_glyph = cf_payload(columns, rows, cf);
         let svg_glyph = render(&payload_glyph, &test_fonts()).unwrap();
         let glyph_number_x = number_tspan_x(&svg_glyph, "5");
@@ -8467,7 +8450,7 @@ mod conditional_formatting_tests {
     fn an_invalid_rule_font_weight_never_reaches_the_svg() {
         let rows = vec![json!({"label": "x"})];
         let columns = json!({"label": {"label": "Label"}});
-        let cf = json!({"label": {"when": [{"is_null": false, "font": {"weight": "999"}}]}});
+        let cf = json!({"label": [{"is_null": false, "font": {"weight": "999"}}]});
         let payload = cf_payload(columns, rows, cf);
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(!svg.contains("font-weight=\"999\""), "invalid weight must not reach the SVG:\n{svg}");
@@ -8477,7 +8460,7 @@ mod conditional_formatting_tests {
     fn a_valid_rule_font_weight_reaches_the_svg() {
         let rows = vec![json!({"label": "x"})];
         let columns = json!({"label": {"label": "Label"}});
-        let cf = json!({"label": {"when": [{"is_null": false, "font": {"weight": 700}}]}});
+        let cf = json!({"label": [{"is_null": false, "font": {"weight": 700}}]});
         let payload = cf_payload(columns, rows, cf);
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(svg.contains("font-weight=\"700\""), "valid weight must reach the SVG:\n{svg}");
@@ -8554,16 +8537,15 @@ mod conditional_formatting_tests {
     fn a_tone_rule_with_no_board_tones_refuses_at_render() {
         let rows = vec![json!({"days": 120})];
         let columns = json!({"days": {"label": "Days", "width": 100}});
-        let cf = json!({"days": {"when": [{"gt": 90, "glyph": "\u{25d0}", "tone": "warning"}]}});
+        let cf = json!({"days": [{"gt": 90, "glyph": "\u{25d0}", "tone": "warning"}]});
         let theme = cf_theme();
         let resolved = json!({
             "link_open": "page",
             "title": "CF Table",
             "title_style": resolved_title_style(),
-            "columns": columns,
+            "columns": super::tests::with_rules(columns, cf),
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": cf,
         });
         // No board_style at all — tones absent.
         let payload_json = json!({
@@ -8611,7 +8593,6 @@ mod conditional_formatting_tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": Value::Null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -8667,6 +8648,7 @@ mod conditional_formatting_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let glyph_col = ColMeta {
             name: "v".to_string(),
@@ -8677,6 +8659,7 @@ mod conditional_formatting_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let plain = column_demand(&cells, &rows, &plain_col, &fonts, &MeasureFonts { body: "Inter", header: "Inter", numeral: "Inter" }, 11.0, 8.0).unwrap();
         let widened =
@@ -8700,7 +8683,7 @@ mod conditional_formatting_tests {
             rows.extend((0..49).map(|_| json!({"a": "z", "b": "y"})));
             let columns = json!({"a": {"label": "A", "link_open": "page", "header_link_open": "page"}, "b": {"label": "B", "link_open": "page", "header_link_open": "page"}});
             let cf = if has_glyph {
-                json!({"a": {"when": [{"eq": "x", "glyph": "MMMMMMMMMMMMMMMMMMMM"}]}})
+                json!({"a": [{"eq": "x", "glyph": "MMMMMMMMMMMMMMMMMMMM"}]})
             } else {
                 Value::Null
             };
@@ -8712,10 +8695,9 @@ mod conditional_formatting_tests {
                 "link_open": "page",
                 "title": "T",
                 "title_style": resolved_title_style(),
-                "columns": columns,
+                "columns": super::tests::with_rules(columns, cf),
                 "style": {"table": theme, "title_font": resolved_title_font()},
                 "pivot_columns": null,
-                "conditional_formatting": cf,
             });
             let payload_json = json!({
                 "resolved": resolved,
@@ -8761,7 +8743,7 @@ mod conditional_formatting_tests {
         // cascade steps the body font down to 11px.
         let rows = vec![json!({"v": 5})];
         let columns = json!({"v": {"label": "V", "width": 40}});
-        let cf = json!({"v": {"when": [{"eq": 5, "glyph": "MMMMMMMMMM"}]}});
+        let cf = json!({"v": [{"eq": 5, "glyph": "MMMMMMMMMM"}]});
         let mut theme = cf_theme();
         theme["font"]["size"] = json!(18.0);
         theme["outer_padding"] = json!(0.0);
@@ -8770,10 +8752,9 @@ mod conditional_formatting_tests {
             "link_open": "page",
             "title": "T",
             "title_style": resolved_title_style(),
-            "columns": columns,
+            "columns": super::tests::with_rules(columns, cf),
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": cf,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -8840,7 +8821,6 @@ mod all_pinned_overflow_growth_tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -8875,7 +8855,6 @@ mod all_pinned_overflow_growth_tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -8901,7 +8880,6 @@ mod all_pinned_overflow_growth_tests {
             "columns": {"a": {"label": "A", "width": pin}},
             "style": {"table": super::tests::base_table_theme(), "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         crate::test_payload(json!({
             "resolved": resolved,
@@ -9145,7 +9123,6 @@ mod floor_source_tests {
                     "columns": columns,
                     "style": {"table": theme.clone(), "title_font": resolved_title_font()},
                     "pivot_columns": null,
-                    "conditional_formatting": null,
                 }),
                 rows: maps.clone().into(),
                 schema: crate::payload_schema::test_schema_of(&maps),
@@ -9178,7 +9155,6 @@ mod floor_source_tests {
                 "columns": columns,
                 "style": {"table": theme, "title_font": resolved_title_font()},
                 "pivot_columns": null,
-                "conditional_formatting": null,
             },
             "rows": rows,
             "width": name_w + revenue_w + 2.0 * outer,
@@ -9229,7 +9205,6 @@ mod cascade_and_lane_tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         crate::test_payload(json!({
             "resolved": resolved,
@@ -9512,7 +9487,6 @@ mod date_like_tests {
                 "columns": columns,
                 "style": {"table": theme, "title_font": resolved_title_font()},
                 "pivot_columns": null,
-                "conditional_formatting": null,
             },
             "rows": rows,
             "width": 500.0,
@@ -9553,7 +9527,6 @@ mod date_like_tests {
                 "columns": columns,
                 "style": {"table": theme, "title_font": resolved_title_font()},
                 "pivot_columns": null,
-                "conditional_formatting": null,
             },
             "rows": rows,
             "width": 500.0,
@@ -9591,7 +9564,6 @@ mod date_like_tests {
                 "columns": {"event": {"label": "Event"}, "day": {"label": "Day", "align": "right"}, "amount": {"label": "Amount"}},
                 "style": {"table": theme, "title_font": resolved_title_font()},
                 "pivot_columns": null,
-                "conditional_formatting": null,
             },
             "rows": rows,
             "width": 500.0,
@@ -9645,6 +9617,7 @@ mod demand_affix_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let maps: Vec<serde_json::Map<String, Value>> = vec![json!({"days_since_close": 45.0})]
             .into_iter()
@@ -9676,6 +9649,7 @@ mod demand_affix_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let maps: Vec<serde_json::Map<String, Value>> = vec![json!({"amt": 45.0})]
             .into_iter()
@@ -9708,6 +9682,7 @@ mod demand_affix_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let maps: Vec<serde_json::Map<String, Value>> = vec![json!({"amt": 45.0})]
             .into_iter()
@@ -9741,6 +9716,7 @@ mod demand_affix_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let maps: Vec<serde_json::Map<String, Value>> =
             values.iter().map(|v| json!({"v": v}).as_object().unwrap().clone()).collect();
@@ -9827,6 +9803,7 @@ mod demand_affix_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let maps: Vec<serde_json::Map<String, Value>> = vec![json!({"amount": 24_730_000.0})]
             .into_iter()
@@ -9871,7 +9848,6 @@ mod demand_affix_tests {
             "columns": {"name": {"label": "Name"}, "rate": {"label": "Rate"}},
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload: Payload = crate::test_payload(json!({
             "resolved": resolved,
@@ -9942,6 +9918,7 @@ mod demand_affix_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let maps = vec![json!({"amt": 0.67}).as_object().unwrap().clone()];
         let cells = format_numeric_col(&maps, &col, "all", &[RowRole::Value]).expect("formats");
@@ -9958,6 +9935,7 @@ mod demand_affix_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         }
     }
 
@@ -10029,6 +10007,7 @@ mod demand_affix_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let cols = [col("balance", None), col("budget", Some("every"))];
         let rows: Vec<serde_json::Map<String, Value>> = [(168000.0, 150000.0), (-41500.0, -30000.0), (-12000.0, -10000.0)]
@@ -10088,10 +10067,9 @@ mod link_paint_tests {
             "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
-            "columns": columns,
+            "columns": super::tests::with_rules(columns, conditional_formatting),
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": conditional_formatting,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -10152,9 +10130,9 @@ mod link_paint_tests {
         let columns = json!({
             "company": {"label": "Company", "link": "/accounts/{{ company }}"},
         });
-        let cf = json!({"company": {"when": [
+        let cf = json!({"company": [
             {"eq": "Nucleus", "font": {"weight": "700"}}
-        ]}});
+        ]});
         let payload = link_payload(columns, rows, None, cf);
         let svg = render(&payload, &test_fonts()).unwrap();
         let cell_tag = last_text_tag(&svg);
@@ -10296,7 +10274,6 @@ mod row_link_tests {
             "columns": {"id": {"label": "Id"}, "status": {"label": "Status"}},
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -10516,7 +10493,6 @@ mod row_link_tests {
             },
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let mut payload: Payload = crate::test_payload(json!({
             "resolved": resolved,
@@ -10629,7 +10605,6 @@ mod background_and_font_family_tests {
             "columns": {"a": {"label": "A"}},
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         });
         let payload_json = json!({
             "resolved": resolved,
@@ -10955,12 +10930,13 @@ mod background_and_font_family_tests {
         assert!(svg.contains("data-col=\"0\">N/A</text>"), "{svg}");
     }
 
-    /// A static `color` replaces the body ink; an authored color that is not a
+    /// A `column_defaults.font.color` replaces the body ink; an authored color that is not a
     /// hex color, `transparent` or `none` is an error, never painted.
     #[test]
     fn a_static_table_color_inks_the_body_and_an_invalid_color_errors() {
         let mut payload = payload_with(json!({}));
-        payload.resolved["style"]["table"]["color"] = json!({"static": "#dd00dd"});
+        payload.resolved["style"]["table"]["column_defaults"] =
+            json!({"font": {"color": "#dd00dd"}});
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(svg.contains("fill=\"#dd00dd\""), "{svg}");
         payload.resolved["style"]["table"]["header"]["background"] = json!("not-a-color");
@@ -11099,6 +11075,7 @@ mod header_font_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let rows = vec![json!({"quarterly": "Al"}).as_object().unwrap().clone()];
         let cells = vec![vec![Cell { text: "Al".into(), ..Default::default() }]];
@@ -11143,6 +11120,7 @@ mod padded_column_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         }
     }
 
@@ -11482,7 +11460,7 @@ mod board_format_tests {
             "link_open": "page",
             "title": null, "title_style": super::tests::resolved_title_style(), "columns": columns,
             "style": {"table": super::tests::base_table_theme(), "title_font": super::tests::resolved_title_font()},
-            "pivot_columns": null, "conditional_formatting": null,
+            "pivot_columns": null,
         });
         let payload = json!({
             "resolved": resolved, "rows": rows, "width": 600.0, "height": 0.0,
@@ -11566,6 +11544,7 @@ mod board_format_tests {
                 is_date: false,
                 is_day: false,
                 when_rules: Vec::new(),
+                row_rules: Default::default(),
             };
             let rows = vec![json!({"v": 1.5}).as_object().unwrap().clone()];
             format_numeric_col(&rows, &col, "all", &[RowRole::Value])
@@ -11664,6 +11643,7 @@ mod shared_scale_register_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let rows: Vec<serde_json::Map<String, Value>> = values
             .iter()
@@ -11676,6 +11656,43 @@ mod shared_scale_register_tests {
 
     fn suffix_of(mode: &str, exponent: i32, value: f64) -> Result<Option<String>, String> {
         Ok(suffixes_of(mode, exponent, "all", &[value])?.remove(0))
+    }
+
+    fn numbers_of(digit_spec: &str, values: &[f64]) -> Vec<String> {
+        let cfg: ColConfig = crate::families::table::tests::col_config(json!({
+            "shared_scale": {"exponent": 6, "mode": "anchor", "digit_spec": digit_spec},
+        }))
+        .unwrap();
+        let col = ColMeta {
+            name: "amount".to_string(),
+            header: "Amount".to_string(),
+            cfg,
+            kind: column_types::ColumnType::Float,
+            is_numeric: true,
+            is_date: false,
+            is_day: false,
+            when_rules: Vec::new(),
+            row_rules: Default::default(),
+        };
+        let rows: Vec<serde_json::Map<String, Value>> = values
+            .iter()
+            .map(|v| json!({"amount": v}).as_object().unwrap().clone())
+            .collect();
+        let roles = vec![RowRole::Value; values.len()];
+        format_numeric_col(&rows, &col, "all", &roles)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.text.replace('\u{2007}', ""))
+            .collect()
+    }
+
+    // A nonzero row the column's decimals cannot show prints the grid's
+    // smallest step as a bound; a real zero stays `0`.
+    #[test]
+    fn a_row_too_small_for_the_grid_prints_the_smallest_step_as_a_bound() {
+        let got = numbers_of(",.2~f", &[825_072_000.0, 1_277_430.0, 15_670.0, 4_000.0, 0.0, -4_000.0]);
+        assert_eq!(got, ["825.07", "1.28", "0.02", "<0.01", "0", ">\u{2212}0.01"]);
+        assert_eq!(numbers_of(",.0~f", &[825_000_000.0, 15_670.0]), ["825", "<1"]);
     }
 
     // The word paints on every nonzero row, even under symbol_mode "anchors":
@@ -11752,6 +11769,7 @@ mod shared_scale_register_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let rows: Vec<serde_json::Map<String, Value>> = values
             .iter()
@@ -11823,6 +11841,7 @@ mod shared_scale_register_tests {
                     is_date: false,
                     is_day: false,
                     when_rules: Vec::new(),
+                    row_rules: Default::default(),
                 };
                 let rows = vec![json!({"amount": value}).as_object().unwrap().clone()];
                 format_numeric_col(&rows, &col, "all", &[RowRole::Value]).map(|_| ()).unwrap_err().to_string()
@@ -11878,6 +11897,7 @@ mod shared_scale_register_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let rows = vec![json!({"amount": 24_730_000.0}).as_object().unwrap().clone()];
         let cell = ::bind::formats::locale::with_number_locale(&::bind::formats::locale::de_de(), || {
@@ -11912,6 +11932,7 @@ mod shared_scale_register_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let rows: Vec<serde_json::Map<String, Value>> = values
             .iter()
@@ -11987,6 +12008,7 @@ mod shared_scale_register_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let rows = vec![json!({"amount": 4_820_000.0}).as_object().unwrap().clone()];
         let cell = ::bind::formats::locale::with_number_locale(&::bind::formats::locale::de_de(), || {
@@ -12061,6 +12083,7 @@ mod notation_and_shared_scale_lane_tests {
             is_date: false,
             is_day: false,
             when_rules: Vec::new(),
+            row_rules: Default::default(),
         };
         let rows = vec![json!({"v": value}).as_object().unwrap().clone()];
         let _scope = super::tests::en_us_scope();
@@ -12205,7 +12228,6 @@ mod contract_tests {
                 },
                 "style": {"table": theme, "title_font": resolved_title_font()},
                 "pivot_columns": null,
-                "conditional_formatting": null,
             },
             "rows": [
                 {"name": "Apex", "value": 1234567.0},

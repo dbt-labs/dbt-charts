@@ -70,7 +70,7 @@ def test_columns_are_answered_as_board_names() -> None:
         ),
     ):
         names = [row["name"] for row in probe.columns_of(("db", "SALES", "ORDERS"))]
-    assert names == ["priority", "status"]
+    assert names == ["priority", "Status"]
 
 
 def test_a_failed_schema_query_is_raised_not_an_empty_answer() -> None:

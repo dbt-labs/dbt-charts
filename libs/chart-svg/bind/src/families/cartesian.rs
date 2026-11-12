@@ -20,7 +20,7 @@ use board_model::style::style::Style;
 use model_core::{Engine, Resolved};
 
 use crate::category_colors::{series_colors, CategoryColorScale};
-use crate::channel_type::{classify, ChannelType};
+use crate::column_kind::{field_channel, ChannelType, Role};
 use crate::formats::locale::{active_number_locale, d3_format};
 use crate::derived::{DerivedChart, Placed};
 use crate::formats::{column_format, resolve_format_parts, AuthoredFormat, Formats, Kind, ResolvedFormat, Tiers};
@@ -124,10 +124,10 @@ pub fn single_series(placed: &Placed<'_>, y_field: &str, title: &str, derived: &
     })
 }
 
-/// A title or subtitle as drawn: plain text as written. A template needs `queries.<name>` by
-/// query id, which no chart text reads yet.
+/// A title or subtitle as drawn: plain text as written, none when empty (production tests `not title`).
+/// A template needs `queries.<name>` by query id, which no chart text reads yet.
 pub fn plain_text(text: Option<&DisplayText>) -> Result<Option<String>, Diagnostic> {
-    let Some(text) = text.map(|t| t.as_str()) else { return Ok(None) };
+    let Some(text) = text.map(|t| t.as_str()).filter(|t| !t.is_empty()) else { return Ok(None) };
     if text.contains("{{") || text.contains("{%") || text.contains("{#") {
         return Err(unsupported(refuse!("a templated cartesian chart title or subtitle is not supported")));
     }
@@ -312,6 +312,7 @@ pub fn measure_axis(
     let axis = domain::Axis {
         zero,
         headroom: ladder.headroom().unwrap_or(0.0),
+        percent: format.spec.contains('%'),
         count: count(ladder)?,
         values: None,
         domain: ladder.domain(),
@@ -367,7 +368,9 @@ pub fn color_series(
     palette: &[String],
     canvas: Rgba,
 ) -> Result<ColorSeries, Diagnostic> {
-    if classify(&dataset.schema, &dataset.rows, Some(field), false)? != ChannelType::Nominal {
+    // `Role::Free`, not `Role::Color`: a date or date-shaped text still refuses as temporal here, where
+    // a color field reads it as a category.
+    if field_channel(&dataset.schema, &dataset.rows, field, Role::Free)? != ChannelType::Nominal {
         return Err(unsupported(refuse!("a cartesian `color:` that is quantitative or temporal is not supported")));
     }
     let texts = keys

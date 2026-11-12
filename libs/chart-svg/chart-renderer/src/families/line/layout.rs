@@ -8,6 +8,7 @@ use crate::pattern::Paint;
 use ::layout::scene_path::scene_path;
 use super::{AXIS_CRISP, label_x, FacetPanelOpts, area_paint, HALO_POINT_STROKE_W, LinePanelGeometry, LineXAxis, LineXAxisBody, PlotRect, Shape, StackColumn, X_AXIS_OFFSET, bare_label_ink, bare_label_layout, bare_label_widths, description_color_title, domain_position, flush_anchor_px, last_y_ascending_order, mirror_ghost_x, nominal_label_anchor, point_mark_reach, quantitative_x_ticks, rail_cascade_bounds, series_dash, series_fill, shape, stack_columns, stack_data, stack_extent, stacked_top_datum, tick_snap, tilted_temporal_label, with_dash, y_family, y_font_size};
 use crate::families::temporal::{interval_axis, interval_labels_allowed, labels_unpinned, BareMark, IntervalAxis};
+use super::segments::{segment_styles, style_runs, AreaStyle, LineStyle};
 use diagnostic::Diagnostic;
 use std::collections::{HashMap, HashSet};
 
@@ -859,6 +860,7 @@ pub(super) fn fit(
         let sv = color_field.map(|cf| row_str(row, cf)).unwrap_or_default();
         label_rows.insert((row_str(row, x_field), sv), row);
     }
+    let patches = r.patches(&label_rows)?;
     let datum_extras: HashMap<(String, String), Vec<String>> = label_rows
         .iter()
         .filter(|_| !r.tooltip.is_empty())
@@ -1389,7 +1391,7 @@ pub(super) fn fit(
         r.title_style.as_ref(),
     );
     let eff_title_ref = eff_title_style.as_ref().or(r.title_style.as_ref());
-    let title_font_size = eff_title_ref.and_then(|ts| ts.font.size).unwrap_or(18.0);
+    let title_font_size = crate::common::painted_title_size(r.title.is_some() || r.subtitle.is_some(), eff_title_ref)?;
 
     // ── x-axis label geometry ────────────────────────────────────────────────
     let ax_x = &r.style.axis_x;
@@ -1607,7 +1609,7 @@ pub(super) fn fit(
         let reserved = crate::families::cartesian::rail_reserved_lines(&plans);
         // The strip's row labels stand in this column when the axis is on the left, so it holds the widest.
         let stubs = match (composed_strip, r.effective_support_table_style.as_ref()) {
-            (Some(cfg), Some(style)) if !y_on_right => support_table_strip::widest_stub(cfg, &per_series_order, fonts, style)?,
+            (Some(cfg), Some(style)) if !y_on_right => support_table_strip::widest_stub( cfg, rows, x_field, &x_domain, color_field, &per_series_order, fonts, style)?,
             _ => 0.0,
         };
         (width_of(reserved)?.max(stubs), plans, painted_names, key_list)
@@ -2324,7 +2326,7 @@ pub(super) fn fit(
     // The text a nominal x label paints: `x_domain` stays the raw lookup key.
     let x_shown: Vec<String> = match &x_expr {
         Some(expr) if detected_data_tu.is_none() && !bare_temporal => {
-            x_domain.iter().enumerate().map(|(i, c)| expr.rewrite_band(c, i, x_domain.len()).map_err(|e| format!("line: {e}"))).collect::<Result<_, _>>()?
+            x_domain.iter().enumerate().map(|(i, c)| expr.rewrite_band(c, i, x_domain.len(), &crate::labels_expr::env()).map_err(|e| format!("line: {e}"))).collect::<Result<_, _>>()?
         }
         // A one-instant date domain ticks that instant under d3's multi-scale format.
         _ if x_is_temporal_candidate && !x_is_band && detected_data_tu.is_none() && x_domain.len() == 1 => {
@@ -3246,7 +3248,6 @@ pub(super) fn fit(
                 let columns: Vec<support_table_strip::Column> = cell_xs.iter().enumerate().map(|(i, &x)| strip_column(i, x, svg_w, x_angle)).collect();
                 let strip_ordered = detected_data_tu.is_some() || bare_temporal;
                 let composed = support_table_strip::build_rows_composed(
-                    &r.id,
                     cfg,
                     rows,
                     x_field,
@@ -3254,18 +3255,6 @@ pub(super) fn fit(
                     &columns,
                     fonts,
                     style,
-                    // Production anchors the declared affix on the first
-                    // carrying cell in paint order for both x shapes this arm
-                    // reaches: a point scale keeps the data order its `sort:
-                    // null` anchor assumes, and a temporal domain is
-                    // ascending. A sorted category x anchors on the first
-                    // carrying cell of its pinned domain
-                    // (`_pinned_domain_anchor`); only an unpinnable sort
-                    // (`_is_json_scalar_domain`) stays `nowhere`, which this
-                    // arm does not model. A quantitative x has no pinned
-                    // order to anchor on: every cell paints in full.
-                    !x_is_quantitative,
-                    y_on_right,
                     color_field,
                     &per_series_order,
                     &per_series_ink,
@@ -3744,7 +3733,7 @@ pub(super) fn fit(
                     // `connect: false` — at each plateau's own inset edge
                     // (`line_mark.disconnected_width`'s share of the band,
                     // the SAME inset `band_edge` below draws with).
-                    let point_reach = match r.style.point_mark.as_ref().and_then(|pm| pm.size) {
+                    let point_reach = match r.point_size_ceiling() {
                         Some(sz) if sz > 0.0 => {
                             point_mark_reach(sz, &r.style.line_mark)
                         }
@@ -3890,7 +3879,7 @@ pub(super) fn fit(
                         let mut ink = vega_fit::Bounds::empty_new();
                         // The fit sizes what the strip paints: its skipped rows, labels cleared.
                         let mut rows = if detected_data_tu.is_some() || bare_temporal {
-                            support_table_strip::thinned_strip(rows, strip_labeled.as_deref(), style.row.padding.horizontal, y_on_right.then_some(pw + ay_stub_pad)).0
+                            support_table_strip::thinned_strip(rows, strip_labeled.as_deref(), style.row.padding.horizontal).0
                         } else {
                             rows.clone()
                         };
@@ -4087,7 +4076,7 @@ pub(super) fn fit(
                 + if bottom_strip { m.bottom.max(strip_axis_offset + strip_h) } else { m.bottom }
                 + pad_b;
             if detected_data_tu.is_some() || bare_temporal {
-                support_table_strip::skip_strip(&r.id, &mut rows, strip_labeled.as_deref(), strip_style.row.padding.horizontal, y_on_right.then_some(m.plot_w + ay_stub_pad));
+                support_table_strip::skip_strip(&r.id, &mut rows, strip_labeled.as_deref(), strip_style.row.padding.horizontal);
             }
             if y_on_right {
                 support_table_strip::clear_right_stubs(&mut rows, m.plot_w);
@@ -4307,7 +4296,7 @@ pub(super) fn fit(
         // strokeWidth 2, full expand), a baseline rule's stroke.
         let mark_reach = {
             let mut ink = line_stroke_w;
-            if let Some(sz) = r.style.point_mark.as_ref().and_then(|pm| pm.size) {
+            if let Some(sz) = r.point_size_ceiling() {
                 if sz > 0.0 {
                     ink = ink.max(point_mark_reach(sz, &r.style.line_mark));
                 }
@@ -4357,8 +4346,7 @@ pub(super) fn fit(
                     let x_angle = vega_x_labels.as_ref().map_or(0.0, |labels| labels.angle);
                     let columns: Vec<support_table_strip::Column> = cell_xs.iter().enumerate().map(|(i, &x)| strip_column(i, x, svg_w, x_angle)).collect();
                     let strip_rows = support_table_strip::build_rows_composed(
-                        &r.id,
-                        cfg, rows, x_field, &x_domain, &columns, fonts, style, true, y_on_right,
+                        cfg, rows, x_field, &x_domain, &columns, fonts, style,
                         color_field, &per_series_order, &per_series_ink,
                         r.link.is_some().then_some(&strip_links), detected_data_tu.is_some() || bare_temporal)?;
                     reserved_left_reach = support_table_strip::composed_left_bound(&strip_rows, x_scale_pad);
@@ -4653,7 +4641,7 @@ pub(super) fn fit(
             }
             // Same ink model as right_ink above.
             let mut mark_reach = line_stroke_w;
-            if let Some(sz) = r.style.point_mark.as_ref().and_then(|pm| pm.size) {
+            if let Some(sz) = r.point_size_ceiling() {
                 if sz > 0.0 {
                     mark_reach =
                         mark_reach.max(point_mark_reach(sz, &r.style.line_mark));
@@ -4981,8 +4969,7 @@ pub(super) fn fit(
             let columns: Vec<support_table_strip::Column> = cell_xs.iter().enumerate().map(|(i, &x)| strip_column(i, x, plot_w, rail_x_angle)).collect();
             let strip_ordered = detected_data_tu.is_some() || bare_temporal;
             let composed = support_table_strip::build_rows_composed(
-                &r.id,
-                cfg, rows, x_field, &x_domain, &columns, fonts, style, true, y_on_right,
+                cfg, rows, x_field, &x_domain, &columns, fonts, style,
                 color_field, &per_series_order, &per_series_ink,
                 r.link.is_some().then_some(&strip_links), strip_ordered)?;
             let fit = support_table_strip::fit_strip(&r.id, composed, style.row.padding.horizontal, strip_ordered);
@@ -4990,9 +4977,7 @@ pub(super) fn fit(
             if let Some(mut rows) = fit {
             rows.iter_mut().for_each(|row| row.describe(&strip_aria));
             if detected_data_tu.is_some() || bare_temporal {
-                // Row labels begin past the axis gutter on a right axis, else in the rail's column.
-                let labels_at = if rail_right { svg_w + ax_y.labels.padding.unwrap_or(6.0) } else { rail_x_rel.expect("the rail arm places its column") };
-                support_table_strip::skip_strip(&r.id, &mut rows, strip_labeled.as_deref(), style.row.padding.horizontal, Some(labels_at));
+                support_table_strip::skip_strip(&r.id, &mut rows, strip_labeled.as_deref(), style.row.padding.horizontal);
             }
             if support_table_strip::gutter_holds(&r.id, &rows, reserved_left_reach, plot_w) {
             if rail_right {
@@ -5201,6 +5186,29 @@ pub(super) fn fit(
     // (`area_won_stacked`'s reference: `Download` draws runs of 5/8/5/8/2 —
     // the run lengths a null-only break gives, not the 1/1/3/7/1/5/8/1/1 a
     // missing row would also break into).
+    // `style.conditional` patches, per datum; a rule's `size` may draw a point where the chart
+    // has none, or none where it has one.
+    let patch_at = |data_key: &str, i: usize| patches.get(&(x_domain[i].clone(), data_key.to_string()));
+    // The domain index of every point of each defined run: the datum a point draws.
+    let domain_runs_of = |series: &str| -> Vec<Vec<usize>> {
+        let mut runs: Vec<Vec<usize>> = Vec::new();
+        let mut open = false;
+        for (i, xv) in x_domain.iter().enumerate() {
+            match data.get(&(xv.clone(), series.to_string())) {
+                None => {}
+                Some(None) => open = false,
+                Some(_) if x_nan[i] => open = false,
+                Some(&Some(_)) => {
+                    if !open {
+                        runs.push(Vec::new());
+                        open = true;
+                    }
+                    runs.last_mut().unwrap().push(i);
+                }
+            }
+        }
+        runs
+    };
     let runs_of = |series: &str| -> Vec<Vec<(f64, f64)>> {
         let mut runs: Vec<Vec<(f64, f64)>> = Vec::new();
         let mut open = false;
@@ -5230,21 +5238,17 @@ pub(super) fn fit(
             }
             return runs;
         }
-        for (i, xv) in x_domain.iter().enumerate() {
-            match data.get(&(xv.clone(), series.to_string())) {
-                None => {}
-                Some(None) => open = false,
-                Some(_) if x_nan[i] => open = false,
-                Some(&Some(yv)) => {
-                    if !open {
-                        runs.push(Vec::new());
-                        open = true;
-                    }
-                    runs.last_mut().unwrap().push((fit_x_at(i), y_at(yv)));
-                }
-            }
-        }
-        runs
+        domain_runs_of(series)
+            .iter()
+            .map(|run| {
+                run.iter()
+                    .map(|&i| {
+                        let yv = data[&(x_domain[i].clone(), series.to_string())].expect("a run's point has a measure");
+                        (fit_x_at(i), y_at(yv))
+                    })
+                    .collect()
+            })
+            .collect()
     };
     // Band-step: each row doubles onto its band's left (0) and right (1)
     // pixel edge — `step_band.apply_step_band`'s `xOffset` point scale bound
@@ -5432,6 +5436,88 @@ pub(super) fn fit(
         paint_order.iter().map(|s| (key(s), stacked_runs_of(s))).collect()
     } else {
         Vec::new()
+    };
+
+    // A rule's line or area keys restyle a segment between two points (`segments.rs`). The
+    // curve is computed over the whole run and cut at its points, so a styled run traces the
+    // path the unstyled line draws.
+    let segment_styled = r.sets_segment_style();
+    if segment_styled {
+        let fam = if draw_areas { "area" } else { "line" };
+        if curve == d3rs::shape::Curve::Basis {
+            return Err(diagnostic::refuse!("{fam}: a conditional line or area style on a basis curve is not supported").into());
+        }
+        if is_band_step {
+            return Err(diagnostic::refuse!("{fam}: a conditional line or area style on a step curve over a categorical x axis is not supported").into());
+        }
+        if data_order || base_walks_every_row {
+            return Err(diagnostic::refuse!("{fam}: a conditional line or area style on a chart that draws every row is not supported").into());
+        }
+        if is_stacked && !hrefs.is_empty() {
+            return Err(diagnostic::refuse!("{fam}: a conditional area style on a stacked area with links is not supported").into());
+        }
+    }
+    let cut_error = |e: String| format!("internal error - a curve drawn through distinct points cannot be cut at them: {e}");
+    // `series`' line as paths of one style each. A datum with no row takes the base style.
+    let line_spans = |series: &str, runs: &[Vec<(f64, f64)>]| -> Result<Vec<(PathData, Option<&str>, LineStyle)>, String> {
+        let data_key = data_key_of(series);
+        let whole = || line_paths(runs, &data_key).into_iter().map(|(d, href)| (d, href, LineStyle::default())).collect::<Vec<_>>();
+        if !segment_styled {
+            return Ok(whole());
+        }
+        let datum_runs = domain_runs_of(&data_key);
+        let point_styles = |run: &[usize]| -> Vec<LineStyle> { run.iter().map(|&i| patch_at(&data_key, i).map(|p| p.line.clone()).unwrap_or_default()).collect() };
+        let segments: Vec<Vec<LineStyle>> = datum_runs.iter().map(|run| segment_styles(&point_styles(run))).collect();
+        if segments.iter().flatten().all(|style| *style == LineStyle::default()) {
+            return Ok(whole());
+        }
+        if runs.len() != datum_runs.len() {
+            return Err(format!("internal error - {} runs drawn from {} datum runs", runs.len(), datum_runs.len()));
+        }
+        let mut spans = Vec::new();
+        for ((run, datums), styles) in runs.iter().zip(&datum_runs).zip(&segments) {
+            if run.len() < 2 {
+                spans.push((scene_path(&d3rs::shape::line_path(std::slice::from_ref(run), curve)), href_at(datums[0], &data_key), LineStyle::default()));
+                continue;
+            }
+            let cut = d3rs::shape::line_segments(run, curve).map_err(cut_error)?;
+            for (from, to, style) in style_runs(styles) {
+                spans.push((scene_path(&cut.path(from, to).map_err(cut_error)?), href_at(datums[from], &data_key), style));
+            }
+        }
+        Ok(spans)
+    };
+    // An area's fill as paths of one style each, with the domain index its first point draws
+    // (`None` for the whole fill). `datum_runs` names the datum of every point, and is read only
+    // when a rule styles the fill.
+    let area_spans = |data_key: &str, runs: &[Vec<(f64, f64, f64)>], datum_runs: &dyn Fn() -> Vec<Vec<usize>>| -> Result<Vec<(PathData, Option<usize>, AreaStyle)>, String> {
+        let whole = || vec![(scene_path(&d3rs::shape::stacked_area_path(runs, curve)), None, AreaStyle::default())];
+        if !segment_styled {
+            return Ok(whole());
+        }
+        let datum_runs = datum_runs();
+        let segments: Vec<Vec<AreaStyle>> = datum_runs
+            .iter()
+            .map(|run| segment_styles(&run.iter().map(|&i| patch_at(data_key, i).map(|p| p.area.clone()).unwrap_or_default()).collect::<Vec<_>>()))
+            .collect();
+        if segments.iter().flatten().all(|style| *style == AreaStyle::default()) {
+            return Ok(whole());
+        }
+        if runs.len() != datum_runs.len() {
+            return Err(format!("internal error - {} runs drawn from {} datum runs", runs.len(), datum_runs.len()));
+        }
+        let mut spans = Vec::new();
+        for ((run, datums), styles) in runs.iter().zip(&datum_runs).zip(&segments) {
+            if run.len() < 2 {
+                spans.push((scene_path(&d3rs::shape::stacked_area_path(std::slice::from_ref(run), curve)), Some(datums[0]), AreaStyle::default()));
+                continue;
+            }
+            let cut = d3rs::shape::area_segments(run, curve).map_err(cut_error)?;
+            for (from, to, style) in style_runs(styles) {
+                spans.push((scene_path(&cut.path(from, to).map_err(cut_error)?), Some(datums[from]), style));
+            }
+        }
+        Ok(spans)
     };
 
     // Line style
@@ -5715,15 +5801,15 @@ pub(super) fn fit(
     let halo_stroke = canvas;
     if r.style.line_mark.halo_present() {
         for (series, runs) in &series_points {
-            for (d, href) in line_paths(runs, &data_key_of(series)) {
+            for (d, href, style) in line_spans(series, runs)? {
                 let anchor = r.link_open.anchor(href);
                 let halo = Attrs::new()
                     .set("fill", "none")
                     .set("stroke", halo_stroke)
-                    .num("stroke-width", halo_w)
+                    .num("stroke-width", style.width.map_or(halo_w, |width| width * r.style.line_mark.halo_multiplier))
                     .set("stroke-linecap", cap)
                     .set("stroke-linejoin", join);
-                let halo = with_dash(halo, dash_of(series));
+                let halo = with_dash(halo, style.dasharray.clone().or_else(|| dash_of(series)));
                 plot.push(crate::contract::connected_group("line", "layer_1_marks", vec![crate::href::linked(anchor, Node::path(Role::Chrome, d, halo))]));
             }
         }
@@ -5760,12 +5846,64 @@ pub(super) fn fit(
             let thickest = runs.iter().flatten().map(|&(_, lo, hi)| (hi - lo).abs()).fold(0.0, f64::max);
             let mark = paint.for_mark(thickest, stroke_color, line_w);
             band_marks.insert(series.clone(), mark.clone());
-            let d = scene_path(&d3rs::shape::stacked_area_path(runs, curve));
+            let data_key = data_key_of(series);
+            let all_datums = || vec![(0..x_domain.len()).collect::<Vec<usize>>()];
+            let mut spans = area_spans(&data_key, runs, &all_datums)?;
+            // The top edge of the band, cut where a rule restyles it.
+            let edge_spans: Vec<(usize, usize, LineStyle)> = if segment_styled && runs[0].len() > 1 {
+                let points: Vec<LineStyle> = (0..runs[0].len()).map(|i| patch_at(&data_key, i).map(|p| p.line.clone()).unwrap_or_default()).collect();
+                style_runs(&segment_styles(&points)).into_iter().filter(|(_, _, style)| *style != LineStyle::default()).collect()
+            } else {
+                Vec::new()
+            };
             // The path's first item: the first x's own datum, or the imputed row there.
-            let anchor = selection.mark(r.link_open.anchor(datum_href(0, &data_key_of(series))));
+            let anchor = selection.mark(r.link_open.anchor(datum_href(0, &data_key)));
             let fill = Attrs::new().set("fill", &mark.fill).num("fill-opacity", area_opacity).quick_some("data-dbt-ink", mark.ink.as_deref());
             let series_key = |attrs: Attrs| attrs.set_if(is_multi, ::layout::contract::SERIES_KEY, display_label(series));
             let mut marks = Vec::new();
+            if spans.len() > 1 || spans[0].2 != AreaStyle::default() || !edge_spans.is_empty() {
+                // A cut stacked band paints its fills apart and strokes the whole perimeter once, so no
+                // separator crosses the band where two fills meet.
+                if mark.ink.is_some() && (!edge_spans.is_empty() || spans.iter().any(|(_, _, style)| style.color.is_some())) {
+                    return Err(diagnostic::refuse!("area: a conditional area color or edge style on a patterned fill is not supported").into());
+                }
+                for (piece, first, style) in spans {
+                    let fill = Attrs::new()
+                        .set("fill", style.color.as_deref().unwrap_or(&mark.fill))
+                        .num("fill-opacity", style.opacity.unwrap_or(area_opacity))
+                        .quick_some("data-dbt-ink", mark.ink.as_deref());
+                    let anchor = selection.mark(r.link_open.anchor(datum_href(first.unwrap_or(0), &data_key)));
+                    marks.push(crate::href::linked(anchor, Node::path(mark_of(series, None), piece, series_key(fill))));
+                }
+                let perimeter = Attrs::new().set("fill", "none").set("stroke", &mark.stroke).num("stroke-width", mark.stroke_w).set("stroke-linecap", cap).set("stroke-linejoin", join);
+                if edge_spans.is_empty() {
+                    marks.push(Node::path(mark_of(series, None), scene_path(&d3rs::shape::stacked_area_path(runs, curve)), series_key(perimeter)));
+                } else {
+                    // The perimeter keeps its other three sides; each restyled stretch of the top
+                    // edge is stroked in its own style, cut from the same whole-band curve.
+                    let mut restyled = vec![false; runs[0].len() - 1];
+                    for &(from, to, _) in &edge_spans {
+                        restyled[from..to].fill(true);
+                    }
+                    let outline = d3rs::shape::area_segments(&runs[0], curve).map_err(cut_error)?.outline_without_top(|k| restyled[k]).map_err(cut_error)?;
+                    marks.push(Node::path(mark_of(series, None), scene_path(&outline), series_key(perimeter)));
+                    let top: Vec<(f64, f64)> = runs[0].iter().map(|&(x, top, _)| (x, top)).collect();
+                    let top_cut = d3rs::shape::line_segments(&top, curve).map_err(cut_error)?;
+                    for (from, to, style) in edge_spans {
+                        let edge = Attrs::new()
+                            .set("fill", "none")
+                            .set("stroke", style.color.as_deref().unwrap_or(&mark.stroke))
+                            .num("stroke-width", style.width.unwrap_or(mark.stroke_w))
+                            .set("stroke-linecap", cap)
+                            .set("stroke-linejoin", join);
+                        let anchor = selection.mark(r.link_open.anchor(datum_href(from, &data_key)));
+                        marks.push(crate::href::linked(anchor, Node::path(mark_of(series, None), scene_path(&top_cut.path(from, to).map_err(cut_error)?), series_key(with_dash(edge, style.dasharray)))));
+                    }
+                }
+                plot.push(crate::contract::connected_group("area", "layer_2_marks", marks));
+                continue;
+            }
+            let d = spans.remove(0).0;
             // A patterned band draws fill-only, then its shared edge line.
             let path = match &mark.ink {
                 Some(_) => {
@@ -5812,23 +5950,30 @@ pub(super) fn fit(
             let thickest = runs.iter().flatten().map(|&(_, y)| (area_floor_y - y).abs()).fold(0.0, f64::max);
             let mark = paint.for_mark(thickest, "none", 0.0);
             band_marks.insert(series.clone(), mark.clone());
-            let d = scene_path(&d3rs::shape::area_path(runs, area_floor_y, curve));
-            let anchor = selection.mark(r.link_open.anchor(series_href(&data_key_of(series))));
-            let path = Node::path(
-                mark_of(series, None),
-                d,
-                Attrs::new()
-                    .set("fill", &mark.fill)
-                    .num("fill-opacity", area_opacity)
-                    .quick_some("data-dbt-ink", mark.ink.as_deref())
-                    .extend(if matches!(paint, Paint::Pattern(_)) {
-                        Attrs::new().set("stroke", &mark.stroke).num("stroke-width", mark.stroke_w)
-                    } else {
-                        Attrs::new()
-                    })
-                    .set_if(is_multi, ::layout::contract::SERIES_KEY, display_label(series)),
-            );
-            plot.push(crate::contract::connected_group("area", "layer_2_marks", vec![crate::href::linked(anchor, path)]));
+            let data_key = data_key_of(series);
+            let triples: Vec<Vec<(f64, f64, f64)>> = runs.iter().map(|run| run.iter().map(|&(x, y)| (x, y, area_floor_y)).collect()).collect();
+            let spans = area_spans(&data_key, &triples, &|| domain_runs_of(&data_key))?;
+            if matches!(paint, Paint::Pattern(_)) && spans.iter().any(|(_, _, style)| style.color.is_some()) {
+                return Err(diagnostic::refuse!("area: a conditional area color or edge style on a patterned fill is not supported").into());
+            }
+            for (d, first, style) in spans {
+                let anchor = selection.mark(r.link_open.anchor(first.map_or_else(|| series_href(&data_key), |i| href_at(i, &data_key))));
+                let path = Node::path(
+                    mark_of(series, None),
+                    d,
+                    Attrs::new()
+                        .set("fill", style.color.as_deref().unwrap_or(&mark.fill))
+                        .num("fill-opacity", style.opacity.unwrap_or(area_opacity))
+                        .quick_some("data-dbt-ink", mark.ink.as_deref())
+                        .extend(if matches!(paint, Paint::Pattern(_)) {
+                            Attrs::new().set("stroke", &mark.stroke).num("stroke-width", mark.stroke_w)
+                        } else {
+                            Attrs::new()
+                        })
+                        .set_if(is_multi, ::layout::contract::SERIES_KEY, display_label(series)),
+                );
+                plot.push(crate::contract::connected_group("area", "layer_2_marks", vec![crate::href::linked(anchor, path)]));
+            }
         }
         // Z1: an area chart's zero rule paints here — above the fills it
         // just drew, below the point-marker halos and main strokes below. A
@@ -6003,13 +6148,15 @@ pub(super) fn fit(
     // underneath to match the canvas, which `point_mark.fill`'s own
     // resolved default (a flat `#FFFFFF`, independent of any authored
     // `style.background`) can't stand in for.
-    let point_r = match r.style.point_mark.as_ref().and_then(|pm| pm.size) {
-        Some(sz) if sz > 0.0 => Some((
-            symbol_radius(sz),
-            symbol_radius(sz * r.style.line_mark.halo_multiplier),
-            canvas.to_string(),
-        )),
-        _ => None,
+    let base_point_size = r.style.point_mark.as_ref().and_then(|pm| pm.size);
+    let point_size_at = |data_key: &str, i: usize| -> Option<f64> {
+        patch_at(data_key, i).and_then(|patch| patch.size).or(base_point_size).filter(|size| *size > 0.0)
+    };
+    let symbol = |shape: Option<&str>, role: Role, radius: f64, attrs: Attrs| -> Result<Node, String> {
+        match shape {
+            None | Some("circle") => Ok(Node::circle(role, (0.0, 0.0), radius, attrs)),
+            Some(name) => Ok(Node::path(role, crate::families::scatter_shape::path(name, radius)?, attrs)),
+        }
     };
     // The point overlays are deliberately UNclipped, matching production:
     // `_layers.py`'s CLIP_TO_PLOT goes on the halo line / hit-target / area
@@ -6020,8 +6167,10 @@ pub(super) fn fit(
     // returns `[]`, so no halo point layer exists to paint. An
     // area's halo (`_area_halo_layers`) is a backdrop fill and a halo line
     // only, never a point layer.
-    if r.style.line_mark.halo_present() && !draw_areas {
-        if let Some((_, halo_r, halo_fill)) = &point_r {
+    let has_points = r.point_size_ceiling().is_some_and(|size| size > 0.0);
+    if r.style.line_mark.halo_present() && !draw_areas && has_points {
+        {
+            let halo_fill = canvas.to_string();
             let mut halos = Vec::new();
             for (data_key, _) in &series_keys_for_points {
                 for &i in &datum_order {
@@ -6031,6 +6180,9 @@ pub(super) fn fit(
                     if anchored_only && !anchored.contains(&(data_key.clone(), i)) {
                         continue;
                     }
+                    let Some(size) = point_size_at(data_key, i) else { continue };
+                    let halo_r = symbol_radius(size * r.style.line_mark.halo_multiplier);
+                    let shape = patch_at(data_key, i).and_then(|patch| patch.shape.as_deref());
                     let anchor = r.link_open.anchor(href_at(i, data_key));
                     for px in datum_xs(i) {
                         let py = datum_y(data_key, i, yv);
@@ -6040,7 +6192,7 @@ pub(super) fn fit(
                         let halo = if halo_r.is_nan() {
                             Node::path(Role::Chrome, PathData::new().move_to(f64::NAN, 0.0), ring)
                         } else {
-                            Node::circle(Role::Chrome, (0.0, 0.0), *halo_r, ring)
+                            symbol(shape, Role::Chrome, halo_r, ring)?
                         }
                         .translate(px, py);
                         halos.push(crate::href::linked(anchor, halo));
@@ -6087,16 +6239,16 @@ pub(super) fn fit(
                 Some(c) => c.clone(),
                 None => series_fill(series, &palette_domain, &r.series_palette, is_multi, category_scale)?,
             };
-            for (d, href) in line_paths(runs, &data_key_of(series)) {
+            for (d, href, style) in line_spans(series, runs)? {
                 let anchor = selection.mark(r.link_open.anchor(href));
                 let line = Attrs::new()
                     .set("fill", "none")
-                    .set("stroke", &color)
-                    .num("stroke-width", line_w)
+                    .set("stroke", style.color.as_ref().unwrap_or(&color))
+                    .num("stroke-width", style.width.unwrap_or(line_w))
                     .set("stroke-linecap", cap)
                     .set("stroke-linejoin", join)
                     .set_if(is_multi, ::layout::contract::SERIES_KEY, display_label(series));
-                let line = with_dash(line, ink_dash.clone().or_else(|| dash_of(series)));
+                let line = with_dash(line, style.dasharray.or_else(|| ink_dash.clone()).or_else(|| dash_of(series)));
                 plot.push(crate::contract::connected_group("line", "layer_3_marks", vec![crate::href::linked(anchor, Node::path(mark_of(series, None), d, line))]));
             }
         }
@@ -6107,7 +6259,7 @@ pub(super) fn fit(
 
     // Point markers (line-colored circles at each data point, over the
     // line) — unclipped, same as the halos above.
-    if let Some((r_pt, _, _)) = &point_r {
+    if has_points {
         let mut points = Vec::new();
         for (data_key, paint_key) in &series_keys_for_points {
             // The points are the line's color: a resolved stroke color paints both.
@@ -6122,17 +6274,35 @@ pub(super) fn fit(
                 if anchored_only && !anchored.contains(&(data_key.clone(), i)) {
                     continue;
                 }
+                let Some(size) = point_size_at(data_key, i) else { continue };
+                let patch = patch_at(data_key, i);
                 let aria = if tooltip_labels { Some(point_aria(data_key, i, yv)?) } else { None };
                 let label_attrs = ::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::Point)?;
                 let anchor = r.link_open.anchor(href_at(i, data_key));
+                let ink = patch.and_then(|patch| patch.color.as_deref()).unwrap_or(color.as_str());
+                // A hollow point is a ring in its color around its fill, else the canvas.
+                let paint = if patch.and_then(|patch| patch.filled).unwrap_or(true) {
+                    Attrs::new().set("fill", ink)
+                } else {
+                    Attrs::new()
+                        .set("fill", patch.and_then(|patch| patch.fill.as_deref()).unwrap_or(canvas))
+                        .set("stroke", ink)
+                        .num("stroke-width", patch.and_then(|patch| patch.stroke_width).unwrap_or(HALO_POINT_STROKE_W))
+                };
+                let opacity = patch.and_then(|patch| patch.opacity);
                 for px in datum_xs(i) {
                     let py = datum_y(data_key, i, yv);
-                    let circle = Attrs::new()
+                    let circle = paint
+                        .clone()
                         .set_if(is_multi, ::layout::contract::SERIES_KEY, display_label(data_key))
-                        .set("fill", color.as_str())
-                        .set_if(tooltip_labels, "opacity", "1")
+                        .set_if(tooltip_labels && opacity.is_none(), "opacity", "1")
                         .extend(label_attrs.clone());
-                    points.push(crate::href::linked(anchor, Node::circle(mark_of(paint_key, Some(i)), (0.0, 0.0), *r_pt, circle).translate(px, py)));
+                    let circle = match opacity {
+                        Some(opacity) => circle.num("opacity", opacity),
+                        None => circle,
+                    };
+                    let shape = patch.and_then(|patch| patch.shape.as_deref());
+                    points.push(crate::href::linked(anchor, symbol(shape, mark_of(paint_key, Some(i)), symbol_radius(size), circle)?.translate(px, py)));
                 }
             }
         }
@@ -6151,8 +6321,8 @@ pub(super) fn fit(
     // `aria: False`, one hidden mark set.
     if tooltip_labels {
         let hover_r = symbol_radius(crate::common::HOVER_TARGET_SIZE);
-        let announce = point_r.is_none();
         let mut targets = Vec::new();
+        let mut announcing = Vec::new();
         for (data_key, paint_key) in &series_keys_for_points {
             let color = series_fill(paint_key, &palette_domain, &r.series_palette, is_multi, category_scale)?;
             // A patterned band is hovered as the band it is: its target takes the band's fill and ink.
@@ -6162,6 +6332,7 @@ pub(super) fn fit(
                 let Some(Some(yv)) = data.get(&(x_domain[i].clone(), data_key.clone())).copied() else {
                     continue;
                 };
+                let announce = point_size_at(data_key, i).is_none();
                 let aria = if announce { Some(point_aria(data_key, i, yv)?) } else { None };
                 let label_attrs = ::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::Point)?;
                 let anchor = r.link_open.anchor(href_at(i, data_key));
@@ -6172,15 +6343,17 @@ pub(super) fn fit(
                         .quick_some("data-dbt-ink", band.and_then(|mark| mark.ink.as_deref()))
                         .set("opacity", "0")
                         .extend(label_attrs.clone());
-                    targets.push(crate::href::linked(anchor, Node::circle(Role::Chrome, (0.0, 0.0), hover_r, target).translate(px, py)));
+                    let target = crate::href::linked(anchor, Node::circle(Role::Chrome, (0.0, 0.0), hover_r, target).translate(px, py));
+                    if announce { announcing.push(target) } else { targets.push(target) }
                 }
             }
         }
-        plot.push(if announce {
-            ::layout::contract::mark_group("symbol", "layer_3_marks", targets)?
-        } else {
-            crate::contract::hidden_mark_group("symbol", "layer_3_marks", targets)
-        });
+        if !announcing.is_empty() || !has_points {
+            plot.push(::layout::contract::mark_group("symbol", "layer_3_marks", announcing)?);
+        }
+        if !targets.is_empty() || has_points {
+            plot.push(crate::contract::hidden_mark_group("symbol", "layer_3_marks", targets));
+        }
     }
 
     // The mirrored right-edge axis rides an invisible rule layer, one rule per
@@ -6815,7 +6988,7 @@ pub(super) fn fit(
                     movable: movable && !is_stacked && preferred.edge.is_none(),
                     owner,
                     group: owner,
-                    own_radius: point_r.as_ref().map_or(0.0, |(r_pt, _, _)| *r_pt),
+                    own_radius: point_size_at(series, *i).map_or(0.0, symbol_radius),
                     channel: in_axis_channel || (*i == 0 && start_outside),
                 }
             })
@@ -6848,15 +7021,16 @@ pub(super) fn fit(
             } else {
                 inherited
             };
+            let patch = patch_at(series, *i);
             let label = crate::common::value_label(
                 label_x + spot.dx,
                 label_y + spot.dy + measure::baseline_shift(spot.baseline, value_label_size),
                 spot.align,
                 &value_label_family,
                 value_label_size,
-                &weight,
+                patch.and_then(|patch| patch.label_weight.as_deref()).unwrap_or(&weight),
                 font_style,
-                text_color,
+                patch.and_then(|patch| patch.label_color.as_deref()).unwrap_or(text_color),
                 label_attrs,
                 text,
             )
@@ -6869,7 +7043,7 @@ pub(super) fn fit(
         let left_default = reqs.iter().zip(&spots).any(|(req, spot)| {
             spot.is_some_and(|s| req.movable && (s.dx, s.dy, s.align, s.baseline) != (req.preferred.dx, req.preferred.dy, req.preferred.align, req.preferred.baseline))
         });
-        if movable && point_r.is_none() && (left_default || series_ids.len() > 1) {
+        if movable && !has_points && (left_default || series_ids.len() > 1) {
             crate::placement::warn_value_labels_no_markers(payload.chart_id()?);
         }
         // A thinned chart already says its labels are too many; the crowd check would repeat it.
@@ -7074,6 +7248,7 @@ pub(super) fn fit(
     if let Some(lg) = &vega_legend_box {
         let (lx, ly) = legend_pos;
         let (dx, dy) = legend_slide(&r.id, &r.legend.position, lg, (plot_w, plot_h))?;
+        crate::families::legend::warn_overlay_legend_covers_marks(&r.id, &r.legend.position, &plot, (lx + dx, ly + dy), (lg.box_w, lg.box_h()));
         tail.extend(drawn_symbol_legend(&legend_entries, lg, &r.legend, LegendSymbol::Circle, group_x + lx + dx, group_y + ly + dy, tooltip_labels && has_layers, r.canvas.as_str()));
         tail.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (plot_w, plot_h), (group_x + lx + dx, group_y + ly + dy), r.canvas.as_str())?);
         tail.extend(crate::legend_view::legend_clear(lg, &legend_entries, &r.legend, (group_x + lx + dx, group_y + ly + dy), crate::legend_view::Inset::below_titles(&head, pad_t, canvas_w - pad_r, canvas_h - pad_b), fonts)?);
@@ -7164,7 +7339,7 @@ pub(super) fn fit(
             .collect(),
         None => Vec::new(),
     };
-    let geom_point_reach = match r.style.point_mark.as_ref().and_then(|pm| pm.size) {
+    let geom_point_reach = match r.point_size_ceiling() {
         Some(sz) if sz > 0.0 => point_mark_reach(sz, &r.style.line_mark),
         _ => 0.0,
     };

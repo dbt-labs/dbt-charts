@@ -155,7 +155,7 @@ def test_chart_font_reaches_every_slot_it_does_not_set() -> None:
     assert _attr(_tspan(svg, "0.12"), "font-size") == "20"
 
 
-def test_conditional_formatting_beats_value_slot_colors() -> None:
+def test_conditional_rule_beats_value_slot_colors() -> None:
     chart = _kpi(
         {
             "value": {
@@ -165,15 +165,15 @@ def test_conditional_formatting_beats_value_slot_colors() -> None:
             }
         }
     )
-    chart["conditional_formatting"] = {
-        "revenue": {"when": [{"gt": 0, "font": {"color": "#00aa00"}}]}
+    chart["style"]["conditional"] = {
+        "revenue": [{"gt": 0, "value": {"font": {"color": "#00aa00"}}}]
     }
     svg = _render(chart)
     for text in ("128,000", "$", "● "):
         assert _attr(_tspan(svg, text), "fill") == "#00aa00"
 
 
-def test_conditional_formatting_beats_support_slot_colors() -> None:
+def test_conditional_rule_beats_support_slot_colors() -> None:
     chart = _kpi(
         {
             "support": {
@@ -183,8 +183,8 @@ def test_conditional_formatting_beats_support_slot_colors() -> None:
             }
         }
     )
-    chart["conditional_formatting"] = {
-        "delta": {"when": [{"gt": 0, "font": {"color": "#00aa00"}}]}
+    chart["style"]["conditional"] = {
+        "delta": [{"gt": 0, "support": {"font": {"color": "#00aa00"}}}]
     }
     svg = _render(chart)
     assert _attr(_tspan(svg, "0.12"), "fill") == "#00aa00"

@@ -1,6 +1,8 @@
 //! d3-geo 3.1.1 `src/path/centroid.js`: the planar centroid of a projected stream, by the highest dimension
 //! present (polygon area, else line length, else points).
 
+use crate::invariant;
+
 use crate::geo::stream::GeoStream;
 use crate::js_math::js_truthy;
 
@@ -148,6 +150,6 @@ impl GeoStream for PathCentroid {
     }
 
     fn sphere(&mut self) {
-        unreachable!("d3's centroid stream has no sphere: a projection's pre-clip consumes it, and geoPath rejects it otherwise");
+        invariant::broken("d3's centroid stream has no sphere: a projection's pre-clip consumes it, and geoPath rejects it otherwise");
     }
 }

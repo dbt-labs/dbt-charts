@@ -2086,6 +2086,20 @@
     engine never repaints -- the color pair is still painted exactly as written.
   summary: Fired when a text block's ink has too little contrast against its background.
   docs_topic: board
+- code: WARN-VARIABLE-BUTTONS-OVERFLOW
+  level: warning
+  title: A variable's button row is wider than its slot
+  template: Variable {variable!r} draws as a button row {needed:.0f}px wide, but only {available:.0f}px
+    is available; it is drawn as a dropdown instead.
+  fix: 'Set `style.variables.overflow: wrap` to flow the buttons onto further rows, shorten
+    the option labels, or give the button row a wider slot.'
+  doc: 'Fires when an `input: radio` variable, or a daterange under `style.variables.presets_display:
+    buttons`, has buttons that together are wider than the space the board gives its controls.
+    The control is never dropped or clipped: by default it draws as the dropdown form of the
+    same variable. `style.variables.overflow: wrap` is the opt-in that lets the button row
+    flow onto further rows instead.'
+  summary: Fired when a button row does not fit its slot and draws as a dropdown.
+  docs_topic: board
 - code: ERR-LINK-SCHEME-UNSAFE-AT-RENDER
   level: error
   title: A rendered link uses a disallowed URL scheme
@@ -2328,4 +2342,12 @@
     no plotted rows, or its trend has too few rows for the fit or interval. The rest of the
     chart renders.'
   summary: Fired when an annotation has nothing to draw on the plot.
+  docs_topic: charts
+- code: WARN-LEGEND-OVERLAY-COVERS-MARKS
+  level: warning
+  title: An overlay legend covers data marks
+  template: 'Chart {chart_id!r}: the overlay legend sits on top of the data, hiding part of a mark.'
+  fix: Move the legend to a corner the data leaves empty (`legend.position`), or set `overlay` to false to reserve a strip for it.
+  doc: Fires on a line or area chart whose legend is drawn over the plot (`legend.position.overlay` true) and whose drawn box meets a line, an area's outline stroke, or a point. A line is not drawn across a missing value, and a filled area under the legend does not count. Other chart types never fire. The legend stays where it is; the warning only reports the overlap.
+  summary: Fired when an overlay legend sits on top of a line or point.
   docs_topic: charts

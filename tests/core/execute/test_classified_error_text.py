@@ -17,7 +17,10 @@ SNOWFLAKE_MISSING = (
 
 def test_snowflake_unknown_relation_says_a_missing_grant_looks_the_same() -> None:
     error = classify_warehouse_error(
-        "snowflake SQL execution", Exception(SNOWFLAKE_MISSING), "snowflake"
+        "snowflake SQL execution",
+        Exception(SNOWFLAKE_MISSING),
+        "snowflake",
+        source="wh",
     ).error
 
     assert error is not None
@@ -25,13 +28,17 @@ def test_snowflake_unknown_relation_says_a_missing_grant_looks_the_same() -> Non
         f"Warehouse could not find a table or view: {SNOWFLAKE_MISSING}. "
         "Check that the relation exists and the connection can read it. "
         "Snowflake reports a missing object and a missing grant identically, "
-        "so check the name and schema for a typo before asking for access."
+        "so check the name and schema for a typo before asking for access. "
+        "To list a table's real names, run `dct query wh --table <table>`."
     )
 
 
 def test_snowflake_note_keeps_the_warehouse_text_as_detail() -> None:
     error = classify_warehouse_error(
-        "snowflake SQL execution", Exception(SNOWFLAKE_MISSING), "snowflake"
+        "snowflake SQL execution",
+        Exception(SNOWFLAKE_MISSING),
+        "snowflake",
+        source="wh",
     ).error
 
     assert error is not None
@@ -43,11 +50,12 @@ def test_unknown_relation_on_another_warehouse_has_no_snowflake_note() -> None:
         "bigquery SQL execution",
         Exception("Not found: Table p:d.t was not found"),
         "bigquery",
+        source="wh",
     ).error
 
     assert error is not None
     assert "Snowflake" not in str(error)
-    assert str(error).endswith("the connection can read it.")
+    assert str(error).endswith("`dct query wh --table <table>`.")
 
 
 def test_duckdb_unknown_relation_text_is_unchanged(tmp_path: Path) -> None:
@@ -70,7 +78,7 @@ def test_duckdb_unknown_relation_text_is_unchanged(tmp_path: Path) -> None:
 
 def test_unclassified_rejection_uses_the_registry_words() -> None:
     error = classify_warehouse_error(
-        "bigquery SQL execution", Exception("boom"), "bigquery"
+        "bigquery SQL execution", Exception("boom"), "bigquery", source="wh"
     ).error
 
     assert error is not None

@@ -33,7 +33,13 @@ from dbt_charts.core.compile.models.constraints import (
     Forbids,
     ValueIn,
 )
-from dbt_charts.core.compile.models.markers import Channel, Color, DisplayText, Url
+from dbt_charts.core.compile.models.markers import (
+    Channel,
+    Color,
+    ColumnRef,
+    DisplayText,
+    Url,
+)
 from dbt_charts.core.compile.models.primitives import CHANNEL_COLUMN, ErrorHint, Link
 from dbt_charts.core.compile.models.query.authored import AuthoredQuery
 from dbt_charts.core.compile.models.refs import (
@@ -52,7 +58,6 @@ from ._annotations import (
     ChartSort,
     ChartTotal,
 )
-from ._conditional_formatting import FieldConditionalFormatting
 from ._support_table import (
     CHART_SUPPORT_TABLE_SUPPORTED_TYPES,
     ChartSupportTableOrList,
@@ -107,9 +112,9 @@ def _reject_numeric_link(
 # `palette: ["dbt-seq-blue"]` (inside a list a name is a stop, not a palette),
 # which dead-ended the author in a second, unrelated error. Validating a hint
 # does not establish that following it works.
-STATIC_COLOR_FIX = "  style:\n    color:\n      static: category[1]"
+STATIC_COLOR_FIX = "  style:\n    marks:\n      bar:\n        color: category[1]"
 # The author already chose a color; keep it. `{value}` is the rejected literal.
-STATIC_COLOR_LITERAL_FIX = "  style:\n    color:\n      static: '{value}'"
+STATIC_COLOR_LITERAL_FIX = "  style:\n    marks:\n      bar:\n        color: '{value}'"
 GRADIENT_COLOR_FIX = (
     "  style:\n    color:\n      gradient:\n        palette: dbt-seq-blue"
 )
@@ -119,7 +124,9 @@ ChartColorColumn = Annotated[
     StringConstraints(pattern=CHANNEL_COLUMN),
     ErrorHint(
         "chart.color is a data channel (bare field name only); a literal color "
-        "like '{value}' belongs in style:\n" + STATIC_COLOR_LITERAL_FIX
+        "like '{value}' belongs on the chart's mark (a bar chart's shown; a line's "
+        "is marks.line.stroke.color, a point's marks.point.color):\n"
+        + STATIC_COLOR_LITERAL_FIX
     ),
 ]
 
@@ -177,14 +184,14 @@ def _reject_color_dict(v: Any) -> Any:
             )
         if "when" in v:
             raise ValueError(
-                "Inline conditional no longer accepted at chart.color. This "
-                "family no longer supports rule-driven conditional_formatting; "
-                "for a data-driven fill use a gradient scale instead:\n"
+                "Inline conditional no longer accepted at chart.color. Rules "
+                "(`style.conditional`) restyle a table or KPI only; for a "
+                "data-driven fill here use a gradient scale instead:\n"
                 + GRADIENT_COLOR_FIX
             )
         raise ValueError(
             "chart.color only accepts a bare field name (string). "
-            "Use style.color for static paint or gradient scale."
+            "Use style.marks.<mark>.color for a constant color, or style.color.gradient for a scale."
         )
     return v
 
@@ -208,11 +215,11 @@ class MultiplesConfig(ConstrainedModel):
         ),
     )
 
-    rows: str | None = Field(
+    rows: ColumnRef | None = Field(
         default=None,
         description="Column whose distinct values become vertically stacked panel rows.",
     )
-    columns: str | None = Field(
+    columns: ColumnRef | None = Field(
         default=None,
         description="Column whose distinct values become side-by-side panel columns.",
     )
@@ -310,32 +317,6 @@ class _BaseChartFields(ConstrainedModel):
         Field(
             default=None,
             description="Codes of render warnings to suppress for this chart. Query-domain codes such as WARN-REAGGREGATION go in `queries.<name>.ignore` instead.",
-        ),
-    ]
-
-
-class _ConditionalFormattingField(BaseModel):
-    """Mixin adding conditional_formatting to the chart families that lower it.
-
-    Attached individually to table/kpi — the only families that honor the
-    full (table) or partial (kpi) rule-output set. Every other family's
-    `extra="forbid"` config makes authoring conditional_formatting on it a
-    parse-time ValidationError.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    conditional_formatting: Annotated[
-        dict[str, FieldConditionalFormatting] | None,
-        Field(
-            default=None,
-            description=(
-                "Discrete rule-driven style overrides indexed by column name. "
-                "Available on type: table and type: kpi only. On a KPI, rules "
-                "on the `support.value` column style the support row (font.color, "
-                "glyph, glyph_color, tone); rules on other columns style the "
-                "headline."
-            ),
         ),
     ]
 
@@ -447,7 +428,7 @@ class _CartesianChartFields(_SharedChartFields, _FieldLabelsField):
         Channel(),
         Field(
             default=None,
-            description="Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only; a literal color goes in `style.color.static`.",
+            description="Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only; a literal color goes on the chart's mark, e.g. `style.marks.bar.color`.",
         ),
     ]
     sort: Annotated[
@@ -594,7 +575,7 @@ class _GeoChartFields(_SharedChartFields, _FieldLabelsField):
         Channel(),
         Field(
             default=None,
-            description="Column carried on the color channel: fill for geoshape regions, hue for point-map points. Bare column name only; a literal color goes in `style.color.static`.",
+            description="Column carried on the color channel: fill for geoshape regions, hue for point-map points. Bare column name only; a literal color goes on `style.marks.geoshape.fill` (geoshape) or `style.marks.point.color` (point map).",
         ),
     ]
     geo: Annotated[
@@ -676,7 +657,7 @@ class _RadialChartFields(_SharedChartFields, _FieldLabelsField):
         Channel(),
         Field(
             default=None,
-            description="Column naming each wedge, giving it its own hue. Bare column name only; a literal color goes in `style.color.static`.",
+            description="Column naming each wedge, giving it its own hue. Bare column name only; a literal color goes on `style.marks.slice.color`.",
         ),
     ]
     total: Annotated[

@@ -22,7 +22,6 @@ fn table(columns: Value, rows: Vec<Value>) -> Payload {
             "columns": columns,
             "style": {"table": base_table_theme(), "title_font": resolved_title_font()},
             "pivot_columns": null,
-            "conditional_formatting": null,
         },
         "rows": rows,
         "width": 600.0,

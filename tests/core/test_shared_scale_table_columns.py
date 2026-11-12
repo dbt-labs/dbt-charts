@@ -26,7 +26,6 @@ from dbt_charts.core.fonts import DBT_SANS_TABULAR_FONT_FAMILY
 from dbt_charts.core.text.numeral_scale import (
     SuffixMode,
     column_digit_format,
-    tier_distance,
 )
 
 
@@ -225,21 +224,6 @@ class TestResolveSharedScaleForTableColumn:
                 for v in (2_658_969.0, 2_431_825.0, 631_289.0, 776_965.0, 14_769.0)
             ],
             fmt="currency",
-        )
-        assert scale is None
-
-    def test_value_far_below_the_shared_tier_refuses_the_whole_bake(self) -> None:
-        # 500 has no SI tier of its own at all (below even thousands) --
-        # more than one tier below the M tier the other two rows share.
-        # Deriving precision from a value this far below the majority would
-        # force every OTHER row in the column to inherit far more decimal
-        # places than the format's own significant-figure count asks for
-        # (three sig figs requested, seven delivered, because of one
-        # far-below-tier straggler) -- see TestSubTierPrecisionAndRefusal
-        # for the case genuinely close enough (one tier below) to accommodate
-        # with a few extra decimals instead of refusing.
-        scale = self._resolve(
-            [{"amount": 500.0}, {"amount": 3_500_000.0}, {"amount": 4_200_000.0}]
         )
         assert scale is None
 
@@ -443,129 +427,6 @@ class TestSharedScaleAnchorsRender:
         assert svg.count(">M</tspan>") == 3, (
             f"Every nonzero row carries the magnitude suffix; got: {svg}"
         )
-
-
-class TestSubTierPrecisionAndRefusal:
-    """Round-2 review regressions: precision derivation and the zero-refusal
-    guard must hold for values genuinely below the column's shared tier, not
-    just for the "renders as literal 0" case round 1 caught.
-    """
-
-    def _resolve(self, rows: list[dict[str, Any]], fmt: str = "number"):
-        columns = {"amount": TableColumnConfig(format=fmt)}
-        resolved = _with_resolved_scale_stops(
-            columns,
-            text_color=None,
-            canvas_tone="light",
-            formats=None,
-            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
-            rows=rows,
-            allow_shared_scale=True,
-            own_formats={n: c.format for n, c in (columns or {}).items()},
-            defaults_format=None,
-            declared=None,
-            filter_variables=frozenset(),
-            link_open="page",
-        )
-        assert resolved is not None
-        return resolved["amount"].shared_scale
-
-    def test_distinct_sub_tier_values_never_collapse_to_the_same_string(self) -> None:
-        # Two rows both below the M tier but at different magnitudes must
-        # not paint identically -- _integer_digit_count floors at 1 for any
-        # value < 1, so a naive precision derivation gives both rows the
-        # same (too-shallow) decimal depth regardless of how far below the
-        # tier they sit.
-        rows = [
-            {"amount": v}
-            for v in (10_000, 14_900, 10_001, 2_000_000, 3_000_000, 4_000_000)
-        ]
-        scale = self._resolve(rows)
-        assert scale is not None
-        magnitude = 10.0**scale.exponent
-        formatted_10000 = _d3_format(scale.digit_spec)(10_000 / magnitude)
-        formatted_14900 = _d3_format(scale.digit_spec)(14_900 / magnitude)
-        assert formatted_10000 != formatted_14900, (
-            f"10,000 and 14,900 must render distinguishably, both got "
-            f"{formatted_10000!r}"
-        )
-
-    def test_extremely_low_sig_figs_spec_refuses_when_precision_cannot_help(
-        self,
-    ) -> None:
-        # An author-authored 0-significant-figure spec (`.0~s`) leaves no
-        # decimal precision to lean on: the finest value's own decimal
-        # exponent can still land the computed precision at exactly the
-        # rounding boundary, where a sub-tier row renders with no nonzero
-        # digit at all -- distinguishable from every other refusal case
-        # covered above, which precision alone resolves.
-        scale = self._resolve(
-            [{"amount": v} for v in (300_000.0, 3_500_000.0, 4_200_000.0)], fmt=".0~s"
-        )
-        assert scale is None
-
-    def test_far_outlier_refuses_rather_than_inflate_precision_for_everyone(
-        self,
-    ) -> None:
-        # Round-3 regression: an unbounded precision derivation let one
-        # far-below-tier straggler force every OTHER row in the column to
-        # inherit far more decimal places than the format's own
-        # significant-figure count ever asked for (three sig figs
-        # requested, seven delivered). Refusing the whole bake when the
-        # finest value sits more than one tier below the majority protects
-        # the normal rows' own precision contract.
-        scale = self._resolve(
-            [{"amount": v} for v in (500.0, 3_456_789.0, 4_234_567.0)]
-        )
-        assert scale is None
-
-    def test_far_outlier_refuses_even_when_it_is_not_the_smallest_by_much(
-        self,
-    ) -> None:
-        scale = self._resolve(
-            [{"amount": v} for v in (5_000_000.0, 6_000_000.0, 7_000_000.0, 0.001)]
-        )
-        assert scale is None
-
-    def test_one_tier_below_still_gets_a_bounded_precision(self) -> None:
-        # The boundary this task must not over-correct past: a value ONE
-        # tier below the majority (thousands inside a millions column)
-        # legitimately needs a few extra decimals and must still resolve,
-        # not refuse -- distinguishing it from the far-outlier cases above.
-        scale = self._resolve(
-            [{"amount": v} for v in (10_000.0, 3_500_000.0, 4_200_000.0)]
-        )
-        assert scale is not None
-        assert _d3_parse(scale.digit_spec).precision <= 5
-
-    def test_signed_low_sig_figs_spec_still_refuses(self) -> None:
-        # A `+`-signed digit_spec formats a rounded-to-zero value as "+0",
-        # not "0" -- the refusal check must key on digit content, not a
-        # fixed glyph set, or a signed spec silently bypasses the guard.
-        scale = self._resolve(
-            [{"amount": v} for v in (300_000.0, 3_500_000.0, 4_200_000.0)], fmt="+.0~s"
-        )
-        assert scale is None
-
-
-class TestTierDistance:
-    """tier_distance: the pure predicate the sub-tier refusal gate is built on."""
-
-    def test_same_tier_is_zero(self) -> None:
-        assert tier_distance(3_500_000, 6) == 0
-
-    def test_one_tier_below_is_one(self) -> None:
-        assert tier_distance(10_000, 6) == 1
-
-    def test_three_tiers_below_is_three(self) -> None:
-        # k(3) -> M(6) -> B(9) -> T(12): three steps apart.
-        assert tier_distance(10_000, 12) == 3
-
-    def test_below_every_tier_is_none(self) -> None:
-        assert tier_distance(500, 6) is None
-
-    def test_zero_has_no_tier(self) -> None:
-        assert tier_distance(0, 6) is None
 
 
 class TestPadTableCappedAtObservedDepth:
@@ -902,7 +763,7 @@ class TestUnformattedColumnThatDoesNotCompact:
 @pytest.mark.parametrize(
     ("rows", "precision"),
     [
-        ([(858.5, 1437.5), (1137.5, 1300.5)], 3),
+        ([(858.5, 1437.5), (1137.5, 1300.5)], 2),
         ([(1500.5, 150000.5), (2314.0, 160250.0), (130000.5, 170000.5)], 2),
         ([(120000.5, 150000.5), (125000.5, 160000.5)], 0),
     ],
@@ -931,3 +792,77 @@ def test_sibling_columns_on_one_scale_bake_the_largest_precision_they_need(
     }
     assert set(specs) == {"a", "b"}
     assert {_d3_parse(s).precision for s in specs.values()} == {precision}
+
+
+class TestMajorityTierPrecision:
+    """Decimals come from the smallest value at or above the shared unit, so a
+    straggler a tier below never deepens the column; it prints at the column's
+    grid, or as `<step` when the grid cannot show it.
+    """
+
+    def _cells(self, values: list[float], fmt: str = "number") -> list[str]:
+        columns = {"amount": TableColumnConfig(format=fmt)}
+        resolved = _with_resolved_scale_stops(
+            columns,
+            text_color=None,
+            canvas_tone="light",
+            formats=None,
+            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
+            rows=[{"amount": v} for v in values],
+            allow_shared_scale=True,
+            own_formats={"amount": fmt},
+            defaults_format=None,
+            declared=None,
+            filter_variables=frozenset(),
+            link_open="page",
+        )
+        assert resolved is not None
+        scale = resolved["amount"].shared_scale
+        assert scale is not None
+        return [
+            "".join(format_kpi_parts(v, fmt, shared_scale=scale)).replace(" ", "")
+            for v in values
+        ]
+
+    def test_a_straggler_one_tier_below_prints_on_the_majority_grid(self) -> None:
+        cells = self._cells([825_072_000, 99_917_920, 1_277_430, 15_670])
+        assert cells == ["825.07M", "99.92M", "1.28M", "0.02M"]
+
+    def test_three_integer_digit_majority_prints_no_decimals(self) -> None:
+        cells = self._cells([825_000_000, 199_400_000, 100_600_000, 15_670])
+        assert cells == ["825M", "199M", "101M", "<1M"]
+
+    def test_a_row_too_small_for_the_grid_prints_the_smallest_step(self) -> None:
+        cells = self._cells([825_072_000, 99_917_920, 1_277_430, 4_000, 0, -4_000])
+        assert cells == ["825.07M", "99.92M", "1.28M", "<0.01M", "0", ">\u22120.01M"]
+
+    def test_a_floored_row_deepens_the_pad_table_to_the_grid(self) -> None:
+        columns = {"amount": TableColumnConfig(format="number")}
+        resolved = _with_resolved_scale_stops(
+            columns,
+            text_color=None,
+            canvas_tone="light",
+            formats=None,
+            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
+            rows=[{"amount": v} for v in (1_500_000, 99_000_000, 4_000)],
+            allow_shared_scale=True,
+            own_formats={"amount": "number"},
+            defaults_format=None,
+            declared=None,
+            filter_variables=frozenset(),
+            link_open="page",
+        )
+        assert resolved is not None
+        column = resolved["amount"]
+        assert column.shared_scale is not None
+        # 1.5 / 99 / "<0.01": the floor is as deep as the spec (2), so the
+        # table must cover two decimals, not the one 1.5 prints.
+        assert len(column.decimal_pad_table) == 4
+
+    def test_sub_thousand_rows_keep_the_column_unit(self) -> None:
+        cells = self._cells([440_000, 175_000, 10_900, 1_180, 545_000, 40, 0])
+        assert cells == ["440K", "175K", "10.9K", "1.18K", "545K", "0.04K", "0"]
+
+    def test_a_row_tiers_below_the_unit_floors_instead_of_dropping_it(self) -> None:
+        cells = self._cells([5_000_000, 6_000_000, 7_000_000, 5_000, 0.001])
+        assert cells == ["5M", "6M", "7M", "0.01M", "<0.01M"]

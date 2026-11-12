@@ -25,7 +25,7 @@ pub fn bind(id: &ChartId, chart: &SparkBarChart, style: &SparkBarChartStyle, boa
     let unmodeled = [
         (chart.shared.title.is_some() || chart.shared.subtitle.is_some(), "a spark_bar `title` or `subtitle`"),
         (chart.shared.base.link.is_some(), "a spark_bar `link`"),
-        (board.regional.is_some() || run.env.locale != "en-US", "a number locale other than en-US"),
+        (board.regional.is_some(), "a number locale other than en-US"),
     ];
     if let Some((_, what)) = unmodeled.iter().find(|(set, _)| *set) {
         return Err(Diagnostic::refused(refuse!("{what} is not supported")));
@@ -98,5 +98,5 @@ fn count_text(n: &serde_json::Number) -> Result<String, Diagnostic> {
         let f = n.as_f64().unwrap_or(0.0);
         if f.fract() == 0.0 { Ok(format!("{}", f as i64)) } else { d3rs::format::format(locale, ",.1f", f) }
     };
-    text.map_err(|e| diag::err_internal(e))
+    text.map_err(diag::err_internal)
 }

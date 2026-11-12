@@ -10,16 +10,17 @@ use board_model::style::axis::{
     AxisTicksStylePatch, BaseAxisStyle, BaseAxisStylePatch,
 };
 use board_model::style::font::{FontSlant, LetterCase, TextDecoration};
+use board_model::style::charts::ChartsStyle;
 use board_model::style::style::Style;
 use diagnostic::{diag, refuse, Diagnostic};
 use display_text::font::family_is_tabular;
 use model_core::{DropNulls, Engine, Patch, Resolved, SetLeaves, Tri};
 
 use super::axis::{AxisLadder, AxisName, AxisRung, TicksShown};
-use crate::channel_type::ChannelType;
+use crate::column_kind::ChannelType;
 use crate::families::cartesian::unsupported;
 use crate::walk::sparse;
-use crate::bound::{AxisStyle, Side, Face, Labels, Line, Ticks, Title};
+use crate::bound::{AxisStyle, Side, Face, Labels, Line, Ticks, TimeLabelStyle, Title};
 
 /// The leaves of the x axis that act only on a time axis. Every theme sets them, so a rung may
 /// hold them only at the theme's value; `time_unit` may hold `none`, the one value
@@ -184,7 +185,8 @@ impl AxisRung<'_> {
 impl AxisLadder<'_> {
     /// Where the axis sits: `position` off the highest rung that sets it. A y axis' `auto` flips
     /// to the right for endpoint labels, which no ported family draws, and where the family has no
-    /// rail to yield the right side to (`y_auto_right`, a scatter: `bake_ay_position_right`).
+    /// rail to yield the right side to (`y_auto_right`, a scatter or a line:
+    /// `bake_ay_position_right`).
     fn side(&self, y_auto_right: bool) -> Side {
         match self.axis {
             AxisName::X => {
@@ -271,8 +273,24 @@ impl AxisLadder<'_> {
             (AxisName::X, Some(TicksShown::Auto)) => Some(self.grid_visible() != Some(true) || caps_bottom),
             _ => None,
         };
-        parts_of(&resolved.total.charts.axis, self.side(y_auto_right), family, ticks_drawn, labeled)
+        let mut parts = parts_of(&resolved.total.charts.axis, self.side(y_auto_right), family, ticks_drawn, labeled)?;
+        if self.axis == AxisName::X && self.channel == ChannelType::Temporal {
+            parts.time = Some(time_label_style(&resolved.total.charts)?);
+        }
+        Ok(parts)
     }
+}
+
+/// How a time axis crowds its labels: the walked `labels.overlap` switches and the theme's tilt
+/// ladder (`labels.tilt_increments`, which no rung may move off the theme's value) and usable ratio.
+fn time_label_style(charts: &ChartsStyle) -> Result<TimeLabelStyle, Diagnostic> {
+    let overlap = &charts.axis.labels.overlap;
+    let tilt = match (overlap.tilt, charts.axis_x.labels.tilt_increments.as_ref()) {
+        (true, Tri::Value(angles)) => Some(angles.0.clone()),
+        (true, _) => return Err(diag::err_internal("`labels.overlap.tilt` is on but the theme leaves `labels.tilt_increments` unset")),
+        (false, _) => None,
+    };
+    Ok(TimeLabelStyle { skip: overlap.skip, tilt, usable_ratio: charts.label_usable_ratio })
 }
 
 fn lay(scope: &Resolved<Style>, axis: Patch<BaseAxisStyle>) -> Result<Resolved<Style>, Diagnostic> {
@@ -320,6 +338,7 @@ fn parts_of(axis: &BaseAxisStyle, side: Side, family: &str, ticks_drawn: Option<
             opacity: grid.opacity,
             dash: grid.dash.clone(),
         }),
+        threshold: grid.threshold.visible.then(|| line(&grid.threshold.color, grid.threshold.width)),
         domain: axis.line.visible.then(|| line(&axis.line.color, axis.line.width)),
         ticks: ticks_drawn.unwrap_or(ticks.visible).then(|| Ticks {
             line: line(&ticks.rest.color, ticks.rest.width),
@@ -354,5 +373,6 @@ fn parts_of(axis: &BaseAxisStyle, side: Side, family: &str, ticks_drawn: Option<
                 })
             })
             .transpose()?,
+        time: None,
     })
 }

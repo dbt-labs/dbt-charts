@@ -10,6 +10,7 @@ from dbt_charts.core.compile.models.style.theme import (
     TotalStyle,
     TotalValueSlotStyle,
 )
+from dbt_charts.core.compile.models.style.theme.pie import PieConditionalRule
 
 
 class ResolvedTotalValueSlot(TotalValueSlotStyle):
@@ -32,11 +33,21 @@ class ResolvedPieStyle(BaseModel):
     inner_radius: float = Field(
         description="Hole-to-disk ratio 0–1; 0.0 renders a full (solid) pie.",
     )
+    single_series_fill: str = Field(
+        description="The wedge fill when no color channel is bound: the slice mark's authored color, else the palette's first color.",
+    )
     slice_mark: SliceMarkStyle = Field(
         description="Cascade-merged slice mark geometry (opacity, corner radius, labels).",
     )
     tooltip_format: ResolvedFormat = Field(
         description="Resolved d3 tooltip number format ('' = VL default).",
+    )
+    conditional: dict[str, list[PieConditionalRule]] | None = Field(
+        default=None,
+        description=(
+            "The chart's per-slice rules keyed by column, color tokens resolved. "
+            "The renderer evaluates them against each slice's row."
+        ),
     )
     total_style: ResolvedTotalStyle = Field(
         description="Donut center total paint: value number (font + resolved format) and caption label (font).",

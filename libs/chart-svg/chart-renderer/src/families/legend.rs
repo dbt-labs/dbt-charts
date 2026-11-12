@@ -766,6 +766,20 @@ pub fn legend_overlay_origin(position: &LegendPosition, plot: (f64, f64), size: 
     }
 }
 
+/// `WARN-LEGEND-OVERLAY-COVERS-MARKS` when a floating legend's drawn box
+/// (`origin` and `size`, in the frame of `plot`) meets a stroked line or a
+/// point among the plot's marks; a filled area is no mark the legend hides.
+/// It reports and moves nothing.
+pub(crate) fn warn_overlay_legend_covers_marks(chart_id: &str, position: &LegendPosition, plot: &[Node], origin: (f64, f64), size: (f64, f64)) {
+    if !position.overlay {
+        return;
+    }
+    let legend = crate::vega_fit::Bounds::new(origin.0, origin.1, origin.0 + size.0, origin.1 + size.1);
+    if crate::annotation::DataMark::plot_marks(plot).iter().any(|mark| mark.hidden_by(&legend)) {
+        diagnostic::warn(diagnostic::diag::warn_legend_overlay_covers_marks(chart_id));
+    }
+}
+
 /// The ink a reserved legend at `origin` (its group's top-left, in plot
 /// coordinates) with `size` (box w, h) adds to the autosize-fit view bounds:
 /// only its own axis, one point per edge — `ViewLayout.js:127-129` unions a

@@ -80,6 +80,9 @@ pub(super) struct LabelPoint {
     /// The label's ink box, plot-relative: what the text node carries as its measured box.
     /// `None` in a genuine-zero layer that labels nothing at this size.
     pub(super) ink: Option<vega_fit::Bounds>,
+    /// A conditional rule's font color and weight for this label.
+    pub(super) font_color: Option<String>,
+    pub(super) font_weight: Option<String>,
 }
 
 /// A ranged bar's label under `top` (`_build_bar_span_text_layer`). A row that
@@ -202,6 +205,11 @@ impl LabelSpec {
 pub(super) struct LabelDecor {
     pub(super) aria: Option<String>,
     pub(super) fill: Option<String>,
+    /// A conditional rule's `marks.text.font` for this bar's label.
+    pub(super) color: Option<String>,
+    pub(super) weight: Option<String>,
+    /// The label keeps the aria it would have without a decor: this decor only carries paint.
+    pub(super) paint_only: bool,
 }
 
 pub(super) type LabelDecors = HashMap<(String, String), LabelDecor>;
@@ -794,8 +802,10 @@ impl LabelLayer {
             let Some(place) = self.place(site, width, geom, hide) else { continue };
             let ink = (!silent).then(|| self.ink_of(site, width, &place));
             let LabelPlace { center, extent, blank, side } = place;
-            let (aria, series_fill) = match decors.get(&site.key) {
-                Some(d) => (d.aria.clone(), d.fill.clone()),
+            let decor = decors.get(&site.key);
+            let (aria, series_fill) = match decor {
+                Some(d) if !d.paint_only => (d.aria.clone(), d.fill.clone()),
+                Some(d) => (plain_aria(site)?, d.fill.clone()),
                 None => (plain_aria(site)?, None),
             };
             points.push(LabelPoint {
@@ -810,6 +820,8 @@ impl LabelLayer {
                 href: site.href.clone(),
                 recede: selection.recede_of(site.href.as_deref()),
                 ink,
+                font_color: decor.and_then(|d| d.color.clone()),
+                font_weight: decor.and_then(|d| d.weight.clone()),
             });
         }
         Ok(points)
@@ -1135,9 +1147,9 @@ pub(super) fn mark_labels(
     let stamped = points.iter().any(|p| p.aria.is_some());
     let mut labels = Vec::new();
     for point in points {
-        let LabelPoint { center, extent, ref aria, ref series_fill, blank, side, span, ref text, ref href, recede, ink } = *point;
+        let LabelPoint { center, extent, ref aria, ref series_fill, blank, side, span, ref text, ref href, recede, ink, ref font_color, ref font_weight } = *point;
         let anchor = link_open.anchor(href.as_deref()).map(|anchor| crate::href::Anchor { recede, ..anchor });
-        let color = style.font.color.as_deref().unwrap_or(if style.inside_bar && !matches!(side, Some(LabelSide::Out(_) | LabelSide::Bare)) {
+        let color = font_color.as_deref().or(style.font.color.as_deref()).unwrap_or(if style.inside_bar && !matches!(side, Some(LabelSide::Out(_) | LabelSide::Bare)) {
             canvas
         } else {
             series_fill.as_deref().unwrap_or("#313233")
@@ -1148,7 +1160,7 @@ pub(super) fn mark_labels(
             .set("text-anchor", spot.anchor)
             .vega("font-family", style.font.family.as_str())
             .num("font-size", style.font.size)
-            .set("font-weight", style.font.weight.as_str())
+            .set("font-weight", font_weight.as_deref().unwrap_or(style.font.weight.as_str()))
             .set_if(style.font_style.is_some(), "font-style", style.font_style.clone().unwrap_or_default())
             .set("fill", color)
             .extend(::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::TextMark)?);

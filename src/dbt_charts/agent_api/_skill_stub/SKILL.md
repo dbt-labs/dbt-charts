@@ -14,7 +14,8 @@ Before your first board edit in a session, run `dct skills chart` and follow
 it: it is the board grammar and how to check a board. If `dct` is missing,
 `uv tool install dbt-charts`.
 
-Other skills, only when the task is one (`dct skills <name>`): `styling` (a
-look change), `report-design` (a written report), `custom-chart-build` (a shape
-no chart type draws), `board-migrate` (a Looker, Sigma, Hex or Omni dashboard,
-or a screenshot), `cloud-setup`, `mcp-setup`.
+Other skills, only when the task is one (`dct skills <name>`): `board-layout`
+(laying out a board), `styling` (a look change), `report-design` (a written
+report), `custom-chart-build` (a shape no chart type draws),
+`board-migrate` (a Looker, Sigma, Hex or Omni dashboard, or a screenshot),
+`cloud-setup`, `mcp-setup`.

@@ -1,0 +1,3 @@
+kind: Features
+body: 'input: radio now draws every option as a row of buttons, and style.variables.presets_display: buttons does the same for a daterange''s presets.'
+time: 2026-10-29T23:21:51.561145-07:00

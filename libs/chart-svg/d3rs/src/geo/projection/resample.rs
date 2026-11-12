@@ -2,6 +2,8 @@
 //! segment until the projected midpoint is within `sqrt(delta2)` of the straight line, the midpoint is not
 //! near an end, and the angular distance is under 30 degrees, to a depth of 16.
 
+use crate::invariant;
+
 use std::sync::LazyLock;
 
 use crate::geo::cartesian::cartesian;
@@ -202,6 +204,6 @@ impl<P: Fn(f64, f64) -> [f64; 2], S: GeoStream> GeoStream for Resample<P, S> {
     }
 
     fn sphere(&mut self) {
-        unreachable!("d3's resampleStream has no sphere: the pre-clip stage consumes it");
+        invariant::broken("d3's resampleStream has no sphere: the pre-clip stage consumes it");
     }
 }

@@ -644,23 +644,6 @@ def test_an_automatic_link_reaches_a_shorthand_chart(
     assert render("") == twin
 
 
-def test_a_kpi_good_check_runs_on_the_bound_value() -> None:
-    board = _board(
-        {
-            "type": "kpi",
-            "good": "up",
-            "conditional_formatting": {
-                "revenue": {"when": [{"default": True, "background": "red"}]}
-            },
-        },
-        ["revenue"],
-        [[10]],
-    )
-    result = render_board_svg_result(board)
-    assert len(result.chart_errors) == 1
-    assert "default: true" in result.chart_errors[0].message
-
-
 def test_a_heatmap_placeholder_binds_x_to_its_columns(make_chart) -> None:
     chart = make_chart("heatmap", x=None, y=None)
     rows = generate_placeholder_data("heatmap", chart).rows

@@ -792,6 +792,37 @@
     stroke: var(--dbt-system-accent, #667eea);
 }
 
+{# A button row is laid out at rest but hidden, with the selected value in its
+   place. Binding swaps them; opacity moves nothing. #}
+.dbt-interactive [data-dbt-buttons] {
+    opacity: 1;
+}
+
+.dbt-interactive [data-dbt-buttons-value] {
+    opacity: 0;
+}
+
+.dbt-interactive [data-dbt-segment] {
+    cursor: pointer;
+    outline: none;
+}
+
+.dbt-interactive [data-dbt-segment]:not([href]) {
+    cursor: default;
+}
+
+{# The focus ring is its own inset box drawn over the segment, in the accent
+   ink; on a segment the theme fills solid (data-dbt-inverse) the accent can be
+   the fill itself, so the ring takes the canvas color there. #}
+.dbt-interactive [data-dbt-segment]:focus-visible > [data-dbt-segment-ring] {
+    stroke: var(--dbt-system-accent, #667eea);
+    stroke-width: 2;
+}
+
+.dbt-interactive [data-dbt-segment][data-dbt-inverse]:focus-visible > [data-dbt-segment-ring] {
+    stroke: var(--dbt-system-background, #ffffff);
+}
+
 {# A gated-off control gets no handlers and no tab stop, so it must not offer a
    pointer either — the cursor would undercut the dimming and promise a click
    that does nothing. #}
@@ -836,6 +867,16 @@
    control. #}
 .dbt-interactive [data-dbt-ornament="slider-thumb"] {
     pointer-events: none;
+}
+
+{# The value a hovered or dragged slider would pick; its look is the
+   board's tooltip style, set by the runtime. #}
+.dbt-slider-tip {
+    position: fixed;
+    z-index: 10000;
+    pointer-events: none;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
 
 {# Footer attribution link. The fill and the heavier weight are inline

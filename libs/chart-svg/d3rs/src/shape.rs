@@ -10,6 +10,7 @@
 //! - https://github.com/d3/d3-shape/blob/main/src/curve/natural.js
 //! - https://github.com/d3/d3-shape/blob/main/src/curve/cardinal.js
 
+use crate::invariant::{at, at_mut};
 use crate::path::{Command, Path};
 
 /// `linkHorizontal()({source, target})` (link.js over curve/bump.js's
@@ -145,6 +146,174 @@ pub fn stacked_area_path_horizontal(runs: &[Vec<(f64, f64, f64)>], curve: Curve)
     path.into_commands()
 }
 
+/// A run's curve, computed over the WHOLE run and kept cut at its points: `pieces[k]` is what
+/// the curve draws from point `k` to point `k + 1`. Drawing any span of segments from these is
+/// the unstyled curve's own geometry for that span, which re-running the curve on the span's
+/// points would not give for a spline (`natural`, `monotone` and `cardinal` read their
+/// neighbors).
+#[derive(Debug)]
+pub struct LineSegments {
+    points: Vec<(f64, f64)>,
+    pieces: Vec<Vec<Command>>,
+}
+
+impl LineSegments {
+    /// The number of segments: one fewer than the points.
+    pub fn segments(&self) -> usize {
+        self.pieces.len()
+    }
+
+    /// The curve from point `from` to point `to`, as one open subpath.
+    pub fn path(&self, from: usize, to: usize) -> Result<Vec<Command>, String> {
+        let (Some(&(x, y)), Some(pieces)) = (self.points.get(from), self.pieces.get(from..to)) else {
+            return Err(outside(from, to, self.segments()));
+        };
+        let mut commands = vec![Command::MoveTo(x, y)];
+        commands.extend(pieces.iter().flatten().copied());
+        Ok(commands)
+    }
+}
+
+fn outside(from: usize, to: usize, segments: usize) -> String {
+    format!("segments {from}..{to} are outside a run of {segments} segments")
+}
+
+/// The curve `curve` draws through `run`, cut at its points. `Basis` is an error: a B-spline
+/// does not pass through its points, so there is no point to cut at. So is a repeated point
+/// under a spline, which d3 drops and which would shift every later segment.
+pub fn line_segments(run: &[(f64, f64)], curve: Curve) -> Result<LineSegments, String> {
+    Ok(LineSegments { points: run.to_vec(), pieces: pieces_of(run, curve, Edge::Bare)? })
+}
+
+/// [`LineSegments`] for a filled area: each segment owns its top-edge piece and the matching
+/// piece of the bottom edge, which d3 walks back through the same curve (toggled for a step).
+#[derive(Debug)]
+pub struct AreaSegments {
+    top: LineSegments,
+    bottom: LineSegments,
+}
+
+impl AreaSegments {
+    /// The number of segments: one fewer than the points.
+    pub fn segments(&self) -> usize {
+        self.top.segments()
+    }
+
+    /// The area under segments `from..to`, as one closed subpath: top edge out, down at point
+    /// `to`, bottom edge back.
+    pub fn path(&self, from: usize, to: usize) -> Result<Vec<Command>, String> {
+        let mut commands = self.top.path(from, to)?;
+        let last = self.bottom.segments();
+        let (start, end) = (last.saturating_sub(to), last.saturating_sub(from));
+        let (Some(&(x, y)), Some(pieces)) = (self.bottom.points.get(start), self.bottom.pieces.get(start..end)) else {
+            return Err(outside(from, to, last));
+        };
+        commands.push(Command::LineTo(x, y));
+        commands.extend(pieces.iter().flatten().copied());
+        commands.push(Command::ClosePath);
+        Ok(commands)
+    }
+}
+
+impl AreaSegments {
+    /// The band's perimeter as open strokes, leaving out the top-edge segments `omit` names:
+    /// the top edge out, down at the last point, the bottom edge back, up at the first point.
+    /// Each maximal stretch of kept pieces is its own subpath, so the omitted segments can be
+    /// stroked in another style.
+    pub fn outline_without_top(&self, omit: impl Fn(usize) -> bool) -> Result<Vec<Command>, String> {
+        let (Some(&top_first), Some(&top_last), Some(&(bx, by)), Some(&bottom_last)) =
+            (self.top.points.first(), self.top.points.last(), self.bottom.points.first(), self.bottom.points.last())
+        else {
+            return Err("an empty run has no outline".into());
+        };
+        let mut items: Vec<((f64, f64), bool, Vec<Command>)> = Vec::new();
+        for (k, (&point, piece)) in self.top.points.iter().zip(&self.top.pieces).enumerate() {
+            items.push((point, !omit(k), piece.clone()));
+        }
+        items.push((top_last, true, vec![Command::LineTo(bx, by)]));
+        for (&point, piece) in self.bottom.points.iter().zip(&self.bottom.pieces) {
+            items.push((point, true, piece.clone()));
+        }
+        let (tx, ty) = top_first;
+        items.push((bottom_last, true, vec![Command::LineTo(tx, ty)]));
+        let mut commands = Vec::new();
+        let mut open = false;
+        for ((x, y), kept, piece) in items {
+            if !kept {
+                open = false;
+                continue;
+            }
+            if !open {
+                commands.push(Command::MoveTo(x, y));
+                open = true;
+            }
+            commands.extend(piece);
+        }
+        Ok(commands)
+    }
+}
+
+/// [`stacked_area_path`]'s run `(x, top, bottom)`, cut at its points. A flat-baseline area
+/// passes the same `bottom` for every point.
+pub fn area_segments(run: &[(f64, f64, f64)], curve: Curve) -> Result<AreaSegments, String> {
+    let top: Vec<(f64, f64)> = run.iter().map(|&(x, top, _)| (x, top)).collect();
+    let bottom: Vec<(f64, f64)> = run.iter().rev().map(|&(x, _, bottom)| (x, bottom)).collect();
+    let bottom_pieces = pieces_of(&bottom, curve.toggled_for_area_bottom(), Edge::AreaBottom)?;
+    Ok(AreaSegments {
+        top: LineSegments { pieces: pieces_of(&top, curve, Edge::AreaTop)?, points: top },
+        bottom: LineSegments { pieces: bottom_pieces, points: bottom },
+    })
+}
+
+/// One edge's pieces. A spline or a polyline draws exactly one command per segment after its
+/// opening one; a step's risers are written out per segment, with the centered step's flat run
+/// split at the point so each side belongs to its own segment.
+fn pieces_of(points: &[(f64, f64)], curve: Curve, edge: Edge) -> Result<Vec<Vec<Command>>, String> {
+    let segments = points.len().saturating_sub(1);
+    if let Some(t) = step_position(curve) {
+        return Ok(points.iter().zip(points.iter().skip(1)).map(|(&p, &q)| step_riser(p, q, t)).collect());
+    }
+    if curve == Curve::Basis {
+        return Err("curve basis does not pass through its points".into());
+    }
+    let mut path = Path::new();
+    append_edge(&mut path, points, curve, edge);
+    let mut commands = path.into_commands();
+    if edge == Edge::AreaBottom {
+        commands.pop_if(|command| *command == Command::ClosePath);
+    }
+    if segments == 0 {
+        return Ok(Vec::new());
+    }
+    if commands.len() != segments + 1 {
+        return Err(format!("a run of {} points drew {} commands: it repeats a point", points.len(), commands.len()));
+    }
+    Ok(commands.iter().skip(1).map(|&command| vec![command]).collect())
+}
+
+fn step_position(curve: Curve) -> Option<f64> {
+    match curve {
+        Curve::Step => Some(0.5),
+        Curve::StepBefore => Some(0.0),
+        Curve::StepAfter => Some(1.0),
+        _ => None,
+    }
+}
+
+/// [`step_edge`]'s commands for the segment from `p` to `q`, plus, for a centered step, the
+/// flat run on to `q` that d3 draws at the next point or at `lineEnd`.
+fn step_riser((px, py): (f64, f64), (qx, qy): (f64, f64), t: f64) -> Vec<Command> {
+    if t <= 0.0 {
+        return vec![Command::LineTo(px, qy), Command::LineTo(qx, qy)];
+    }
+    let x1 = px * (1.0 - t) + qx * t;
+    let mut piece = vec![Command::LineTo(x1, py), Command::LineTo(x1, qy)];
+    if t < 1.0 {
+        piece.push(Command::LineTo(qx, qy));
+    }
+    piece
+}
+
 /// Run one `lineStart … point* … lineEnd` cycle of `curve` over `points`.
 fn append_edge(path: &mut Path, points: &[(f64, f64)], curve: Curve, edge: Edge) {
     let drawn = match curve {
@@ -277,29 +446,29 @@ fn basis_edge(path: &mut Path, points: &[(f64, f64)], edge: Edge) -> usize {
 fn natural_control_points(x: &[f64]) -> (Vec<f64>, Vec<f64>) {
     let n = x.len() - 1;
     let (mut a, mut b, mut r) = (vec![0.0; n], vec![0.0; n], vec![0.0; n]);
-    a[0] = 0.0;
-    b[0] = 2.0;
-    r[0] = x[0] + 2.0 * x[1];
+    *at_mut(&mut a, 0) = 0.0;
+    *at_mut(&mut b, 0) = 2.0;
+    *at_mut(&mut r, 0) = *at(x, 0) + 2.0 * *at(x, 1);
     for i in 1..n.saturating_sub(1) {
-        a[i] = 1.0;
-        b[i] = 4.0;
-        r[i] = 4.0 * x[i] + 2.0 * x[i + 1];
+        *at_mut(&mut a, i) = 1.0;
+        *at_mut(&mut b, i) = 4.0;
+        *at_mut(&mut r, i) = 4.0 * *at(x, i) + 2.0 * *at(x, i + 1);
     }
-    a[n - 1] = 2.0;
-    b[n - 1] = 7.0;
-    r[n - 1] = 8.0 * x[n - 1] + x[n];
+    *at_mut(&mut a, n - 1) = 2.0;
+    *at_mut(&mut b, n - 1) = 7.0;
+    *at_mut(&mut r, n - 1) = 8.0 * *at(x, n - 1) + *at(x, n);
     for i in 1..n {
-        let m = a[i] / b[i - 1];
-        b[i] -= m;
-        r[i] -= m * r[i - 1];
+        let m = *at(&a, i) / *at(&b, i - 1);
+        *at_mut(&mut b, i) -= m;
+        *at_mut(&mut r, i) -= m * *at(&r, i - 1);
     }
-    a[n - 1] = r[n - 1] / b[n - 1];
+    *at_mut(&mut a, n - 1) = *at(&r, n - 1) / *at(&b, n - 1);
     for i in (0..n.saturating_sub(1)).rev() {
-        a[i] = (r[i] - a[i + 1]) / b[i];
+        *at_mut(&mut a, i) = (*at(&r, i) - *at(&a, i + 1)) / *at(&b, i);
     }
-    b[n - 1] = (x[n] + a[n - 1]) / 2.0;
+    *at_mut(&mut b, n - 1) = (*at(x, n) + *at(&a, n - 1)) / 2.0;
     for i in 0..n.saturating_sub(1) {
-        b[i] = 2.0 * x[i + 1] - a[i + 1];
+        *at_mut(&mut b, i) = 2.0 * *at(x, i + 1) - *at(&a, i + 1);
     }
     (a, b)
 }
@@ -307,23 +476,34 @@ fn natural_control_points(x: &[f64]) -> (Vec<f64>, Vec<f64>) {
 /// d3's `curveNatural` (natural cubic spline), returning its point count.
 fn natural_edge(path: &mut Path, points: &[(f64, f64)], edge: Edge) -> usize {
     let n = points.len();
-    if n == 0 {
-        return 0;
-    }
-    let xs: Vec<f64> = points.iter().map(|p| p.0).collect();
-    let ys: Vec<f64> = points.iter().map(|p| p.1).collect();
+    let (Some(&(x_first, y_first)), Some(&(x_second, y_second))) = (points.first(), points.get(1)) else {
+        // One point: d3 draws only the start; no points: nothing.
+        return match points.first() {
+            Some(&(x, y)) => {
+                if edge == Edge::AreaBottom {
+                    path.line_to(x, y);
+                } else {
+                    path.move_to(x, y);
+                }
+                n
+            }
+            None => 0,
+        };
+    };
     if edge == Edge::AreaBottom {
-        path.line_to(xs[0], ys[0]);
+        path.line_to(x_first, y_first);
     } else {
-        path.move_to(xs[0], ys[0]);
+        path.move_to(x_first, y_first);
     }
     if n == 2 {
-        path.line_to(xs[1], ys[1]);
-    } else if n > 2 {
+        path.line_to(x_second, y_second);
+    } else {
+        let xs: Vec<f64> = points.iter().map(|p| p.0).collect();
+        let ys: Vec<f64> = points.iter().map(|p| p.1).collect();
         let (px0, px1) = natural_control_points(&xs);
         let (py0, py1) = natural_control_points(&ys);
         for i in 0..n - 1 {
-            path.bezier_curve_to(px0[i], py0[i], px1[i], py1[i], xs[i + 1], ys[i + 1]);
+            path.bezier_curve_to(*at(&px0, i), *at(&py0, i), *at(&px1, i), *at(&py1, i), *at(&xs, i + 1), *at(&ys, i + 1));
         }
     }
     n
@@ -480,7 +660,7 @@ fn js_min(a: f64, b: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::path::testing::assert_path;
+    use crate::path::testing::{assert_path, flatten, hausdorff};
     use crate::path::Command;
 
     /// One defined run — the shape both generators take.
@@ -539,6 +719,96 @@ mod tests {
     /// shortest area run reads `M833.043,244.55L833.043,335Z` and whose
     /// halo line reads `…M416.522,294.8ZM458.174,254.6Z…`, one closing `Z`
     /// per one-point run and none on the longer ones.
+    #[test]
+    fn the_segments_of_a_run_are_its_whole_curve() {
+        for curve in [Curve::Linear, Curve::MonotoneX, Curve::MonotoneY, Curve::Natural, Curve::Cardinal, Curve::StepBefore, Curve::StepAfter] {
+            let cut = line_segments(&ORACLE_PTS, curve).unwrap();
+            assert_eq!(cut.segments(), 6);
+            assert_eq!(cut.path(0, 6).unwrap(), line_path(&one_run(&ORACLE_PTS), curve), "{curve:?}");
+        }
+    }
+
+    #[test]
+    fn a_centered_step_is_cut_on_its_flat_runs_not_changed() {
+        let cut = line_segments(&ORACLE_PTS, Curve::Step).unwrap();
+        let whole = line_path(&one_run(&ORACLE_PTS), Curve::Step);
+        let drawn = flatten(&cut.path(0, 6).unwrap(), 1.0);
+        assert!(hausdorff(&drawn, &flatten(&whole, 1.0)) < 1e-9);
+    }
+
+    #[test]
+    fn spans_that_meet_at_a_point_stitch_into_the_whole_curve() {
+        for curve in [Curve::Linear, Curve::MonotoneX, Curve::Natural, Curve::Cardinal, Curve::Step, Curve::StepAfter] {
+            let cut = line_segments(&ORACLE_PTS, curve).unwrap();
+            let (left, right) = (cut.path(0, 2).unwrap(), cut.path(2, 6).unwrap());
+            let mut stitched = left.clone();
+            stitched.extend(right[1..].iter().cloned());
+            let want = flatten(&line_path(&one_run(&ORACLE_PTS), curve), 1.0);
+            assert!(hausdorff(&flatten(&stitched, 1.0), &want) < 1e-9, "{curve:?}");
+        }
+    }
+
+    #[test]
+    fn a_spline_span_keeps_the_tangents_the_whole_run_gave_it() {
+        let cut = line_segments(&ORACLE_PTS, Curve::MonotoneX).unwrap();
+        let alone = line_path(&one_run(&ORACLE_PTS[2..]), Curve::MonotoneX);
+        assert_ne!(cut.path(2, 6).unwrap(), alone);
+    }
+
+    #[test]
+    fn an_area_cut_across_its_whole_run_is_the_area() {
+        let run: Vec<(f64, f64, f64)> = ORACLE_PTS.iter().map(|&(x, y)| (x, y, 177.0)).collect();
+        for curve in [Curve::Linear, Curve::MonotoneX, Curve::Natural, Curve::Cardinal, Curve::StepBefore, Curve::StepAfter] {
+            let cut = area_segments(&run, curve).unwrap();
+            assert_eq!(cut.path(0, 6).unwrap(), stacked_area_path(std::slice::from_ref(&run), curve), "{curve:?}");
+        }
+        let cut = area_segments(&run, Curve::Step).unwrap();
+        let drawn = flatten(&cut.path(0, 6).unwrap(), 1.0);
+        assert!(hausdorff(&drawn, &flatten(&stacked_area_path(&[run], Curve::Step), 1.0)) < 1e-9);
+    }
+
+    #[test]
+    fn a_linear_area_span_is_the_area_of_its_points() {
+        let run: Vec<(f64, f64, f64)> = ORACLE_PTS.iter().map(|&(x, y)| (x, y, 177.0)).collect();
+        let cut = area_segments(&run, Curve::Linear).unwrap();
+        assert_eq!(cut.path(2, 5).unwrap(), stacked_area_path(&[run[2..=5].to_vec()], Curve::Linear));
+    }
+
+    #[test]
+    fn a_stacked_span_walks_the_bands_own_baseline_back() {
+        let run = vec![(0.0, 10.0, 20.0), (10.0, 12.0, 25.0), (20.0, 8.0, 22.0)];
+        let cut = area_segments(&run, Curve::Linear).unwrap();
+        assert_path(&cut.path(1, 2).unwrap(), "M10,12L20,8L20,22L10,25Z");
+    }
+
+    #[test]
+    fn a_band_outline_leaves_out_the_omitted_top_segments() {
+        let run = vec![(0.0, 1.0, 9.0), (1.0, 2.0, 9.0), (2.0, 3.0, 9.0)];
+        let cut = area_segments(&run, Curve::Linear).unwrap();
+        assert_path(&cut.outline_without_top(|k| k == 1).unwrap(), "M0,1L1,2M2,3L2,9L1,9L0,9L0,1");
+        assert_path(&cut.outline_without_top(|_| false).unwrap(), "M0,1L1,2L2,3L2,9L1,9L0,9L0,1");
+    }
+
+    #[test]
+    fn a_curve_that_misses_its_points_cannot_be_cut() {
+        assert!(line_segments(&ORACLE_PTS, Curve::Basis).unwrap_err().contains("basis"));
+        let run: Vec<(f64, f64, f64)> = ORACLE_PTS.iter().map(|&(x, y)| (x, y, 177.0)).collect();
+        assert!(area_segments(&run, Curve::Basis).is_err());
+    }
+
+    #[test]
+    fn a_repeated_point_under_a_spline_cannot_be_cut() {
+        let run = [(0.0, 1.0), (1.0, 2.0), (1.0, 2.0), (3.0, 1.0)];
+        assert!(line_segments(&run, Curve::MonotoneX).unwrap_err().contains("repeats a point"));
+        assert_eq!(line_segments(&run, Curve::Linear).unwrap().segments(), 3);
+    }
+
+    #[test]
+    fn a_lone_point_has_no_segment() {
+        assert_eq!(line_segments(&[(1.0, 2.0)], Curve::MonotoneX).unwrap().segments(), 0);
+        assert_eq!(line_segments(&[], Curve::Linear).unwrap().segments(), 0);
+    }
+
     #[test]
     fn each_defined_run_is_its_own_subpath() {
         let runs = vec![vec![(0.0, 1.0), (2.0, 3.0)], vec![(6.0, 7.0)]];
@@ -746,6 +1016,25 @@ mod tests {
     }
 
     const SPLINE_PTS: [(f64, f64); 3] = [(0.0, 0.0), (1.0, 2.0), (2.0, 0.0)];
+
+    /// No d3 fixture records `curveNatural` for three or more points, so pin the laws that define a natural cubic
+    /// spline: each segment is the Bezier through its two knots with the returned control points, the tangent and the
+    /// second derivative agree at every interior knot, and the second derivative is zero at both ends.
+    #[test]
+    fn natural_control_points_are_a_c2_spline_with_free_ends() {
+        for x in [vec![0.0, 1.0, 3.0], vec![0.0, 1.0, 3.0, 4.0, 7.0], vec![5.0, -2.0, 0.5, 0.5, 9.0, 11.0]] {
+            let (a, b) = natural_control_points(&x);
+            let n = a.len();
+            assert_eq!(n, x.len() - 1);
+            let close = |l: f64, r: f64| assert!((l - r).abs() < 1e-9, "{l} vs {r} for {x:?}");
+            close(x[0] - 2.0 * a[0] + b[0], 0.0);
+            close(a[n - 1] - 2.0 * b[n - 1] + x[n], 0.0);
+            for i in 0..n - 1 {
+                close(x[i + 1] - b[i], a[i + 1] - x[i + 1]);
+                close(a[i] - 2.0 * b[i] + x[i + 1], x[i + 1] - 2.0 * a[i + 1] + b[i + 1]);
+            }
+        }
+    }
 
     /// Two points are a plain segment under `natural`; a lone point closes.
     #[test]

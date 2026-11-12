@@ -94,7 +94,7 @@ from dbt_charts.core.compile.models.style.resolved.callout import (
 from dbt_charts.core.compile.models.style.resolved.geoshape import (
     ResolvedGeoshapeChartStyle,
     ResolvedGeoshapeStyle,
-    ResolvedStaticGradientColorStyle,
+    ResolvedGradientColorStyle,
 )
 from dbt_charts.core.compile.models.style.resolved.heatmap import ResolvedHeatmapStyle
 from dbt_charts.core.compile.models.style.resolved.kpi import ResolvedKpiStyle
@@ -166,7 +166,7 @@ __all__ = [
     "ResolvedColumnSharedScale",
     "ResolvedGeoshapeChartStyle",
     "ResolvedGeoshapeStyle",
-    "ResolvedStaticGradientColorStyle",
+    "ResolvedGradientColorStyle",
     "ResolvedHeatmapStyle",
     "ResolvedKpiStyle",
     "ResolvedLineStyle",

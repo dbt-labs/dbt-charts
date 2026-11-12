@@ -314,7 +314,9 @@ class TestSchemaFieldTypes:
     def test_annotated_strict_unwrapped(self) -> None:
         ir = introspect()
         is_null = next(
-            f for f in ir.models["ConditionalRule"].fields if f.name == "is_null"
+            f
+            for f in ir.models["KpiChartStyleConditional"].fields
+            if f.name == "is_null"
         )
         assert "strict=" not in is_null.type_repr
         assert is_null.type_repr == "bool | None"

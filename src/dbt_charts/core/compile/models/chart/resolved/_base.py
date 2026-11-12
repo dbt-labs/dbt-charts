@@ -26,7 +26,6 @@ from pydantic import (
 
 from dbt_charts.core.compile.models.chart.authored import (
     ChartSort,
-    FieldConditionalFormatting,
     MultiplesConfig,
 )
 from dbt_charts.core.compile.models.chart.resolved import (
@@ -60,8 +59,7 @@ from dbt_charts.core.compile.models.vega_lite.contracts import (
 class _BaseResolvedChartFields(BaseModel):
     """Universal fields on every resolved chart (except the minimal CalloutChart).
 
-    Mirrors compiled._BaseCompiledChartFields: notes, link,
-    conditional_formatting declared here once.
+    Mirrors compiled._BaseCompiledChartFields: notes and link declared here once.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -106,10 +104,6 @@ class _BaseResolvedChartFields(BaseModel):
     link_open: LinkOpen = Field(
         default="page",
         description="How a click on the chart link opens its target.",
-    )
-    conditional_formatting: dict[str, FieldConditionalFormatting] | None = Field(
-        default=None,
-        description="Conditional-formatting rules keyed by column name.",
     )
     # Shared-envelope fields projected from the style cascade.
     # The resolver bakes the style cascade internally, then projects into

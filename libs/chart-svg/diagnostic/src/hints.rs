@@ -15,7 +15,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 
 /// The codes whose generator is ported.
-pub const PORTED: [&str; 9] = [
+pub const PORTED: [&str; 12] = [
     "ERR-DBT-REF-UNKNOWN-NODE",
     "ERR-DBT-MODEL-COLUMN-MISSING",
     "ERR-DBT-SOURCE-UNKNOWN-TABLE",
@@ -23,8 +23,11 @@ pub const PORTED: [&str; 9] = [
     "ERR-UNKNOWN-QUERY",
     "ERR-UNRESOLVED-REFERENCE",
     "ERR-UNKNOWN-THEME",
+    "ERR-UNKNOWN-CHART",
     "ERR-EXTENDS-UNRESOLVED",
     "ERR-SOURCE-NOT-FOUND",
+    "ERR-FORMAT-INVALID",
+    "ERR-UNKNOWN-VARIABLE-OVERRIDE",
 ];
 
 /// Format names that were renamed: a successor in the pool beats a fuzzy match.
@@ -169,7 +172,7 @@ pub fn close_match_at<'a>(word: &str, candidates: &[&'a str], cutoff: f64) -> Op
 }
 
 /// `_suggest_close_match`: the candidates are stripped and blanks dropped.
-fn close_match(value: &str, available: &[String]) -> Option<String> {
+pub fn close_match(value: &str, available: &[String]) -> Option<String> {
     let candidates: Vec<&str> = available
         .iter()
         .map(|c| c.trim_matches(is_space))
@@ -246,6 +249,9 @@ pub fn generate(code: &str, params: &BTreeMap<&'static str, Value>) -> Option<St
             close_match(&name, &available)
         }
         "ERR-QUERY-FORMAT-UNKNOWN" => close_format(text(params, "spec")?, &available),
+        "ERR-FORMAT-INVALID" => close_format(text(params, "spec")?, &available),
+        "ERR-UNKNOWN-VARIABLE-OVERRIDE" => close_match(text(params, "variable")?, &available),
+        "ERR-UNKNOWN-CHART" => close_match(text(params, "chart")?, &available),
         "ERR-UNKNOWN-THEME" => close_match(text(params, "theme")?, &available),
         "ERR-EXTENDS-UNRESOLVED" => close_match(text(params, "entry")?, &available),
         "ERR-SOURCE-NOT-FOUND" => close_match(text(params, "source")?, &available),

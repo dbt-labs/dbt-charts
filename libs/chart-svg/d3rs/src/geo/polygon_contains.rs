@@ -1,8 +1,10 @@
 //! d3-geo 3.1.1 `src/polygonContains.js`.
 
+
 use super::cartesian::{cartesian, cartesian_cross, cartesian_normalize_in_place};
 use super::math::{asin, EPSILON, EPSILON2, HALF_PI, PI, QUARTER_PI, TAU};
 use crate::array::Adder;
+use crate::invariant::at;
 
 fn longitude(point: [f64; 2]) -> f64 {
     if point[0].abs() <= PI {
@@ -30,7 +32,7 @@ pub fn polygon_contains(polygon: &[Vec<[f64; 2]>], point: [f64; 2]) -> bool {
     }
 
     for ring in polygon {
-        let mut point0 = ring[ring.len() - 1];
+        let mut point0 = *at(ring, ring.len() - 1);
         let mut lambda0 = longitude(point0);
         let phi0 = point0[1] / 2.0 + QUARTER_PI;
         let mut sin_phi0 = libm::sin(phi0);

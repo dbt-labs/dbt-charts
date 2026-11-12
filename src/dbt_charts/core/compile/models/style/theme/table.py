@@ -13,10 +13,12 @@ if TYPE_CHECKING:
         PaginationConfig,
         TableColumnConfig,
         TableColumnDefaultsConfig,
+        TableRowRule,
     )
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
+from dbt_charts.core.compile.models.conditional_predicate import default_rule_last
 from dbt_charts.core.compile.models.constraints import (
     ConstrainedModel,
     Constraint,
@@ -26,7 +28,9 @@ from dbt_charts.core.compile.models.markers import (
     AUTO,
     Absent,
     AutoUnset,
+    ChartLocal,
     Color,
+    ColumnRef,
     Inherit,
     InheritSlot,
 )
@@ -35,8 +39,8 @@ from dbt_charts.core.compile.models.primitives import (
     CornerStyle,
     DividerStyle,
     FontStyle,
+    GradientColorStyle,
     SpacingValues,
-    StaticGradientColorStyle,
     StrokeStyle,
 )
 from dbt_charts.core.compile.models.style.theme._chart_base import (
@@ -172,6 +176,32 @@ class TableRowStyle(BaseModel):
     divider: TableDividerStyle = Field(description="Line under each body row.")
     roles: TableRowRolesStyle = Field(
         description="Per-role style overrides for summary and total rows."
+    )
+    # None = no row rules: only a chart's own style sets them, so no theme populates it.
+    conditional: Annotated[
+        dict[
+            str,
+            Annotated[
+                list[TableRowRule],
+                Field(min_length=1),
+                AfterValidator(default_rule_last),
+            ],
+        ]
+        | None,
+        ChartLocal(),
+    ] = Field(
+        default=None,
+        description=(
+            "Rules that restyle a row by any column's value, hidden ones "
+            "included. Keyed by column name. Each rule is one condition (eq, "
+            "ne, lt, lte, gt, gte, between, in, is_null, or default) plus the "
+            "background and font it gives every visible cell, or `columns` to "
+            "style named cells (also glyph, glyph_color and tone). Every matching "
+            "rule applies; where two set the same key the later one wins, so list "
+            "the more specific rule last. A `default: true` rule applies only when "
+            "no other rule matched. A cell's own `conditional` rules beat these; "
+            "`scale` paints over these on its own cells. Two columns cannot patch the same property."
+        ),
     )
 
 
@@ -324,7 +354,7 @@ class TableRowNumbersStyle(BaseModel):
     that displays the absolute 1-based row index in the original unpaginated
     dataset. Pagination is continuous: page 2 of a 10-per-page table starts
     at 11. The column is transparent to ``style.columns`` (not listed), to
-    conditional_formatting rules keyed by column name, and to data-pipeline
+    ``style.conditional`` rules keyed by column name, and to data-pipeline
     transforms — it exists only in the chart layer.
     """
 
@@ -462,13 +492,13 @@ class TableChartStyle(
     background: Annotated[str | None, Color()] = Field(
         default=None, description="Table background color; None inherits from theme."
     )
-    # Tables have no series axis — extra_forbidden via StaticGradientColorStyle
+    # Tables have no series axis — extra_forbidden via GradientColorStyle
     # (no categorical arm). Not an override: _ChartStyleBaseAllOptional carries
     # no color field (it lives on _PaintedChartStyleBase, which table does not
     # inherit), so this is a fresh field declaration.
-    color: StaticGradientColorStyle | None = Field(
+    color: GradientColorStyle | None = Field(
         default=None,
-        description="Table color: static text paint or gradient scale only (no categorical arm).",
+        description="Table color: gradient scale only (no categorical arm). Cell text color is `column_defaults.font.color`.",
     )
 
     outer_padding: float = Field(description="Outer table padding in pixels.")
@@ -509,7 +539,7 @@ class TableChartStyle(
         default=None,
         description="Table-level column defaults applied to every column; None means no defaults authored.",
     )
-    columns: dict[str, TableColumnConfig] | None = Field(
+    columns: dict[ColumnRef, TableColumnConfig] | None = Field(
         default=None,
         description="Per-column display configuration keyed by column name (label, format, width, etc.).",
     )

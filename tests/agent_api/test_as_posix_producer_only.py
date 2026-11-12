@@ -47,12 +47,12 @@ ALLOWED: dict[tuple[str, int], str] = {
         "_resolve_path_or_title(): no file has the caller's path, so its raw "
         "text is compared as a board title, never used as a project identity."
     ),
-    ("agent_api/validate.py", 137): (
+    ("agent_api/validate.py", 141): (
         "_validate_one_path() except ValueError: resolve_board_path failed, "
         "raw_path never became a ProjectPath — no root to relativize "
         "against. Echoes the raw caller input, POSIX-normalized."
     ),
-    ("agent_api/validate.py", 175): (
+    ("agent_api/validate.py", 179): (
         "validate() except ValueError: same shape — resolution failed, "
         "nothing to relativize against."
     ),

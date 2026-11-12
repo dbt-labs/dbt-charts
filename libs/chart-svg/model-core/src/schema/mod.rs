@@ -12,9 +12,11 @@ mod at;
 mod build;
 mod json;
 pub mod theme;
+mod walk;
 
 pub use at::{At, AtError};
 pub use build::SchemaError;
+pub use walk::Visit;
 
 use crate::{Attrs, Constraint, Keywords, Merge, Scalar};
 use indexmap::IndexMap;
@@ -72,6 +74,8 @@ pub enum Body {
         string_pattern: Option<&'static str>,
         /// Required of an authored layer even under a slot.
         complete: bool,
+        /// The tag key a constraint of this model may name.
+        read_under: Option<&'static str>,
     },
     /// Each variant selected by the value of `tag`.
     Tagged {

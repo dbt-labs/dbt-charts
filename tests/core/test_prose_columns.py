@@ -474,3 +474,84 @@ class TestMultiColumnWithInlineImage:
             f"rendered column {max(captured)} -- the packer's own height "
             "bookkeeping disagrees with what mdsvg drew"
         )
+
+
+class TestLoneColumnOnASnappedBoard:
+    """On a board where some block flows into columns, a lone column is one span.
+
+    A card between one and two spans wide (a ``width: "40%"`` cell) wraps at the
+    span, not at its own width, so its text edge matches the board's thirds.
+    """
+
+    BOARD = 1128.0
+    CARD = 0.4 * BOARD
+
+    def _wrap(self, snap: bool, card: float) -> int:
+        resolved = resolve_style(get_theme_style("clarity"))
+        pad = float(resolved.frame.card_padding)
+        gap = float(resolved.layout.cols.gap)
+        text_style = resolved.text
+        svg, _ = render_prose_svg(
+            LONG,
+            card - 2 * pad,
+            text_style,
+            resolved,
+            ProsePlan(3, self.BOARD, gap, snap),
+            authored=LONG,
+            base_dir=None,
+            error_collector=None,
+        )
+        return longest_line(svg)
+
+    def test_a_card_between_one_and_two_spans_wraps_at_one_span(self) -> None:
+        span_card = (self.BOARD - 40.0) / 3
+        assert self._wrap(True, self.CARD) == self._wrap(True, span_card)
+
+    def test_an_unsnapped_board_keeps_the_whole_card(self) -> None:
+        span_card = (self.BOARD - 40.0) / 3
+        assert self._wrap(False, self.CARD) > self._wrap(True, span_card)
+
+    @pytest.mark.parametrize("align", ["center", "right"])
+    def test_short_aligned_text_on_an_unsnapped_board_sits_in_the_whole_card(
+        self, align: Literal["center", "right"]
+    ) -> None:
+        resolved = resolve_style(get_theme_style("clarity"))
+        pad = float(resolved.frame.card_padding)
+        gap = float(resolved.layout.cols.gap)
+        text = "Short note."
+        width = self.CARD - 2 * pad
+        svg, _ = render_prose_svg(
+            text,
+            width,
+            resolved.text.model_copy(update={"align": align}),
+            resolved,
+            ProsePlan(3, self.BOARD, gap, False),
+            authored=text,
+            base_dir=None,
+            error_collector=None,
+        )
+        offsets = re.findall(r'<g transform="translate\(([\d.]+),', svg)
+        anchor = max(float(x) for x in re.findall(r'<text[^>]*\bx="([\d.]+)"', svg))
+        anchor += max((float(o) for o in offsets), default=0.0)
+        expected = width / 2 if align == "center" else width
+        assert anchor == pytest.approx(expected, abs=2.0)
+
+    def test_a_table_wider_than_a_span_still_holds_unwrapped_in_the_card(self) -> None:
+        table = (
+            "| Layout | Purpose |\n|---|---|\n"
+            "| Arrange components | side-by-side cards across a row |\n"
+        )
+        resolved = resolve_style(get_theme_style("clarity"))
+        pad = float(resolved.frame.card_padding)
+        gap = float(resolved.layout.cols.gap)
+        svg, _ = render_prose_svg(
+            table,
+            self.CARD - 2 * pad,
+            resolved.text,
+            resolved,
+            ProsePlan(3, self.BOARD, gap, True),
+            authored=table,
+            base_dir=None,
+            error_collector=None,
+        )
+        assert "side-by-side cards across a row" in svg

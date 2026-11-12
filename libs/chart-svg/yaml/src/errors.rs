@@ -1,4 +1,4 @@
-use diagnostic::{codes, Diagnostic, SourceRange};
+use diagnostic::{codes, Diagnostic};
 use serde_json::Value;
 
 pub const UNNAMED_SOURCE: &str = "the given YAML content";
@@ -6,16 +6,12 @@ pub const UNNAMED_SOURCE: &str = "the given YAML content";
 /// `ERR-YAML-SYNTAX` as Python's `yaml_syntax_error` builds it: the position
 /// and the offending line come from `line`/`column` (1-based) in `text`.
 pub fn syntax(text: &str, line: usize, column: usize, problem: &str) -> Diagnostic {
-    let unified = text.replace("\r\n", "\n");
-    let offending = unified
-        .split(['\n', '\r', '\u{85}', '\u{2028}', '\u{2029}'])
-        .nth(line.saturating_sub(1))
-        .map_or("", str::trim);
-    let quoted = if offending.is_empty() {
-        String::new()
-    } else {
-        format!("\n    {offending}")
+    // libyaml moves a mark at the end of the stream to column 1 of the next line.
+    let (line, column) = match offset_of(text, line, column) == text.len() && column != 1 {
+        true => (line + 1, 1),
+        false => (line, column),
     };
+    let quoted = quoted_line(text, line);
     Diagnostic::new(
         &codes::ERR_YAML_SYNTAX,
         [
@@ -30,10 +26,29 @@ pub fn syntax(text: &str, line: usize, column: usize, problem: &str) -> Diagnost
     )
     .with_sink_param("line", Value::from(line))
     .with_sink_param("column", Value::from(column))
-    .at(SourceRange::new(
-        offset_of(text, line, column),
-        offset_of(text, line, column),
-    ))
+}
+
+/// The offending line, trimmed and indented under the message, or nothing for a blank or absent one.
+fn quoted_line(text: &str, line: usize) -> String {
+    let unified = text.replace("\r\n", "\n");
+    let offending = unified
+        .split(['\n', '\r', '\u{85}', '\u{2028}', '\u{2029}'])
+        .nth(line.saturating_sub(1))
+        .map_or("", str::trim);
+    if offending.is_empty() {
+        String::new()
+    } else {
+        format!("\n    {offending}")
+    }
+}
+
+/// A syntax error found in YAML embedded in `file` at the file's own lines quotes the file's line,
+/// as Python does, not the embedded text's.
+pub fn requote(d: &mut Diagnostic, file: &str) {
+    if let Some(line) = d.params.get("line").and_then(Value::as_u64) {
+        let quoted = quoted_line(file, line as usize);
+        d.params.insert("quoted_line", Value::from(quoted));
+    }
 }
 
 /// The byte offset of `line`/`column` (1-based, in characters, YAML's line breaks), or the end of

@@ -133,6 +133,7 @@ class TestFractionalInputProducesIntegerTranslate:
             x_offset=4.0,
             y_offset=0.0,
             gap=8.0,
+            variables_gap=8.0,
             title_svg="<text>hello</text>",
             title_height=20.0,
             text_svg="",

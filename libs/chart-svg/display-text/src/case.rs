@@ -15,17 +15,6 @@
 //! prefixes and ALL-CAPS initials (`U.S`) are handled because a board
 //! variable's inferred label runs slug text through this same `title` branch.
 
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::indexing_slicing,
-        clippy::unreachable
-    )
-)]
-
 use std::collections::{BTreeMap, HashSet};
 use std::sync::LazyLock;
 

@@ -255,7 +255,7 @@ style:
     font:
       color: *mid
     border:
-      color: *faint
+      color: chrome[9]
     input:
       background: *panel
   layout:

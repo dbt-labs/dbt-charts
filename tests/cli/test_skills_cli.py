@@ -57,6 +57,7 @@ class TestSkillsList:
         assert result.exit_code == 0, result.output
         names = {s["name"] for s in json.loads(result.output)["skills"]}
         assert names == {
+            "board-layout",
             "board-migrate",
             "chart",
             "chart-recipes",

@@ -17,7 +17,7 @@ from dbt_charts.core.compile.models.style.authored import CalloutChartStylePatch
 class CalloutChart(BaseModel):
     """Normalized callout chart.
 
-    Minimal: no query, no link, no filters, no conditional_formatting.
+    Minimal: no query, no link, no filters.
     Mirrors authored CalloutChart which also inherits BaseModel directly.
     """
 

@@ -1,5 +1,7 @@
 //! d3-geo 3.1.1 `src/path/bounds.js`: the extent of the points a projected stream delivers (`fit` reads it).
 
+use crate::invariant;
+
 use crate::geo::stream::GeoStream;
 
 /// The extent of the points streamed so far.
@@ -47,6 +49,6 @@ impl GeoStream for Bounds {
     fn polygon_end(&mut self) {}
 
     fn sphere(&mut self) {
-        unreachable!("d3's boundsStream has no sphere: the pre-clip stage consumes it");
+        invariant::broken("d3's boundsStream has no sphere: the pre-clip stage consumes it");
     }
 }

@@ -257,6 +257,15 @@ impl QueryId {
     pub fn name(&self) -> &QueryName {
         &self.name
     }
+
+    /// How a diagnostic names the query: `name` for one `own` declares (an inline query keeps
+    /// its `@` position), `file:name` for one another file does.
+    pub fn label(&self, own: &ProjectPath) -> String {
+        match &self.file == own {
+            true => self.name.to_string(),
+            false => format!("{}:{}", self.file, self.name),
+        }
+    }
 }
 
 impl QueryName {

@@ -5,6 +5,8 @@
 //! milliseconds (`f64`, NaN for Invalid Date) read as UTC fields; a local clock is the instant plus
 //! the zone offset the caller resolved.
 
+use crate::invariant::at;
+
 pub const MS_PER_DAY: f64 = 86_400_000.0;
 const MAX_TIME: f64 = 8.64e15;
 
@@ -56,7 +58,7 @@ pub fn days_in_month(year: i32, month: u32) -> u32 {
 /// `"YYYY-MM-DD"` as written: four, two and two ASCII digits and a day the month has.
 pub fn parse_ymd(s: &str) -> Option<(i32, u8, u8)> {
     let b = s.as_bytes();
-    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+    if b.len() != 10 || *at(b, 4) != b'-' || *at(b, 7) != b'-' {
         return None;
     }
     let digits = |r: std::ops::Range<usize>| -> Option<i32> {

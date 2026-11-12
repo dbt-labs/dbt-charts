@@ -34,7 +34,7 @@ from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
     ColorStyle,
     FontStyle,
-    StaticGradientColorStyle,
+    GradientColorStyle,
 )
 from dbt_charts.core.compile.models.style.theme.annotations import AnnotationsStyle
 from dbt_charts.core.compile.models.style.theme.board import (
@@ -230,7 +230,7 @@ class _PaintedChartStyleBase(_ChartStyleBase):
     # (e.g. one layer sets categorical.palette, another sets categorical.single_series_palette)
     # without the later layer wiping out the earlier one.
     color: ColorStyle = Field(
-        description="Chart color: static mark paint, categorical palette, and/or gradient scale."
+        description="Chart color scales: categorical palette and/or gradient."
     )
 
 
@@ -431,10 +431,10 @@ class _GeoChartStyle(
         BorderStyle | None, InheritSlot(from_path="Style.charts.border")
     ] = Field(default=None, description="Chart card border style.")
 
-    # Override: geo families do not support categorical color (extra_forbidden via StaticGradientColorStyle).
-    color: StaticGradientColorStyle | None = Field(  # type: ignore[assignment]
+    # Override: geo families do not support categorical color (extra_forbidden via GradientColorStyle).
+    color: GradientColorStyle | None = Field(  # type: ignore[assignment]  # type-state: type_ignore — narrowing override of the parent field's ColorStyle
         default=None,
-        description="Geo color: static paint or gradient scale only (no categorical arm).",
+        description="Geo color: gradient scale only (no categorical arm).",
     )
     basemap: BasemapStyle = Field(
         default_factory=BasemapStyle,

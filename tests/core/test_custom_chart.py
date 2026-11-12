@@ -288,7 +288,7 @@ class TestCompile:
         assert _compile(project, ok).success
         bad = _board_yaml().replace(
             "    title: Where",
-            "    style:\n      color:\n        static: red\n    title: Where",
+            "    style:\n      marks:\n        bar:\n          color: red\n    title: Where",
         )
         assert not _compile(project, bad).success
 
@@ -595,6 +595,16 @@ class TestColorParams:
             _project(tmp_path, self.TEMPLATE), _color_board("category[1]")
         ).output
         assert re.search(r'id="r" fill="#[0-9a-fA-F]{6}"', svg)
+
+    def test_category_token_indexes_the_boards_own_palette(
+        self, tmp_path: Path
+    ) -> None:
+        board = (
+            "style:\n  charts:\n    color:\n      categorical:\n"
+            "        palette: ['#B5427F', '#112233']\n"
+        ) + _color_board("category[2]")
+        svg = _render(_project(tmp_path, self.TEMPLATE), board).output
+        assert 'id="r" fill="#112233"' in svg
 
     @pytest.mark.parametrize("tint", ["category.0", "nonsense.blue"])
     def test_unresolvable_token_is_a_chart_level_fields_error(

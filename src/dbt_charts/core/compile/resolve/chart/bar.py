@@ -72,6 +72,9 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     partition,
     restamp,
 )
+from dbt_charts.core.compile.resolve.chart._conditional import (
+    validate_mark_conditional,
+)
 from dbt_charts.core.compile.resolve.chart._domain import (
     _axis_headroom,
     _bake_normalize_domain,
@@ -84,6 +87,7 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _resolve_cartesian_ticks,
     _resolve_stacked_bar_ticks,
     _shared_y_values,
+    _unit_cap,
 )
 from dbt_charts.core.compile.resolve.chart._header_inks import series_header_inks
 from dbt_charts.core.compile.resolve.chart._kwargs import (
@@ -370,7 +374,9 @@ def _stacked_measure_domain_span(
     raw_max = stacked_totals_max(rows, x_field, y_fields)
     if raw_max is None or raw_max <= 0:
         return None
-    return 0.0, apply_headroom(raw_max, _axis_headroom(ay))
+    return 0.0, apply_headroom(
+        raw_max, _axis_headroom(ay), cap=_unit_cap(ay, 0.0, raw_max)
+    )
 
 
 def _categorical_axis_gutter_px(
@@ -698,6 +704,7 @@ def _resolve_bar(
         temporal_band_axes=frozenset(),
     )
     bar = chart_local_style_context.bar
+    validate_mark_conditional(bar.conditional, data, y=normalized.y)
     # Computed here (rather than at their original, later call sites) because
     # the plot-height floor check below needs both before axes are built:
     # the legend the classifier judges must be the legend that actually
@@ -738,6 +745,7 @@ def _resolve_bar(
     single_series_fill = _effective_single_series_fill(
         chart_style_context,
         primary,
+        ("marks", "bar", "color"),
         rhythm_slot=normalized.rhythm_slot,
         has_layers=bool(normalized.layers),
     )
@@ -1206,7 +1214,9 @@ def _resolve_bar(
             _raw_stacked_max = max([_raw_stacked_max, *annotations.y_values])
         if _raw_stacked_max is not None and _raw_stacked_max > 0:
             stacked_domain_max = apply_headroom(
-                _raw_stacked_max, _axis_headroom(ay_merged)
+                _raw_stacked_max,
+                _axis_headroom(ay_merged),
+                cap=_unit_cap(ay_merged, 0.0, _raw_stacked_max),
             )
     # A horizontal bar's measure axis (this "ay") renders on VL's x channel
     # and forms no column — see build_resolved_axis's column_forming
@@ -1388,6 +1398,7 @@ def _resolve_bar(
             series_label=series_label,
             stack_order=bar.stack_order,
             mark=bar_mark,
+            conditional=bar.conditional,
             overlap=bar.overlap,
             plot_height_below_floor=plot_starved,
             estimated_plot_height_px=estimated_plot_height,
@@ -1554,6 +1565,7 @@ def _resolve_histogram(
             single_series_fill=_effective_single_series_fill(
                 chart_style_context,
                 primary,
+                ("marks", "bar", "color"),
                 rhythm_slot=normalized.rhythm_slot,
                 has_layers=bool(normalized.layers),
             ),

@@ -100,7 +100,10 @@ class TestTableRowRoleStyleChanges:
         )
 
 
-from dbt_charts.core.compile.models.primitives import StaticGradientColorStyle as _sgs
+from dbt_charts.core.compile.models.primitives import ColumnFontStyle
+from dbt_charts.core.compile.models.style.authored.table import (
+    TableColumnDefaultsConfig,
+)
 
 
 class TestTableRendererUsesNestedConfig:
@@ -158,14 +161,18 @@ class TestTableRendererUsesNestedConfig:
         assert "#aabbcc" in svg
 
     def test_color_override_via_compiled_style(self):
-        """table_config.color overrides theme text color in render."""
+        """table column_defaults.font.color overrides theme text color in render."""
         base = get_theme_style()
         seed = base.model_copy(
             update={
                 "charts": base.charts.model_copy(
                     update={
                         "table": base.charts.table.model_copy(
-                            update={"color": _sgs(static="#dd00dd")}
+                            update={
+                                "column_defaults": TableColumnDefaultsConfig(
+                                    font=ColumnFontStyle(color="#dd00dd")
+                                )
+                            }
                         )
                     }
                 )

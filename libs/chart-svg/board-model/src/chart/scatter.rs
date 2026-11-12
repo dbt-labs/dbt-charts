@@ -10,9 +10,15 @@ use model_derive::Model;
 /// Scatter chart. `support_table:` is declared but refused: only bar, line and area draw one.
 #[derive(Debug, Clone, PartialEq, Model)]
 #[model(
-    constraint(forbids(support_table)),
-    constraint(forbids(tooltip, when(set(layers)))),
-    constraint(forbids(tooltip, when(list(y))))
+    constraint(forbids(support_table,
+        message = "chart.support_table is not supported for chart type {type!r} in v1. Supported chart types: area, bar, line."
+    )),
+    constraint(forbids(tooltip, when(set(layers)),
+        message = "tooltip is not supported with layers: an overlay mark's card describes the layer, not a column of the base query."
+    )),
+    constraint(forbids(tooltip, when(list(y)),
+        message = "tooltip is not supported with a multi-measure y: list: a wide scatter draws no structured hover card."
+    ))
 )]
 #[allow(clippy::duplicated_attributes)]
 pub struct ScatterChart {

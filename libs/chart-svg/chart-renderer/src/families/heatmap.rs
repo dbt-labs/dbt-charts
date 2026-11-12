@@ -162,7 +162,7 @@ fn null_as_empty<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<St
 }
 
 /// The column a colorless heatmap's cells share: one category, so every cell takes the
-/// palette's first color and no legend or hover value is drawn.
+/// resolved `single_series_fill` and no legend or hover value is drawn.
 pub(crate) const FLAT_COLOR: &str = "\u{0}flat";
 
 pub(crate) fn with_flat_column(rows: Vec<serde_json::Map<String, Value>>) -> Vec<serde_json::Map<String, Value>> {
@@ -181,6 +181,9 @@ impl HeatmapResolved {
             return rows;
         }
         self.color = FLAT_COLOR.to_string();
+        if let Some(fill) = &self.style.single_series_fill {
+            self.series_palette = vec![fill.clone()];
+        }
         self.legend.visible = false;
         with_flat_column(rows)
     }
@@ -314,11 +317,16 @@ impl RectMark {
 
 #[derive(Deserialize)]
 pub(crate) struct HeatmapStyle {
+    /// The cell fill when no color channel is bound; null when the palette is empty.
+    pub(crate) single_series_fill: Option<String>,
     pub(crate) axis_x: AxisStyle,
     pub(crate) axis_y: AxisStyle,
     pub(crate) color_gradient: ColorGradient,
     #[serde(default)]
     pub(crate) rect_mark: RectMark,
+    /// `style.conditional`: per-column rules restyling a cell by its own row.
+    #[serde(default)]
+    pub(crate) conditional: Option<std::collections::BTreeMap<String, Vec<crate::conditional::MarkRule>>>,
     /// The format of the tooltip's value row. The gradient legend paints its
     /// spec alone (the color encoding takes `tooltip_format.spec`,
     /// `emitters/heatmap.py:400`) and falls back to comma-integer.
@@ -472,6 +480,7 @@ pub(crate) struct CellPaint<'a> {
     /// A facet panel's rules carry the plain channel titles instead of the cell's structured label.
     pub(crate) ghost_titles: Option<(&'a str, &'a str)>,
     pub(crate) patterns: &'a crate::pattern::PatternPlan,
+    pub(crate) conditional: Option<&'a std::collections::BTreeMap<String, Vec<crate::conditional::MarkRule>>>,
 }
 
 /// How a cell's rect draws: its opacity and stroke, and how far the stroke grows its bounds.
@@ -479,11 +488,21 @@ pub(crate) struct CellMarks {
     pub(crate) opacity: f64,
     pub(crate) stroke: Attrs,
     pub(crate) reach: f64,
+    /// The painted stroke's color and width, which a conditional rule overrides one at a time.
+    stroke_color: Option<String>,
+    stroke_width: Option<f64>,
 }
 
 impl CellMarks {
     pub(crate) fn of(mark: &RectMark) -> Result<Self, String> {
-        Ok(CellMarks { opacity: mark.opacity.unwrap_or(1.0), stroke: mark.stroke_attrs()?, reach: mark.stroke_reach() })
+        let painted = mark.painted_stroke();
+        Ok(CellMarks {
+            opacity: mark.opacity.unwrap_or(1.0),
+            stroke: mark.stroke_attrs()?,
+            reach: mark.stroke_reach(),
+            stroke_color: painted.map(|(_, color, _)| color.to_string()),
+            stroke_width: painted.map(|(_, _, width)| width),
+        })
     }
 }
 
@@ -532,6 +551,8 @@ pub(crate) struct Cell {
     pub(crate) href: Option<(String, crate::href::LinkOpen)>,
     /// What a mirrored chart's ghost rule says of the cell.
     pub(crate) ghost: Option<String>,
+    /// What `style.conditional` sets on this cell beyond its fill (already in `fill`).
+    pub(crate) patch: crate::conditional::MarkPatch,
 }
 
 impl Cell {
@@ -561,6 +582,7 @@ pub(crate) fn bind_cells(
         let xv = row_str(row, c.x_field);
         let yv = row_str(row, c.y_field);
         let (Some(&x), Some(&y)) = (x_index.get(xv.as_str()), y_index.get(yv.as_str())) else { continue };
+        let patch = crate::conditional::MarkPatch::of(c.conditional, row, crate::conditional::MarkKind::Rect)?;
         let (fill, cv) = match c.fill {
             CellFill::Gradient { colors, min, max } => {
                 let Some(cv) = row_num(row, c.color_field) else { continue };
@@ -619,7 +641,8 @@ pub(crate) fn bind_cells(
         };
         let href = c.link.as_ref().map(|link| link.href(row)).transpose()?;
         let ghost = if c.mirror { ghost_label.or_else(|| aria.clone()) } else { None };
-        cells.push(Cell { x, y, fill, aria, href: href.zip(link_open), ghost });
+        let fill = patch.fill.clone().map_or(fill, crate::pattern::Paint::Color);
+        cells.push(Cell { x, y, fill, aria, href: href.zip(link_open), ghost, patch });
     }
     Ok(cells)
 }
@@ -641,8 +664,17 @@ pub(crate) fn cell_nodes(
         let (cx, cy) = (x_scale.position_at(cell.x), y_scale.position_at(cell.y));
         let paint = cell.fill.for_mark(cell_w.min(cell_h), "none", 0.0);
         // A patterned cell outlines in its ink in place of the theme's cell stroke.
+        let patch = &cell.patch;
         let stroke = match cell.fill {
             crate::pattern::Paint::Pattern(_) => Attrs::new().set("stroke", &paint.stroke).num("stroke-width", paint.stroke_w),
+            crate::pattern::Paint::Color(_) if patch.stroke.is_some() || patch.stroke_w.is_some() => {
+                let color = patch.stroke.as_ref().or(marks.stroke_color.as_ref());
+                let width = patch.stroke_w.or(marks.stroke_width);
+                let (Some(color), Some(width)) = (color, width) else {
+                    return Err("heatmap: a conditional stroke needs both a color and a width".to_string());
+                };
+                Attrs::new().set("stroke", color.as_str()).set("stroke-width", width.to_string())
+            }
             crate::pattern::Paint::Color(_) => marks.stroke.clone(),
         };
         let rect = Node::rect(
@@ -651,7 +683,7 @@ pub(crate) fn cell_nodes(
             Attrs::new()
                 .set("fill", &paint.fill)
                 .extend(stroke)
-                .num("opacity", marks.opacity)
+                .num("opacity", patch.opacity.unwrap_or(marks.opacity))
                 .extend(aria_attrs(cell.aria.as_deref(), ItemRole::RectMark)?),
         );
         let mark = crate::href::linked(cell.anchor(), rect);
@@ -1149,6 +1181,7 @@ mod tests {
                                        "color": "#626366"}, "padding": 8.0}
                 },
                 "style": {
+                    "single_series_fill": "#000000",
                     "axis_x": axis_json(true, None),
                     "axis_y": axis_json(false, Some("left")),
                     "color_gradient": {
@@ -1924,6 +1957,26 @@ mod tests {
             j["resolved"]["legend"]["position"] = json!({"edge": "left", "align": "start", "overlay": false});
         }));
         assert_eq!(attr(&text_tag(&svg, "Tier"), "x"), 16.0, "{svg}");
+    }
+
+    /// With no color channel every cell paints the resolved `single_series_fill`.
+    #[test]
+    fn a_colorless_heatmap_paints_the_resolved_single_series_fill() {
+        let svg = render_json(heatmap_payload(|j| {
+            j["resolved"]["color"] = json!("");
+            j["resolved"]["resolved_channels"] = json!({});
+            j["resolved"]["style"]["single_series_fill"] = json!("#12ab34");
+        }));
+        assert!(svg.contains("fill=\"#12ab34\""), "{svg}");
+    }
+
+    /// An empty palette resolves a null fill; a heatmap with a color channel never reads it.
+    #[test]
+    fn a_null_single_series_fill_does_not_stop_a_colored_heatmap() {
+        let svg = render_json(heatmap_payload(|j| {
+            j["resolved"]["style"]["single_series_fill"] = Value::Null;
+        }));
+        assert!(svg.contains("<svg"), "{svg}");
     }
 
     /// `RECEDE_ROLES` matches `rect` literally: a heatmap cell recedes

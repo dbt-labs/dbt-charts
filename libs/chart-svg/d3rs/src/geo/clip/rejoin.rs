@@ -1,11 +1,42 @@
 //! d3-geo 3.1.1 `src/clip/rejoin.js`: a generalized polygon clipping algorithm. Given a polygon that has
 //! been cut into its visible line segments, it rejoins the segments by interpolating along the clip edge.
 
+use crate::invariant::{at, at_mut, Invariant};
+
 use super::buffer::BufferPoint;
 use crate::geo::math::EPSILON;
 use crate::geo::point_equal::point_equal;
 use crate::geo::stream::GeoStream;
 use crate::js_sort::js_sort;
+
+/// The nodes of both lists. A node is named by its index, which only this module hands out, so an index that
+/// misses is a broken invariant, not data.
+#[derive(Default)]
+struct Arena(Vec<Intersection>);
+
+impl Arena {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn push(&mut self, node: Intersection) {
+        self.0.push(node);
+    }
+}
+
+impl std::ops::Index<usize> for Arena {
+    type Output = Intersection;
+
+    fn index(&self, i: usize) -> &Intersection {
+        at(&self.0, i)
+    }
+}
+
+impl std::ops::IndexMut<usize> for Arena {
+    fn index_mut(&mut self, i: usize) -> &mut Intersection {
+        at_mut(&mut self.0, i)
+    }
+}
 
 /// d3's `Intersection`. The nodes of both lists live in one arena and refer to each other by index; `z` is
 /// the index of the subject segment a node starts or ends, absent on the clip list's twins.
@@ -28,7 +59,7 @@ pub fn clip_rejoin<S: GeoStream>(
     interpolate: impl Fn(Option<([f64; 2], [f64; 2])>, i32, &mut S),
     stream: &mut S,
 ) -> Result<(), String> {
-    let mut nodes: Vec<Intersection> = Vec::new();
+    let mut nodes = Arena::default();
     let mut subject: Vec<usize> = Vec::new();
     let mut clip: Vec<usize> = Vec::new();
 
@@ -38,25 +69,25 @@ pub fn clip_rejoin<S: GeoStream>(
         }
         let n = segment.len() - 1;
 
-        if point_equal(segment[0].xy, segment[n].xy) {
-            if segment[0].m.is_none() && segment[n].m.is_none() {
+        if point_equal(at(segment, 0).xy, at(segment, n).xy) {
+            if at(segment, 0).m.is_none() && at(segment, n).m.is_none() {
                 stream.line_start();
-                for p in &segment[..n] {
+                for p in at(segment, ..n) {
                     stream.point(p.xy[0], p.xy[1], None);
                 }
                 stream.line_end();
                 continue;
             }
             // handle degenerate cases by moving the point
-            segment[n].xy[0] += 2.0 * EPSILON;
+            at_mut(segment, n).xy[0] += 2.0 * EPSILON;
         }
 
         let first = nodes.len();
         for (offset, (xy, z, entry)) in [
-            (segment[0].xy, Some(index), true),
-            (segment[0].xy, None, false),
-            (segment[n].xy, Some(index), false),
-            (segment[n].xy, None, true),
+            (at(segment, 0).xy, Some(index), true),
+            (at(segment, 0).xy, None, false),
+            (at(segment, n).xy, Some(index), false),
+            (at(segment, n).xy, None, true),
         ]
         .into_iter()
         .enumerate()
@@ -81,7 +112,7 @@ pub fn clip_rejoin<S: GeoStream>(
     if clip.iter().any(|&i| nodes[i].x.iter().any(|v| v.is_nan())) {
         js_sort(&mut clip, |a, b| compare_intersection(nodes[a].x, nodes[b].x))?;
     } else {
-        clip.sort_by(|&a, &b| compare_intersection(nodes[a].x, nodes[b].x).partial_cmp(&0.0).expect("no NaN key"));
+        clip.sort_by(|&a, &b| compare_intersection(nodes[a].x, nodes[b].x).partial_cmp(&0.0).held("no NaN key"));
     }
     link(&mut nodes, &subject);
     link(&mut nodes, &clip);
@@ -91,7 +122,7 @@ pub fn clip_rejoin<S: GeoStream>(
         nodes[i].e = start_inside;
     }
 
-    let start = subject[0];
+    let start = *at(&subject, 0);
     loop {
         // Find first unvisited intersection.
         let mut current = start;
@@ -109,8 +140,8 @@ pub fn clip_rejoin<S: GeoStream>(
             nodes[other].v = true;
             if nodes[current].e {
                 if is_subject {
-                    let points = nodes[current].z.expect("a subject node has a segment");
-                    for p in &segments[points] {
+                    let points = nodes[current].z.held("a subject node has a segment");
+                    for p in at(&segments, points) {
                         stream.point(p.xy[0], p.xy[1], None);
                     }
                 } else {
@@ -119,8 +150,8 @@ pub fn clip_rejoin<S: GeoStream>(
                 current = nodes[current].n;
             } else {
                 if is_subject {
-                    let points = nodes[nodes[current].p].z.expect("a subject node has a segment");
-                    for p in segments[points].iter().rev() {
+                    let points = nodes[nodes[current].p].z.held("a subject node has a segment");
+                    for p in at(&segments, points).iter().rev() {
                         stream.point(p.xy[0], p.xy[1], None);
                     }
                 } else {
@@ -139,9 +170,9 @@ pub fn clip_rejoin<S: GeoStream>(
 }
 
 /// Links `order` into a ring (`order` is never empty: `subject` is checked and `clip` has as many nodes).
-fn link(nodes: &mut [Intersection], order: &[usize]) {
+fn link(nodes: &mut Arena, order: &[usize]) {
     for (i, &a) in order.iter().enumerate() {
-        let b = order[(i + 1) % order.len()];
+        let b = *at(order, (i + 1) % order.len());
         nodes[a].n = b;
         nodes[b].p = a;
     }

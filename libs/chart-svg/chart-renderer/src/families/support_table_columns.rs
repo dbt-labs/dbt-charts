@@ -6,7 +6,7 @@
 //! `support_table_strip.rs`. Where the strip paints one row per entry at a
 //! pixel-literal y over the category x band, the block paints one column per
 //! entry at a pixel-literal x over the category y band. Entry resolution
-//! (values, declare-once numerals, `per_series` expansion, cell formatting) is
+//! (values, bare numerals, `per_series` expansion, cell formatting) is
 //! the strip's own `entry_lines`/`build_cells`; only the geometry lives here.
 //!
 //! Everything about a column's width is baked into the spec by production's
@@ -20,7 +20,7 @@ use serde_json::Value;
 use crate::common::slug_to_display;
 use diagnostic::Diagnostic;
 use crate::families::support_table_strip::{
-    build_cells, divider_line, entry_lines, label_font_resolved, link_cells, row_height, trailing_unit,
+    build_cells, divider_line, entry_lines, label_font_resolved, link_cells, row_height,
     validate_against_data, CellAria, ComposedCell, EntryLines, SupportTableConfig, SupportTableStyle,
 };
 use scene::{Attrs, Node, Role};
@@ -65,12 +65,6 @@ pub struct Column {
     pub header_ink: Option<String>,
     /// The series a `per_series:` column prints; `None` on every other column.
     pub series: Option<String>,
-    /// The column's unit width: the widest of the entry's hung suffix
-    /// (`_hung_suffix_width`) and any unit a cell carries itself. The cells' digits
-    /// share an edge this far inside the header's, and each cell hangs what follows
-    /// its last digit (`ComposedCell::hang`) out toward it. 0 when no cell carries a
-    /// unit.
-    pub hung_w: f64,
     /// One cell per category, `x` the band center along the category axis.
     /// A grouped bar's single per_series column holds one cell per
     /// (series, category), series-major, `x` the sub-band center.
@@ -124,15 +118,13 @@ pub fn warn_block_share(chart_id: &str, block_width: f64, plot_width: f64, share
 
 /// Build the block: one [`Column`] per visual column, widths per
 /// `_entry_column_widths`. `centers[i]` is category `domain[i]`'s band center
-/// along the category axis. `anchored` and `series_order` carry the same
-/// meaning as `build_rows_composed`'s; `series_ink` is `None` when the style
-/// authors one uniform cell ink. Every cell, the anchor included, ends at its
-/// column's right edge. `sub_offsets` is set for a
+/// along the category axis. `series_order` carries the same meaning as
+/// `build_rows_composed`'s; `series_ink` is `None` when the style authors one
+/// uniform cell ink. Every cell ends at its column's right edge. `sub_offsets` is set for a
 /// grouped bar: its `per_series` entry paints ONE column, a cell per series
 /// on that series' sub-band, `sub_offsets[i]` past the category's band center.
 #[allow(clippy::too_many_arguments)]
 pub fn build_block(
-    chart_id: &str,
     config: &SupportTableConfig,
     rows: &[serde_json::Map<String, Value>],
     cat_field: &str,
@@ -143,7 +135,6 @@ pub fn build_block(
     numeral_family: &str,
     side: Side,
     axis_label_padding: f64,
-    anchored: bool,
     color_field: Option<&str>,
     series_order: &[String],
     series_ink: Option<&[String]>,
@@ -169,10 +160,8 @@ pub fn build_block(
     let pad = 2.0 * style.row.padding.horizontal;
 
     let mut columns: Vec<Column> = Vec::new();
-    for (entry_index, entry) in config.entries.iter().enumerate() {
-        // `vertical = true`: the magnitude suffix speaks the column register.
-        let EntryLines { spec, lines, numerals, nums } =
-            entry_lines(entry, rows, cat_field, domain, anchored, true, true, color_field, series_order, chart_id, entry_index)?;
+    for entry in &config.entries {
+        let resolved = entry_lines(entry, rows, cat_field, domain, color_field, series_order)?;
         if entry.per_series.is_some() && series_ink.is_some_and(|ink| ink.len() != series_order.len()) {
             return Err("support_table: internal error — series_ink/series_order length mismatch".into());
         }
@@ -196,21 +185,15 @@ pub fn build_block(
         } else {
             vec![label_of(&entry.label, &entry.source)?]
         };
+        let headers: Vec<String> = headers.iter().map(|header| resolved.labeled(header)).collect();
+        let EntryLines { spec, lines, numerals, nums } = resolved;
 
-        // The widest digits and the widest unit any of the entry's columns could
-        // paint, apart: the digits share one edge and the units hang past it, so
-        // `999` beside `1k` needs `999` plus `k`. A column has no free gutter for an
-        // anchor's affix to overhang, so every cell is measured as if it were the
-        // anchor (`conservative=True`).
+        // The widest digits any of the entry's columns could paint.
         let mut digits_w = 0.0_f64;
-        let mut unit_w = 0.0_f64;
         match (&numerals, spec) {
             (Some(n), Some(_)) => {
                 for &v in nums.iter().filter(|v| v.is_finite()) {
-                    let text = n.cell_text(v, true)?;
-                    let unit = fonts.measure(trailing_unit(&text), numeral_family, font_size)?;
-                    digits_w = digits_w.max(fonts.measure(&text, numeral_family, font_size)? - unit);
-                    unit_w = unit_w.max(unit);
+                    digits_w = digits_w.max(fonts.measure(&n.cell_text(v)?, numeral_family, font_size)?);
                 }
             }
             _ => {
@@ -220,17 +203,11 @@ pub fn build_block(
                 }
             }
         }
-        // From the numerals, not from an anchor cell: production insets the
-        // digits by the hung suffix even when no cell of the column carries.
-        let hung_w = match &numerals {
-            Some(n) => fonts.measure(n.hung_suffix(), numeral_family, font_size)?,
-            None => 0.0,
-        };
         let mut header_w = 0.0_f64;
         for h in &headers {
             header_w = header_w.max(fonts.measure(h, header_measure, label_size)?);
         }
-        let width = (digits_w + unit_w.max(hung_w)).max(header_w) + pad;
+        let width = digits_w.max(header_w) + pad;
 
         if let (true, Some(offsets)) = (single_column, sub_offsets) {
             let mut cells = Vec::new();
@@ -238,7 +215,7 @@ pub fn build_block(
             for (si, series) in series_order.iter().enumerate() {
                 let series_centers: Vec<f64> = centers.iter().map(|c| c + offsets[si]).collect();
                 let (series_cells, _bare_w) =
-                    build_cells(&lines[si], &series_centers, &numerals, spec, fonts, numeral_family, font_size, false)?;
+                    build_cells(&lines[si], &series_centers, &numerals, spec, fonts, numeral_family, font_size)?;
                 for (ci, mut cell) in series_cells.into_iter().enumerate() {
                     if lines[si][ci].is_none() {
                         continue;
@@ -256,7 +233,6 @@ pub fn build_block(
                 ink: None,
                 header_ink: entry.ink.clone(),
                 series: None,
-                hung_w: cells.iter().map(|c| c.hang).fold(hung_w, f64::max),
                 cells,
                 cell_series,
                 copies: 1,
@@ -265,7 +241,7 @@ pub fn build_block(
         }
         for (i, header) in headers.into_iter().enumerate() {
             let (mut cells, _bare_w) =
-                build_cells(&lines[i], centers, &numerals, spec, fonts, numeral_family, font_size, false)?;
+                build_cells(&lines[i], centers, &numerals, spec, fonts, numeral_family, font_size)?;
             link_cells(&mut cells, entry, domain, links);
             let header_shaped = fonts.measure_shaped(&header, label_family, label_size)?;
             columns.push(Column {
@@ -275,7 +251,6 @@ pub fn build_block(
                 ink: series_ink.filter(|_| entry.per_series.is_some()).map(|ink| ink[i].clone()),
                 header_ink: entry.ink.clone(),
                 series: entry.per_series.as_ref().map(|_| series_order[i].clone()),
-                hung_w: cells.iter().map(|c| c.hang).fold(hung_w, f64::max),
                 cells,
                 cell_series: Vec::new(),
                 copies: if entry.per_series.is_some() { 1 } else { config.cell_copies() },
@@ -291,15 +266,6 @@ pub fn build_block(
         cell_ink,
         label_ink,
     })
-}
-
-impl Column {
-    /// A cell's right edge for a column whose header sits at `edge`: the digits
-    /// share `edge - hung_w` and the cell's unit hangs past them
-    /// (`_column_cell_layers`, `_hung_anchor_layers`).
-    fn cell_x(&self, edge: f64, cell: &ComposedCell) -> f64 {
-        edge - self.hung_w + cell.hang
-    }
 }
 
 impl ColumnBlock {
@@ -360,7 +326,7 @@ impl ColumnBlock {
         for (col, edge) in self.columns.iter().zip(self.right_edges(plot_w)) {
             b.union(&vega_fit::text_ink(edge, header_y, col.header_w, label_size, "right", "middle"));
             for cell in &col.cells {
-                b.union(&vega_fit::text_ink(col.cell_x(edge, cell), cell.x * y_scale, cell.w, font_size, "right", "middle"));
+                b.union(&vega_fit::text_ink(edge, cell.x * y_scale, cell.w, font_size, "right", "middle"));
             }
         }
     }
@@ -396,7 +362,7 @@ impl ColumnBlock {
             let mut cells = Vec::new();
             for (k, cell) in col.cells.iter().enumerate() {
                 let ink = col.cell_series.get(k).and_then(|(_, ink, _)| ink.as_deref()).or(col.ink.as_deref()).unwrap_or(cell_ink);
-                let cell_x = origin_x + col.cell_x(edge, cell);
+                let cell_x = origin_x + edge;
                 let y = origin_y + cell.x + cell_shift;
                 let anchor = link_open.and_then(|open| open.anchor(cell.href.as_deref()));
                 for _ in 0..col.copies {
@@ -484,19 +450,18 @@ mod tests {
             .collect()
     }
 
-    fn block_of(entries: serde_json::Value, anchored: bool) -> Result<ColumnBlock, Diagnostic> {
-        block_over(&rows(), entries, anchored)
+    fn block_of(entries: serde_json::Value) -> Result<ColumnBlock, Diagnostic> {
+        block_over(&rows(), entries)
     }
 
     fn block_over(
         rows: &[serde_json::Map<String, Value>],
         entries: serde_json::Value,
-        anchored: bool,
     ) -> Result<ColumnBlock, Diagnostic> {
         let config = parse_config(&serde_json::json!({ "entries": entries }), "bar").unwrap();
         let dom = domain();
         let centers = [10.0, 30.0, 50.0];
-        build_block("c",
+        build_block(
             &config,
             rows,
             "cat",
@@ -507,7 +472,6 @@ mod tests {
             crate::common::TAB_FONT,
             Side::Left,
             6.0,
-            anchored,
             None,
             &[],
             None, None, None)
@@ -525,7 +489,7 @@ mod tests {
     /// authored order; right block starts `gutter` past the plot.
     #[test]
     fn right_edges_run_left_to_right_on_both_sides() {
-        let col = |width: f64| Column { header: String::new(), header_w: 0.0, width, ink: None, header_ink: None, series: None, hung_w: 0.0, cells: vec![], cell_series: vec![], copies: 1 };
+        let col = |width: f64| Column { header: String::new(), header_w: 0.0, width, ink: None, header_ink: None, series: None, cells: vec![], cell_series: vec![], copies: 1 };
         let mut block = ColumnBlock {
             columns: vec![col(50.0), col(30.0)],
             side: Side::Left,
@@ -546,7 +510,7 @@ mod tests {
     #[test]
     fn column_width_is_the_widest_cell_or_header_plus_two_paddings() {
         let fonts = test_fonts();
-        let block = block_of(serde_json::json!([{"source": "units", "format": ",d", "label": "U"}]), false)
+        let block = block_of(serde_json::json!([{"source": "units", "format": ",d", "label": "U"}]))
             .unwrap();
         let cell_w = fonts.measure("60", TAB_FONT, 11.0).unwrap();
         let header_w = fonts.measure("U", "Inter", 11.0).unwrap();
@@ -554,11 +518,9 @@ mod tests {
         assert_eq!(block.columns[0].width, cell_w + 12.0);
     }
 
-    /// A column is a digits column and a unit column: `999` and `1k` share one digit
-    /// edge with the `k` past it, so the column holds `999` plus `k`, wider than
-    /// either cell's whole text.
+    /// A column that cannot share a tier prints full digits, and is as wide as its widest cell.
     #[test]
-    fn a_column_holds_its_widest_digits_and_its_widest_unit() {
+    fn a_column_is_as_wide_as_its_widest_full_digit_cell() {
         let fonts = test_fonts();
         let rows: Vec<serde_json::Map<String, Value>> = [("A", 999.0), ("B", 1000.0), ("C", 5.0)]
             .iter()
@@ -567,15 +529,11 @@ mod tests {
         let block = block_over(
             &rows,
             serde_json::json!([{"source": "units", "format": {"spec": ".3~s", "raw": "number"}, "label": "U"}]),
-            false,
         )
         .unwrap();
         let col = &block.columns[0];
-        assert_eq!(col.cells.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["999", "1k", "5"]);
-        let digits = fonts.measure("999", TAB_FONT, 11.0).unwrap();
-        let unit = fonts.measure("k", TAB_FONT, 11.0).unwrap();
-        assert_eq!(col.hung_w, unit);
-        assert_eq!(col.width, digits + unit + 12.0);
+        assert_eq!(col.cells.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["999", "1,000", "5"]);
+        assert_eq!(col.width, fonts.measure("1,000", TAB_FONT, 11.0).unwrap() + 12.0);
     }
 
     /// 26F: a header wider than every value sizes its own column.
@@ -584,24 +542,24 @@ mod tests {
         let fonts = test_fonts();
         let label = "A Very Long Column Header Name";
         let block =
-            block_of(serde_json::json!([{"source": "units", "format": ",d", "label": label}]), false)
+            block_of(serde_json::json!([{"source": "units", "format": ",d", "label": label}]))
                 .unwrap();
         assert_eq!(block.columns[0].width, fonts.measure(label, "Inter", 11.0).unwrap() + 12.0);
     }
 
-    /// `conservative=True`: no free gutter for an anchor's affix, so a column
-    /// reserves the anchor-decorated width even for cells that drop the `$`.
+    /// A column's cells print digits alone and its header names the unit; the column is as wide as
+    /// its widest cell or header.
     #[test]
-    fn a_column_reserves_the_anchor_decorated_width() {
+    fn a_column_prints_bare_cells_under_a_header_that_names_the_unit() {
         let fonts = test_fonts();
         let block =
-            block_of(serde_json::json!([{"source": "revenue", "format": {"spec": "$,.0f", "raw": "currency_whole"}, "label": "R"}]), true)
+            block_of(serde_json::json!([{"source": "revenue", "format": {"spec": "$,.0f", "raw": "currency_whole"}, "label": "R"}]))
                 .unwrap();
-        let widest = fonts.measure("$1,200,000", TAB_FONT, 11.0).unwrap();
+        let widest = fonts.measure("1,200,000", TAB_FONT, 11.0).unwrap();
         assert_eq!(block.columns[0].width, widest + 12.0);
-        // The anchor is the first carrying cell; the rest drop the `$`.
         let texts: Vec<&str> = block.columns[0].cells.iter().map(|c| c.text.as_str()).collect();
-        assert_eq!(texts, vec!["$1,200,000", "30", "8"]);
+        assert_eq!(texts, vec!["1,200,000", "30", "8"]);
+        assert_eq!(block.columns[0].header, "R, $");
     }
 
     /// The `x` of `<text ...>{text}</text>` in `svg`.
@@ -627,7 +585,6 @@ mod tests {
                 {"source": "units", "label": "U"},
                 {"source": "revenue", "label": "V"},
             ]),
-            false,
         )
         .unwrap();
         block.label_ink = "#111111".into();
@@ -638,90 +595,12 @@ mod tests {
         assert_eq!(text_fill(&out, "V"), "#111111");
     }
 
-    /// A column cell's `x` stays its band center along the category axis; the
-    /// anchor carries its suffix width as `hang`, and the column paints every
-    /// digit `hung_w` inside its header edge while the anchor's suffix hangs
-    /// out to that edge (`_column_cell_layers`).
-    #[test]
-    fn an_anchored_percent_column_hangs_its_anchor_suffix_past_the_digit_edge() {
-        let pct_w = test_fonts().measure("%", TAB_FONT, 11.0).unwrap();
-        let block = block_over(
-            &ratio_rows(),
-            serde_json::json!([{"source": "units", "format": {"spec": ".0%", "raw": "percent_whole"}, "label": "U"}]),
-            true,
-        )
-        .unwrap();
-        let col = &block.columns[0];
-        let texts: Vec<&str> = col.cells.iter().map(|c| c.text.as_str()).collect();
-        assert_eq!(texts, vec!["5%", "60", "7"]);
-        let bands: Vec<f64> = col.cells.iter().map(|c| c.x).collect();
-        assert_eq!(bands, vec![10.0, 30.0, 50.0]);
-        let hangs: Vec<f64> = col.cells.iter().map(|c| c.hang).collect();
-        assert_eq!(hangs, vec![pct_w, 0.0, 0.0]);
-        assert_eq!(col.hung_w, pct_w);
-
-        let out = print::print(&block.nodes(&style(), 400.0, 300.0, 100.0, 50.0, None).unwrap());
-        let edge = 100.0 + block.right_edges(400.0)[0];
-        assert!((text_x(&out, "5%") - edge).abs() < 0.005, "anchor at the header edge");
-        assert!((text_x(&out, "60") - (edge - pct_w)).abs() < 0.005, "bare digits one suffix in");
-        assert!((text_x(&out, "U") - edge).abs() < 0.005, "header stays at the edge");
-
-        let mut b = Bounds::empty_new();
-        block.ink(&mut b, &style(), 400.0, 1.0);
-        let mut want = Bounds::empty_new();
-        let edge = block.right_edges(400.0)[0];
-        for cell in &col.cells {
-            let x = if cell.hang > 0.0 { edge } else { edge - pct_w };
-            want.union(&vega_fit::text_ink(x, cell.x, cell.w, 11.0, "right", "middle"));
-        }
-        assert_eq!((b.x1, b.x2), (want.x1, want.x2));
-    }
-
-    /// A column is a table column: a percent column whose every cell carries its own
-    /// `%` hangs each one, and its digits share the edge one `%` inside the header's.
-    #[test]
-    fn an_unanchored_percent_column_hangs_every_cells_own_unit() {
-        let block = block_over(
-            &ratio_rows(),
-            serde_json::json!([{"source": "units", "format": {"spec": ".0%", "raw": "percent_whole"}, "label": "U"}]),
-            false,
-        )
-        .unwrap();
-        let col = &block.columns[0];
-        assert!(col.hung_w > 0.0);
-        assert!(col.cells.iter().all(|c| c.text.ends_with('%') && c.hang == col.hung_w), "{:?}", col.cells);
-    }
-
-    /// A column speaks the analytic register while its magnitude suffix
-    /// declares once: the whole word is the hung suffix, measured in the
-    /// tabular typeface. Production's
-    /// `get_font_measurer("'dbt Sans Tabular', Inter, sans-serif",
-    /// numeric=True).measure("M", 11)` is 9.9365234375.
-    #[test]
-    fn a_compacting_column_hangs_the_analytic_word() {
-        let rows: Vec<serde_json::Map<String, Value>> = [("A", 120e6), ("B", 340e6), ("C", 560e6)]
-            .iter()
-            .map(|(c, r)| serde_json::from_value(serde_json::json!({"cat": c, "revenue": r})).unwrap())
-            .collect();
-        let block = block_over(
-            &rows,
-            serde_json::json!([{"source": "revenue", "format": {"spec": ".3~s", "raw": "number"}, "label": "R"}]),
-            true,
-        )
-        .unwrap();
-        let col = &block.columns[0];
-        let texts: Vec<&str> = col.cells.iter().map(|c| c.text.as_str()).collect();
-        assert_eq!(texts, vec!["120M", "340", "560"]);
-        assert!((col.hung_w - 9.9365234375).abs() < 1e-6, "{}", col.hung_w);
-        assert_eq!(col.cells[0].hang, col.hung_w);
-    }
-
     /// An unformatted entry paints the bare number but reserves the width of
     /// Python's `str(float)` (`320` paints, `320.0` is measured).
     #[test]
     fn an_unformatted_entry_reserves_python_float_repr_width() {
         let fonts = test_fonts();
-        let block = block_of(serde_json::json!([{"source": "units", "label": "U"}]), false).unwrap();
+        let block = block_of(serde_json::json!([{"source": "units", "label": "U"}])).unwrap();
         assert_eq!(block.columns[0].width, fonts.measure("60.0", TAB_FONT, 11.0).unwrap() + 12.0);
         assert_eq!(block.columns[0].cells[1].text, "60");
     }
@@ -730,7 +609,7 @@ mod tests {
     /// (`_default_support_table_label`).
     #[test]
     fn the_default_header_is_the_title_cased_source() {
-        let block = block_of(serde_json::json!([{"source": "units", "format": ",d"}]), false).unwrap();
+        let block = block_of(serde_json::json!([{"source": "units", "format": ",d"}])).unwrap();
         assert_eq!(block.columns[0].header, "Units");
     }
 
@@ -750,8 +629,8 @@ mod tests {
         let dom: Vec<String> = vec!["A".into(), "B".into()];
         let series: Vec<String> = vec!["Online".into(), "Retail Stores".into()];
         let ink: Vec<String> = vec!["#111111".into(), "#222222".into()];
-        let block = build_block("c",
-            &config, &rows, "cat", &dom, &[10.0, 30.0], &fonts, &style(), crate::common::TAB_FONT, Side::Left, 6.0, false,
+        let block = build_block(
+            &config, &rows, "cat", &dom, &[10.0, 30.0], &fonts, &style(), crate::common::TAB_FONT, Side::Left, 6.0,
             Some("series"), &series, Some(&ink), None, None)
         .unwrap();
         assert_eq!(block.columns.len(), 2);
@@ -767,14 +646,14 @@ mod tests {
     /// column is plain right-aligned text with no decimal pad.
     #[test]
     fn a_trim_fixed_point_spec_paints_trimmed_cells_with_no_pad() {
-        let block = block_of(serde_json::json!([{"source": "units", "format": ",.2~f", "label": "U"}]), false)
+        let block = block_of(serde_json::json!([{"source": "units", "format": ",.2~f", "label": "U"}]))
             .unwrap();
         let texts: Vec<&str> = block.columns[0].cells.iter().map(|c| c.text.as_str()).collect();
         assert_eq!(texts, ["5", "60", "7"]);
     }
 
-    /// An SI row whose cells share one unit but print different fractional
-    /// depths (`15k`, `3.5k`) prints each as is: no pad spaces.
+    /// An SI row whose cells share one tier but print different fractional depths
+    /// (`15`, `3.5`) prints each as is, no pad spaces, and its header names the tier.
     #[test]
     fn an_si_row_with_mixed_fractional_depths_prints_each_cell_as_is() {
         let rows: Vec<serde_json::Map<String, Value>> = [("A", 15000.0), ("B", 5000.0), ("C", 3500.0)]
@@ -784,18 +663,18 @@ mod tests {
         let block = block_over(
             &rows,
             serde_json::json!([{"source": "revenue", "format": {"spec": ".3~s", "raw": "number"}, "label": "R"}]),
-            false,
         )
         .unwrap();
         let texts: Vec<&str> = block.columns[0].cells.iter().map(|c| c.text.as_str()).collect();
-        assert_eq!(texts, ["15k", "5k", "3.5k"]);
+        assert_eq!(texts, ["15", "5", "3.5"]);
+        assert_eq!(block.columns[0].header, "R, K");
     }
 
     /// Cells that print different units (`1.2M`, `30`) share no decimal
     /// position, so nothing pads.
     #[test]
     fn an_si_row_printing_different_units_pads_nothing() {
-        let block = block_of(serde_json::json!([{"source": "revenue", "format": {"spec": ".3~s", "raw": "number"}, "label": "R"}]), false)
+        let block = block_of(serde_json::json!([{"source": "revenue", "format": {"spec": ".3~s", "raw": "number"}, "label": "R"}]))
             .unwrap();
         assert_eq!(block.columns[0].cells[1].text, "30");
     }
@@ -811,9 +690,8 @@ mod tests {
                 .map(|(c, n)| serde_json::from_value(serde_json::json!({"cat": c, "note": n})).unwrap())
                 .collect();
             let dom: Vec<String> = vec!["A".into(), "B".into()];
-            build_block("c",
-                &config, &rows, "cat", &dom, &[10.0, 30.0], &test_fonts(), &style(), crate::common::TAB_FONT, Side::Left, 6.0,
-                false, None, &[], None, None, None)
+            build_block(
+                &config, &rows, "cat", &dom, &[10.0, 30.0], &test_fonts(), &style(), crate::common::TAB_FONT, Side::Left, 6.0, None, &[], None, None, None)
             .unwrap()
         };
         let text = block(["n/a", "ok"]);
@@ -830,10 +708,10 @@ mod tests {
         let config = parse_config(&serde_json::json!({"entries": [{"source": "units", "format": ",d"}]}), "bar").unwrap();
         let mut rows = rows();
         rows.push(rows[0].clone());
-        let err = build_block("c",
+        let err = build_block(
             &config, &rows, "cat", &domain(), &[10.0, 30.0, 50.0], &test_fonts(), &style(),
             crate::common::TAB_FONT,
-            Side::Left, 6.0, false, None, &[], None, None, None)
+            Side::Left, 6.0, None, &[], None, None, None)
         .unwrap_err();
         assert!(err.contains("ambiguous"), "{err}");
     }
@@ -858,7 +736,6 @@ mod tests {
                 {"source": "units", "format": ",d", "label": "U"},
                 {"source": "revenue", "format": ",d", "label": "R"}
             ]),
-            false,
         )
         .unwrap();
         print::print(&block.nodes(style, 400.0, 300.0, 100.0, 50.0, None).unwrap())
@@ -875,7 +752,6 @@ mod tests {
                 {"source": "units", "format": ",d", "label": "U"},
                 {"source": "revenue", "format": ",d", "label": "R"}
             ]),
-            false,
         )
         .unwrap();
         let x = 100.0 + block.right_edges(400.0)[0] + 6.0;
@@ -917,26 +793,26 @@ mod tests {
             let mut value = style_json();
             value[path[0]].as_object_mut().unwrap().remove(path[1]);
             let style: SupportTableStyle = serde_json::from_value(value).unwrap();
-            let err = build_block("c",
+            let err = build_block(
                 &config, &rows(), "cat", &domain(), &[10.0, 30.0, 50.0], &test_fonts(), &style,
                 crate::common::TAB_FONT,
-                Side::Left, 6.0, false, None, &[], None, None, None)
+                Side::Left, 6.0, None, &[], None, None, None)
             .unwrap_err();
             assert!(err.contains(needle), "{err}");
         }
         let mut value = style_json();
         value["label"]["font"].as_object_mut().unwrap().remove("color");
         let style: SupportTableStyle = serde_json::from_value(value).unwrap();
-        let err = build_block("c",
+        let err = build_block(
             &config, &rows(), "cat", &domain(), &[10.0, 30.0, 50.0], &test_fonts(), &style,
             crate::common::TAB_FONT,
-            Side::Left, 6.0, false, None, &[], None, None, None)
+            Side::Left, 6.0, None, &[], None, None, None)
         .unwrap_err();
         assert!(err.contains("label.font.color"), "{err}");
     }
 
     #[test]
     fn an_integer_format_carries_no_pad() {
-        block_of(serde_json::json!([{"source": "units", "format": ",d", "label": "U"}]), false).unwrap();
+        block_of(serde_json::json!([{"source": "units", "format": ",d", "label": "U"}])).unwrap();
     }
 }

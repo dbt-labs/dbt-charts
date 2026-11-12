@@ -1,7 +1,7 @@
 """Per-adapter warehouse check — validity and column schema without full execution.
 
-Every mechanism runs the query through ``run.run_query`` or
-``run.execute_resolved`` so it sees
+Every mechanism composes and runs the query through the plan-keyed entry points
+of ``planned``, so it sees
 exactly what execution would: dbt refs resolved, ``setup_sql`` on the same
 connection, board variables merged and coerced. Checking a hand-rebuilt copy of
 the SQL instead would report failures the real render never produces.
@@ -41,8 +41,8 @@ result schema — so those rows are ``columns_checked=False`` and the caller
 reports the chart-column check as unavailable rather than pretending it ran.
 
 A query authored with a ``dialect:`` other than its source's is translated first,
-through the path execution uses (``compose.translate_query``), and the
-mechanism then checks the translated text. A translation failure is ``invalid``:
+through the path execution uses (``planned.translate_query``) and the
+mechanism checks that translation. A translation failure is ``invalid``:
 execution would fail the same way.
 
 A first EXPLAIN tier was cut from PR #7266: its guard inferred fault from
@@ -71,7 +71,6 @@ import sqlglot.expressions as exp
 from pydantic import BaseModel, ConfigDict
 
 from dbt_charts.core.attribution import attribute, attribution_payload
-from dbt_charts.core.compile.models.query.normalized import SqlQuery, is_sql_query
 from dbt_charts.core.compile.models.source import AttributedSourceConfig, is_file_source
 from dbt_charts.core.compile.sql_guard import (
     as_expressions,
@@ -93,13 +92,18 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_WAREHOUSE_RUNTIME,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError, UnparseableSqlError
-from dbt_charts.core.execute.compose import compose_query, translate_query
-from dbt_charts.core.execute.plan_sources import resolve_query_source
-from dbt_charts.core.execute.run import execute_resolved, run_query
+from dbt_charts.core.dialects.identifier import result_column_name
+from dbt_charts.core.execute.plan import CACHE_REF_JINJA_RE
+from dbt_charts.core.execute.plan_reader import (
+    board_clock as plan_clock,
+    resolve_planned_source,
+)
+from dbt_charts.core.execute.planned import compose_query, translate_query
+from dbt_charts.core.execute.query_plan import QueryPlan
+from dbt_charts.core.execute.query_result import QueryResult
+from dbt_charts.core.execute.run import execute_on_backend, run_planned
 
 if TYPE_CHECKING:
-    from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
-    from dbt_charts.core.compile.models.query.normalized import AnyQuery
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
     from dbt_charts.core.diagnostics.registry import ErrorCode
     from dbt_charts.core.execute.env import ExecEnv
@@ -170,35 +174,25 @@ class WarehouseCheck(BaseModel):
 
 
 def warehouse_check(
-    query: SqlQuery,
-    *,
-    board: Board,
-    env: ExecEnv,
-    query_name: str,
-    query_registry: dict[str, AnyQuery],
+    plan: QueryPlan, query_name: str, *, env: ExecEnv
 ) -> WarehouseCheck:
-    """Check one compiled query against its warehouse without executing it.
+    """Check one SQL query of *plan* against its warehouse without executing it.
 
-    Args:
-        query_registry: Every compiled query of the board, so a ``{{ queries.X }}``
-            chain resolves the same way the executor resolves it.
+    Composition, source resolution and the route a statement takes are the
+    plan-keyed entry points of ``planned``, the ones a run uses.
 
     Raises:
+        KeyError: The plan holds no query *query_name*.
         DbtChartsError: the query's source cannot be resolved.
     """
-    from dbt_charts.core.execute.plan import (
-        CACHE_REF_JINJA_RE,
-        merge_board_variables,
-        resolve_query_references,
-        utc_now,
-    )
-    from dbt_charts.core.execute.query_result import QueryResult
+    entry = plan["queries"][query_name]
+    assert entry["type"] == "sql"
 
     # {{ queries.X.cache }} composes another query's *cached result*, which the
     # run stage materializes at render time and no warehouse has ever heard of.
     # Sending this SQL anywhere would report a failure about a table the author
     # never wrote.
-    if CACHE_REF_JINJA_RE.search(query.sql):
+    if CACHE_REF_JINJA_RE.search(entry["sql"]):
         return WarehouseCheck(
             status="unchecked",
             adapter_type="none",
@@ -210,29 +204,8 @@ def warehouse_check(
             ),
         )
 
-    # Multi-hop {{ queries.X }} composition and the setup_sql of everything in
-    # the chain, resolved exactly as the executor resolves it, and before the
-    # source is: the source is chosen on the SQL that executes. ``compose`` is a
-    # single non-recursive pass, so a two-hop chain would
-    # otherwise reach the warehouse with `{{ queries.X }}` still in the SQL.
-    resolved = resolve_query_references(
-        query,
-        all_queries={**board.queries, **query_registry},
-        query_name=query_name,
-    )
-    # Resolution only ever rewrites `sql`/`setup_sql` on a copy of what it got.
-    assert is_sql_query(resolved)
-    query = resolved
-
     try:
-        source_config = resolve_query_source(
-            query,
-            sources=env.sources,
-            resolver=env.resolver,
-            dbt_context=env.dbt_context,
-            board=board,
-            query_name=query_name,
-        )
+        source_config = resolve_planned_source(plan, query_name, env)
     except ExecutionError as exc:
         # A dbt target that cannot be read is this query's problem, not the
         # board's: the other queries still get their check.
@@ -244,17 +217,14 @@ def warehouse_check(
             reason=str(exc),
         )
     assert source_config is not None  # SQL always resolves to a source
-    clock = board.clock(utc_now())
-    with board_clock(clock):
-        variables = merge_board_variables(board, {}, clock)
-
-        # A `dialect:` query is translated when it runs. The mechanisms below wrap
-        # or dry-run the SQL as given, so they must be handed the translated text.
-        if query.dialect is not None:
+    with board_clock(plan_clock(plan)):
+        # A `dialect:` query is translated when it runs. A translation failure is a
+        # verdict on the query, and the prefix gate reads the translated text.
+        translated = None
+        if entry["dialect"] is not None:
             translated = translate_query(
-                query,
-                board=board,
-                variables=variables,
+                plan,
+                query_name,
                 source_config=source_config,
                 refs=env.dbt_refs,
                 project=env.project,
@@ -267,7 +237,6 @@ def warehouse_check(
                     adapter_type=source_config.type,
                     mechanism="translation",
                 )
-            query = translated
 
         adapter_type = source_config.type
 
@@ -275,7 +244,7 @@ def warehouse_check(
             # The dry run is sent on a bare client, not the dbt connection that labels
             # execution, so it establishes the same scope the registry does and
             # `_check_bigquery` reads it back.
-            scope = {"query": query_name, "board": board.id}
+            scope = {"query": query_name, "board": plan["board_id"]}
             with attribute(
                 scope,
                 source_config.attribution
@@ -283,19 +252,11 @@ def warehouse_check(
                 else {},
             ):
                 return _check_bigquery(
-                    query,
-                    board=board,
-                    env=env,
-                    variables=variables,
-                    source_config=source_config,
+                    plan, query_name, env=env, source_config=source_config
                 )
         if adapter_type == "sqlserver":
             return _check_sqlserver(
-                query,
-                board=board,
-                env=env,
-                variables=variables,
-                source_config=source_config,
+                plan, query_name, env=env, source_config=source_config
             )
         prefix_check = _PREFIX_CHECKS.get(adapter_type)
         parse_dialect = adapter_type
@@ -319,8 +280,27 @@ def warehouse_check(
             # is lead every statement, which is what the gate below rules on — and
             # for EXPLAIN the gate's leading-parenthesized-arm refusal also covers
             # Postgres parsing `EXPLAIN (SELECT …)` as EXPLAIN's options list.
+            composed = (
+                translated
+                if translated is not None
+                else compose_query(
+                    plan,
+                    query_name,
+                    source_config=source_config,
+                    refs=env.dbt_refs,
+                    project=env.project,
+                )
+            )
+            if isinstance(composed, QueryResult):
+                assert composed.error is not None
+                return _failure(
+                    str(composed.error),
+                    rejected=_is_query_defect(composed.error.code),
+                    adapter_type=adapter_type,
+                    mechanism=keyword,
+                )
             unwrappable = _unwrappable_reason(
-                query.sql, dialect=parse_dialect, keyword=keyword
+                composed.inline(parse_dialect), dialect=parse_dialect, keyword=keyword
             )
             if unwrappable is not None:
                 return WarehouseCheck(
@@ -331,13 +311,11 @@ def warehouse_check(
                     reason=unwrappable,
                 )
             return _check_via_wrap(
-                query,
-                f"{keyword} {query.sql}",
+                plan,
+                query_name,
                 adapter_type=adapter_type,
                 check=prefix_check,
-                board=board,
                 env=env,
-                variables=variables,
                 source_config=source_config,
             )
         # The remaining adapters are unchecked because dbt charts implements no
@@ -444,23 +422,19 @@ def _unwrappable_reason(sql: str, *, dialect: str, keyword: str) -> str | None:
 
 
 def _check_via_wrap(
-    query: SqlQuery,
-    wrapped_sql: str,
+    plan: QueryPlan,
+    query_name: str,
     *,
     adapter_type: str,
     check: _PrefixCheck,
-    board: Board,
     env: ExecEnv,
-    variables: VariableValues,
-    source_config: ResolvedSourceConfig | None,
+    source_config: ResolvedSourceConfig,
 ) -> WarehouseCheck:
-    """Run a keyword-wrapped statement through the real execute path.
+    """Run a keyword-wrapped statement through the route a run takes.
 
-    The wrap replaces ``sql``; source, ``setup_sql`` and lenient_variables ride
-    along, so the adapter resolves refs and variables exactly as it would for
-    the real run. ``limit`` is dropped: it bounds the *rows* of the authored
-    query, and the wrapped statement's rows are a schema or a plan, never the
-    authored result.
+    The wrap rewrites the composed SQL right before it is sent; source,
+    ``setup_sql`` and the variable bindings ride along, so the adapter resolves
+    refs and variables exactly as it would for the real run.
 
     ``check.columns`` says what those rows are: DESCRIBE's are the result
     column schema and are read into ``columns``; EXPLAIN's are a plan nobody
@@ -472,12 +446,12 @@ def _check_via_wrap(
     entitles this to read a failure of the wrapped statement as a verdict on
     the authored one.
     """
-    result = run_query(
+    result = run_planned(
         env,
-        query.model_copy(update={"sql": wrapped_sql, "limit": None}),
-        variables=variables,
-        board=board,
+        plan,
+        query_name,
         source_config=source_config,
+        rewrite=lambda sql: f"{check.keyword} {sql}",
     )
     if result.error:
         return _failure(
@@ -607,11 +581,10 @@ def _strip_trailing_semicolon_for_script_join(sql: str) -> str:
 
 
 def _check_sqlserver(
-    query: SqlQuery,
+    plan: QueryPlan,
+    query_name: str,
     *,
-    board: Board,
     env: ExecEnv,
-    variables: VariableValues,
     source_config: ResolvedSourceConfig,
 ) -> WarehouseCheck:
     """Bind the query without running it, through ``sys.dm_exec_describe_first_result_set``.
@@ -621,31 +594,16 @@ def _check_sqlserver(
 
     The query goes in as a string literal, so it is wrapped *after* rendering
     (a rendered value's quotes would otherwise close the literal): the wire SQL
-    from :func:`~dbt_charts.core.execute.compose.compose_query`, whose select-only guard has
+    from :func:`~dbt_charts.core.execute.planned.compose_query`, whose select-only guard has
     already run, is wrapped and sent through
-    :func:`~dbt_charts.core.execute.run.execute_resolved`.
+    :func:`~dbt_charts.core.execute.run.execute_on_backend`.
     """
     from dbt_charts.core.dialects import get_dialect
-    from dbt_charts.core.execute.query_result import QueryResult
     from dbt_charts.core.execute.sql_literals import sql_string_literal
 
-    unwrappable = _unwrappable_reason(
-        query.sql, dialect="sqlserver", keyword=_SQLSERVER_DESCRIBE
-    )
-    if unwrappable is not None:
-        return WarehouseCheck(
-            status="unchecked",
-            adapter_type="sqlserver",
-            mechanism=_SQLSERVER_DESCRIBE,
-            columns_checked=False,
-            reason=unwrappable,
-        )
-    # The authored limit bounds the rows of the query; the describe's rows are
-    # its columns, so a limit here would truncate the schema.
     composed = compose_query(
-        query.model_copy(update={"limit": None}),
-        board=board,
-        variables=variables,
+        plan,
+        query_name,
         source_config=source_config,
         refs=env.dbt_refs,
         project=env.project,
@@ -664,6 +622,17 @@ def _check_sqlserver(
             mechanism=_SQLSERVER_DESCRIBE,
             columns_checked=False,
             reason="the query could not be prepared for a describe",
+        )
+    unwrappable = _unwrappable_reason(
+        composed.inline("sqlserver"), dialect="sqlserver", keyword=_SQLSERVER_DESCRIBE
+    )
+    if unwrappable is not None:
+        return WarehouseCheck(
+            status="unchecked",
+            adapter_type="sqlserver",
+            mechanism=_SQLSERVER_DESCRIBE,
+            columns_checked=False,
+            reason=unwrappable,
         )
     if composed.setup_sql:
         # The function binds the statement in a scope of its own, so it cannot
@@ -690,7 +659,9 @@ def _check_sqlserver(
         ),
         params=(),
     )
-    result = execute_resolved(env, wrapped, query, source_config=source_config)
+    result = execute_on_backend(
+        env, source_config, plan["queries"][query_name]["source"], lambda _: wrapped
+    )
     if result.error:
         return _failure(
             str(result.error),
@@ -712,17 +683,18 @@ def _check_sqlserver(
         adapter_type="sqlserver",
         mechanism=_SQLSERVER_DESCRIBE,
         columns_checked=True,
-        # Lowercased to match `DbtBackend`, which lowercases every result
-        # column before a chart sees it. An expression with no alias has no name
-        # (NULL), and the empty string is how the driver spells that.
+        # Spelled as `DbtBackend` names result columns before a chart sees
+        # them. An expression with no alias has no name (NULL), and the empty
+        # string is how the driver spells that.
         columns=[
             WarehouseCheckColumn(
-                name=(
+                name=result_column_name(
                     row[
                         "name"
                     ]  # type-state: silent_fallback — NULL is how SQL Server reports an unaliased column; "" is the driver's own spelling
-                    or ""
-                ).lower(),
+                    or "",
+                    "tsql",
+                ),
                 type=row["system_type_name"],
             )
             for row in result.data
@@ -731,11 +703,10 @@ def _check_sqlserver(
 
 
 def _check_bigquery(
-    query: SqlQuery,
+    plan: QueryPlan,
+    query_name: str,
     *,
-    board: Board,
     env: ExecEnv,
-    variables: VariableValues,
     source_config: ResolvedSourceConfig,
 ) -> WarehouseCheck:
     """Dry-run through the native BigQuery client — validity + schema, unbilled.
@@ -755,10 +726,7 @@ def _check_bigquery(
     """
     from dbt_charts.core.connections import build_bigquery_client, import_bigquery
     from dbt_charts.core.execute.backends.dbt_core import bigquery_default_dataset
-    from dbt_charts.core.execute.query_result import (
-        BIGQUERY_UNKNOWN_REF_SUBSTRINGS,
-        QueryResult,
-    )
+    from dbt_charts.core.execute.query_result import BIGQUERY_UNKNOWN_REF_SUBSTRINGS
 
     # Through the same helper the rest of the BigQuery surface uses, so a
     # missing extra names itself instead of surfacing a bare ModuleNotFoundError.
@@ -767,9 +735,8 @@ def _check_bigquery(
     BadRequest = import_bigquery("google.api_core.exceptions").BadRequest
 
     composed = compose_query(
-        query,
-        board=board,
-        variables=variables,
+        plan,
+        query_name,
         source_config=source_config,
         refs=env.dbt_refs,
         project=env.project,
@@ -879,12 +846,12 @@ def _check_bigquery(
         adapter_type="bigquery",
         mechanism=_BIGQUERY_DRY_RUN,
         columns_checked=True,
-        # Lowercased to match `DbtBackend`, which lowercases every result column
-        # before a chart ever sees it — so lowercase is the only spelling that
-        # renders, and reporting the dry run's verbatim casing would reject the
-        # working board and pass the broken one.
+        # Spelled as `DbtBackend` names result columns before a chart sees them.
         columns=[
-            WarehouseCheckColumn(name=field.name.lower(), type=str(field.field_type))
+            WarehouseCheckColumn(
+                name=result_column_name(field.name, "bigquery"),
+                type=str(field.field_type),
+            )
             for field in schema
         ],
     )

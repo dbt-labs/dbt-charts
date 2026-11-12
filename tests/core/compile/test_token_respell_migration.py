@@ -186,7 +186,7 @@ class TestRetiredTokensRespellInMemory:
         result = prepare_board_mapping(dict(mapping))
 
         assert (
-            result["tabs"]["items"][0]["cols"][0]["style"]["color"]["static"]
+            result["tabs"]["items"][0]["cols"][0]["style"]["marks"]["bar"]["color"]
             == "category[2].dark"
         )
 

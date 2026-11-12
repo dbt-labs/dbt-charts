@@ -172,7 +172,7 @@ mod tests {
 
     fn sidecar(queries: Value) -> Sidecar {
         Sidecar::parse(
-            &json!({"source": "text", "queries": queries}).to_string(),
+            &json!({"source": "text", "queries": queries, "rendered_at": "2026-01-15T12:00:00Z"}).to_string(),
             "text",
         )
         .unwrap()
@@ -276,7 +276,7 @@ mod tests {
         let int = json!({"kind": "integer", "element": null, "fields": null});
         let rows = json!({"rows": [{"v": 7}], "schema": {"v": int}});
         assert_eq!(
-            tally_kpi("rows", Some(json!({"source": KPI, "queries": {"q": rows}}))),
+            tally_kpi("rows", Some(json!({"source": KPI, "queries": {"q": rows}, "rendered_at": "2026-01-15T12:00:00Z"}))),
             ("drawn".into(), None)
         );
     }
@@ -287,7 +287,7 @@ mod tests {
         assert_eq!(
             tally_kpi(
                 "error",
-                Some(json!({"source": KPI, "queries": {"q": {"error": error}}}))
+                Some(json!({"source": KPI, "queries": {"q": {"error": error}}, "rendered_at": "2026-01-15T12:00:00Z"}))
             ),
             ("drawn".into(), None)
         );
@@ -306,7 +306,7 @@ mod tests {
             ),
             (NO_RECORDING, true)
         );
-        let (outcome, detail) = tally_kpi("lacking", Some(json!({"source": KPI, "queries": {}})));
+        let (outcome, detail) = tally_kpi("lacking", Some(json!({"source": KPI, "queries": {}, "rendered_at": "2026-01-15T12:00:00Z"})));
         assert_eq!(
             (outcome.as_str(), detail.as_deref()),
             (

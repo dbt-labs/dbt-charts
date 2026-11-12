@@ -251,8 +251,14 @@ def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
             if nullable:
                 parts.append({"type": "null"})
             return {"anyOf": parts} if len(parts) > 1 else parts[0]
-        if field.container == "dict":
-            obj: dict[str, Any] = {"type": "object", "additionalProperties": inner}
+        if field.container in ("dict", "dict_of_list"):
+            values = (
+                _array_schema(inner) if field.container == "dict_of_list" else inner
+            )
+            obj: dict[str, Any] = {  # type-state: explicit_any — JSON Schema fragment
+                "type": "object",
+                "additionalProperties": values,
+            }
             parts = [obj]
             if nullable:
                 parts.append({"type": "null"})

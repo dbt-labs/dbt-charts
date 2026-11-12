@@ -316,6 +316,9 @@ pub struct Constraint {
     /// What a violation says when a caller refuses a value over it (`{query}` is the caller's
     /// name for the offender); the JSON Schema states the rule and never this text.
     pub message: Option<&'static str>,
+    /// A registered diagnostic code the violation is reported under, in place of
+    /// `ERR-VALIDATION-FIELD` (a code whose message takes no parameters).
+    pub code: Option<&'static str>,
 }
 
 /// What a model is, which decides how its fields read.
@@ -344,4 +347,7 @@ pub struct ModelInfo {
     pub string_pattern: Option<&'static str>,
     /// Every key is required of an authored layer even where a slot mirrors the model.
     pub complete: bool,
+    /// The tag a tagged enum reads this model under, when a rule of the model depends on it (a
+    /// histogram is a bar): a constraint may name that key though it is no field.
+    pub read_under: Option<&'static str>,
 }

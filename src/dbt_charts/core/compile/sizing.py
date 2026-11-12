@@ -40,17 +40,13 @@ from dbt_charts.core.compile.resolve.chart._kwargs import _FAMILY_SLOT
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
-from dbt_charts.core.compile.resolve.style.inherit_resolver import settled
 from dbt_charts.core.compile.resolve.style.markdown_style import (
     prose_content_widths,
     prose_measure,
     title_max_content_width,
     title_min_content_width,
 )
-from dbt_charts.core.compile.resolve.style.typography import (
-    concrete_title_style,
-    resolve_title_font,
-)
+from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.font_measure import get_font_measurer, get_weighted_font_measurer
 from dbt_charts.core.text.case import apply_case
 from dbt_charts.core.text.format_d3 import portable_strftime
@@ -141,9 +137,8 @@ def _one_line_title_width(
         return 0.0
     font = resolve_title_font(ctx, width)
     text = apply_case(title, font.case)
-    wrap_size = float(settled(concrete_title_style(ctx).font.size))
     needed = max(
-        get_font_measurer(_TITLE_WRAP_MEASURE_FAMILY).measure(text, wrap_size),
+        get_font_measurer(_TITLE_WRAP_MEASURE_FAMILY).measure(text, float(font.size)),
         get_weighted_font_measurer(font.family, font.weight).measure(
             text, float(font.size)
         ),

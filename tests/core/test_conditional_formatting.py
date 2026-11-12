@@ -1,13 +1,4 @@
-"""Tests for conditional formatting engine.
-
-Covers the ``when`` clause under the chart-level ``conditional_formatting:``
-block: condition operators, style overrides, rule ordering / conflict
-resolution, and validation. Tables read CF rules directly from the block at
-render time — there is no per-column ``when:`` field.
-"""
-
-import pytest
-from pydantic import ValidationError
+"""Tests for conditional formatting: predicate operators and table/KPI rendering."""
 
 from dbt_charts.core.compile.config import (
     get_theme_style,
@@ -26,352 +17,135 @@ _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 # ---------------------------------------------------------------------------
 
 
-class TestConditionalRuleModel:
-    """ConditionalRule validates operator + style overrides."""
-
-    def test_basic_rule_with_lt_and_background(self):
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-        )
-
-        rule = ConditionalRule(lt=0, background="#fee2e2")
-        assert rule.lt == 0
-        assert rule.background == "#fee2e2"
-
-    def test_basic_rule_with_eq_string(self):
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-        )
-
-        rule = ConditionalRule.model_validate(
-            {"eq": "At Risk", "background": "#fef3c7", "font": {"color": "#92400e"}}
-        )
-        assert rule.eq == "At Risk"
-        assert rule.background == "#fef3c7"
-        assert rule.font is not None
-        assert rule.font.color == "#92400e"
-
-    def test_rule_with_multiple_style_keys(self):
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-        )
-
-        rule = ConditionalRule.model_validate(
-            {
-                "gte": 100000,
-                "background": "#dcfce7",
-                "font": {"color": "#166534", "weight": "bold"},
-            }
-        )
-        assert rule.gte == 100000
-        assert rule.font is not None
-        assert rule.font.weight == "bold"
-
-    def test_rule_must_have_exactly_one_operator(self):
-        """A rule with zero operators is invalid."""
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-        )
-
-        with pytest.raises(ValidationError):
-            ConditionalRule(background="#fee2e2")
-
-    def test_rule_rejects_two_operators(self):
-        """A rule with two operators is invalid."""
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-        )
-
-        with pytest.raises(ValidationError):
-            ConditionalRule(lt=0, gt=100, background="#fee2e2")
-
-    def test_rule_must_have_at_least_one_style(self):
-        """A rule with an operator but no style overrides is invalid."""
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-        )
-
-        with pytest.raises(ValidationError):
-            ConditionalRule(eq="bad")
-
-    def test_rule_rejects_unknown_font_fields(self):
-        """Unknown fields inside font are rejected (FontStyle has extra='forbid')."""
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-        )
-
-        with pytest.raises(ValidationError):
-            ConditionalRule.model_validate(
-                {"eq": "bad", "font": {"unknown_field": "value"}}
-            )
-
-    @pytest.mark.parametrize("weight", ["normal", "bold", "100", "400", "700", "900"])
-    def test_rule_accepts_valid_font_weights(self, weight):
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-        )
-
-        rule = ConditionalRule.model_validate({"eq": "x", "font": {"weight": weight}})
-        assert rule.font is not None
-        assert rule.font.weight == weight
-
-
-class TestFieldConditionalFormattingBlock:
-    """``FieldConditionalFormatting`` carries a column's ``when`` list."""
-
-    def test_block_parses_when_list(self):
-        from dbt_charts.core.compile.models.chart.authored import (
-            FieldConditionalFormatting,
-        )
-
-        entry = FieldConditionalFormatting.model_validate(
-            {
-                "when": [
-                    {
-                        "lt": 0,
-                        "background": "#fee2e2",
-                        "font": {"color": "#991b1b"},
-                    },
-                    {"gte": 100_000, "background": "#dcfce7"},
-                ]
-            }
-        )
-        assert len(entry.when) == 2
-        assert entry.when[0].lt == 0
-        assert entry.when[0].font is not None
-        assert entry.when[0].font.color == "#991b1b"
-
-    def test_block_rejects_extra_keys_on_column_entry(self):
-        """Each column entry only accepts ``when:``."""
-        from dbt_charts.core.compile.models.chart.authored import (
-            FieldConditionalFormatting,
-        )
-
-        with pytest.raises(ValidationError):
-            FieldConditionalFormatting.model_validate(
-                {
-                    "when": [{"eq": "x", "background": "#fff"}],
-                    "default_background": "#ccc",  # not allowed
-                }
-            )
-
-
-# ---------------------------------------------------------------------------
-# Rule evaluation tests
-# ---------------------------------------------------------------------------
-
-
 class TestEvaluateCondition:
     """Test individual condition operators."""
 
     def test_eq_matches_string(self):
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
+        from dbt_charts.core.compile.models.conditional_predicate import (
+            ConditionalPredicate,
             match_predicate,
         )
 
-        rule = ConditionalRule(eq="At Risk", background="#fef3c7")
+        rule = ConditionalPredicate(eq="At Risk")
         assert match_predicate(rule, "At Risk") is True
         assert match_predicate(rule, "On Track") is False
 
     def test_eq_matches_number(self):
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
+        from dbt_charts.core.compile.models.conditional_predicate import (
+            ConditionalPredicate,
             match_predicate,
         )
 
-        rule = ConditionalRule(eq=42, background="#fff")
+        rule = ConditionalPredicate(eq=42)
         assert match_predicate(rule, 42) is True
         assert match_predicate(rule, 43) is False
 
     def test_ne_operator(self):
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
+        from dbt_charts.core.compile.models.conditional_predicate import (
+            ConditionalPredicate,
             match_predicate,
         )
 
-        rule = ConditionalRule(ne="OK", background="#fee2e2")
+        rule = ConditionalPredicate(ne="OK")
         assert match_predicate(rule, "Bad") is True
         assert match_predicate(rule, "OK") is False
 
     def test_lt_operator(self):
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
+        from dbt_charts.core.compile.models.conditional_predicate import (
+            ConditionalPredicate,
             match_predicate,
         )
 
-        rule = ConditionalRule(lt=0, background="#fee2e2")
+        rule = ConditionalPredicate(lt=0)
         assert match_predicate(rule, -5) is True
         assert match_predicate(rule, 0) is False
         assert match_predicate(rule, 10) is False
 
     def test_lte_operator(self):
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
+        from dbt_charts.core.compile.models.conditional_predicate import (
+            ConditionalPredicate,
             match_predicate,
         )
 
-        rule = ConditionalRule(lte=0, background="#fee2e2")
+        rule = ConditionalPredicate(lte=0)
         assert match_predicate(rule, -5) is True
         assert match_predicate(rule, 0) is True
         assert match_predicate(rule, 1) is False
 
     def test_gt_operator(self):
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
+        from dbt_charts.core.compile.models.conditional_predicate import (
+            ConditionalPredicate,
             match_predicate,
         )
-        from dbt_charts.core.compile.models.primitives import FontStyle
 
-        rule = ConditionalRule(gt=100, font=FontStyle(color="green"))
+        rule = ConditionalPredicate(gt=100)
         assert match_predicate(rule, 200) is True
         assert match_predicate(rule, 100) is False
 
     def test_gte_operator(self):
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
+        from dbt_charts.core.compile.models.conditional_predicate import (
+            ConditionalPredicate,
             match_predicate,
         )
-        from dbt_charts.core.compile.models.primitives import FontStyle
 
-        rule = ConditionalRule(gte=100, font=FontStyle(color="green"))
+        rule = ConditionalPredicate(gte=100)
         assert match_predicate(rule, 100) is True
         assert match_predicate(rule, 99) is False
 
     def test_none_value_never_matches(self):
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
+        from dbt_charts.core.compile.models.conditional_predicate import (
+            ConditionalPredicate,
             match_predicate,
         )
 
-        rule = ConditionalRule(eq=0, background="#fee2e2")
+        rule = ConditionalPredicate(eq=0)
         assert match_predicate(rule, None) is False
 
     def test_type_mismatch_does_not_crash(self):
         """Comparing string value against numeric operator returns False, not error."""
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
+        from dbt_charts.core.compile.models.conditional_predicate import (
+            ConditionalPredicate,
             match_predicate,
         )
 
-        rule = ConditionalRule(lt=0, background="#fee2e2")
+        rule = ConditionalPredicate(lt=0)
         assert match_predicate(rule, "hello") is False
 
     def test_eq_zero_does_not_match_false(self):
         """Guard against Python's bool ⊂ int: eq: 0 should not match False."""
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
+        from dbt_charts.core.compile.models.conditional_predicate import (
+            ConditionalPredicate,
             match_predicate,
         )
 
-        rule = ConditionalRule(eq=0, background="#fee2e2")
+        rule = ConditionalPredicate(eq=0)
         assert match_predicate(rule, False) is False
         assert match_predicate(rule, 0) is True
 
     def test_ne_zero_does_not_match_true_as_not_equal(self):
         """ne: 0 should not interact with True/False."""
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
+        from dbt_charts.core.compile.models.conditional_predicate import (
+            ConditionalPredicate,
             match_predicate,
         )
 
-        rule = ConditionalRule(ne=0, background="#fee2e2")
+        rule = ConditionalPredicate(ne=0)
         assert match_predicate(rule, True) is True  # different types
         assert match_predicate(rule, 0) is False
 
     def test_bool_excluded_from_numeric_operators(self):
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
+        from dbt_charts.core.compile.models.conditional_predicate import (
+            ConditionalPredicate,
             match_predicate,
         )
 
-        rule = ConditionalRule(gt=0, background="#fee2e2")
+        rule = ConditionalPredicate(gt=0)
         assert match_predicate(rule, True) is False
 
 
 # ---------------------------------------------------------------------------
 # Style resolution tests
 # ---------------------------------------------------------------------------
-
-
-class TestResolveConditionalStyles:
-    """Test that when rules produce correct merged style overrides."""
-
-    def test_no_rules_returns_empty(self):
-        from dbt_charts.core.render.chart.table_support import (
-            resolve_conditional_styles,
-        )
-
-        assert resolve_conditional_styles(None, 42) == {}
-        assert resolve_conditional_styles([], 42) == {}
-
-    def test_single_matching_rule(self):
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-        )
-        from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.render.chart.table_support import (
-            resolve_conditional_styles,
-        )
-
-        rules = [
-            ConditionalRule(lt=0, background="#fee2e2", font=FontStyle(color="#991b1b"))
-        ]
-        result = resolve_conditional_styles(rules, -5)
-        assert result["background"] == "#fee2e2"
-        assert result["color"] == "#991b1b"
-
-    def test_no_matching_rule_returns_empty(self):
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-        )
-        from dbt_charts.core.render.chart.table_support import (
-            resolve_conditional_styles,
-        )
-
-        rules = [ConditionalRule(lt=0, background="#fee2e2")]
-        result = resolve_conditional_styles(rules, 100)
-        assert result == {}
-
-    def test_multiple_matching_rules_last_wins(self):
-        """When multiple rules match, later rules override earlier ones."""
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-        )
-        from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.render.chart.table_support import (
-            resolve_conditional_styles,
-        )
-
-        rules = [
-            ConditionalRule(gt=0, background="#dcfce7"),
-            ConditionalRule(
-                gte=100, background="#bbf7d0", font=FontStyle(weight="bold")
-            ),
-        ]
-        # Value 200 matches both rules
-        result = resolve_conditional_styles(rules, 200)
-        # Later rule overrides background, adds font.weight
-        assert result["background"] == "#bbf7d0"
-        assert result["weight"] == "bold"
-
-    def test_partial_overlap_merges(self):
-        """Non-overlapping style keys from multiple rules are merged."""
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-        )
-        from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.render.chart.table_support import (
-            resolve_conditional_styles,
-        )
-
-        rules = [
-            ConditionalRule(gt=0, background="#dcfce7"),
-            ConditionalRule(gt=0, font=FontStyle(color="#166534")),
-        ]
-        result = resolve_conditional_styles(rules, 50)
-        assert result["background"] == "#dcfce7"
-        assert result["color"] == "#166534"
 
 
 # ---------------------------------------------------------------------------
@@ -398,21 +172,20 @@ class TestConditionalFormattingRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "amount": {
-                    "when": [
-                        {
-                            "lt": 0,
-                            "background": "#fee2e2",
-                            "font": {"color": "#991b1b"},
-                        },
-                    ],
-                }
-            },
             style={
                 "columns": {
-                    "amount": TableColumnConfig(format=",.0f", background="#ffffff"),
-                }
+                    "amount": TableColumnConfig(
+                        format=",.0f",
+                        background="#ffffff",
+                        conditional=[
+                            {
+                                "lt": 0,
+                                "background": "#fee2e2",
+                                "font": {"color": "#991b1b"},
+                            }
+                        ],
+                    )
+                },
             },
         )
         data = [{"amount": -500}, {"amount": 200}]
@@ -438,13 +211,13 @@ class TestConditionalFormattingRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "amount": {"when": [{"lt": 0, "background": "#fee2e2"}]},
-            },
             style={
                 "columns": {
-                    "amount": TableColumnConfig(background="#ffffff"),
-                }
+                    "amount": TableColumnConfig(
+                        background="#ffffff",
+                        conditional=[{"lt": 0, "background": "#fee2e2"}],
+                    )
+                },
             },
         )
         data = [{"amount": 200}]
@@ -466,15 +239,17 @@ class TestConditionalFormattingRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "status": {
-                    "when": [
-                        {
-                            "eq": "Critical",
-                            "background": "#fee2e2",
-                            "font": {"color": "#991b1b", "weight": "bold"},
-                        },
-                    ],
+            style={
+                "columns": {
+                    "status": {
+                        "conditional": [
+                            {
+                                "eq": "Critical",
+                                "background": "#fee2e2",
+                                "font": {"color": "#991b1b", "weight": "bold"},
+                            }
+                        ]
+                    }
                 }
             },
         )
@@ -497,8 +272,12 @@ class TestConditionalFormattingRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "amount": {"when": [{"gte": 1000, "font": {"weight": "bold"}}]},
+            style={
+                "columns": {
+                    "amount": {
+                        "conditional": [{"gte": 1000, "font": {"weight": "bold"}}]
+                    }
+                }
             },
         )
         data = [{"amount": 5000}, {"amount": 10}]
@@ -520,9 +299,13 @@ class TestConditionalFormattingRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "amount": {"when": [{"lt": 0, "background": "#fee2e2"}]},
-                "status": {"when": [{"eq": "Critical", "background": "#fecaca"}]},
+            style={
+                "columns": {
+                    "amount": {"conditional": [{"lt": 0, "background": "#fee2e2"}]},
+                    "status": {
+                        "conditional": [{"eq": "Critical", "background": "#fecaca"}]
+                    },
+                }
             },
         )
         data = [{"amount": -100, "status": "OK"}, {"amount": 200, "status": "Critical"}]
@@ -549,13 +332,13 @@ class TestConditionalFormattingRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "revenue": {"when": [{"lt": 0, "background": "#fee2e2"}]},
-            },
             style={
                 "columns": {
-                    "revenue": TableColumnConfig(background="_bg_col"),
-                }
+                    "revenue": TableColumnConfig(
+                        background="_bg_col",
+                        conditional=[{"lt": 0, "background": "#fee2e2"}],
+                    )
+                },
             },
         )
         data = [
@@ -583,8 +366,17 @@ class TestConditionalFormattingRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "status": {"when": [{"eq": "Pending", "font": {"style": "italic"}}]},
+            style={
+                "columns": {
+                    "status": {
+                        "conditional": [
+                            {
+                                "eq": "Pending",
+                                "font": {"style": "italic"},
+                            }
+                        ]
+                    }
+                }
             },
         )
         data = [{"status": "Pending"}, {"status": "OK"}]
@@ -616,9 +408,16 @@ class TestConditionalFormattingRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "status": {
-                    "when": [{"eq": "open", "font": {"color": "category[1]"}}],
+            style={
+                "columns": {
+                    "status": {
+                        "conditional": [
+                            {
+                                "eq": "open",
+                                "font": {"color": "category[1]"},
+                            }
+                        ]
+                    }
                 }
             },
         )
@@ -636,6 +435,36 @@ class TestConditionalFormattingRendering:
         )
         assert f'fill="{expected_hex}"' in svg
 
+    def test_category_token_indexes_the_boards_own_palette(self, make_chart):
+        import dataclasses
+
+        from ._engine_render import render_table_svg
+
+        chart = make_chart(
+            "table",
+            x=None,
+            y=None,
+            style={
+                "columns": {
+                    "status": {
+                        "conditional": [
+                            {"eq": "open", "font": {"color": "category[2]"}}
+                        ]
+                    }
+                }
+            },
+        )
+        data = [{"status": "open"}]
+        board = dataclasses.replace(_BOARD_STYLE, palette=["#B5427F", "#112233"])
+        chart = resolve(chart, data, chart_style_context=board)
+        svg = render_table_svg(
+            chart,
+            data,
+            width=400,
+            board_style=resolve_style(get_theme_style()),
+        )
+        assert 'fill="#112233"' in svg
+
     def test_conditional_strikethrough_renders_in_svg(self, make_chart):
         """font.decoration=line-through emits text-decoration on matching rows."""
         from ._engine_render import render_table_svg
@@ -644,10 +473,17 @@ class TestConditionalFormattingRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "amount": {
-                    "when": [{"lt": 0, "font": {"decoration": "line-through"}}],
-                },
+            style={
+                "columns": {
+                    "amount": {
+                        "conditional": [
+                            {
+                                "lt": 0,
+                                "font": {"decoration": "line-through"},
+                            }
+                        ]
+                    }
+                }
             },
         )
         data = [{"amount": -100}, {"amount": 50}]
@@ -677,8 +513,17 @@ class TestExtendedPredicatesTableRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "amount": {"when": [{"between": [10, 20], "background": "#dcfce7"}]},
+            style={
+                "columns": {
+                    "amount": {
+                        "conditional": [
+                            {
+                                "between": [10, 20],
+                                "background": "#dcfce7",
+                            }
+                        ]
+                    }
+                }
             },
         )
         data = [{"amount": 5}, {"amount": 15}, {"amount": 25}]
@@ -700,8 +545,17 @@ class TestExtendedPredicatesTableRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "amount": {"when": [{"between": [10, 20], "background": "#dcfce7"}]},
+            style={
+                "columns": {
+                    "amount": {
+                        "conditional": [
+                            {
+                                "between": [10, 20],
+                                "background": "#dcfce7",
+                            }
+                        ]
+                    }
+                }
             },
         )
         data = [{"amount": 10}, {"amount": 20}]
@@ -722,16 +576,18 @@ class TestExtendedPredicatesTableRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "status": {
-                    "when": [
-                        {
-                            "in": ["At Risk", "Critical"],
-                            "background": "#fee2e2",
-                            "font": {"color": "#991b1b"},
-                        },
-                    ],
-                },
+            style={
+                "columns": {
+                    "status": {
+                        "conditional": [
+                            {
+                                "in": ["At Risk", "Critical"],
+                                "background": "#fee2e2",
+                                "font": {"color": "#991b1b"},
+                            }
+                        ]
+                    }
+                }
             },
         )
         data = [
@@ -757,10 +613,12 @@ class TestExtendedPredicatesTableRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "amount": {
-                    "when": [{"is_null": True, "background": "#e5e7eb"}],
-                },
+            style={
+                "columns": {
+                    "amount": {
+                        "conditional": [{"is_null": True, "background": "#e5e7eb"}]
+                    }
+                }
             },
         )
         data = [{"amount": None}, {"amount": 10}]
@@ -781,10 +639,12 @@ class TestExtendedPredicatesTableRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "amount": {
-                    "when": [{"is_null": False, "background": "#dcfce7"}],
-                },
+            style={
+                "columns": {
+                    "amount": {
+                        "conditional": [{"is_null": False, "background": "#dcfce7"}]
+                    }
+                }
             },
         )
         data = [{"amount": None}, {"amount": 10}, {"amount": 0}]
@@ -806,14 +666,16 @@ class TestExtendedPredicatesTableRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "amount": {
-                    "when": [
-                        {"lt": 0, "background": "#fee2e2"},
-                        {"gt": 100, "background": "#dcfce7"},
-                        {"default": True, "background": "#f3f4f6"},
-                    ],
-                },
+            style={
+                "columns": {
+                    "amount": {
+                        "conditional": [
+                            {"lt": 0, "background": "#fee2e2"},
+                            {"gt": 100, "background": "#dcfce7"},
+                            {"default": True, "background": "#f3f4f6"},
+                        ]
+                    }
+                }
             },
         )
         data = [{"amount": -1}, {"amount": 50}, {"amount": 200}]
@@ -841,13 +703,15 @@ class TestExtendedPredicatesTableRendering:
             "table",
             x=None,
             y=None,
-            conditional_formatting={
-                "amount": {
-                    "when": [
-                        {"lt": 0, "background": "#fee2e2"},
-                        {"default": True, "background": "#f3f4f6"},
-                    ],
-                },
+            style={
+                "columns": {
+                    "amount": {
+                        "conditional": [
+                            {"lt": 0, "background": "#fee2e2"},
+                            {"default": True, "background": "#f3f4f6"},
+                        ]
+                    }
+                }
             },
         )
         data = [{"amount": -1}]
@@ -886,8 +750,8 @@ class TestExtendedPredicatesKpiRendering:
             query_name="q",
             type="kpi",
             value="arr",
-            conditional_formatting={
-                "arr": {"when": [{"is_null": False, "background": "#dcfce7"}]},
+            style={
+                "conditional": {"arr": [{"is_null": False, "background": "#dcfce7"}]}
             },
         )
         data = [{"arr": 42}]
@@ -913,13 +777,13 @@ class TestExtendedPredicatesKpiRendering:
             query_name="q",
             type="kpi",
             value="arr",
-            conditional_formatting={
-                "arr": {
-                    "when": [
+            style={
+                "conditional": {
+                    "arr": [
                         {"lt": 0, "background": "#fee2e2"},
                         {"default": True, "background": "#f3f4f6"},
-                    ],
-                },
+                    ]
+                }
             },
         )
         data = [{"arr": 100}]

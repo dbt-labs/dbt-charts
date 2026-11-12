@@ -127,7 +127,6 @@ pub struct Guard;
 
 /// Opens the view for a render whose axis expressions read it.
 pub fn enter() -> Guard {
-    super::funcs::reseed_random();
     VIEW.with(|v| *v.borrow_mut() = View { on: true, ..View::default() });
     Guard
 }

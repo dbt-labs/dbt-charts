@@ -99,3 +99,14 @@ def test_heatmap_chart_local_gradient_override_does_not_crash_on_named_theme_pal
     inline_resolved = resolve(inline_chart, SAMPLE_DATA, chart_style_context=board_ctx)
     assert inline_resolved.style.color_gradient is not None
     assert inline_resolved.style.color_gradient.palette == ["#ffffff", "#000000"]
+
+
+def test_a_heatmap_with_an_empty_palette_has_no_single_series_fill() -> None:
+    resolved = resolve(
+        _heatmap_chart(style={"color": {"categorical": {"palette": []}}}),
+        SAMPLE_DATA,
+        chart_style_context=_BOARD_CTX,
+        width=600.0,
+    )
+
+    assert resolved.style.single_series_fill is None

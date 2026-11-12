@@ -13,6 +13,8 @@ HOST = {
     "default_theme": "clarity",
     "html_policy_ceiling": None,
     "sources": {"db": "{}"},
+    "cache_root": (True, "24h", False),
+    "source_caches": {},
     "implicit_source": None,
 }
 

@@ -10,6 +10,7 @@
 //! with roxmltree, so where the two parsers could disagree — a payload that is
 //! not UTF-8, a DTD attribute default, expat's error text — it refuses by name.
 
+use d3rs::invariant::Invariant;
 use d3rs::py_str::is_py_space;
 
 /// `images.py::ImageSize`: integer pixel dimensions, both at least 1. Held as
@@ -47,16 +48,18 @@ pub fn is_data_uri(url: &str) -> bool {
 /// no measurable size; `Err` is production's `ValueError` (or the `struct` /
 /// `OverflowError` it lets through) message, or a by-name refusal.
 pub fn data_uri_image_size(url: &str) -> Result<Option<ImageSize>, String> {
-    let Some((header, payload)) = url[5..].split_once(',') else {
+    let Some((header, payload)) = url.get(5..).and_then(|rest| rest.split_once(',')) else {
         return Err("Malformed data: URI \u{2014} no ',' separating header from payload".into());
     };
     let parameters: Vec<String> = header
         .split(';')
         .map(|p| p.trim_matches(is_py_space).to_lowercase())
         .collect();
-    let media_type = &parameters[0];
+    let (media_type, flags) = parameters
+        .split_first()
+        .held("split yields at least one piece");
 
-    let data = if parameters[1..].iter().any(|p| p == "base64") {
+    let data = if flags.iter().any(|p| p == "base64") {
         // `b64decode` encodes the `str` to ASCII first, outside the
         // `binascii.Error` handler, so this message reaches the caller bare.
         if !payload.is_ascii() {
@@ -154,8 +157,8 @@ fn unquote_to_bytes(text: &str) -> Vec<u8> {
     let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
+    while let Some(&byte) = bytes.get(i) {
+        if byte == b'%' {
             if let (Some(hi), Some(lo)) = (
                 bytes.get(i + 1).copied().and_then(hex),
                 bytes.get(i + 2).copied().and_then(hex),
@@ -165,7 +168,7 @@ fn unquote_to_bytes(text: &str) -> Vec<u8> {
                 continue;
             }
         }
-        out.push(bytes[i]);
+        out.push(byte);
         i += 1;
     }
     out
@@ -216,12 +219,12 @@ fn declared_encoding(text: &str) -> Option<&str> {
         .strip_prefix('\u{feff}')
         .unwrap_or(text)
         .strip_prefix("<?xml")?;
-    let declaration = &declaration[..declaration.find("?>")?];
-    let rest = &declaration[declaration.find("encoding")? + "encoding".len()..];
+    let (declaration, _) = declaration.split_once("?>")?;
+    let (_, rest) = declaration.split_once("encoding")?;
     let rest = rest.trim_start().strip_prefix('=')?.trim_start();
     let quote = rest.chars().next().filter(|q| *q == '"' || *q == '\'')?;
-    let value = &rest[1..];
-    Some(&value[..value.find(quote)?])
+    let (value, _) = rest.strip_prefix(quote)?.split_once(quote)?;
+    Some(value)
 }
 
 /// `images.py::_svg_image_size`: Python's `round()` (ties to even) of each
@@ -268,31 +271,28 @@ fn parse_svg_view_box(value: Option<&str>) -> Result<Option<ImageSize>, String> 
         .split(is_py_space)
         .filter(|p| !p.is_empty())
         .collect();
-    if parts.len() != 4 {
+    let &[_, _, width, height] = parts.as_slice() else {
         return Ok(None);
-    }
-    match (
-        parse_svg_length(Some(parts[2])),
-        parse_svg_length(Some(parts[3])),
-    ) {
+    };
+    match (parse_svg_length(Some(width)), parse_svg_length(Some(height))) {
         (Some(width), Some(height)) => svg_image_size(width, height),
         _ => Ok(None),
     }
 }
 
-fn be_u16(d: &[u8], at: usize) -> f64 {
-    f64::from(u16::from_be_bytes([d[at], d[at + 1]]))
+/// `struct.unpack` of `N` bytes at `pos`, raising `struct.error` past the end.
+fn read<const N: usize>(d: &[u8], pos: usize) -> Result<[u8; N], String> {
+    d.get(pos..pos + N)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or_else(|| format!("unpack requires a buffer of {N} bytes"))
 }
 
-fn le_u16(d: &[u8], at: usize) -> f64 {
-    f64::from(u16::from_le_bytes([d[at], d[at + 1]]))
+fn be_u16(d: &[u8], pos: usize) -> Result<f64, String> {
+    Ok(f64::from(u16::from_be_bytes(read(d, pos)?)))
 }
 
-/// `struct.unpack` of four bytes at `at`, raising `struct.error` past the end.
-fn four(d: &[u8], at: usize) -> Result<[u8; 4], String> {
-    d.get(at..at + 4)
-        .map(|b| [b[0], b[1], b[2], b[3]])
-        .ok_or_else(|| "unpack requires a buffer of 4 bytes".to_string())
+fn le_u16(d: &[u8], pos: usize) -> Result<f64, String> {
+    Ok(f64::from(u16::from_le_bytes(read(d, pos)?)))
 }
 
 /// `images.py::_parse_image_dimensions`: PNG, JPEG, GIF, WebP, BMP, sniffed
@@ -301,23 +301,23 @@ fn parse_image_dimensions(d: &[u8]) -> Result<Option<ImageSize>, String> {
     if d.len() < 24 {
         return Ok(None);
     }
-    if d[..8] == *b"\x89PNG\r\n\x1a\n" && d[12..16] == *b"IHDR" {
-        let width = f64::from(u32::from_be_bytes(four(d, 16)?));
-        let height = f64::from(u32::from_be_bytes(four(d, 20)?));
+    if d.starts_with(b"\x89PNG\r\n\x1a\n") && read::<4>(d, 12)? == *b"IHDR" {
+        let width = f64::from(u32::from_be_bytes(read(d, 16)?));
+        let height = f64::from(u32::from_be_bytes(read(d, 20)?));
         return ImageSize::new(width, height).map(Some);
     }
-    if d[..2] == *b"\xff\xd8" {
+    if d.starts_with(b"\xff\xd8") {
         return parse_jpeg_dimensions(d);
     }
-    if d[..6] == *b"GIF87a" || d[..6] == *b"GIF89a" {
-        return ImageSize::new(le_u16(d, 6), le_u16(d, 8)).map(Some);
+    if d.starts_with(b"GIF87a") || d.starts_with(b"GIF89a") {
+        return ImageSize::new(le_u16(d, 6)?, le_u16(d, 8)?).map(Some);
     }
-    if d[..4] == *b"RIFF" && d[8..12] == *b"WEBP" {
+    if d.starts_with(b"RIFF") && read::<4>(d, 8)? == *b"WEBP" {
         return parse_webp_dimensions(d);
     }
-    if d[..2] == *b"BM" {
-        let width = f64::from(u32::from_le_bytes(four(d, 18)?));
-        let height = f64::from(i32::from_le_bytes(four(d, 22)?)).abs();
+    if d.starts_with(b"BM") {
+        let width = f64::from(u32::from_le_bytes(read(d, 18)?));
+        let height = f64::from(i32::from_le_bytes(read(d, 22)?)).abs();
         return ImageSize::new(width, height).map(Some);
     }
     Ok(None)
@@ -327,21 +327,21 @@ fn parse_image_dimensions(d: &[u8]) -> Result<Option<ImageSize>, String> {
 fn parse_jpeg_dimensions(d: &[u8]) -> Result<Option<ImageSize>, String> {
     let mut i = 2;
     while i + 9 < d.len() {
-        if d[i] != 0xFF {
+        let [first, marker] = read(d, i)?;
+        if first != 0xFF {
             return Ok(None);
         }
-        let marker = d[i + 1];
         if marker == 0xFF {
             i += 1;
             continue;
         }
         if matches!(marker, 0xC0..=0xC2) {
-            return ImageSize::new(be_u16(d, i + 7), be_u16(d, i + 5)).map(Some);
+            return ImageSize::new(be_u16(d, i + 7)?, be_u16(d, i + 5)?).map(Some);
         }
         if matches!(marker, 0xD0..=0xD9) {
             i += 2;
         } else {
-            i += 2 + be_u16(d, i + 2) as usize;
+            i += 2 + be_u16(d, i + 2)? as usize;
         }
     }
     Ok(None)
@@ -352,26 +352,23 @@ fn parse_webp_dimensions(d: &[u8]) -> Result<Option<ImageSize>, String> {
     if d.len() < 30 {
         return Ok(None);
     }
-    match &d[12..16] {
-        b"VP8 " if d[23..26] == *b"\x9d\x01\x2a" => {
-            let width = f64::from(u16::from_le_bytes([d[26], d[27]]) & 0x3FFF);
-            let height = f64::from(u16::from_le_bytes([d[28], d[29]]) & 0x3FFF);
+    match &read::<4>(d, 12)? {
+        b"VP8 " if read::<3>(d, 23)? == *b"\x9d\x01\x2a" => {
+            let width = f64::from(u16::from_le_bytes(read(d, 26)?) & 0x3FFF);
+            let height = f64::from(u16::from_le_bytes(read(d, 28)?) & 0x3FFF);
             ImageSize::new(width, height).map(Some)
         }
         b"VP8L" => {
-            let (b0, b1, b2, b3) = (
-                u32::from(d[21]),
-                u32::from(d[22]),
-                u32::from(d[23]),
-                u32::from(d[24]),
-            );
+            let [b0, b1, b2, b3] = read::<4>(d, 21)?.map(u32::from);
             let width = ((b1 & 0x3F) << 8 | b0) + 1;
             let height = ((b3 & 0x0F) << 10 | b2 << 2 | (b1 & 0xC0) >> 6) + 1;
             ImageSize::new(f64::from(width), f64::from(height)).map(Some)
         }
         b"VP8X" => {
-            let width = u32::from_le_bytes([d[24], d[25], d[26], 0]) + 1;
-            let height = u32::from_le_bytes([d[27], d[28], d[29], 0]) + 1;
+            let [w0, w1, w2] = read(d, 24)?;
+            let [h0, h1, h2] = read(d, 27)?;
+            let width = u32::from_le_bytes([w0, w1, w2, 0]) + 1;
+            let height = u32::from_le_bytes([h0, h1, h2, 0]) + 1;
             ImageSize::new(f64::from(width), f64::from(height)).map(Some)
         }
         _ => Ok(None),

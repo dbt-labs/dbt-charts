@@ -125,10 +125,6 @@ class TestPivotSingleMeasureSVG:
 
     def test_conditional_formatting_keys_by_col_value(self) -> None:
         """Conditional formatting keyed by col-value (e.g. game-of-life c1..c32)."""
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-            FieldConditionalFormatting,
-        )
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
 
         from ._engine_render import render_table_svg
@@ -137,11 +133,7 @@ class TestPivotSingleMeasureSVG:
             {"row_key": "r1", "col": "c1", "val": "#"},
             {"row_key": "r2", "col": "c1", "val": "."},
         ]
-        cf = {
-            "c1": FieldConditionalFormatting(
-                when=[ConditionalRule(eq="#", background="#000000")]
-            )
-        }
+        rules = [{"eq": "#", "background": "#000000"}]
         chart = TableChart(
             id="cf_test",
             type="table",
@@ -150,7 +142,7 @@ class TestPivotSingleMeasureSVG:
             rows=["row_key"],
             columns=["col"],
             values=["val"],
-            conditional_formatting=cf,
+            style={"columns": {"c1": {"conditional": rules}}},
         )
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         board = _board_style()

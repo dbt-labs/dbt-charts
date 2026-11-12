@@ -2,7 +2,7 @@
 
 ``conditional_formatting:`` retired from 11 ``type:`` literals (bar,
 histogram, line, area, scatter, pie, donut, map, geoshape, point_map,
-bubble_map), kept unchanged on ``table``/``kpi`` — declared as 11
+bubble_map), moved on ``table``/``kpi`` — declared as 11
 chart_type-scoped ``Deletion`` entries in the DEV boundary module
 ``compile/migrations/versions/v0_7_0.py`` (``CONDITIONAL_FORMATTING_RETIRED_CHART_TYPES``).
 See ``Deletion.chart_type``'s docstring in ``migrations.py`` for why a bare
@@ -83,11 +83,7 @@ rows: [bar1]
     assert result.success, [f"{e.code}: {e.message}" for e in result.errors]
     assert result.board is not None
     chart = result.board.charts["bar1"]
-    # conditional_formatting stays a universal field on the normalized model
-    # (deliberate keep — compile/normalize/charts.py:231's getattr pattern);
-    # what proves the migration actually stripped bar's authored block is
-    # this field reading None, not the field being absent.
-    assert chart.conditional_formatting is None
+    assert chart.type == "bar"
 
 
 def test_mixed_table_and_bar_conditional_formatting_round_trip_inline_rows_shape() -> (
@@ -95,7 +91,7 @@ def test_mixed_table_and_bar_conditional_formatting_round_trip_inline_rows_shape
 ):
     """migrate_yaml_text round-trip, inline rows: list-item shape.
 
-    Bar's conditional_formatting block is gone; table's survives untouched.
+    Bar's conditional_formatting block is gone; KPI's moved to style.conditional.
     Calls migrate_yaml_text directly (not migrate_board_yaml_text / dct
     migrate) with no stop_target, reaching the DEV version: this Deletion is
     declared on the pending 0.6.0 -> 0.7.0 boundary in versions/v0_7_0.py,
@@ -120,8 +116,9 @@ def test_mixed_table_and_bar_conditional_formatting_round_trip_inline_rows_shape
         "      b:\n"
         "        when:\n"
         '          - gt: 1\n            background: "#ff0000"\n'
-        "  - type: table\n"
+        "  - type: kpi\n"
         "    query: q1\n"
+        "    value: b\n"
         "    conditional_formatting:\n"
         "      b:\n"
         "        when:\n"
@@ -136,12 +133,13 @@ def test_mixed_table_and_bar_conditional_formatting_round_trip_inline_rows_shape
     lines = result.split("\n")
     bar_start = next(i for i, line in enumerate(lines) if line.strip() == "- type: bar")
     table_start = next(
-        i for i, line in enumerate(lines) if line.strip() == "- type: table"
+        i for i, line in enumerate(lines) if line.strip() == "- type: kpi"
     )
     bar_block = "\n".join(lines[bar_start:table_start])
     table_block = "\n".join(lines[table_start:])
     assert "conditional_formatting" not in bar_block, bar_block
-    assert "conditional_formatting" in table_block, table_block
+    assert "conditional_formatting" not in table_block, table_block
+    assert "conditional:" in table_block, table_block
 
 
 def test_mixed_table_and_bar_conditional_formatting_round_trip_charts_mapping_shape() -> (
@@ -149,7 +147,7 @@ def test_mixed_table_and_bar_conditional_formatting_round_trip_charts_mapping_sh
 ):
     """migrate_yaml_text round-trip, charts: mapping-entry shape (momentum.yml's own shape).
 
-    Bar's conditional_formatting block is gone; table's survives untouched.
+    Bar's conditional_formatting block is gone; KPI's moved to style.conditional.
     Same no-stop_target rationale as the inline rows: shape test above.
     """
     text = (
@@ -169,8 +167,9 @@ def test_mixed_table_and_bar_conditional_formatting_round_trip_charts_mapping_sh
         "        when:\n"
         '          - gt: 1\n            background: "#ff0000"\n'
         "  t:\n"
-        "    type: table\n"
+        "    type: kpi\n"
         "    query: q1\n"
+        "    value: b\n"
         "    conditional_formatting:\n"
         "      b:\n"
         "        when:\n"
@@ -187,6 +186,7 @@ def test_mixed_table_and_bar_conditional_formatting_round_trip_charts_mapping_sh
     bar_start = next(i for i, line in enumerate(lines) if line.strip() == "b:")
     table_start = next(i for i, line in enumerate(lines) if line.strip() == "t:")
     bar_block = "\n".join(lines[bar_start:table_start])
-    table_block = "\n".join(lines[table_start : table_start + 6])
+    table_block = "\n".join(lines[table_start : table_start + 7])
     assert "conditional_formatting" not in bar_block, bar_block
-    assert "conditional_formatting" in table_block, table_block
+    assert "conditional_formatting" not in table_block, table_block
+    assert "conditional:" in table_block, table_block

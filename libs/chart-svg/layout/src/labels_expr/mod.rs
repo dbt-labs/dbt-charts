@@ -32,7 +32,7 @@ mod val;
 pub mod view;
 
 use parse::{Node, Parser};
-pub use val::{EvalError, Text, Val};
+pub use val::{EvalEnv, EvalError, Text, Val};
 use val::{js_rem, throws, to_int32, Res};
 
 /// One axis tick as Vega's `AxisTicks` builds it.
@@ -53,7 +53,7 @@ impl<'a> Tick<'a> {
     }
 }
 
-/// A parsed label expression.
+/// A parsed label expression; [`EvalEnv`] is what evaluating it reads of the host.
 #[derive(Debug, Clone)]
 pub struct Expr {
     node: Node,
@@ -88,8 +88,8 @@ impl Expr {
     }
 
     /// The lines of text one tick paints.
-    pub fn eval_lines(&self, tick: &Tick) -> Res<Vec<String>> {
-        let _evaluation = val::Evaluation::begin();
+    pub fn eval_lines(&self, tick: &Tick, env: &EvalEnv) -> Res<Vec<String>> {
+        let _evaluation = val::Evaluation::begin(env);
         let datum = Val::tuple(vec![
             ("index".into(), Val::Num(tick.index)),
             ("value".into(), tick.value.clone()),
@@ -126,16 +126,16 @@ impl Expr {
 
     /// The text one tick paints: its lines joined by [`measure::LINE_SEP`], which a painter measures by the
     /// widest line and layout paints as a `tspan` each.
-    pub fn eval(&self, tick: &Tick) -> Res<String> {
+    pub fn eval(&self, tick: &Tick, env: &EvalEnv) -> Res<String> {
         let sep = measure::LINE_SEP.to_string();
         // A line holding the separator itself paints the noncharacter beside it, which looks the same.
-        Ok(self.eval_lines(tick)?.iter().map(|l| l.replace(measure::LINE_SEP, "\u{FDD1}")).collect::<Vec<_>>().join(&sep))
+        Ok(self.eval_lines(tick, env)?.iter().map(|l| l.replace(measure::LINE_SEP, "\u{FDD1}")).collect::<Vec<_>>().join(&sep))
     }
 
     /// The text a band axis paints for its band `raw`, which is both `datum.value` and the default `datum.label`.
-    pub fn rewrite_band(&self, raw: &str, index: usize, count: usize) -> Result<String, String> {
+    pub fn rewrite_band(&self, raw: &str, index: usize, count: usize, env: &EvalEnv) -> Result<String, String> {
         let value = Val::string(raw.to_string()).map_err(|e| describe(&e, &format!("the band {raw:?}")))?;
-        self.eval(&Tick::at(index, count, value, raw)).map_err(|e| describe(&e, &format!("the band {raw:?}")))
+        self.eval(&Tick::at(index, count, value, raw), env).map_err(|e| describe(&e, &format!("the band {raw:?}")))
     }
 }
 
@@ -155,9 +155,9 @@ pub fn describe(e: &EvalError, at: &str) -> String {
 }
 
 /// A value tick's text under the authored expression `src`: `datum.value` the number, `datum.label` its own text.
-pub fn speak_value(scale: &'static str, src: &str, value: f64, label: &str, index: usize, count: usize) -> Result<String, String> {
+pub fn speak_value(scale: &'static str, src: &str, value: f64, label: &str, index: usize, count: usize, env: &EvalEnv) -> Result<String, String> {
     let expr = Expr::parse(src).map(|e| e.on(scale)).map_err(|e| describe(&e, "the axis"))?;
-    expr.eval(&Tick::at(index, count, Val::Num(value), label)).map_err(|e| describe(&e, &format!("the tick {value}")))
+    expr.eval(&Tick::at(index, count, Val::Num(value), label), env).map_err(|e| describe(&e, &format!("the tick {value}")))
 }
 
 impl Val {

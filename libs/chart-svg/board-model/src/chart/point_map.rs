@@ -9,8 +9,12 @@ use model_derive::Model;
 /// channel, and `color` would split the count back into the piles it merges.
 #[derive(Debug, Clone, PartialEq, Model)]
 #[model(
-    constraint(forbids(size, when(is_in(collapse, true)))),
-    constraint(forbids(color, when(is_in(collapse, true))))
+    constraint(forbids(size, when(is_in(collapse, true)),
+        message = "{type}: `collapse: true` and `size: <column>` both bind the mark's size channel — they cannot be combined. Drop `size` to size collapsed points by count, or drop `collapse` to keep `size` as a bubble_map measure encoding."
+    )),
+    constraint(forbids(color, when(is_in(collapse, true)),
+        message = "{type}: `collapse: true` and `color: <column>` cannot be combined — VL's size:{{aggregate: count}} groups by every other non-aggregated encoded field, so an authored `color` reintroduces the exact pile `collapse` exists to remove. Drop `color` to keep collapsed counts, or drop `collapse` and aggregate per-category counts in SQL (`GROUP BY <lat>, <lon>, <category>` producing a count column), then use `bubble_map` with `size: <count column>, color: <category column>`."
+    ))
 )]
 #[allow(clippy::duplicated_attributes)]
 pub struct PointMapChart {

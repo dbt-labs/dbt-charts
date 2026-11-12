@@ -30,10 +30,10 @@ from dbt_charts.core.execute.cache_backend import CacheRows
 # means a channel added to _FIELD_CHANNEL_KEYS is checked automatically.
 _CHANNEL_FIELDS: frozenset[str] = _FIELD_CHANNEL_KEYS - {"geo", "sort"}
 
-ColumnRef = tuple[str, str, str]
+ChannelColumn = tuple[str, str, str]
 
 
-def chart_column_refs(chart: Chart) -> list[ColumnRef]:
+def chart_column_refs(chart: Chart) -> list[ChannelColumn]:
     """Return (query_name, channel_label, column_name) for every column channel.
 
     Walks the chart's own channels and ``tooltip`` columns, plus each cartesian
@@ -42,7 +42,7 @@ def chart_column_refs(chart: Chart) -> list[ColumnRef]:
     chart's, so each ref carries the query whose result actually has to contain
     it.
     """
-    refs: list[ColumnRef] = []
+    refs: list[ChannelColumn] = []
 
     def collect(source: BaseModel, prefix: str, query_name: str | None) -> None:
         if query_name is None:
@@ -77,7 +77,7 @@ def chart_column_refs(chart: Chart) -> list[ColumnRef]:
 
 
 def missing_column_error(
-    chart_id: str, ref: ColumnRef, available: Collection[str]
+    chart_id: str, ref: ChannelColumn, available: Collection[str]
 ) -> DbtChartsError:
     """The error for a channel whose column the query's result lacks."""
     query_name, channel, column = ref

@@ -13,7 +13,7 @@ use column_types::ColumnTypes;
 use diagnostic::codes;
 use diagnostic::{py_repr, Diagnostic};
 use ::bind::multiples::PartitionAxis;
-use crate::families::table::bind::coerce_numeric_cell;
+use crate::conditional::coerce_numeric_cell;
 use ::bind::temporal::{infer_vega_type, VegaType};
 use crate::Payload;
 

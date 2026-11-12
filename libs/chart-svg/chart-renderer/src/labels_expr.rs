@@ -3,8 +3,9 @@
 //! settles the chart's layout one autosize-fit padding pass at a time for an expression that reads the view.
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
-use ::layout::labels_expr::{describe, view, EvalError, Expr, COMPILER_MARK, THROWS_MARK};
+use ::layout::labels_expr::{describe, view, EvalEnv, EvalError, Expr, COMPILER_MARK, THROWS_MARK};
 
 use crate::common::AxisLabels;
 use crate::vega_fit::FitMargins;
@@ -25,7 +26,7 @@ pub fn band_texts(
     domain
         .iter()
         .enumerate()
-        .map(|(i, band)| labels.cased(&expr.rewrite_band(band, i, domain.len())?))
+        .map(|(i, band)| labels.cased(&expr.rewrite_band(band, i, domain.len(), &crate::labels_expr::env())?))
         .collect()
 }
 
@@ -182,6 +183,27 @@ struct Passes {
 
 thread_local! {
     static PASSES: RefCell<Passes> = RefCell::new(Passes::default());
+    static ENV: RefCell<Rc<EvalEnv>> = RefCell::new(Rc::new(wall_clock_env()));
+}
+
+// legacy: production's payload carries no render instant for a chart (the board's `render_time_iso` is a
+// string stamped by the Python reference render), so a render's `now()` and `random()` read the wall clock, as
+// Vega's do. Deleted at cutover: the engine passes `rendered_at`.
+fn wall_clock_env() -> EvalEnv {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_millis() as f64);
+    EvalEnv::new(now_ms)
+}
+
+/// The env the render's label expressions evaluate in; [`fresh_env`] starts a fresh one for every render, as a new Vega view has its own clock and stream.
+pub(crate) fn env() -> Rc<EvalEnv> {
+    ENV.with(|env| env.borrow().clone())
+}
+
+/// Starts the clock and random stream of the render about to run, whatever its expressions read.
+pub(crate) fn fresh_env() {
+    ENV.with(|env| *env.borrow_mut() = Rc::new(wall_clock_env()));
 }
 
 /// Holds the layout view open for one render; closing it drops every registration and pass.

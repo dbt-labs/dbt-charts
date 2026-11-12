@@ -151,8 +151,8 @@ pub const TITLECASE_FIRST_CHAR_EXCEPTIONS: &[(u32, &str)] = &[
 /// table above, or `None` when it agrees with the plain uppercase mapping
 /// (the caller falls back to `char::to_uppercase()`).
 pub fn titlecase_first_char(codepoint: u32) -> Option<&'static str> {
-    TITLECASE_FIRST_CHAR_EXCEPTIONS
+    let i = TITLECASE_FIRST_CHAR_EXCEPTIONS
         .binary_search_by_key(&codepoint, |&(cp, _)| cp)
-        .ok()
-        .map(|i| TITLECASE_FIRST_CHAR_EXCEPTIONS[i].1)
+        .ok()?;
+    TITLECASE_FIRST_CHAR_EXCEPTIONS.get(i).map(|&(_, mapped)| mapped)
 }

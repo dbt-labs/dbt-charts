@@ -8,6 +8,8 @@
 //! a pinned node's column can exceed its depth). `nodeSort`/`linkSort` stay
 //! at d3's defaults — relaxation-order nodes and breadth-ordered links.
 
+#![allow(clippy::indexing_slicing, reason = "mirrors d3's array code; being taken off indexing module by module")]
+
 // sankey.js skips a node with `if (!(w > 0)) continue`, which is also true for
 // NaN; `w <= 0` is not. The negated comparisons stay as written upstream.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]

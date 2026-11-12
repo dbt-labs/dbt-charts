@@ -12,7 +12,6 @@ from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.chart.authored import (
     AreaChart,
     BarChart,
-    ConditionalRule,
     HeatmapChart,
     KpiSupportConfig,
     MultiplesConfig,
@@ -21,6 +20,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     SparkBarChart,
 )
 from dbt_charts.core.compile.models.chart.authored.table import TableChart
+from dbt_charts.core.compile.models.conditional_predicate import ConditionalPredicate
 from dbt_charts.core.compile.models.config import ProjectCacheConfig, ProjectCacheInput
 from dbt_charts.core.compile.models.constraints import declared_constraints
 from dbt_charts.core.compile.models.primitives import CategoricalColorStyle
@@ -67,40 +67,21 @@ CASES: list[tuple[str, type[BaseModel], dict[str, Any], str]] = [
     ),
     (
         "rule-two-predicates",
-        ConditionalRule,
-        {"gt": 1, "lt": 5, "background": "red"},
-        "ConditionalRule requires exactly one condition operator, got: ['lt', 'gt']",
+        ConditionalPredicate,
+        {"gt": 1, "lt": 5},
+        "A conditional rule requires exactly one condition operator, got: ['lt', 'gt']",
     ),
     (
         "rule-predicates-named-by-yaml-key",
-        ConditionalRule,
-        {"gt": 1, "in": [1], "background": "red"},
-        "ConditionalRule requires exactly one condition operator, got: ['gt', 'in']",
+        ConditionalPredicate,
+        {"gt": 1, "in": [1]},
+        "A conditional rule requires exactly one condition operator, got: ['gt', 'in']",
     ),
     (
         "rule-no-predicate",
-        ConditionalRule,
-        {"background": "red"},
-        "ConditionalRule requires exactly one condition operator",
-    ),
-    (
-        "rule-glyph-color-without-glyph",
-        ConditionalRule,
-        {"gt": 1, "background": "red", "glyph_color": "red"},
-        "ConditionalRule glyph_color requires glyph to be set",
-    ),
-    (
-        "rule-tone-without-glyph",
-        ConditionalRule,
-        {"gt": 1, "tone": "positive"},
-        "ConditionalRule tone requires glyph to be set",
-    ),
-    (
-        "rule-no-override",
-        ConditionalRule,
-        {"gt": 1, "font": {"size": 12}},
-        "ConditionalRule requires at least one style override (background, "
-        "font.color, font.weight, font.style, font.decoration, or glyph)",
+        ConditionalPredicate,
+        {},
+        "A conditional rule requires exactly one condition operator",
     ),
     (
         "multiples-empty",
@@ -319,14 +300,14 @@ def test_rule_message(
     ("model", "payload", "loc", "message"),
     [
         (
-            ConditionalRule,
-            {"between": [1, 2, 3], "background": "red"},
+            ConditionalPredicate,
+            {"between": [1, 2, 3]},
             ("between",),
             "List should have at most 2 items after validation, not 3",
         ),
         (
-            ConditionalRule,
-            {"in": [], "background": "red"},
+            ConditionalPredicate,
+            {"in": []},
             ("in",),
             "List should have at least 1 item after validation, not 0",
         ),
@@ -386,8 +367,8 @@ def test_length_rule_message(
 @pytest.mark.parametrize(
     ("model", "payload"),
     [
-        (ConditionalRule, {"eq": "", "background": "red"}),
-        (ConditionalRule, {"is_null": False, "font": {"color": "red"}}),
+        (ConditionalPredicate, {"eq": ""}),
+        (ConditionalPredicate, {"is_null": False}),
         (AuthoredBoard, {"title": "t"}),
         (AuthoredBoard, {"text": " ", "width": "28px"}),
         (BarChart, {**_BAR, "y": ["a", "b"], "layers": []}),

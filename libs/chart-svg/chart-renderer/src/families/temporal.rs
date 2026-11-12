@@ -955,7 +955,7 @@ pub fn rewrite_with_expr(
                 ExprBands::AllBuckets => l.domain_idx,
                 ExprBands::KeptByLadder => kept,
             };
-            Ok(TemporalLabel { row1: expr.rewrite_band(&domain[l.domain_idx], index, count)?, row2: String::new(), ..l })
+            Ok(TemporalLabel { row1: expr.rewrite_band(&domain[l.domain_idx], index, count, &crate::labels_expr::env())?, row2: String::new(), ..l })
         })
         .collect()
 }
@@ -999,7 +999,7 @@ pub fn speak_labels(
                 (Val::Date(day as f64 * MS_PER_DAY), if expr.uses_label() { datum_label(grain, day)? } else { String::new() })
             };
             let text = expr
-                .eval(&Tick::at(l.domain_idx, domain.len(), value, &label))
+                .eval(&Tick::at(l.domain_idx, domain.len(), value, &label), &crate::labels_expr::env())
                 .map_err(|e| describe(&e, &format!("{date:?}")))?;
             Ok(TemporalLabel { row1: text, row2: String::new(), ..l })
         })
@@ -1024,7 +1024,7 @@ pub fn first_throw_at_dates(
         } else {
             (Val::Date(day * MS_PER_DAY), if expr.uses_label() { label(day.floor() as i64)? } else { String::new() })
         };
-        match expr.eval(&Tick::at(i, dates.len(), value, &text)) {
+        match expr.eval(&Tick::at(i, dates.len(), value, &text), &crate::labels_expr::env()) {
             Ok(_) => {}
             Err(e @ EvalError::Throws(_)) => return Ok(Some(describe(&e, &format!("{date:?}")))),
             Err(e) => return Err(describe(&e, &format!("{date:?}"))),
@@ -1042,7 +1042,7 @@ pub fn speak_bare(ticks: Vec<BareTick>, expr: &::layout::labels_expr::Expr) -> R
         .enumerate()
         .map(|(i, t)| {
             let text = expr
-                .eval(&Tick::at(i, n, Val::Date(t.day as f64 * MS_PER_DAY), &t.text))
+                .eval(&Tick::at(i, n, Val::Date(t.day as f64 * MS_PER_DAY), &t.text), &crate::labels_expr::env())
                 .map_err(|e| describe(&e, &format!("the tick on day {}", t.day)))?;
             Ok(BareTick { text, ..t })
         })

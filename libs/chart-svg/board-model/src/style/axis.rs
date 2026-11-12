@@ -530,7 +530,9 @@ pub struct AxisTicksStyle {
 /// is the quantitative-axis cadence lever, and whether the axis resolves to
 /// quantitative, temporal or ordinal is data-dependent.
 #[derive(Debug, Clone, PartialEq, Model)]
-#[model(constraint(at_most_one_of(time_unit, count, auto(count))))]
+#[model(constraint(at_most_one_of(time_unit, count, auto(count),
+        message = "ticks.time_unit and ticks.count cannot both be set — they are two different ways to express tick cadence. Use ticks.time_unit/step for a step-anchored cadence (every N years/quarters/months), or ticks.count for VL's advisory tick-count hint, not both."
+    )))]
 pub struct DimensionTicksStyle {
     /// Show axis ticks. 'auto' shows the tick only where the gridlines cannot
     /// reach all the way to the labels on their own.
@@ -691,14 +693,27 @@ pub struct ScaleSymlogStyle {
     constraint(items_match(
         domain,
         pattern = r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])([T ]([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9](\.[0-9]+)?)?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])?)?$",
-        when(is_in(type, "temporal"))
+        when(is_in(type, "temporal")),
+        message = "scale.domain element {item!r} is not an ISO-8601 date/datetime string, but scale.type: temporal requires both domain bounds to be dates (e.g. '1955-01-01')."
     )),
-    constraint(forbids("log.base", when(not_in(type, "log")))),
-    constraint(forbids("pow.exponent", when(not_in(type, "pow")))),
-    constraint(forbids("symlog.constant", when(not_in(type, "symlog")))),
-    constraint(forbids(zero, when(is_in(type, "log"), is_in(zero, true)))),
-    constraint(range(domain, gt = 0, when(is_in(type, "log")))),
-    constraint(range("log.base", gt = 1))
+    constraint(forbids("log.base", when(not_in(type, "log")),
+        message = "scale.continuous.log.base is only meaningful with type: log — set axis_y.scale.continuous.type: log, or remove log.base."
+    )),
+    constraint(forbids("pow.exponent", when(not_in(type, "pow")),
+        message = "scale.continuous.pow.exponent is only meaningful with type: pow — set axis_y.scale.continuous.type: pow, or remove pow.exponent."
+    )),
+    constraint(forbids("symlog.constant", when(not_in(type, "symlog")),
+        message = "scale.continuous.symlog.constant is only meaningful with type: symlog — set axis_y.scale.continuous.type: symlog, or remove symlog.constant."
+    )),
+    constraint(forbids(zero, when(is_in(type, "log"), is_in(zero, true)),
+        message = "scale.continuous.type: log is incompatible with zero: true — a log domain cannot include 0. Remove zero or drop the log scale."
+    )),
+    constraint(range(domain, gt = 0, when(is_in(type, "log")),
+        message = "scale.continuous.type: log requires a positive domain — a log scale is undefined at and below 0, got domain {domain}. Use positive bounds or drop the log scale."
+    )),
+    constraint(range("log.base", gt = 1,
+        message = "scale.continuous.log.base must be greater than 1, got {log.base}. A base at or below 1 flips or flattens the scale's decades, so Vega-Lite's nice domain no longer covers the data."
+    ))
 )]
 pub struct ScaleContinuousStyle {
     /// Force the zero baseline: true or false pins it; "auto" runs the smart-zero
@@ -860,8 +875,12 @@ pub struct TooltipStyle {
 // Vega-Lite ignores `format` whenever a label expression is present, so both
 // set makes `format` dead config; an empty object overrides nothing.
 #[model(
-    constraint(at_most_one_of(format, expr)),
-    constraint(at_least_one_of(format, expr))
+    constraint(at_most_one_of(format, expr,
+        message = "mirror takes format or expr, not both — expr fully controls the label text (call format() inside it if needed)."
+    )),
+    constraint(at_least_one_of(format, expr,
+        message = "empty mirror override — set format or expr to relabel the mirrored edge, or use `mirror: true` to mirror the primary axis's label verbatim."
+    ))
 )]
 pub struct AxisMirrorStyle {
     /// Tick value format for the mirrored edge.

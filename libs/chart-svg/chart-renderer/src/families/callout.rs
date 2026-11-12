@@ -232,7 +232,14 @@ fn wrap_callout(
     family: &str,
     max_lines: usize,
 ) -> Result<Vec<String>, String> {
-    wrap_plain(fonts_dir, text, width, size, family, max_lines).map_err(|e| format!("callout: {e}"))
+    // legacy: the placard measures from a font directory.
+    let path = measure::font_files::font_path(fonts_dir, family);
+    // unweighted: the placard paints no `font-weight`, so the browser draws it at 400.
+    let measurer = measure::fonts::cached_measurer(&path, 0, None);
+    if !measurer.is_available() {
+        return Err(format!("callout: font file {path} cannot be read to measure text"));
+    }
+    Ok(wrap_plain(&measurer, text, width, size, max_lines))
 }
 
 fn truncated(chart_id: &str, field: &str, text: &str) -> Diagnostic {

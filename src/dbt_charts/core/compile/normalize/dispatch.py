@@ -345,6 +345,30 @@ def _with_nested_layout_gap(
     return patch.model_copy(update={"gap": layout_patch["gap"]})
 
 
+def _with_compact_variable_controls(
+    patch: StylePatch | None, base: Style
+) -> StylePatch:
+    """``patch`` with every control of this nested board's variable band set to
+    ``style.variables.compact_height``, for the input and the row alike.
+
+    A board's own band keeps the theme's heights; a nested board's band sits
+    inside a card, where a control the size of the board's own reads as a
+    second header. A height authored on this board or an ancestor wins.
+    """
+    from dbt_charts.core.compile.merge import merge_patches
+
+    own = {} if patch is None else patch.model_dump(exclude_unset=True)
+    authored = own.get("variables")
+    if authored is not None and authored.get("compact_height") is not None:
+        compact = authored["compact_height"]
+    else:
+        compact = base.variables.compact_height
+    heights = StylePatch.model_validate(
+        {"variables": {"container_height": compact, "input": {"height": compact}}}
+    )
+    return heights if patch is None else merge_patches(heights, patch)
+
+
 # Variable fields the compiler sets itself; never what the author wrote.
 _INFERRED_VARIABLE_FIELDS = frozenset(
     {"defined_in_other_file", "input_auto_detected", "authored_fields"}
@@ -457,8 +481,10 @@ def compile_board_resolved_style(
         merged_patch = _pin_unauthored_nested_background(
             inherited_patch, None, is_nested=is_nested, replacement=replacement
         )
-        if merged_patch is not None and is_nested:
-            merged_patch = _with_nested_layout_gap(merged_patch, layout_type)
+        if is_nested:
+            if merged_patch is not None:
+                merged_patch = _with_nested_layout_gap(merged_patch, layout_type)
+            merged_patch = _with_compact_variable_controls(merged_patch, base)
         return (
             *_shared_with_parent(
                 resolve_style_and_context(
@@ -482,7 +508,11 @@ def compile_board_resolved_style(
     )
 
     resolve_patch = (
-        _with_nested_layout_gap(own_patch, layout_type) if is_nested else own_patch
+        _with_compact_variable_controls(
+            _with_nested_layout_gap(own_patch, layout_type), base
+        )
+        if is_nested
+        else own_patch
     )
 
     cache = _current_memo().cascades

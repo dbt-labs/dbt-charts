@@ -6,6 +6,7 @@
 //! can close the declaration or open a rule (`is_css_breaking`,
 //! `Style::validate_css`).
 
+use d3rs::invariant::Invariant;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -45,7 +46,7 @@ const CSS_GENERIC_FONT_FAMILIES: [&str; 13] = [
 /// interpreter's own Unicode data assigns them (`is_unassigned`).
 fn is_family_body_char(ch: char) -> bool {
     static LETTER_OR_NUMBER: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^[\p{L}\p{N}]$").expect("static pattern"));
+        Lazy::new(|| Regex::new(r"^[\p{L}\p{N}]$").held("static pattern"));
     matches!(ch, ' ' | '-' | '_')
         || (!is_unassigned(ch) && LETTER_OR_NUMBER.is_match(ch.encode_utf8(&mut [0; 4])))
 }
@@ -64,14 +65,14 @@ fn is_safe_family_entry(entry: &str) -> bool {
     let last = chars
         .iter()
         .rposition(|&c| !is_py_space(c))
-        .expect("first exists, so last does");
-    let quote = chars[first];
-    if quote == '"' || quote == '\'' {
-        return last > first + 1
-            && chars[last] == quote
-            && chars[first + 1..last].iter().all(|&c| is_family_body_char(c));
+        .held("first exists, so last does");
+    let core = chars.get(first..=last).held("first <= last, both inside chars");
+    if let [quote @ ('"' | '\''), body @ .., closing] = core {
+        return !body.is_empty()
+            && closing == quote
+            && body.iter().all(|&c| is_family_body_char(c));
     }
-    chars[first..=last].iter().all(|&c| is_family_body_char(c))
+    core.iter().all(|&c| is_family_body_char(c))
 }
 
 /// `css.py:32-37` `escape_css_string`: `value` as a quoted CSS string, every
@@ -126,7 +127,7 @@ pub fn css_font_family_stack(stack: &str) -> String {
 /// the interpreter's own assignment (`is_unassigned`), not the regex crate's.
 fn is_py_printable(ch: char) -> bool {
     static PRINTABLE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^[\p{L}\p{M}\p{N}\p{P}\p{S}]$").expect("static pattern"));
+        Lazy::new(|| Regex::new(r"^[\p{L}\p{M}\p{N}\p{P}\p{S}]$").held("static pattern"));
     ch == ' ' || (!is_unassigned(ch) && PRINTABLE.is_match(ch.encode_utf8(&mut [0; 4])))
 }
 
@@ -183,6 +184,14 @@ mod tests {
         ] {
             assert_eq!(css_font_family_stack(stack), stack);
         }
+    }
+
+    #[test]
+    fn a_quote_pair_around_nothing_and_a_lone_quote_are_not_family_names() {
+        for entry in ["\"\"", "''", "\"", "'", " \"\" "] {
+            assert!(!is_safe_family_entry(entry), "{entry:?}");
+        }
+        assert!(is_safe_family_entry("\"a\""));
     }
 
     #[test]

@@ -7,8 +7,8 @@
 //! source names the project declares; the caller pairs them). The board is compiled and rendered whole, as
 //! `refusal_tally --with-data` does, and one JSON object goes to stdout:
 //!
-//! - `{"svg", "diagnostics", "boxes", "extent"}`: the board's SVG, from which the harness cuts
-//!   each chart, and the report as the comparator reads its meta: diagnostics (`code`, `params`,
+//! - `{"svg", "charts", "diagnostics", "boxes", "extent"}`: the board's SVG, each chart's own `<svg>`
+//!   (`charts`, keyed as `boxes` is: a chart the board draws inline has none), and the report as the comparator reads its meta: diagnostics (`code`, `params`,
 //!   `chart`), each placement's sized box keyed `id`, `id#2`, ... and the board's extent.
 //! - `{"refused"}`: why the engine does not draw the board: a refusal it makes by name, or the
 //!   recording lacking what the engine asked for. A refusal covers every chart of the board.
@@ -39,7 +39,11 @@ use serde_json::{json, Value};
 /// The answer for the board of `project` rendered over the results in the sidecar `raw`, or the bug
 /// the render hit.
 fn answer(raw: &str, project: &Project) -> Result<Value, String> {
-    match render("board", project, || Sidecar::read_unchecked(raw).map(Some)) {
+    match render("board", project, || {
+        let sidecar = Sidecar::read_unchecked(raw)?;
+        sidecar.page_stylesheet()?;
+        Ok(Some(sidecar))
+    }) {
         Ok(rendered) => {
             let diagnostics: Vec<Value> = rendered
                 .report
@@ -56,7 +60,8 @@ fn answer(raw: &str, project: &Project) -> Result<Value, String> {
                 boxes.insert(key, json!({"x": r.x, "y": r.y, "width": r.width, "height": r.height}));
             }
             let extent = json!({"width": rendered.report.width, "height": rendered.report.height});
-            Ok(json!({"svg": rendered.svg, "diagnostics": diagnostics, "boxes": boxes, "extent": extent}))
+            let charts: serde_json::Map<String, Value> = rendered.charts.iter().map(|(key, svg)| (key.clone(), json!(svg))).collect();
+            Ok(json!({"svg": rendered.svg, "charts": charts, "diagnostics": diagnostics, "boxes": boxes, "extent": extent}))
         }
         Err((outcome, detail)) => {
             let why = detail.map_or(outcome.clone(), |d| format!("{outcome}: {d}"));
@@ -90,7 +95,7 @@ mod tests {
     const SCATTER: &str = "queries:\n  q:\n    type: values\n    columns: [x, y]\n    values:\n      - [1, 2]\ncharts:\n  s:\n    query: q\n    type: scatter\n    x: x\n    y: y\nrows: [s]\n";
 
     fn sidecar(queries: Value) -> String {
-        json!({"source": "recorded text", "queries": queries}).to_string()
+        json!({"source": "recorded text", "queries": queries, "rendered_at": "2026-01-15T12:00:00Z", "stylesheet": "svg text { font-variant-emoji: text; }"}).to_string()
     }
 
     fn rows() -> Value {
@@ -106,6 +111,32 @@ mod tests {
         assert_eq!(answer["diagnostics"], json!([]));
         assert!(answer["boxes"]["p"]["width"].as_f64().unwrap() > 0.0, "{answer}");
         assert!(answer["extent"]["height"].as_f64().unwrap() > 0.0, "{answer}");
+    }
+
+    #[test]
+    fn a_board_renders_at_the_sidecars_clock() {
+        let answer = answer(&sidecar(rows()), &Project::single(PIE)).unwrap();
+        assert!(answer["svg"].as_str().is_some_and(|s| s.contains("data-rendered-at=\"2026-01-15T12:00:00Z\"")), "{answer}");
+    }
+
+    #[test]
+    fn a_board_renders_with_the_sidecars_stylesheet() {
+        let answer = answer(&sidecar(rows()), &Project::single(PIE)).unwrap();
+        assert!(answer["svg"].as_str().is_some_and(|s| s.contains("svg text { font-variant-emoji: text; }")), "{answer}");
+    }
+
+    #[test]
+    fn a_sidecar_with_no_stylesheet_is_refused() {
+        let raw = json!({"source": "recorded text", "queries": rows(), "rendered_at": "2026-01-15T12:00:00Z"}).to_string();
+        let answer = answer(&raw, &Project::single(PIE)).unwrap();
+        assert!(answer["refused"].as_str().unwrap().starts_with("no-recording: the sidecar has no stylesheet"), "{answer}");
+    }
+
+    #[test]
+    fn a_sidecar_with_no_clock_is_refused() {
+        let raw = json!({"source": "recorded text", "queries": rows(), "stylesheet": ""}).to_string();
+        let answer = answer(&raw, &Project::single(PIE)).unwrap();
+        assert!(answer["refused"].as_str().unwrap().starts_with("no-recording: the sidecar has no rendered_at"), "{answer}");
     }
 
     #[test]

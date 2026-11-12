@@ -118,6 +118,10 @@ pub struct Move {
     pub chart_type: Option<String>,
     /// Tails that must be absent beside the source key.
     pub conflicts_with: Vec<KeyPath>,
+    /// The destination mapping may already exist: the (rewritten) value merges
+    /// into it key by key, recursively. A leaf both hold refuses, so nothing the
+    /// author wrote is overridden.
+    pub merge: bool,
 }
 
 impl Move {
@@ -142,6 +146,7 @@ impl Move {
             rewrite_in_document: None,
             chart_type: None,
             conflicts_with: Vec::new(),
+            merge: false,
         }
     }
 }

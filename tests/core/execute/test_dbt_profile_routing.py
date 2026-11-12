@@ -37,9 +37,10 @@ import pytest
 import yaml
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.compose import compose_query
+from dbt_charts.core.execute.compose import compose_pydantic
 from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.execute.run import run_query
+from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1076,15 +1077,15 @@ class TestBoardPrepareSqlTargetPath:
         assert compiled.board is not None, compiled.errors
         registry = build_exec_env(local_project(tmp_path), read_only=True)
 
-        prepared = compose_query(
+        prepared = compose_pydantic(
             compiled.query_registry["q"],
-            board=compiled.board,
-            variables={},
+            {},
+            None,
+            compiled.board,
+            DbtTargetSourceConfig(type="postgres", host="h", target_path="target/prod"),
+            INLINE_PLACEHOLDERS,
             refs=registry.dbt_refs,
             project=registry.project,
-            source_config=DbtTargetSourceConfig(
-                type="postgres", host="h", target_path="target/prod"
-            ),
         )
 
         assert not hasattr(prepared, "error"), prepared
@@ -1100,7 +1101,9 @@ class TestBoardPrepareSqlTargetPath:
         from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
         from dbt_charts.core.execute.compose import compose
         from dbt_charts.core.execute.env import build_exec_env
+        from dbt_charts.core.execute.query_result import resolve_effective_row_limit
         from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
+        from dbt_charts.core.text.time_zones import UTC
 
         _write_manifest(tmp_path)
         _write_manifest(tmp_path, "target/prod/manifest.json", schema="prod_main")
@@ -1112,10 +1115,15 @@ class TestBoardPrepareSqlTargetPath:
         registry = build_exec_env(local_project(tmp_path), read_only=True)
 
         prepared = compose(
-            query,
+            query.sql,
+            setup_sql=None,
+            dialect=None,
+            strict=True,
+            limit=resolve_effective_row_limit(None),
+            queries=None,
+            time_zone=UTC,
             variables={},
             params=None,
-            board=None,
             source_config=config,
             dialect_name=config.type,
             render_dialect=INLINE_PLACEHOLDERS,

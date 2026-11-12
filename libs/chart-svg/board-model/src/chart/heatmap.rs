@@ -8,8 +8,12 @@ use model_derive::Model;
 #[derive(Debug, Clone, PartialEq, Model)]
 #[allow(clippy::duplicated_attributes)]
 #[model(
-    constraint(forbids(support_table)),
-    constraint(forbids(pattern, "style.pattern", when(set(multiples))))
+    constraint(forbids(support_table,
+        message = "chart.support_table is not supported for chart type {type!r} in v1. Supported chart types: area, bar, line."
+    )),
+    constraint(forbids(pattern, "style.pattern", when(set(multiples)),
+        message = "pattern is not supported on a heatmap with multiples."
+    ))
 )]
 pub struct HeatmapChart {
     #[flatten]

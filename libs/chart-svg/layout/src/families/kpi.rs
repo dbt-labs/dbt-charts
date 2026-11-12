@@ -20,9 +20,10 @@ use bind::bound::{Kpi, KpiSupport};
 use board_model::style::board::{EmojiMode, OverflowMode};
 use board_model::style::font::{FontSlant, LetterCase, SingleLineFontStyle, TextDecoration};
 use board_model::style::kpi::{KpiChartStyle, KpiSupportFontStyle, KpiVariant};
-use diagnostic::{refuse, Diagnostic};
-use measure::font_files::font_path;
-use measure::fonts::{cached_measurer, css_weight_axis};
+use diagnostic::{diag, refuse, Diagnostic};
+use measure::font_files::font_file as family_file;
+use measure::fonts::css_weight_axis;
+use measure::shaped::FontBook;
 use measure::weighted::font_file;
 use scene::{Attrs, Chars, Escape, Extent, Node, Role, Run, Shape};
 
@@ -128,16 +129,16 @@ fn refuse_slot(style: FontSlant, decoration: TextDecoration, case: LetterCase, s
 
 /// The card at `width`: its vertical rhythm, and the label held to one line that fits.
 ///
-/// `fonts_dir` holds the served faces; the label is measured as production's wrap does
-/// (`measure::font_files::font_path`, instanced at the label's weight). Production cuts a label
+/// `book` holds the served faces; the label is measured as production's wrap does
+/// (`measure::font_files::font_file`, instanced at the label's weight). Production cuts a label
 /// wider than the card to an ellipsis and raises a warning, which this does not model.
-pub fn plan(card: &KpiCard, fonts_dir: &str, width: f64) -> Result<Plan, Diagnostic> {
+pub fn plan(card: &KpiCard, book: &FontBook, width: f64) -> Result<Plan, Diagnostic> {
     let style = card.style;
     let variant = style.variant;
     if style.align.is_some() {
         return Err(Diagnostic::refused(refuse!("a KPI `align` is not supported")));
     }
-    if style.base.background.is_some() {
+    if style.background.is_some() {
         return Err(Diagnostic::refused(refuse!("a KPI card background is not supported")));
     }
     let single = |font: &SingleLineFontStyle, slot: &str| refuse_slot(font.style, font.decoration, font.case, slot);
@@ -161,10 +162,7 @@ pub fn plan(card: &KpiCard, fonts_dir: &str, width: f64) -> Result<Plan, Diagnos
     let limit = (width - pad.left - pad.right) as i64;
     let stacked = variant == KpiVariant::Stacked;
     if let (Some(text), true) = (&card.kpi.label, limit > 0) {
-        let measurer = cached_measurer(&font_path(fonts_dir, &label.family), 0, css_weight_axis(&slot_weight(label))?);
-        if !measurer.is_available() {
-            return Err("kpi: the label font file cannot be read to measure text".into());
-        }
+        let measurer = book.file(family_file(&label.family)).map_err(diag::err_internal)?.measurer(0, css_weight_axis(&slot_weight(label))?);
         if measurer.measure(text, label.size) > limit as f64 {
             return Err(Diagnostic::refused(refuse!("a KPI label wider than its card is not supported")));
         }
@@ -190,26 +188,23 @@ pub fn plan(card: &KpiCard, fonts_dir: &str, width: f64) -> Result<Plan, Diagnos
         let runs = support_runs(card.faces, support);
         let mut total = 0.0;
         for (face, _, text) in &runs {
-            let measurer = cached_measurer(&font_path(fonts_dir, &face.family), 0, css_weight_axis(&slot_weight(face))?);
-            if !measurer.is_available() {
-                return Err("kpi: the support font file cannot be read to measure text".into());
-            }
+            let measurer = book.file(family_file(&face.family)).map_err(diag::err_internal)?.measurer(0, css_weight_axis(&slot_weight(face))?);
             total += measurer.measure(text, face.size);
         }
         if total > width - pad.left - pad.right {
             return Err(Diagnostic::refused(refuse!("a KPI support row wider than its card is not supported")));
         }
     }
-    let value_run_width = value_run_width(card, fonts_dir)?;
+    let value_run_width = value_run_width(card, book)?;
     // kpi.rs:`arrangement`: an inline card whose one row overflows the card stacks, with a warning
     // this does not raise, unless it is a bare value that stacking would overflow the same.
     if variant == KpiVariant::Inline && (card.kpi.label.is_some() || card.kpi.support.is_some()) {
         let mut row = value_run_width;
         if let Some(label) = &card.kpi.label {
-            row += INLINE_GAP + measure_text(fonts_dir, &faces.label, label, false)?;
+            row += INLINE_GAP + measure_text(book, &faces.label, label, false)?;
         }
         if let Some(support) = &card.kpi.support {
-            row += INLINE_GAP + runs_width(fonts_dir, &support_runs(faces, support))?;
+            row += INLINE_GAP + runs_width(book, &support_runs(faces, support))?;
         }
         if row > width - pad.left - pad.right {
             return Err(Diagnostic::refused(refuse!("an inline KPI that overflows its card and falls back to stacked is not supported")));
@@ -220,38 +215,35 @@ pub fn plan(card: &KpiCard, fonts_dir: &str, width: f64) -> Result<Plan, Diagnos
 }
 
 /// kpi.rs:`SlotFont::measure`: `text` in `face` at its painted weight.
-fn measure_text(fonts_dir: &str, face: &Face, text: &str, numeric: bool) -> Result<f64, Diagnostic> {
+fn measure_text(book: &FontBook, face: &Face, text: &str, numeric: bool) -> Result<f64, Diagnostic> {
     // `weighted_width`'s file for the face (`font_file`): the three an upright run measures in.
     let file = match font_file(&face.family, false, numeric) {
         "dbt Sans Tabular" => "DBTSansTabular-Regular.ttf",
         "Source Serif 4" => "SourceSerif4Variable.ttf",
         _ => "InterVariable.ttf",
     };
-    let measurer = cached_measurer(&format!("{fonts_dir}/{file}"), 0, css_weight_axis(&slot_weight(face))?);
-    if !measurer.is_available() {
-        return Err("kpi: the font file cannot be read to measure text".into());
-    }
+    let measurer = book.file(file).map_err(diag::err_internal)?.measurer(0, css_weight_axis(&slot_weight(face))?);
     Ok(measurer.measure(text, face.size))
 }
 
-fn runs_width(fonts_dir: &str, runs: &[(&Face, &str, String)]) -> Result<f64, Diagnostic> {
-    runs.iter().map(|(face, _, text)| measure_text(fonts_dir, face, text, false)).sum()
+fn runs_width(book: &FontBook, runs: &[(&Face, &str, String)]) -> Result<f64, Diagnostic> {
+    runs.iter().map(|(face, _, text)| measure_text(book, face, text, false)).sum()
 }
 
 /// kpi.rs:`measure_value_run`: each part in its own face, the number as tabular figures, and the
 /// kern before the suffix.
-fn value_run_width(card: &KpiCard, fonts_dir: &str) -> Result<f64, Diagnostic> {
+fn value_run_width(card: &KpiCard, book: &FontBook) -> Result<f64, Diagnostic> {
     let (kpi, faces) = (card.kpi, card.faces);
     let mut width = 0.0;
     if !kpi.glyph.is_empty() {
-        width += measure_text(fonts_dir, glyph_face(card), &format!("{} ", kpi.glyph), false)?;
+        width += measure_text(book, glyph_face(card), &format!("{} ", kpi.glyph), false)?;
     }
     if !kpi.prefix.is_empty() {
-        width += measure_text(fonts_dir, &faces.affix, &kpi.prefix, false)?;
+        width += measure_text(book, &faces.affix, &kpi.prefix, false)?;
     }
-    width += measure_text(fonts_dir, &faces.value, &kpi.number, true)?;
+    width += measure_text(book, &faces.value, &kpi.number, true)?;
     if !kpi.suffix.is_empty() {
-        width += measure_text(fonts_dir, &faces.affix, &kpi.suffix, false)? + SUFFIX_KERN;
+        width += measure_text(book, &faces.affix, &kpi.suffix, false)? + SUFFIX_KERN;
     }
     Ok(width)
 }
@@ -307,8 +299,10 @@ fn value_runs(card: &KpiCard, value_baseline: f64, prefix_baseline: f64, glyph_b
     runs
 }
 
-fn text_row(at: (f64, f64), runs: Vec<Run>) -> Node {
-    Node::new(Role::Label, Attrs::new().quick("text-anchor", "start"), Shape::Text { at, bounds: None, runs })
+/// A row of card text, stamped with the role token (`kpi-value`, `kpi-label` or `kpi-support`) the
+/// equivalence comparator's quirk classes find it by.
+fn text_row(role: &str, at: (f64, f64), runs: Vec<Run>) -> Node {
+    Node::new(Role::Label, Attrs::new().quick("text-anchor", "start").quick("data-dct-role", role), Shape::Text { at, bounds: None, runs })
 }
 
 /// A line's runs as tspans on no baseline of their own, so they ride their text's; the label's line
@@ -339,7 +333,7 @@ pub fn draw(card: &KpiCard, plan: &Plan, height: f64) -> Vec<Node> {
                 let at = Some(value_baseline);
                 let tspan_at = |dx: Option<f64>, attrs: Attrs, text: &str| Run::Tspan { x: None, y: at, dx, dy: None, attrs, runs: vec![Run::Chars(Chars::new(text, Escape::Quick))] };
                 if let Some(label) = &kpi.label {
-                    let attrs = Attrs::new().quick("data-authored-kind", "label").extend(face_attrs(&faces.label)).quick("fill", faces.label.color.as_str());
+                    let attrs = Attrs::new().quick("data-authored-kind", "label").quick("data-dct-role", "kpi-label").extend(face_attrs(&faces.label)).quick("fill", faces.label.color.as_str());
                     runs.push(tspan_at(Some(INLINE_GAP), attrs, label));
                 }
                 if let Some(support) = &kpi.support {
@@ -347,9 +341,9 @@ pub fn draw(card: &KpiCard, plan: &Plan, height: f64) -> Vec<Node> {
                         runs.push(tspan_at((index == 0).then_some(INLINE_GAP), face_attrs(face).quick("fill", fill), &text));
                     }
                 }
-                vec![text_row((left, value_baseline), runs)]
+                vec![text_row("kpi-value", (left, value_baseline), runs)]
             } else {
-                let mut parts = vec![text_row((left, value_baseline), runs)];
+                let mut parts = vec![text_row("kpi-value", (left, value_baseline), runs)];
                 let x = left + plan.value_run_width + INLINE_GAP;
                 let (top, bottom, kind_on_top, kind_on_bottom) = compact_column(card);
                 // The top line sits one top-line-font line-height above the baseline so the bottom
@@ -357,10 +351,10 @@ pub fn draw(card: &KpiCard, plan: &Plan, height: f64) -> Vec<Node> {
                 // the column, else a split-support piece's.
                 let top_line_size = if kpi.label.is_some() && kpi.support.is_some() { faces.label.size } else { faces.support.size };
                 if !top.is_empty() {
-                    parts.push(text_row((x, value_baseline - (top_line_size + LABEL_LEADING)), line_tspans(top, kind_on_top)));
+                    parts.push(text_row(if kind_on_top { "kpi-label" } else { "kpi-support" }, (x, value_baseline - (top_line_size + LABEL_LEADING)), line_tspans(top, kind_on_top)));
                 }
                 if !bottom.is_empty() {
-                    parts.push(text_row((x, value_baseline), line_tspans(bottom, kind_on_bottom)));
+                    parts.push(text_row(if kind_on_bottom { "kpi-label" } else { "kpi-support" }, (x, value_baseline), line_tspans(bottom, kind_on_bottom)));
                 }
                 parts
             }
@@ -392,15 +386,27 @@ fn compact_column<'a>(card: &KpiCard<'a>) -> (Vec<(&'a Face, &'a str, String)>, 
 /// kpi.rs:`stacked`: the value, the label in its reserved slot and the support row below it.
 fn stacked(card: &KpiCard, plan: &Plan, left: f64) -> Vec<Node> {
     let (faces, kpi) = (card.faces, card.kpi);
-    let mut parts = vec![text_row((left, plan.value_baseline), value_runs(card, plan.value_baseline, plan.prefix_baseline, plan.glyph_baseline))];
+    let mut parts = vec![text_row("kpi-value", (left, plan.value_baseline), value_runs(card, plan.value_baseline, plan.prefix_baseline, plan.glyph_baseline))];
     if let Some(label) = &kpi.label {
         let line = Run::Tspan { x: Some(left), y: Some(plan.label_baseline), dx: None, dy: None, attrs: Attrs::new(), runs: vec![Run::Chars(Chars::new(label.as_str(), Escape::Quick))] };
-        let attrs = Attrs::new().quick("data-authored-kind", "label").quick("text-anchor", "start").extend(face_attrs(&faces.label)).quick("fill", faces.label.color.as_str());
+        let attrs = Attrs::new().quick("data-authored-kind", "label").quick("data-dct-role", "kpi-label").quick("text-anchor", "start").extend(face_attrs(&faces.label)).quick("fill", faces.label.color.as_str());
         let shape = Shape::Text { at: (left, plan.label_baseline), bounds: None, runs: vec![newline(), line, newline()] };
         parts.push(Node::new(Role::Label, attrs, shape));
     }
     if let Some(support) = &kpi.support {
-        parts.push(text_row((left, plan.support_baseline), line_tspans(support_runs(faces, support), false)));
+        parts.push(text_row("kpi-support", (left, plan.support_baseline), line_tspans(support_runs(faces, support), false)));
     }
     parts
+}
+
+impl crate::family::Family for KpiCard<'_> {
+    type Plan = Plan;
+
+    fn plan(&self, env: &crate::family::Env, width: f64) -> Result<Plan, Diagnostic> {
+        plan(self, env.book, width)
+    }
+
+    fn draw(&self, plan: Plan, height: f64) -> Result<Vec<Node>, Diagnostic> {
+        Ok(draw(self, &plan, height))
+    }
 }

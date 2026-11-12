@@ -19,8 +19,8 @@ use crate::style::annotations::{
 use diagnostic::diag;
 use diagnostic::Diagnostic;
 use model_core::{
-    Authored, Cx, Entry, FromNode, Kind, Leaf, Node, Patch, ReadScalar, ScalarValue as Value,
-    Spell, Tri,
+    satisfied, Authored, Cx, Doc, Entry, FromNode, Kind, Leaf, MapRead, Model, Node, Patch,
+    ReadScalar, ScalarValue as Value, Spell, Tri,
 };
 use model_derive::Model;
 use regex::Regex;
@@ -104,8 +104,12 @@ pub struct ClockAnchor {
 #[derive(Debug, Clone, PartialEq, Model)]
 #[allow(clippy::duplicated_attributes)]
 #[model(
-    constraint(requires(order, when(is_in(kind, "polynomial")))),
-    constraint(forbids(order, when(not_in(kind, "polynomial")))),
+    constraint(requires(order, when(is_in(kind, "polynomial")),
+        message = "A polynomial fit takes an order."
+    )),
+    constraint(forbids(order, when(not_in(kind, "polynomial")),
+        message = "Only a polynomial fit takes an order."
+    )),
     constraint(range(order, ge = 2))
 )]
 pub struct FitFunction {
@@ -305,11 +309,38 @@ impl ReadScalar for AnchorScalar {
             Kind::Map(m) => {
                 let clock = matches!(m.get("fn").map(|e| &e.value.kind),
                     Some(Kind::Scalar(Value::Str(n))) if n == "now" || n == "current");
-                if clock {
-                    <ClockAnchor as FromNode>::whole(node, cx).map(Self::Clock)
-                } else {
-                    <AggregateAnchor as FromNode>::whole(node, cx).map(Self::Aggregate)
+                let read = cx.attempt(|cx| {
+                    if clock {
+                        <ClockAnchor as FromNode>::whole(node, cx).map(Self::Clock)
+                    } else {
+                        <AggregateAnchor as FromNode>::whole(node, cx).map(Self::Aggregate)
+                    }
+                });
+                let rules = match clock {
+                    true => ClockAnchor::info().constraints,
+                    false => AggregateAnchor::info().constraints,
+                };
+                let json = node.to_json();
+                let mut holds = true;
+                for c in rules {
+                    match satisfied(c, &Doc(&json)) {
+                        Ok(ok) => holds &= ok,
+                        Err(e) => {
+                            cx.invalid(node.span, format!("an anchor rule cannot be read: {}", e.0));
+                            return None;
+                        }
+                    }
                 }
+                if let (Ok(Some(anchor)), true) = (read, holds) {
+                    return Some(anchor);
+                }
+                // Python reads a mapping anchor as one of its arms and, when none fits, reports
+                // every key of it as extra under the range arm; the keys are the same here. The
+                // inner read's own errors are dropped on purpose: Python never shows them.
+                if let Some(m) = MapRead::new(node) {
+                    cx.unknown_keys(&m);
+                }
+                None
             }
             _ => {
                 cx.mismatch(node, "a number, a date, a string or an anchor function");
@@ -342,7 +373,9 @@ union_leaf!(
 
 /// A span on one axis; a missing bound runs to the axis edge.
 #[derive(Debug, Clone, PartialEq, Model)]
-#[model(constraint(at_least_one_of(from, to)))]
+#[model(constraint(at_least_one_of(from, to,
+        message = "A range needs from or to."
+    )))]
 pub struct AnchorRange {
     /// Where the span starts.
     #[model(absent = "the span runs from the axis edge")]
@@ -558,7 +591,9 @@ pub struct AnnotationBase {
 
 /// A line across the plot at one value, or a segment of it.
 #[derive(Debug, Clone, PartialEq, Model)]
-#[model(constraint(at_least_one_of(x, y)))]
+#[model(constraint(at_least_one_of(x, y,
+        message = "A {type} needs an x or y anchor."
+    )))]
 pub struct RuleAnnotation {
     #[flatten]
     pub base: AnnotationBase,
@@ -575,7 +610,9 @@ pub struct RuleAnnotation {
 
 /// A shaded region over a range or a category.
 #[derive(Debug, Clone, PartialEq, Model)]
-#[model(constraint(at_least_one_of(x, y)))]
+#[model(constraint(at_least_one_of(x, y,
+        message = "A {type} needs an x or y anchor."
+    )))]
 pub struct BandAnnotation {
     #[flatten]
     pub base: AnnotationBase,
@@ -597,19 +634,31 @@ pub struct BandAnnotation {
 #[derive(Debug, Clone, PartialEq, Model)]
 #[allow(clippy::duplicated_attributes)]
 #[model(
-    constraint(requires(y, when(set(x), not_call(x, "min", "max")))),
-    constraint(requires(x, when(set(y), not_call(y, "min", "max")))),
-    constraint(forbids(enclose, when(is_in(x, null), is_in(y, null)))),
+    constraint(requires(y, when(set(x), not_call(x, "min", "max")),
+        message = "A note takes both x and y, or neither; only min() and max() can derive the other coordinate."
+    )),
+    constraint(requires(x, when(set(y), not_call(y, "min", "max")),
+        message = "A note takes both x and y, or neither; only min() and max() can derive the other coordinate."
+    )),
+    constraint(forbids(enclose, when(is_in(x, null), is_in(y, null)),
+        message = "A note with no anchor takes no enclose."
+    )),
     constraint(forbids(
         connector,
-        when(is_in(x, null), is_in(y, null), not_in(connector, null))
+        when(is_in(x, null), is_in(y, null), not_in(connector, null)),
+        message = "A note with no anchor takes no connector."
     )),
     constraint(forbids(
         "style.marks.text.position",
-        when(is_in(enclose, "rect"), is_in(connector, null))
+        when(is_in(enclose, "rect"), is_in(connector, null)),
+        message = "A note boxed with enclose: rect is centered on its anchor, so style.marks.text.position does not apply; add a connector to place the box."
     )),
-    constraint(forbids("style.marks.text.max_width", when(set(x)))),
-    constraint(forbids("style.marks.text.max_width", when(set(y))))
+    constraint(forbids("style.marks.text.max_width", when(set(x)),
+        message = "style.marks.text.max_width wraps only a note with no anchor or a trend; a note anchored at a point does not wrap."
+    )),
+    constraint(forbids("style.marks.text.max_width", when(set(y)),
+        message = "style.marks.text.max_width wraps only a note with no anchor or a trend; a note anchored at a point does not wrap."
+    ))
 )]
 pub struct NoteAnnotation {
     #[flatten]

@@ -38,8 +38,9 @@ BAD_CHARTS = {
     x: a
     y: b
     style:
-      color:
-        static: nosuch.shade
+      marks:
+        bar:
+          color: nosuch.shade
 """,
     "conditional_formatting": """
     type: table

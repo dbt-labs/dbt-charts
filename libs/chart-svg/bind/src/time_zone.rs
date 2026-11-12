@@ -7,8 +7,10 @@
 //! and prints in the board zone; a naive one is a wall-clock time and prints as
 //! written. [`is_aware`] is the one place that tells them apart.
 //!
-//! [`with_time_zone`] opens the zone for one render; outside any scope the zone
-//! is UTC.
+//! [`with_time_zone`] opens the zone for one render; the engine opens the board's own
+//! `regional.time_zone`. Outside any scope the zone is UTC: the host default of the
+//! chart-renderer entry points, which open no scope (production reads the zone from
+//! its payload per chart) and of unit tests. It is the schema's own fill, not a fallback.
 
 use std::cell::RefCell;
 
@@ -163,14 +165,19 @@ pub fn expression_local_instant_ms(wall: f64) -> Result<f64, String> {
     Ok(instant_ms(wall as i64)? as f64 + wall.fract())
 }
 
-/// The payload's IANA zone name, read from the compiled-in tz database.
-pub fn deserialize<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<TimeZone, D::Error> {
-    let name: String = serde::Deserialize::deserialize(deserializer)?;
+/// The IANA zone `name`, read from the compiled-in tz database.
+pub fn named(name: &str) -> Result<TimeZone, jiff::Error> {
     // The tzdb's aliases of UTC need no database and convert every instant.
-    if matches!(name.as_str(), "UTC" | "Etc/UTC" | "Etc/UCT" | "UCT" | "Etc/Universal" | "Universal" | "Etc/Zulu" | "Zulu") {
+    if matches!(name, "UTC" | "Etc/UTC" | "Etc/UCT" | "UCT" | "Etc/Universal" | "Universal" | "Etc/Zulu" | "Zulu") {
         return Ok(TimeZone::UTC);
     }
-    TimeZone::get(&name).map_err(|e| serde::de::Error::custom(format!("time_zone {name:?}: {e}")))
+    TimeZone::get(name)
+}
+
+/// The payload's IANA zone name.
+pub fn deserialize<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<TimeZone, D::Error> {
+    let name: String = serde::Deserialize::deserialize(deserializer)?;
+    named(&name).map_err(|e| serde::de::Error::custom(format!("time_zone {name:?}: {e}")))
 }
 
 /// The zone a payload without `time_zone` prints in.

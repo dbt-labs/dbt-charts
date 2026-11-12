@@ -21,7 +21,7 @@ instead: a field that grew with each tick moved every control beside it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.compile.models.variable.authored import VariableInputType
@@ -59,6 +59,7 @@ class InputTraits:
     ornament: Literal["arrow", "calendar", "none"]
     unset: Literal["chooser", "range", "date", "none"]
     bounds: Literal["slider", "authored", "none"]
+    segments: Literal["options", "presets", "none"]
 
 
 # Every member of `VariableInputType`, and the gate is that it *is* every member
@@ -76,20 +77,20 @@ class InputTraits:
 # deliberate hole in it is the shape this exists to prevent, and "unreachable"
 # is a claim that stops being true quietly.
 _INPUT_TRAITS: dict[VariableInputType, InputTraits] = {
-    "auto": InputTraits("text", "none", "none", "none"),
-    "select": InputTraits("content", "arrow", "chooser", "none"),
-    "multiselect": InputTraits("summary", "arrow", "chooser", "none"),
-    "radio": InputTraits("content", "arrow", "chooser", "none"),
-    "date": InputTraits("content", "calendar", "date", "none"),
-    "datepicker": InputTraits("content", "calendar", "date", "none"),
-    "daterange": InputTraits("daterange", "calendar", "range", "none"),
-    "input": InputTraits("text", "none", "none", "none"),
-    "text": InputTraits("text", "none", "none", "none"),
-    "textarea": InputTraits("text", "none", "none", "none"),
-    "number": InputTraits("number", "none", "none", "authored"),
-    "slider": InputTraits("slider", "none", "none", "slider"),
-    "range": InputTraits("slider", "none", "none", "slider"),
-    "checkbox": InputTraits("checkbox", "none", "none", "none"),
+    "auto": InputTraits("text", "none", "none", "none", "none"),
+    "select": InputTraits("content", "arrow", "chooser", "none", "none"),
+    "multiselect": InputTraits("summary", "arrow", "chooser", "none", "none"),
+    "radio": InputTraits("content", "arrow", "chooser", "none", "options"),
+    "date": InputTraits("content", "calendar", "date", "none", "none"),
+    "datepicker": InputTraits("content", "calendar", "date", "none", "none"),
+    "daterange": InputTraits("daterange", "calendar", "range", "none", "presets"),
+    "input": InputTraits("text", "none", "none", "none", "none"),
+    "text": InputTraits("text", "none", "none", "none", "none"),
+    "textarea": InputTraits("text", "none", "none", "none", "none"),
+    "number": InputTraits("number", "none", "none", "authored", "none"),
+    "slider": InputTraits("slider", "none", "none", "slider", "none"),
+    "range": InputTraits("slider", "none", "none", "slider", "none"),
+    "checkbox": InputTraits("checkbox", "none", "none", "none", "none"),
 }
 
 
@@ -123,6 +124,11 @@ class ControlSpec:
     input: VariableInputType
     label: str
     value: str
+    # The button row's segment texts; empty for a control drawn as a field.
+    segment_labels: tuple[str, ...] = ()
+    # Whether the buttons form draws the control's label. A timespan button row does
+    # not: its buttons say what they span.
+    segments_labeled: bool = True
 
 
 @dataclass(frozen=True)
@@ -132,6 +138,11 @@ class ControlBox:
     ``label_width`` splits the box: the label draws in it, the field takes the
     rest after ``control_gap``. Published rather than re-measured downstream, so
     the width that was reserved is the width that gets drawn.
+
+    A button row publishes ``segment_rows`` (each row's segment widths; empty
+    for a field). ``overflowed`` marks a button row that fell back to the field,
+    ``buttons_width`` is what its buttons wanted on one row, and ``value_width``
+    is the width of the value shown at rest in the button row's place.
     """
 
     name: str
@@ -143,6 +154,11 @@ class ControlBox:
     width: float
     height: float
     label_width: float
+    labeled: bool
+    segment_rows: tuple[tuple[float, ...], ...]
+    overflowed: bool
+    value_width: float
+    buttons_width: float
 
 
 @dataclass(frozen=True)
@@ -172,11 +188,13 @@ class VariablesLayout:
 def lay_out_variables(
     specs: Sequence[ControlSpec], width: float, variables_style: VariablesStyle
 ) -> VariablesLayout:
-    """Place each control into rows no wider than ``width``.
+    """Place each control into rows no wider than ``width``, balanced.
 
     Returns boxes in the order given — document order is what a host binds
     against, so it is not reordered to pack rows more tightly. Two or more
-    controls also reserve a reset item after the last one.
+    controls also reserve a reset item after the last one. A strip that wraps
+    keeps the row count greedy packing needs and evens the rows out
+    (:func:`_balanced_limit`), so it never strands one control on a last row.
     """
     if not specs:
         return VariablesLayout(boxes=(), height=0.0, rows=0, reset=None)
@@ -184,69 +202,182 @@ def lay_out_variables(
     gap = float(variables_style.gap)
     row_height = float(variables_style.container_height)
     available = max(width, 1.0)
-
-    boxes: list[ControlBox] = []
-    x = 0.0
-    row = 0
     font_size = variables_style.font.size
     assert font_size is not None, "style.variables.font.size must be configured"
+    padding = float(variables_style.input.padding.left) + float(
+        variables_style.input.padding.right
+    )
+    measured: list[ControlBox] = []
+    widths: list[float] = []
+    spans: list[int] = []
     for spec in specs:
-        label_width = _text_width(
+        segment_widths = tuple(
+            _text_width(text, float(font_size)) + padding
+            for text in spec.segment_labels
+        )
+        field_label_width = _text_width(
             board_word("controls.field_label", label=spec.label), float(font_size)
         )
-        # The ornament is added here, not inside `_input_width`, so a
-        # theme-sized field reserves room for its glyph exactly like a measured
-        # one — `daterange` is theme-sized and still draws a calendar.
-        control_width = (
-            label_width
-            + float(variables_style.control_gap)
-            + _input_width(spec, variables_style, float(font_size))
-            + ornament_gap(spec.input, float(font_size))
-            + ornament_width(spec.input, float(font_size))
+        labeled = spec.segments_labeled
+        label_width = field_label_width if labeled else 0.0
+        lead = label_width + float(variables_style.control_gap) if labeled else 0.0
+        value_width = (
+            max(_text_width(spec.value, float(font_size)), float(font_size)) + padding
         )
-        # First control on a row is placed wherever it lands, even when it is
-        # wider than the strip: an overrun is visible and debuggable, a dropped
-        # filter is not.
-        if boxes and x + control_width > available + WRAP_EPSILON:
-            row += 1
-            x = 0.0
-        boxes.append(
+        segment_rows: tuple[tuple[float, ...], ...] = ()
+        overflowed = False
+        button_rows = 1
+        single_row = 0.0
+        if segment_widths:
+            single_row = lead + max(sum(segment_widths), value_width)
+            if single_row <= available + WRAP_EPSILON:
+                segment_rows = (segment_widths,)
+            elif variables_style.overflow == "wrap":
+                segment_rows = _wrap_segments(
+                    segment_widths, max(available - lead, 1.0)
+                )
+            else:
+                overflowed = True
+        if segment_rows:
+            button_rows = len(segment_rows)
+            control_width = lead + max(max(sum(r) for r in segment_rows), value_width)
+            box_height = button_rows * row_height + (button_rows - 1) * gap
+        else:
+            # The ornament is added here, not inside `_input_width`, so a
+            # theme-sized field reserves room for its glyph exactly like a
+            # measured one — `daterange` is theme-sized and still draws a calendar.
+            label_width = field_label_width
+            labeled = True
+            control_width = (
+                label_width
+                + float(variables_style.control_gap)
+                + _input_width(spec, variables_style, float(font_size))
+                + ornament_gap(spec.input, float(font_size))
+                + ornament_width(spec.input, float(font_size))
+            )
+            box_height = row_height
+        measured.append(
             ControlBox(
                 name=spec.name,
                 input=spec.input,
                 label=spec.label,
                 value=_drawn_value(spec, variables_style, float(font_size)),
-                x=x,
-                y=row * (row_height + gap),
+                x=0.0,
+                y=0.0,
                 width=control_width,
-                height=row_height,
+                height=box_height,
                 label_width=label_width,
+                labeled=labeled,
+                segment_rows=segment_rows,
+                overflowed=overflowed,
+                value_width=value_width,
+                buttons_width=single_row,
             )
         )
-        x += control_width + gap
-
-    reset = None
+        widths.append(control_width)
+        spans.append(button_rows)
     if len(specs) >= MIN_CONTROLS_FOR_RESET:
-        padding = variables_style.input.padding
-        reset_width = (
+        reset_padding = variables_style.input.padding
+        widths.append(
             _text_width(board_word("controls.reset"), float(font_size))
-            + float(padding.left)
-            + float(padding.right)
+            + float(reset_padding.left)
+            + float(reset_padding.right)
         )
-        if x + reset_width > available + WRAP_EPSILON:
-            row += 1
-            x = 0.0
+        spans.append(1)
+    limit = _balanced_limit(widths, spans, gap, available)
+    places = _flow(widths, spans, gap, limit)
+
+    boxes = tuple(
+        replace(box, x=x, y=row * (row_height + gap))
+        for box, (x, row) in zip(measured, places, strict=False)
+    )
+    reset = None
+    if len(widths) > len(specs):
+        x, row = places[-1]
         reset = ResetBox(
-            x=x, y=row * (row_height + gap), width=reset_width, height=row_height
+            x=x, y=row * (row_height + gap), width=widths[-1], height=row_height
         )
 
-    rows = row + 1
+    rows = places[-1][1] + spans[-1]
     return VariablesLayout(
-        boxes=tuple(boxes),
+        boxes=boxes,
         height=rows * row_height + (rows - 1) * gap,
         rows=rows,
         reset=reset,
     )
+
+
+def _wrap_segments(
+    widths: tuple[float, ...], room: float
+) -> tuple[tuple[float, ...], ...]:
+    """Flow segment widths into rows no wider than ``room`` (one per row at least)."""
+    rows: list[list[float]] = [[]]
+    used = 0.0
+    for width in widths:
+        if rows[-1] and used + width > room + WRAP_EPSILON:
+            rows.append([])
+            used = 0.0
+        rows[-1].append(width)
+        used += width
+    return tuple(tuple(r) for r in rows)
+
+
+def _flow(
+    widths: Sequence[float], spans: Sequence[int], gap: float, limit: float
+) -> list[tuple[float, int]]:
+    """Each item's ``(x, row)``, filling rows no wider than ``limit`` in order.
+
+    The first item on a row is placed wherever it lands, even when it is wider
+    than the strip: an overrun is visible and debuggable, a dropped filter is not.
+    An item spanning several rows (wrapped buttons) owns them: whatever follows
+    starts below it.
+    """
+    places: list[tuple[float, int]] = []
+    x = 0.0
+    row = 0
+    for w, span in zip(widths, spans, strict=True):
+        if places and x + w > limit + WRAP_EPSILON:
+            row += 1
+            x = 0.0
+        places.append((x, row))
+        x += w + gap
+        if span > 1:
+            row += span - 1
+            x = limit + gap
+    return places
+
+
+def _row_count(
+    widths: Sequence[float], spans: Sequence[int], gap: float, limit: float
+) -> int:
+    return _flow(widths, spans, gap, limit)[-1][1] + spans[-1]
+
+
+def _balanced_limit(
+    widths: Sequence[float], spans: Sequence[int], gap: float, available: float
+) -> float:
+    """The narrowest row limit that keeps greedy packing's row count.
+
+    Every row :func:`_flow` can produce is a run of consecutive items, so the
+    narrowest limit is one of those runs' widths (summed exactly as ``_flow``
+    sums them); the first, ascending, that packs into as few rows as
+    ``available`` does is the most even split.
+    """
+    rows = _row_count(widths, spans, gap, available)
+    if rows == 1:
+        return available
+    runs: set[float] = set()
+    for start in range(len(widths)):
+        x = 0.0
+        for w in widths[start:]:
+            if x + w > available + WRAP_EPSILON:
+                break
+            runs.add(x + w)
+            x += w + gap
+    for limit in sorted(runs):
+        if _row_count(widths, spans, gap, limit) == rows:
+            return limit
+    return available
 
 
 def ornament_width(input_type: VariableInputType, font_size: float) -> float:

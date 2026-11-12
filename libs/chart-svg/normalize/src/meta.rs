@@ -9,7 +9,7 @@
 //! cascaded value).
 
 use crate::extends::{parent, split_own, Cx, FoldError, MetaLint, Patch};
-use crate::files::ProjectFiles;
+use crate::files::{ProjectFiles, ReadError};
 pub use crate::merge_warnings::{MergeWarning, RestatedError};
 use migrate::Date;
 use project::ProjectPath;
@@ -52,11 +52,19 @@ impl Merged {
 const PACKAGES: &str = "dbt_packages";
 const HOST_CHARTS: &str = "charts";
 
-fn meta_in(files: &dyn ProjectFiles, dir: &str) -> Option<(ProjectPath, String)> {
-    ["meta.yml", "meta.yaml"].into_iter().find_map(|name| {
-        let at = ProjectPath::anchored(dir, name).ok()?;
-        files.read(&at).map(|text| (at, text))
-    })
+fn meta_in(
+    files: &dyn ProjectFiles,
+    dir: &str,
+) -> Result<Option<(ProjectPath, String)>, ReadError> {
+    for name in ["meta.yml", "meta.yaml"] {
+        let Ok(at) = ProjectPath::anchored(dir, name) else {
+            continue;
+        };
+        if let Some(text) = files.read(&at)? {
+            return Ok(Some((at, text)));
+        }
+    }
+    Ok(None)
 }
 
 /// `find_meta_files`: the `meta.yml` (else `meta.yaml`) of each directory from `boards_root` down to
@@ -79,7 +87,7 @@ pub fn find_meta_files(
     let mut found = Vec::new();
     let mut dir = board_dir;
     loop {
-        if let Some(meta) = meta_in(files, dir) {
+        if let Some(meta) = meta_in(files, dir)? {
             found.push(meta);
         }
         if dir == root || dir.is_empty() {
@@ -93,7 +101,7 @@ pub fn find_meta_files(
             .iter()
             .filter(|(p, _)| p.as_str().split('/').next() != Some(PACKAGES))
             .count();
-        if let Some(host) = meta_in(files, HOST_CHARTS) {
+        if let Some(host) = meta_in(files, HOST_CHARTS)? {
             found.insert(host_layer, host);
         }
     }

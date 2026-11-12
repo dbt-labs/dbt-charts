@@ -2,14 +2,17 @@
 //! the board's diagnostics and index; it never reads the board itself (D-16).
 
 use crate::json_to_py;
+use crate::escape::Escaped;
 use crate::sql::PySqlAnalysis;
 use board_model::board::HtmlPolicy;
+use board_model::cache::{CacheLayer, CacheTtl};
 use board_model::sql_analysis::{Refused, SqlAnalysis};
-use std::collections::BTreeMap;
-use normalize::{HostInputs, ProjectFiles, SourceRegistry};
+use normalize::{HostInputs, ProjectFiles, ReadError, SourceRegistry};
+use project::ProjectPath;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use project::ProjectPath;
+use serde_json::Value;
+use std::collections::BTreeMap;
 
 pyo3::create_exception!(
     dbt_charts._engine,
@@ -18,12 +21,18 @@ pyo3::create_exception!(
     "A board did not compile; `.diagnostics` holds its coded findings, never empty."
 );
 
-/// The host's project reader: `read(path) -> str | None`, `list(dir) -> list[str]` and
-/// `exists(path) -> bool`. Each call reacquires the GIL the compile released.
-struct HostFiles(Py<PyAny>);
+/// The host's project reader: `read(path) -> str | None` (`None` only for a file that is not
+/// there), `list(dir) -> list[str]` and `exists(path) -> bool`. Each call reacquires the GIL the
+/// compile released. An exception the host raises is the refusal `ERR-PROJECT-FILE-UNREADABLE`,
+/// naming the file and the exception.
+struct HostFiles<'a>(Py<PyAny>, &'a Escaped);
 
-impl HostFiles {
-    fn call<T: for<'py> FromPyObject<'py, 'py>>(&self, method: &str, arg: &str) -> T
+impl HostFiles<'_> {
+    fn call<T: for<'py> FromPyObject<'py, 'py>>(
+        &self,
+        method: &str,
+        arg: &str,
+    ) -> Result<T, ReadError>
     where
         for<'py> <T as FromPyObject<'py, 'py>>::Error: Into<PyErr>,
     {
@@ -31,23 +40,23 @@ impl HostFiles {
             self.0
                 .call_method1(py, method, (arg,))
                 .and_then(|v| v.bind(py).extract::<T>().map_err(Into::into))
-                .unwrap_or_else(|e| panic!("project files `{method}({arg:?})` failed: {e}"))
+                .map_err(|e| ReadError::new(arg, self.1.reason(py, e)))
         })
     }
 }
 
-impl ProjectFiles for HostFiles {
-    fn read(&self, path: &ProjectPath) -> Option<String> {
+impl ProjectFiles for HostFiles<'_> {
+    fn read(&self, path: &ProjectPath) -> Result<Option<String>, ReadError> {
         self.call("read", path.as_str())
     }
-    fn list(&self, dir: &str) -> Vec<ProjectPath> {
-        let names: Vec<String> = self.call("list", dir);
+    fn list(&self, dir: &str) -> Result<Vec<ProjectPath>, ReadError> {
+        let names: Vec<String> = self.call("list", dir)?;
         names
             .into_iter()
-            .map(|n| ProjectPath::try_from(n).expect("project files `list` returns project paths"))
+            .map(|n| ProjectPath::try_from(n).map_err(|e| ReadError::new(dir, e.to_string())))
             .collect()
     }
-    fn exists(&self, path: &ProjectPath) -> bool {
+    fn exists(&self, path: &ProjectPath) -> Result<bool, ReadError> {
         self.call("exists", path.as_str())
     }
 }
@@ -67,9 +76,9 @@ impl CompiledBoard {
 
     /// What validate's host checks read (queries, column refs, unbound charts, links, suppressed
     /// warnings), as versioned JSON text.
-    fn host_facts_json(&self) -> String {
-        serde_json::to_string(&self.0.structure.host_facts())
-            .expect("host facts are plain data")
+    fn host_facts_json(&self, py: Python<'_>) -> PyResult<String> {
+        let facts = self.0.structure.host_facts().map_err(|d| crate::coded_error(py, &d))?;
+        Ok(serde_json::to_string(&facts).expect("host facts are plain data"))
     }
 
     /// The board's index as versioned JSON text (see [`index_text`]).
@@ -85,9 +94,16 @@ fn index_text<'a>(
     files: impl Iterator<Item = &'a ProjectPath>,
 ) -> String {
     let facts = &index.facts;
-    let public_ids: serde_json::Map<String, serde_json::Value> =
-        index.public_ids.iter().map(|(k, v)| (k.to_string(), v.as_str().into())).collect();
-    let queries: Vec<_> = facts.queries.iter().map(|q| serde_json::json!({ "name": q.name, "sql": q.sql })).collect();
+    let public_ids: serde_json::Map<String, serde_json::Value> = index
+        .public_ids
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.as_str().into()))
+        .collect();
+    let queries: Vec<_> = facts
+        .queries
+        .iter()
+        .map(|q| serde_json::json!({ "name": q.name, "sql": q.sql }))
+        .collect();
     let charts: Vec<_> = facts
         .charts
         .iter()
@@ -107,49 +123,87 @@ fn index_text<'a>(
     .to_string()
 }
 
+/// A refusal as the Python exception: its diagnostics and the warnings gathered before it, both
+/// in the wire shape.
 fn refusal(
     py: Python<'_>,
     error: &normalize::CompileError,
-    warnings: &[diagnostic::Diagnostic],
-    files: &HostFiles,
-    path: &ProjectPath,
-    today: migrate::Date,
+    (diagnostics, warnings): (Vec<Value>, Vec<Value>),
 ) -> PyErr {
-    let diagnostics = error.wire_diagnostics(files, path, today);
-    let warnings = normalize::wire_located(warnings.to_vec(), files, path, today);
     let build = || -> PyResult<PyErr> {
         let err = CompileError::new_err(error.to_string());
-        err.value(py).setattr("diagnostics", json_to_py(py, &diagnostics)?)?;
-        err.value(py).setattr("warnings", json_to_py(py, &warnings)?)?;
+        err.value(py)
+            .setattr("diagnostics", json_to_py(py, &diagnostics)?)?;
+        err.value(py)
+            .setattr("warnings", json_to_py(py, &warnings)?)?;
         Ok(err)
     };
     build().unwrap_or_else(|failure| failure)
 }
 
-/// `compile(files, path, *, boards_root, today, default_theme, html_policy_ceiling, sources, sql, named)`.
+/// A cache layer as the host sends it: `(enabled, ttl, prefetch)`, each `None` when the scope
+/// does not author it. The host validated the ttl, so it is not read again.
+type CacheWire = (Option<bool>, Option<String>, Option<bool>);
+
+fn cache_layer((enabled, ttl, prefetch): CacheWire) -> CacheLayer {
+    CacheLayer {
+        enabled,
+        ttl: ttl.map(|t| match t.as_str() {
+            "forever" => CacheTtl::Forever,
+            _ => CacheTtl::Duration(t),
+        }),
+        prefetch,
+        ..CacheLayer::default()
+    }
+}
+
+/// What a compile is of: the board at a project path, or board text with no project location.
+enum Board<'a> {
+    At(ProjectPath),
+    Text(&'a str),
+}
+
+/// `compile(files, path, *, boards_root, today, default_theme, html_policy_ceiling, sources, implicit_source, cache_root, source_caches, sql, named, text)`.
+///
+/// `path` is `None` for a board with no project location, whose `text` is then required (and
+/// refused beside a path): it inherits no `meta.yml` and resolves no relative reference.
+///
+/// `cache_root` is the project's `cache:` layer and `source_caches` each declared source's; both
+/// are required, since a compile with no root has no cache policy to resolve.
 ///
 /// `sources` maps each project source name to its declaration as JSON text.
 ///
 /// `today` is `YYYY-MM-DD`. `sql` is the host's analyzer (`analyze_all(requests) -> outcomes`);
 /// without one a SQL query is refused. The GIL is released while compiling.
 #[pyfunction]
-#[pyo3(signature = (files, path, *, boards_root, today, default_theme, html_policy_ceiling, sources, implicit_source, sql=None, named=false))]
+#[pyo3(signature = (files, path, *, boards_root, today, default_theme, html_policy_ceiling, sources, implicit_source, cache_root, source_caches, sql=None, named=false, text=None))]
 #[allow(clippy::too_many_arguments)]
 fn compile(
     py: Python<'_>,
     files: Py<PyAny>,
-    path: &str,
+    path: Option<&str>,
     boards_root: &str,
     today: &str,
     default_theme: &str,
     html_policy_ceiling: Option<&str>,
     sources: BTreeMap<String, String>,
     implicit_source: Option<String>,
+    cache_root: CacheWire,
+    source_caches: BTreeMap<String, CacheWire>,
     sql: Option<Py<PyAny>>,
     named: bool,
+    text: Option<&str>,
 ) -> PyResult<CompiledBoard> {
-    let path = ProjectPath::try_from(path).map_err(|e| PyValueError::new_err(e.to_string()))?;
-    let today = migrate::parse_date(today).ok_or_else(|| PyValueError::new_err("today must be YYYY-MM-DD"))?;
+    let board = match (path, text) {
+        (Some(_), Some(_)) => {
+            return Err(PyValueError::new_err("text is the board of a compile with no path; the board at a path is read from files"))
+        }
+        (None, None) => return Err(PyValueError::new_err("a compile with no path needs the board's text")),
+        (Some(path), None) => Board::At(ProjectPath::try_from(path).map_err(|e| PyValueError::new_err(e.to_string()))?),
+        (None, Some(text)) => Board::Text(text),
+    };
+    let today = migrate::parse_date(today)
+        .ok_or_else(|| PyValueError::new_err("today must be YYYY-MM-DD"))?;
     let html_policy_ceiling = html_policy_ceiling
         .map(|p| HtmlPolicy::try_from(p).map_err(PyValueError::new_err))
         .transpose()?;
@@ -164,8 +218,14 @@ fn compile(
             .collect::<PyResult<Vec<_>>>()?,
     )
     .with_implicit(implicit_source);
-    let files = HostFiles(files);
-    let analyzer = sql.map(PySqlAnalysis);
+    let cache_root = cache_layer(cache_root);
+    let source_caches: BTreeMap<String, CacheLayer> = source_caches
+        .into_iter()
+        .map(|(name, layer)| (name, cache_layer(layer)))
+        .collect();
+    let escaped = Escaped::default();
+    let files = HostFiles(files, &escaped);
+    let analyzer = sql.map(|a| PySqlAnalysis(a, &escaped));
     let sql: &(dyn SqlAnalysis + Sync) = match &analyzer {
         Some(a) => a,
         None => &Refused,
@@ -178,13 +238,31 @@ fn compile(
             html_policy_ceiling,
             sql,
             sources: &sources,
+            cache_root: &cache_root,
+            source_caches: &source_caches,
             named,
         };
-        normalize::compile_or_refuse(&files, &path, &host)
+        match &board {
+            Board::At(path) => normalize::compile_or_refuse(&files, path, &host),
+            Board::Text(text) => normalize::compile_text_or_refuse(&files, text, &host),
+        }
     });
-    compiled
-        .map(CompiledBoard)
-        .map_err(|r| refusal(py, &r.error, &r.warnings, &files, &path, today))
+    if let Some(interrupt) = escaped.take() {
+        return Err(interrupt);
+    }
+    compiled.map(CompiledBoard).map_err(|r| {
+        let wire = match &board {
+            Board::At(path) => Ok((
+                r.error.wire_diagnostics(&files, path, today),
+                normalize::wire_located(r.warnings.clone(), &files, path, today),
+            )),
+            Board::Text(text) => normalize::pathless_wire_refusal(&r, text, today),
+        };
+        match wire {
+            Ok(wire) => refusal(py, &r.error, wire),
+            Err(e) => PyValueError::new_err(e.to_string()),
+        }
+    })
 }
 
 /// `index(files, path, *, boards_root, today, sources, implicit_source)`: the board's index as
@@ -202,11 +280,19 @@ fn index(
     implicit_source: Option<String>,
 ) -> PyResult<String> {
     let path = ProjectPath::try_from(path).map_err(|e| PyValueError::new_err(e.to_string()))?;
-    let today = migrate::parse_date(today).ok_or_else(|| PyValueError::new_err("today must be YYYY-MM-DD"))?;
+    let today = migrate::parse_date(today)
+        .ok_or_else(|| PyValueError::new_err("today must be YYYY-MM-DD"))?;
     // The index reads only which names the project declares, never their declarations.
-    let sources = SourceRegistry::declared(sources.into_iter().map(|name| (name, serde_json::Value::Null)))
-        .with_implicit(implicit_source);
-    let files = HostFiles(files);
+    let sources = SourceRegistry::declared(
+        sources
+            .into_iter()
+            .map(|name| (name, serde_json::Value::Null)),
+    )
+    .with_implicit(implicit_source);
+    let escaped = Escaped::default();
+    let files = HostFiles(files, &escaped);
+    // An index resolves no query's cache policy, so these layers are never read.
+    let (no_cache, no_source_caches) = (CacheLayer::default(), BTreeMap::new());
     let indexed = py.detach(|| {
         let host = HostInputs {
             boards_root,
@@ -215,13 +301,21 @@ fn index(
             html_policy_ceiling: None,
             sql: &Refused,
             sources: &sources,
+            cache_root: &no_cache,
+            source_caches: &no_source_caches,
             named: false,
         };
         normalize::compile_index(&files, &path, &host)
     });
+    if let Some(interrupt) = escaped.take() {
+        return Err(interrupt);
+    }
     indexed
         .map(|(index, read)| index_text(&index, read.iter()))
-        .map_err(|e| refusal(py, &e, &[], &files, &path, today))
+        .map_err(|e| {
+            let diagnostics = e.wire_diagnostics(&files, &path, today);
+            refusal(py, &e, (diagnostics, Vec::new()))
+        })
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

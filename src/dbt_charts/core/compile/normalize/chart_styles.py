@@ -79,7 +79,6 @@ def merged_chart_style(
     )
     fields: dict[str, Any] = {  # type-state: explicit_any — validator input
         "type": chart.type,
-        "color": context.color,
         "palette": context.palette,
         "single_series_palette": context.single_series_palette,
         "requested_alias_palette": context.requested_alias_palette,

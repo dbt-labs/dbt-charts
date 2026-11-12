@@ -3,6 +3,7 @@
 //! `math.fsum`), and `fsum`. d3-array's plain `sum` is a naive left-to-right
 //! loop and has no port: use `Iterator::sum`.
 
+use crate::invariant::{at, at_mut};
 use crate::js_math::js_truthy;
 
 /// d3-array's `Adder`: the exact sum of every value added, as the partials
@@ -19,17 +20,17 @@ impl Adder {
     pub fn add(&mut self, mut x: f64) {
         let mut i = 0;
         for j in 0..self.n.min(32) {
-            let y = self.partials[j];
+            let y = *at(&self.partials, j);
             let hi = x + y;
             let lo = if x.abs() < y.abs() { x - (hi - y) } else { y - (hi - x) };
             if js_truthy(lo) {
-                self.partials[i] = lo;
+                *at_mut(&mut self.partials, i) = lo;
                 i += 1;
             }
             x = hi;
         }
         if i < 32 {
-            self.partials[i] = x;
+            *at_mut(&mut self.partials, i) = x;
         }
         self.n = i + 1;
     }

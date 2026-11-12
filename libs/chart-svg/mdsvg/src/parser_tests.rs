@@ -208,7 +208,7 @@ fn test_ordered_list() {
         panic!("expected list")
     };
     assert_eq!(ol.items.len(), 3);
-    assert_eq!(ol.start, 1);
+    assert_eq!(ol.start, Start::Number(1));
 }
 
 #[test]
@@ -217,7 +217,7 @@ fn test_ordered_list_custom_start() {
     let AnyBlock::OrderedList(ol) = &doc[0] else {
         panic!("expected list")
     };
-    assert_eq!(ol.start, 5);
+    assert_eq!(ol.start, Start::Number(5));
 }
 
 #[test]
@@ -479,7 +479,7 @@ fn test_flat_ordered_text_and_start() {
     let AnyBlock::OrderedList(ol) = &doc[0] else {
         panic!("expected list")
     };
-    assert_eq!(ol.start, 1);
+    assert_eq!(ol.start, Start::Number(1));
     assert_eq!(ol.items.len(), 3);
     assert_eq!(item_text(&ol.items[0]), "one");
 }
@@ -499,7 +499,7 @@ fn test_ordered_custom_start() {
     let AnyBlock::OrderedList(ol) = &doc[0] else {
         panic!("expected list")
     };
-    assert_eq!(ol.start, 5);
+    assert_eq!(ol.start, Start::Number(5));
     assert_eq!(ol.items.len(), 2);
 }
 
@@ -833,4 +833,65 @@ fn emphasis_mixing_text_and_code_splits_into_spans() {
         got,
         [(SpanType::Bold, "set ", false), (SpanType::Code, "tone", true), (SpanType::Bold, " here", false)]
     );
+}
+
+fn ordered_start(markdown: &str) -> Start {
+    let doc = parse(markdown);
+    let AnyBlock::OrderedList(ol) = &doc[0] else {
+        panic!("expected an ordered list")
+    };
+    ol.start.clone()
+}
+
+#[test]
+fn test_ordered_start_reads_a_non_ascii_digit_like_python_int() {
+    assert_eq!(ordered_start("\u{661}. item"), Start::Number(1));
+    assert_eq!(ordered_start("\u{966}\u{967}. item"), Start::Number(1));
+}
+
+#[test]
+fn test_ordered_start_holds_the_widest_number_it_counts() {
+    assert_eq!(
+        ordered_start(&format!("{}. item", u128::MAX)),
+        Start::Number(u128::MAX)
+    );
+}
+
+#[test]
+fn test_ordered_start_past_u128_is_named_not_a_panic() {
+    let digits = format!("{}0", u128::MAX);
+    assert_eq!(
+        ordered_start(&format!("{digits}. item")),
+        Start::TooLarge(digits)
+    );
+}
+
+#[test]
+fn test_inline_patterns_have_the_group_counts_the_matcher_destructures() {
+    for (pattern, groups) in [
+        (inline_code(), 1),
+        (image_re(), 4),
+        (link_re(), 3),
+        (bold_italic_re(), 2),
+        (bold_re(), 2),
+        (italic_re(), 2),
+    ] {
+        assert_eq!(pattern.captures_len() - 1, groups, "{pattern}");
+    }
+}
+
+#[test]
+fn test_lone_pipe_row_is_a_paragraph_not_a_hang() {
+    // `parser.py::_collect_paragraph_lines` stops at a table row only when the
+    // paragraph already holds a line, so a pipe row `parse_table` refuses
+    // still starts a paragraph instead of consuming nothing forever.
+    let (done, result) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(parse("Intro paragraph\n\n|---|---|\n\nTail"));
+    });
+    let doc = result
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("parse returned");
+    assert_eq!(doc.len(), 3);
+    assert!(doc.iter().all(|block| matches!(block, AnyBlock::Paragraph(_))));
 }

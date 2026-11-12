@@ -4,6 +4,17 @@
 //! locales (`locale`), and the letter-case transform (`case`) both engines
 //! apply to a slot's `font.case`.
 
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::unreachable
+    )
+)]
+
 pub mod case;
 pub mod font;
 pub mod language;
@@ -94,8 +105,8 @@ pub fn slug_to_text(slug: &str) -> Result<String, String> {
         .collect();
 
     let mut suffix = None;
-    if tokens.len() > 1 {
-        suffix = lookup(UNIT_SUFFIXES, &tokens[tokens.len() - 1].to_lowercase())?;
+    if let Some(last) = tokens.last().copied().filter(|_| tokens.len() > 1) {
+        suffix = lookup(UNIT_SUFFIXES, &last.to_lowercase())?;
         if suffix.is_some() {
             tokens.pop();
             if tokens.last().is_some_and(|t| t.eq_ignore_ascii_case("in")) {
@@ -138,8 +149,9 @@ pub fn inline_derived_label(label: &str) -> Result<String, String> {
         && !chars.as_str().chars().any(char::is_uppercase);
     if plain && language::text(language::active_language(), "case.title_style")? == "en_small_words" {
         let mut c = label.chars();
-        let head = c.next().unwrap().to_lowercase().collect::<String>();
-        return Ok(head + c.as_str());
+        if let Some(head) = c.next() {
+            return Ok(head.to_lowercase().collect::<String>() + c.as_str());
+        }
     }
     Ok(label.to_string())
 }
@@ -180,7 +192,7 @@ pub fn wide_measure_labels(
     loop {
         let mut by_label: Vec<(String, Vec<String>)> = Vec::new();
         for m in measures {
-            let label = &labels[m];
+            let label = labels.get(m).ok_or_else(|| format!("no label for measure '{m}'"))?;
             match by_label.iter_mut().find(|(l, _)| l == label) {
                 Some((_, group)) if !group.contains(m) => group.push(m.clone()),
                 Some(_) => {}
@@ -190,7 +202,7 @@ pub fn wide_measure_labels(
         let mut progressed = false;
         for (label, group) in by_label.into_iter().filter(|(_, group)| group.len() > 1) {
             for m in &group {
-                if !field_labels.contains_key(m) && labels[m] != *m {
+                if !field_labels.contains_key(m) && labels.get(m) != Some(m) {
                     labels.insert(m.clone(), m.clone());
                     progressed = true;
                 }

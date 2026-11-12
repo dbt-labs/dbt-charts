@@ -1,0 +1,3 @@
+kind: Fixes
+body: Compacted table columns no longer give every row extra decimals because one row is small; a value too small for the column's decimals prints as <0.01 M.
+time: 2026-11-09T22:40:01.056878-08:00

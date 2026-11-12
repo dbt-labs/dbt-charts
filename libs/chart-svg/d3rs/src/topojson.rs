@@ -10,6 +10,7 @@
 //! `GeometryCollection` (GeoJSON has no null member).
 
 use crate::geojson::{Feature, FeatureCollection, GeoJson, Geometry, Position};
+use crate::invariant::{at, at_mut};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -143,8 +144,8 @@ fn transform_arc(t: Option<&Transform>, arc: &[Position]) -> Result<Vec<Position
             x0 += dx;
             y0 += dy;
             let mut out = p.clone();
-            out[0] = x0 * t.scale[0] + t.translate[0];
-            out[1] = y0 * t.scale[1] + t.translate[1];
+            *at_mut(&mut out, 0) = x0 * t.scale[0] + t.translate[0];
+            *at_mut(&mut out, 1) = y0 * t.scale[1] + t.translate[1];
             Ok(out)
         })
         .collect()
@@ -158,7 +159,7 @@ fn transform_point(t: Option<&Transform>, p: &Position) -> Result<Position, Stri
 /// topojson-client's `reverse(array, n)`: reverses the last `n` elements in place.
 fn reverse<T>(array: &mut [T], n: usize) {
     let len = array.len();
-    array[len - n..].reverse();
+    at_mut(array, len - n..).reverse();
 }
 
 impl Topology {
@@ -215,7 +216,8 @@ impl Topology {
     fn ring(&self, arcs: &[i32]) -> Result<Vec<Position>, String> {
         let mut points = self.line(arcs)?;
         while points.len() < 4 {
-            points.push(points[0].clone());
+            let first = at(&points, 0).clone();
+            points.push(first);
         }
         Ok(points)
     }
@@ -317,8 +319,8 @@ pub fn mesh(
     extract(topology.object(name)?, &mut geoms_by_arc);
     let arcs = geoms_by_arc
         .values()
-        .filter(|geoms| filter.is_none_or(|f| f(geoms[0].1, geoms[geoms.len() - 1].1)))
-        .map(|geoms| geoms[0].0)
+        .filter(|geoms| filter.is_none_or(|f| f(at(geoms, 0).1, at(geoms, geoms.len() - 1).1)))
+        .map(|geoms| at(geoms, 0).0)
         .collect();
     mesh_geometry(topology, arcs)
 }
@@ -379,12 +381,12 @@ struct Ends {
 
 impl Ends {
     fn get(&self, k: &Key) -> Option<usize> {
-        self.position.get(k).and_then(|&p| self.entries[p])
+        self.position.get(k).and_then(|&p| *at(&self.entries, p))
     }
 
     fn set(&mut self, k: Key, fragment: usize) {
         match self.position.get(&k) {
-            Some(&p) => self.entries[p] = Some(fragment),
+            Some(&p) => *at_mut(&mut self.entries, p) = Some(fragment),
             None => {
                 self.position.insert(k, self.entries.len());
                 self.entries.push(Some(fragment));
@@ -394,7 +396,7 @@ impl Ends {
 
     fn delete(&mut self, k: &Key) {
         if let Some(p) = self.position.remove(k) {
-            self.entries[p] = None;
+            *at_mut(&mut self.entries, p) = None;
         }
     }
 }
@@ -404,7 +406,7 @@ fn stitch(topology: &Topology, mut arcs: Vec<i32>) -> Result<Vec<Vec<i32>>, Stri
     // Stitch empty arcs first, since they may be subsumed by other arcs.
     let mut empty_index = 0;
     for j in 0..arcs.len() {
-        let i = arcs[j];
+        let i = *at(&arcs, j);
         let arc = topology.arc(i)?;
         let Some(second) = arc.get(1) else {
             return Err(format!("arc {} has fewer than 2 points", arc_index(i)));
@@ -417,7 +419,7 @@ fn stitch(topology: &Topology, mut arcs: Vec<i32>) -> Result<Vec<Vec<i32>>, Stri
 
     let ends = |i: i32| -> Result<(Key, Key), String> {
         let arc = topology.arc(i)?;
-        let p0 = key(&arc[0]);
+        let p0 = key(at(arc, 0));
         let p1 = if topology.transform.is_some() {
             let (mut x, mut y) = (0.0, 0.0);
             for dp in arc {
@@ -427,7 +429,7 @@ fn stitch(topology: &Topology, mut arcs: Vec<i32>) -> Result<Vec<Vec<i32>>, Stri
             }
             key(&[x, y])
         } else {
-            key(&arc[arc.len() - 1])
+            key(at(arc, arc.len() - 1))
         };
         Ok(if i < 0 { (p1, p0) } else { (p0, p1) })
     };
@@ -438,27 +440,27 @@ fn stitch(topology: &Topology, mut arcs: Vec<i32>) -> Result<Vec<Vec<i32>>, Stri
     for &i in &arcs {
         let (start, end) = ends(i)?;
         if let Some(f) = by_end.get(&start) {
-            by_end.delete(&frags[f].end);
-            frags[f].arcs.push(i);
-            frags[f].end = end.clone();
+            by_end.delete(&at(&frags, f).end);
+            at_mut(&mut frags, f).arcs.push(i);
+            at_mut(&mut frags, f).end = end.clone();
             if let Some(g) = by_start.get(&end) {
-                by_start.delete(&frags[g].start);
+                by_start.delete(&at(&frags, g).start);
                 if g != f {
-                    let tail = std::mem::take(&mut frags[g].arcs);
-                    frags[f].arcs.extend(tail);
-                    frags[f].end = frags[g].end.clone();
+                    let tail = std::mem::take(&mut at_mut(&mut frags, g).arcs);
+                    at_mut(&mut frags, f).arcs.extend(tail);
+                    at_mut(&mut frags, f).end = at(&frags, g).end.clone();
                 }
             }
-            by_start.set(frags[f].start.clone(), f);
-            by_end.set(frags[f].end.clone(), f);
+            by_start.set(at(&frags, f).start.clone(), f);
+            by_end.set(at(&frags, f).end.clone(), f);
         } else if let Some(f) = by_start.get(&end) {
-            by_start.delete(&frags[f].start);
-            frags[f].arcs.insert(0, i);
-            frags[f].start = start.clone();
+            by_start.delete(&at(&frags, f).start);
+            at_mut(&mut frags, f).arcs.insert(0, i);
+            at_mut(&mut frags, f).start = start.clone();
             // Upstream also looks for a fragment ending at `start` here, but that lookup just
             // failed to reach this branch, so there is nothing to join on this side.
-            by_start.set(frags[f].start.clone(), f);
-            by_end.set(frags[f].end.clone(), f);
+            by_start.set(at(&frags, f).start.clone(), f);
+            by_end.set(at(&frags, f).end.clone(), f);
         } else {
             frags.push(Fragment {
                 arcs: vec![i],
@@ -476,9 +478,9 @@ fn stitch(topology: &Topology, mut arcs: Vec<i32>) -> Result<Vec<Vec<i32>>, Stri
     // Upstream's two flushes both delete the fragment's `start` key from the other table.
     let mut flush = |from: &Ends, other: &mut Ends| {
         for &f in from.entries.iter().flatten() {
-            other.delete(&frags[f].start);
-            stitched.extend(frags[f].arcs.iter().map(|&i| arc_index(i)));
-            fragments.push(frags[f].arcs.clone());
+            other.delete(&at(&frags, f).start);
+            stitched.extend(at(&frags, f).arcs.iter().map(|&i| arc_index(i)));
+            fragments.push(at(&frags, f).arcs.clone());
         }
     };
     flush(&by_end, &mut by_start);

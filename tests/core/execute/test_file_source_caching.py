@@ -358,15 +358,15 @@ class TestRenderPathComposesFileSourceQueries:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from dbt_charts.core.execute import run as run_stage
-        from dbt_charts.core.execute.compose import compose
+        from dbt_charts.core.execute.compose import compose_file_source
 
         composed: list[str] = []
 
         def spy(*args: Any, **kwargs: Any) -> Any:
-            composed.append(args[0].sql)
-            return compose(*args, **kwargs)
+            composed.append(args[0])
+            return compose_file_source(*args, **kwargs)
 
-        monkeypatch.setattr(run_stage, "compose", spy)
+        monkeypatch.setattr(run_stage, "compose_file_source", spy)
         project = _project(tmp_path, {"data/sales.csv": "region,amount\nNorth,100\n"})
         board = _board("SELECT * FROM sales")
         executor = Run(

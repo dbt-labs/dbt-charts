@@ -95,7 +95,7 @@ pub struct ChartsStyle {
     /// Maximum chart height in pixels.
     #[model(inherit = "Style.charts.max_height")]
     pub max_height: f64,
-    /// Chart color: static mark paint, categorical palette, and/or gradient scale.
+    /// Chart color scales: categorical palette and/or gradient.
     pub color: ColorStyle,
     /// Chart-level font overrides.
     #[model(inherit_slot = "Style.font")]

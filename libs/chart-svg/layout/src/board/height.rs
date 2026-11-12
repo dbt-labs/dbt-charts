@@ -122,6 +122,7 @@ fn plan(
                         Some(Details {
                             collapsed: true,
                             summary_height,
+                            ..
                         }),
                     ..
                 }) => (*summary_height, None, None),
@@ -248,19 +249,20 @@ fn finish(board: &Node, measured: &mut Measured, card_gap: f64) {
         let Some(slot) = slot else { continue };
         if let (Content::Board(inner), Some(planned)) = (&item.content, slot.board.as_mut()) {
             finish(inner, planned, card_gap);
-            slot.content = planned.height + details_chrome(inner, gap);
+            slot.content = planned.height + details_chrome(inner);
         }
         slot.content += slot.shift.body_dy;
     }
     measured.height = board.band + layout_height(board, measured, gap) + board.chrome_height;
 }
 
-/// The summary bar a details section adds above its content, with the
-/// container's gap; a plain board adds nothing.
-fn details_chrome(board: &Node, container_gap: f64) -> f64 {
+/// The summary bar a details section adds above its content, and the offset the content sits
+/// below it: the section's border ends with its content, so its cell is what it draws. A plain
+/// board adds nothing.
+fn details_chrome(board: &Node) -> f64 {
     board
         .details
-        .map_or(0.0, |d| d.summary_height + container_gap)
+        .map_or(0.0, |d| d.summary_height + d.content_offset)
 }
 
 fn drawn<'a>(board: &'a Node, measured: &'a Measured) -> Vec<Drawn<'a>> {
@@ -555,7 +557,7 @@ fn place(
         let nested = match (&d.item.content, &d.slot.board) {
             (Content::Board(inner), Some(inner_measured)) => {
                 let inner_room = (rect.height
-                    - details_chrome(inner, gap)
+                    - details_chrome(inner)
                     - inner.chrome_height
                     - inner.band
                     - d.slot.shift.body_dy)

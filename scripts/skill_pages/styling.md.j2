@@ -98,11 +98,15 @@ A color request ("make Created orange") pins `category.<hue>` under `style.chart
 
 {{ keys('s_kpi_support') }}
 
+{{ keys('s_kpi_cond_rule') }}
+
 ## Table
 
 {{ keys('s_table') }}
 
 {{ keys('s_table_header') }}
+
+{{ keys('s_table_defaults') }}
 
 {{ keys('s_table_row') }}
 
@@ -112,6 +116,11 @@ A color request ("make Created orange") pins `category.<hue>` under `style.chart
 
 {{ keys('s_cond_rule') }}
 {{ rules('cond_rule') }}
+
+{{ keys('s_row_rule') }}
+{{ rules('row_rule') }}
+- A row rule's `background` and `font` paint the whole row; `columns.<column>` paints one cell and alone takes `glyph`, `glyph_color` and `tone`. A cell's own `conditional` and `scale` beat it. Not for pivot or `transpose`.
+- A condition on several columns (`profit < 0 and region = 'EU'`, `actual < target`) becomes a hidden underscore column in SQL (`_flag`) that a row rule keys on: `style.row.conditional._flag: [{eq: true, background: warning.bg}]`.
 
 Layouts with `grid:` (rare; a chart spanning rows):
 

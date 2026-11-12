@@ -8,7 +8,9 @@ use board_model::cascade;
 use board_model::chart::kpi::KpiBackground;
 use board_model::chart::ChartAuthored;
 use board_model::palette::hook::{python_refusal, unknown_name, unusable_name};
-use board_model::palette::{color_from_theme, ThemeColors};
+use board_model::palette::{
+    color_from_theme, palette_list, palette_names, resolve_palette_ref, ThemeColors,
+};
 use board_model::primitives::{PaletteChoice, SeriesInk};
 use board_model::style::style::Style;
 use diagnostic::{diag, Diagnostic, ModelPath};
@@ -37,12 +39,17 @@ fn palette_fault(why: &str, field_path: String, site: Site) -> Option<Diagnostic
     if let (Some(authored), true) = (authored, site != Site::Raw) {
         let slot = [".gradient.palette", ".scale.palette"]
             .iter()
-            .find_map(|s| field_path.strip_suffix(".palette").filter(|_| field_path.ends_with(s)));
+            .find_map(|s| {
+                field_path
+                    .strip_suffix(".palette")
+                    .filter(|_| field_path.ends_with(s))
+            });
         if let Some(parent) = slot {
             if let Some(reason) = python_refusal(authored, true) {
                 let at = ModelPath(parent.split('.').map(str::to_string).collect());
                 return Some(
-                    diag::err_validation_field(parent, format!("Value error, {reason}")).at_path(at),
+                    diag::err_validation_field(parent, format!("Value error, {reason}"))
+                        .at_path(at),
                 );
             }
         }
@@ -55,7 +62,24 @@ fn palette_fault(why: &str, field_path: String, site: Site) -> Option<Diagnostic
         }
     }
     let found = if let Some(name) = unknown_name(why) {
-        diag::err_palette_unknown(name, name, field_path)
+        let available = match palette_names() {
+            Ok(names) => names,
+            Err(e) => return Some(diag::err_internal(e.0).at_path(at)),
+        };
+        let hint = match migrate::respell_retired_variant(name) {
+            Some(now) => Some(format!(
+                "{} was retired; use {} instead.",
+                diagnostic::py_str_repr(name),
+                diagnostic::py_str_repr(&now)
+            )),
+            None => diagnostic::hints::close_match(name, &available),
+        };
+        let d = diag::err_palette_unknown(name, name, field_path)
+            .with_sink_param("available", available.into());
+        match hint {
+            Some(hint) => d.with_hint(hint),
+            None => d,
+        }
     } else {
         let (authored, reason) = unusable_name(why)?;
         diag::err_palette_unusable(authored, field_path, reason)
@@ -171,15 +195,14 @@ pub fn palette_checks(
         });
         found.extend(styled.unwrap_or_default());
         if let ChartAuthored::Kpi(k) = chart {
-            if let Tri::Value(KpiBackground::Channel(spec)) = &k.background {
-                found.extend(background_fault(spec, false, &format!("charts.{id}.background")));
+            if let Tri::Value(KpiBackground::Gradient(gradient)) = &k.style.background {
+                found.extend(background_fault(&model_core::Spell::spell(gradient), false, &format!("charts.{id}.style.background")));
             }
         }
     }
     // Python's models refuse these while the style parses, before any palette walk.
-    let at_parse = |d: &&Diagnostic| {
-        d.code == "ERR-VALIDATION-FIELD" || d.code == "ERR-PALETTE-STYLE-INVALID"
-    };
+    let at_parse =
+        |d: &&Diagnostic| d.code == "ERR-VALIDATION-FIELD" || d.code == "ERR-PALETTE-STYLE-INVALID";
     found
         .iter()
         .find(at_parse)
@@ -206,10 +229,22 @@ fn role_error(style: &Style) -> Option<Diagnostic> {
         }
         _ => None,
     };
+    // A board palette that resolves to no list has its own diagnostic; its roles wait on it.
+    let category: Option<Vec<String>> =
+        match style.charts.color.categorical.as_ref().map(|c| &c.palette) {
+            Some(PaletteChoice::Colors(c)) => {
+                Some(c.iter().map(|c| c.as_str().to_string()).collect())
+            }
+            Some(PaletteChoice::Name(n)) => {
+                Some(palette_list(&resolve_palette_ref(n.as_str(), &palettes).ok()?).ok()?)
+            }
+            None => None,
+        };
     let theme = ThemeColors {
         palettes: &palettes,
         roles: &style.roles,
         single_series: single.as_deref(),
+        category: category.as_deref(),
     };
     style.roles.iter().find_map(|(name, address)| {
         let why = color_from_theme(name, &theme).err()?;

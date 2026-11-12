@@ -310,7 +310,7 @@ def test_author_color_override_still_consumes_slot():
 title: T
 rows:
   - {{type: bar, x: month, y: revenue, {_QUERY_FRAGMENT}}}
-  - {{type: bar, x: month, y: revenue, style: {{color: {{static: '#ff0000'}}}}, {_QUERY_FRAGMENT}}}
+  - {{type: bar, x: month, y: revenue, style: {{marks: {{bar: {{color: '#ff0000'}}}}}}, {_QUERY_FRAGMENT}}}
   - {{type: bar, x: month, y: revenue, {_QUERY_FRAGMENT}}}
 """
     )

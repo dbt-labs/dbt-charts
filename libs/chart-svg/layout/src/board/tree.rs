@@ -97,6 +97,8 @@ pub enum Title {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Details {
     pub summary_height: f64,
+    /// How far below the bar the content sits: the section's border ends with it.
+    pub content_offset: f64,
     pub collapsed: bool,
 }
 

@@ -114,6 +114,8 @@ from dbt_charts.core.compile.models.style.authored.table import (
     TableChartStylePatch,
     TableColumnConfig,
     TableColumnDefaultsConfig,
+    TableColumnRule,
+    TableRowRule,
     fill_table_column_defaults,
 )
 
@@ -175,6 +177,8 @@ __all__ = [
     "TableChartStylePatch",
     "TableColumnConfig",
     "TableColumnDefaultsConfig",
+    "TableColumnRule",
+    "TableRowRule",
     "ChartTitleStylePatch",
     "fill_table_column_defaults",
     "TotalSlotStylePatch",

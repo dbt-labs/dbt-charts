@@ -1,7 +1,9 @@
 //! d3-geo 3.1.1 `src/stream.js`: the stream interface every stage of a projection pipeline implements,
 //! and `geoStream`, which walks a GeoJSON object into one.
 
+
 use crate::geojson::{GeoJson, Geometry, Position};
+use crate::invariant::at;
 
 /// d3's stream object. A stage owns its downstream sink and forwards to it, the way d3's wrappers hold
 /// `this.stream`.
@@ -77,7 +79,7 @@ fn stream_point(c: &Position, stream: &mut impl GeoStream) {
 fn stream_line(coordinates: &[Position], stream: &mut impl GeoStream, closed: usize) {
     let n = coordinates.len().saturating_sub(closed);
     stream.line_start();
-    for c in &coordinates[..n] {
+    for c in at(coordinates, ..n) {
         stream_point(c, stream);
     }
     stream.line_end();

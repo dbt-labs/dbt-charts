@@ -179,6 +179,10 @@ class TestSharedPromptComposition:
         assert "Tables: orders" in prompt
         assert "title: Existing" in prompt
 
+    def test_dashboard_prompt_composes_board_layout(self) -> None:
+        assert "# Board Layout" in build_dbt_charts_system_prompt("dashboard_design")
+        assert "# Board Layout" not in build_dbt_charts_system_prompt("yaml_generation")
+
     def test_build_exploration_prompt_composes_no_skill(self) -> None:
         prompt = build_dbt_charts_system_prompt(
             "database_exploration",

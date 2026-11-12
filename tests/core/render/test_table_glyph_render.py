@@ -7,16 +7,12 @@ import re
 from dbt_charts.core.compile.config import (
     get_theme_style,
 )
-from dbt_charts.core.compile.models.chart.authored import (
-    ConditionalRule,
-)
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
 from dbt_charts.core.font_measure import get_font_measurer
-from dbt_charts.core.render.chart.table_support import resolve_conditional_styles
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
@@ -36,19 +32,25 @@ class TestGlyphRendersInSvg:
         chart = make_chart(
             "table",
             title="Growth",
-            conditional_formatting={
-                "growth": {
-                    "when": [
-                        {"lt": 0, "glyph": "▼", "glyph_color": "#dc2626"},
-                        {"gt": 0, "glyph": "▲", "glyph_color": "#16a34a"},
-                    ]
-                }
-            },
             style={
                 "columns": {
                     "company": {},
-                    "growth": {"format": ".0%"},
-                }
+                    "growth": {
+                        "format": ".0%",
+                        "conditional": [
+                            {
+                                "lt": 0,
+                                "glyph": "▼",
+                                "glyph_color": "#dc2626",
+                            },
+                            {
+                                "gt": 0,
+                                "glyph": "▲",
+                                "glyph_color": "#16a34a",
+                            },
+                        ],
+                    },
+                },
             },
         )
         data = [
@@ -85,10 +87,15 @@ class TestGlyphRendersInSvg:
         chart = make_chart(
             "table",
             title="Growth",
-            conditional_formatting={
-                "growth": {"when": [{"lt": 0, "glyph": "▼", "tone": "negative"}]}
+            style={
+                "columns": {
+                    "company": {},
+                    "growth": {
+                        "format": ".0%",
+                        "conditional": [{"lt": 0, "glyph": "▼", "tone": "negative"}],
+                    },
+                },
             },
-            style={"columns": {"company": {}, "growth": {"format": ".0%"}}},
         )
         data = [
             {"company": "Apex", "growth": 0.12},
@@ -176,22 +183,20 @@ class TestGlyphOnNonNumericCells:
         chart = make_chart(
             "table",
             title="Missing",
-            conditional_formatting={
-                "amount": {
-                    "when": [
-                        {
-                            "is_null": True,
-                            "glyph": "—",
-                            "glyph_color": "#9ca3af",
-                        }
-                    ]
-                }
-            },
             style={
                 "columns": {
                     "company": {},
-                    "amount": {"format": "$,.0f"},
-                }
+                    "amount": {
+                        "format": "$,.0f",
+                        "conditional": [
+                            {
+                                "is_null": True,
+                                "glyph": "—",
+                                "glyph_color": "#9ca3af",
+                            }
+                        ],
+                    },
+                },
             },
         )
         data = [
@@ -266,24 +271,6 @@ def _glyph_cells(svg: str) -> list[_GlyphCell]:
     return [c for c in cells if c.has_glyph]
 
 
-_OK_RULE = ConditionalRule.model_validate(
-    {"eq": "OK", "glyph": "○", "glyph_color": "#888888"}
-)
-_UNDETERMINED_RULE = ConditionalRule.model_validate(
-    {"eq": "UNDETERMINED", "glyph": "○", "glyph_color": "#888888"}
-)
-_GLYPH_RULES = (
-    ConditionalRule.model_validate(
-        {"eq": "INSUFFICIENT", "glyph": "○", "glyph_color": "#888888"}
-    ),
-    _OK_RULE,
-)
-_GLYPH_RULES_ACT = (
-    ConditionalRule.model_validate(
-        {"eq": "ACT NOW", "glyph": "●", "glyph_color": "#aa3333"}
-    ),
-)
-
 _MEASURE_ARGS: dict[str, object] = {
     "columns": ["overall"],
     "column_configs": {},
@@ -309,26 +296,28 @@ class TestGlyphWidthIsReserved:
         chart = make_chart(
             "table",
             title="Motion health",
-            conditional_formatting={
-                "overall": {
-                    "when": [
-                        {
-                            "eq": "INSUFFICIENT",
-                            "glyph": "○",
-                            "glyph_color": "#888888",
-                            "background": "#eeeeec",
-                        },
-                        {
-                            "eq": "INVESTIGATE",
-                            "glyph": "●",
-                            "glyph_color": "#8a6d1f",
-                            "background": "#f7f0dd",
-                        },
-                    ]
-                }
-            },
             style={
-                "columns": {"region": {}, "motion": {}, "overall": {}, "signal": {}}
+                "columns": {
+                    "region": {},
+                    "motion": {},
+                    "overall": {
+                        "conditional": [
+                            {
+                                "eq": "INSUFFICIENT",
+                                "glyph": "○",
+                                "glyph_color": "#888888",
+                                "background": "#eeeeec",
+                            },
+                            {
+                                "eq": "INVESTIGATE",
+                                "glyph": "●",
+                                "glyph_color": "#8a6d1f",
+                                "background": "#f7f0dd",
+                            },
+                        ]
+                    },
+                    "signal": {},
+                },
             },
         )
         data = [
@@ -377,16 +366,20 @@ class TestGlyphWidthIsReserved:
         chart = make_chart(
             "table",
             title="Narrow",
-            conditional_formatting={
-                "c0": {
-                    "when": [
-                        {"eq": "ACT NOW", "glyph": "●", "background": "#f7f0dd"},
-                    ]
-                }
-            },
             style={
                 "column_layout": {"overflow": "fit"},
-                "columns": dict.fromkeys(columns, {}),
+                "columns": {
+                    **dict.fromkeys(columns, {}),
+                    "c0": {
+                        "conditional": [
+                            {
+                                "eq": "ACT NOW",
+                                "glyph": "●",
+                                "background": "#f7f0dd",
+                            }
+                        ]
+                    },
+                },
             },
         )
         data = [dict.fromkeys(columns, "ACT NOW")]
@@ -411,21 +404,22 @@ class TestGlyphWidthIsReserved:
         chart = make_chart(
             "table",
             title="Status",
-            conditional_formatting={
-                "overall": {
-                    "when": [
-                        {
-                            "eq": "INSUFFICIENT",
-                            "glyph": "○",
-                            "glyph_color": "#888888",
-                            "background": "#eeeeec",
-                        }
-                    ]
-                }
-            },
             style={
                 "wrap": False,
-                "columns": {"overall": {"width": 70}, "signal": {}},
+                "columns": {
+                    "overall": {
+                        "width": 70,
+                        "conditional": [
+                            {
+                                "eq": "INSUFFICIENT",
+                                "glyph": "○",
+                                "glyph_color": "#888888",
+                                "background": "#eeeeec",
+                            }
+                        ],
+                    },
+                    "signal": {},
+                },
             },
         )
         data = [{"overall": "INSUFFICIENT", "signal": "Close 104%; generation pending"}]
@@ -446,17 +440,3 @@ class TestGlyphWidthIsReserved:
             f"{cell.fill_right:.1f} — truncation measured against the full "
             "content area rather than what the glyph leaves"
         )
-
-
-class TestGlyphInOverrides:
-    """Glyph keys round-trip through resolve_conditional_styles."""
-
-    def test_glyph_propagation(self) -> None:
-        rules = [
-            ConditionalRule.model_validate(
-                {"lt": 0, "glyph": "▼", "glyph_color": "#dc2626"}
-            )
-        ]
-        out = resolve_conditional_styles(rules, -1)
-        assert out["glyph"] == "▼"
-        assert out["glyph_color"] == "#dc2626"

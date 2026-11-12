@@ -5,8 +5,8 @@
 //! what was drawn, not by the slot: the drawn board grows past its sized extent, and the report keeps
 //! the sized boxes.
 //!
-//! The root closes with the footer and timestamp row (`layout::board::bands`, measured in the font
-//! book of `fonts_dir`). The timestamp prints from `RunResult.env.rendered_at` in UTC only.
+//! The root closes with the footer and timestamp row (`layout::board::bands`, measured in the host's font
+//! book). The timestamp prints from `RunResult.env.rendered_at` in the board's zone.
 //!
 //! Above the layout the root draws its title, text and variables bands (`Header`,
 //! `_build_board_content_items` with its authoring blocks), and the page title. They are sized
@@ -16,7 +16,7 @@
 //! `width:` takes the width its title and text ask for (`Facts::own`). A nested board's title, text
 //! or variables are refused by name. A `cols` row draws a pie no taller than it sizes.
 
-use bind::failed::FailedText;
+use std::cell::RefCell;
 use bind::bound::{self, Family};
 use bind::run::RunResult;
 use board_model::board::layout::LayoutItem;
@@ -28,14 +28,15 @@ use diagnostic::{diag, refuse, Diagnostic};
 use layout::board::assemble::{board_geometry, Laid, LaidBoard, LaidItem, Placed, PlacedBoard};
 use board_model::board::BoardBody;
 use board_model::style::style::{Gap, Style};
-use layout::board::{chrome, prose, variables};
+use layout::board::{chrome, frame, prose, variables};
 use board_model::board::Layout;
 use board_model::variable_value::VariableValue;
 use bind::variables::Controls;
+use layout::board::stack::row_advance;
 use layout::board::tree::Kind;
-use layout::families::callout::{self, CalloutCard, CalloutStyle};
-use layout::families::failed::{draw, plan, ErrorCard, ErrorTile};
-use layout::families::kpi::{self, KpiCard, KpiFaces};
+use layout::families::callout::{CalloutCard, CalloutStyle};
+use layout::family::{Env, Family as _};
+use layout::families::kpi::{KpiCard, KpiFaces};
 use layout::families::spark_bar::{self, SparkBarCard};
 use layout::families::pie::{self, PieCard};
 use layout::families::table::{self, TableCard, TableFaces};
@@ -47,7 +48,7 @@ use scene::{Attrs, Chars, Escape, Extent, Node, Role, Shape};
 use crate::plot;
 use crate::slot::{total_style, Slots};
 use layout::board::assemble::leaf;
-use crate::{frame, EngineFacts};
+use crate::EngineFacts;
 
 /// An item's authored path as production writes it: `@tabs.items[1]` is `tabs.items.1`.
 fn authored_path(at: &ItemId) -> String {
@@ -55,7 +56,7 @@ fn authored_path(at: &ItemId) -> String {
 }
 
 /// `svg_utils.px`: Python's `round`, half to even.
-fn px(v: f64) -> f64 {
+pub(crate) fn px(v: f64) -> f64 {
     v.round_ties_even()
 }
 
@@ -182,7 +183,7 @@ impl Header {
             return Err(Diagnostic::refused(refuse!("a board's title narrower than its card padding is not supported")));
         }
         let prose_width = prose_width.max(0.0);
-        let title = title_text(body).map(|text| prose::title(total, text, facts.fonts_dir(), prose_width)).transpose()?;
+        let title = title_text(body).map(|text| prose::title(total, text, book, prose_width)).transpose()?;
         let title_height = title.as_ref().map_or(0.0, |t| t.height.max(total.title.base.min_height));
         let card_gap = if body.card_gap { total.frame.card_gap } else { 0.0 };
         // `card_row_gap`: a root cols or grid pitches its cards by its own gap, any other by `style.gap`.
@@ -193,7 +194,7 @@ impl Header {
         let text = body
             .text
             .as_ref()
-            .map(|t| prose::text(total, t.as_str(), facts.fonts_dir(), prose::Slot { width: prose_width, board_width: content_width, gap }))
+            .map(|t| prose::text(total, t.as_str(), book, prose::Slot { width: prose_width, board_width: content_width, gap }))
             .transpose()?;
         let text_height = text.as_ref().map_or(0.0, |t| t.height);
         let heading = title.as_ref().map(|t| variables::Headline { height: title_height, baseline: t.baseline, one_line_width: t.one_line_width });
@@ -260,6 +261,8 @@ struct Composer<'a, F> {
     slots: &'a Slots<'a>,
     facts: &'a F,
     book: &'a FontBook,
+    /// The warnings the drawn charts raised against their widths, in the order they draw.
+    warnings: RefCell<Vec<Diagnostic>>,
 }
 
 pub(crate) fn board<F: EngineFacts>(
@@ -270,8 +273,8 @@ pub(crate) fn board<F: EngineFacts>(
     run: &RunResult,
     facts: &F,
     book: &FontBook,
-) -> Result<Vec<Node>, Diagnostic> {
-    let composer = Composer { bound, slots, facts, book, run };
+) -> Result<(Vec<Node>, Vec<Diagnostic>), Diagnostic> {
+    let composer = Composer { bound, slots, facts, book, run, warnings: RefCell::new(Vec::new()) };
     let style = facts.style(&board.body)?;
     let body = &board.body;
     let total = total_style(body)?;
@@ -307,7 +310,7 @@ pub(crate) fn board<F: EngineFacts>(
     }
     children.extend(layout);
     // `{layout}\n\n{timestamp}\n{footer}\n`: the row closes the root.
-    let stamp = bands::stamp_text(total, run.env.rendered_at, &run.env.time_zone)?;
+    let stamp = bands::stamp_text(total, run.env.rendered_at)?;
     let row = bands::draw(total, book, Page { width: total_width, height: total_height }, &stamp)?;
     let newline = || Node::chars(Chars::new("\n", Escape::Attr));
     children.push(Node::chars(Chars::new("\n\n", Escape::Attr)));
@@ -318,7 +321,8 @@ pub(crate) fn board<F: EngineFacts>(
     let family = bind::font_stack::with_emoji(total.font.family.as_str(), &total.font.emoji);
     let page_title = title_text(body).unwrap_or("dbt Charts");
     let attrs = frame::root_attrs(style, &family, page_title, &run.env.rendered_at)?;
-    Ok(vec![Node::new(Role::Chrome, attrs, Shape::Svg { extent: Extent { width: total_width, height: total_height }, children })])
+    let svg = Node::new(Role::Chrome, attrs, Shape::Svg { extent: Extent { width: total_width, height: total_height }, children });
+    Ok((vec![svg], composer.warnings.into_inner()))
 }
 
 impl<'a, F: EngineFacts> Composer<'a, F> {
@@ -329,34 +333,42 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
             return self.tabs(board, pane_top);
         }
         let mut nodes = Vec::new();
-        let (mut y, mut drawn) = (0.0, 0.0_f64);
+        let (mut y, mut drawn, mut cells) = (0.0, 0.0_f64, 0.0_f64);
         for item in &board.items {
-            let (x_box, y_box, content, height) = match item {
+            let (x_box, y_box, content, height, cell) = match item {
                 LaidItem::Chart(p) => {
                     let (content, height) = self.chart(p)?;
-                    (p.x, p.y, content, height)
+                    (p.x, p.y, content, height, p.height)
                 }
                 LaidItem::Board(b) => {
                     let (content, height) = self.board_item(board, b)?;
-                    (b.x, b.y, content, height)
+                    (b.x, b.y, content, height, b.height)
                 }
             };
             match board.kind {
                 Kind::Rows => {
+                    let advance = row_advance(cell, height)?;
                     nodes.extend(translated(content, 0.0, px(y)));
-                    drawn = y + height;
-                    y += height + board.pitch;
+                    drawn = y + advance;
+                    y += advance + board.pitch;
                 }
+                // A cell in a row draws to its content when it is shorter than the row; the row is
+                // the tallest cell, and it must be the tallest drawn.
                 Kind::Cols => {
                     nodes.extend(translated(content, px(x_box), 0.0));
                     drawn = drawn.max(height);
+                    cells = cells.max(cell);
                 }
                 Kind::Grid { .. } => {
                     nodes.extend(translated(content, px(x_box), px(y_box)));
                     drawn = drawn.max(y_box + height);
+                    cells = cells.max(y_box + cell);
                 }
                 Kind::Tabs { .. } => return Err(diag::err_internal("a tabs layout composes through `tabs`".to_string())),
             }
+        }
+        if !matches!(board.kind, Kind::Rows) {
+            row_advance(cells, drawn)?;
         }
         Ok((nodes, drawn))
     }
@@ -378,14 +390,8 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
         let body = drawn.map(|c| &c.family);
         let (class, title, extent_height, children) = match body {
             Some(Err(failure)) => {
-                let card = ErrorCard {
-                    text: FailedText::of(failure, self.facts.docs_site())?,
-                    tile: ErrorTile::of(total_style(slot.body)?)?,
-                    content_left: leaf(style.frame.card_padding, "style.frame.card_padding")?,
-                    title: None,
-                };
-                let planned = plan(&card, self.facts.fonts_dir(), placed.width)?;
-                let (extent, children) = card_svg(draw(&card, &planned, placed.height))?;
+                let card = crate::slot::error_card(self.facts, slot.body, failure)?;
+                let (extent, children) = card_svg(card.render(&Env { book: self.book }, placed.width, placed.height)?)?;
                 let children = unpadded(placed.width, extent.height, children);
                 ("dbt-chart dbt-chart-callout", id.to_string(), extent.height, children)
             }
@@ -397,10 +403,9 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
                 let faces = KpiFaces::of(chart_style, &total_style(slot.body)?.font.emoji);
                 let card = KpiCard { kpi, style: chart_style, faces: &faces };
                 let card_padding = leaf(style.frame.card_padding, "style.frame.card_padding")?;
-                let pad = crate::slot::additive_padding(card_padding, &chart_style.base.padding);
-                let (inner_width, inner_height) = ((placed.width - pad.0 - pad.1).max(0.0), (placed.height - pad.2 - pad.3).max(0.0));
-                let planned = kpi::plan(&card, self.facts.fonts_dir(), inner_width)?;
-                let (extent, content) = card_svg(kpi::draw(&card, &planned, inner_height))?;
+                let pad = crate::slot::additive_padding(card_padding, &chart_style.padding);
+                let (inner_width, inner_height) = ((placed.width - pad.0 - pad.1).max(0.0), (placed.height - px(pad.2) - px(pad.3)).max(0.0));
+                let (extent, content) = card_svg(card.render(&Env { book: self.book }, inner_width, inner_height)?)?;
                 let children = padded(extent, content, pad);
                 let title = kpi.label.clone().unwrap_or_else(|| id.to_string());
                 ("dbt-chart", title, extent.height + px(pad.2) + px(pad.3), children)
@@ -420,7 +425,7 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
                 let card_padding = leaf(style.frame.card_padding, "style.frame.card_padding")?;
                 let pad = crate::slot::additive_padding(card_padding, &chart_style.padding);
                 let planned = table::plan(&card, self.book, (placed.width - pad.0 - pad.1).max(0.0))?;
-                if !planned.fits(&card, placed.height - pad.2 - pad.3) {
+                if !planned.fits(&card, placed.height - px(pad.2) - px(pad.3)) {
                     return Err(Diagnostic::refused(refuse!("a table in a slot shorter than its rows is not supported")));
                 }
                 let (extent, content) = card_svg(table::draw(&card, &planned)?)?;
@@ -436,21 +441,7 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
                 let natural = crate::slot::pie_height(slot, style, placed.width)?;
                 let height = placed.height.min(natural);
                 let planned = pie::plan(&card, self.book, (placed.width, natural), (placed.width, height), pad)?;
-                let svg = pie::draw(&card, &planned, (placed.width, height))?;
-                let selection = |class: &str, rect: (f64, f64, f64, f64)| Node::rect(Role::Chrome, rect, Attrs::new().set("class", class).set("fill", "transparent"));
-                let inner = (px(pad.0), px(pad.2), px(placed.width - pad.0 - pad.1), px(height - pad.2 - pad.3));
-                let children = vec![selection("dbt-box-outer", (0.0, 0.0, px(placed.width), px(height))), selection("dbt-box-inner", inner), svg];
-                ("dbt-chart", bound_pie.title.clone().unwrap_or_else(|| id.to_string()), height, children)
-            }
-            Some(Ok(Family::Pie(bound_pie))) => {
-                let card = PieCard { pie: bound_pie, style: &slot.placed.charts.pie, placed: slot.placed, chart_id: id, emoji: &total_style(slot.body)?.font.emoji, ground: leaf(style.background.as_ref(), "style.background")?.as_str() };
-                let card_padding = leaf(style.frame.card_padding, "style.frame.card_padding")?;
-                let pad = crate::slot::additive_padding(card_padding, &slot.placed.charts.pie.base.padding);
-                // The size stage decides the mode in the slot's own box; a cols row aligns a pie no
-                // taller than it sizes (`_effective_alignment_target_for_chart`).
-                let natural = crate::slot::pie_height(slot, style, placed.width)?;
-                let height = placed.height.min(natural);
-                let planned = pie::plan(&card, self.book, (placed.width, natural), (placed.width, height), pad)?;
+                self.warnings.borrow_mut().extend(planned.diagnostics().iter().cloned());
                 let svg = pie::draw(&card, &planned, (placed.width, height))?;
                 let selection = |class: &str, rect: (f64, f64, f64, f64)| Node::rect(Role::Chrome, rect, Attrs::new().set("class", class).set("fill", "transparent"));
                 let inner = (px(pad.0), px(pad.2), px(placed.width - pad.0 - pad.1), px(height - pad.2 - pad.3));
@@ -464,8 +455,7 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
                 let card = SparkBarCard { spark: bound_spark, style: chart_style, face: &face, fill: &fill };
                 let card_padding = leaf(style.frame.card_padding, "style.frame.card_padding")?;
                 let pad = crate::slot::additive_padding(card_padding, &chart_style.padding);
-                let planned = spark_bar::plan(&card, (placed.width - pad.0 - pad.1).max(0.0))?;
-                let (extent, content) = card_svg(spark_bar::draw(&card, &planned, (placed.height - pad.2 - pad.3).max(0.0)))?;
+                let (extent, content) = card_svg(card.render(&Env { book: self.book }, (placed.width - pad.0 - pad.1).max(0.0), (placed.height - px(pad.2) - px(pad.3)).max(0.0))?)?;
                 ("dbt-chart", id.to_string(), extent.height + px(pad.2) + px(pad.3), padded(extent, content, pad))
             }
             Some(Ok(Family::Callout(callout))) => {
@@ -473,8 +463,7 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
                 // nor the chart's own (`_uses_svg_family_layout_padding`): its card fills the wrapper.
                 let style = CalloutStyle::of(&slot.placed.charts.callout, total_style(slot.body)?)?;
                 let card = CalloutCard { callout, style: &style };
-                let planned = callout::plan(&card, self.facts.fonts_dir(), placed.width)?;
-                let (extent, content) = card_svg(callout::draw(&card, planned, placed.height))?;
+                let (extent, content) = card_svg(card.render(&Env { book: self.book }, placed.width, placed.height)?)?;
                 let title = callout.title.clone().unwrap_or_else(|| id.to_string());
                 ("dbt-chart dbt-chart-callout", title, extent.height, unpadded(placed.width, extent.height, content))
             }
@@ -483,7 +472,8 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
                 let frame = drawn.frame.as_ref().ok_or_else(|| diag::err_internal("a plot carries its frame"))?;
                 let card_padding = leaf(style.frame.card_padding, "style.frame.card_padding")?;
                 let cell = Size { width: placed.width, height: placed.height };
-                let nodes = plot::draw_plot(drawn, id, cell, self.book, slot.placed, &total_style(slot.body)?.font.emoji, card_padding)?;
+                let (nodes, warnings) = plot::draw_plot(drawn, id, cell, self.book, slot.placed, &total_style(slot.body)?.font.emoji, card_padding)?;
+                self.warnings.borrow_mut().extend(warnings);
                 // The selection boxes: the slot, and the slot inside the card and chart padding.
                 let own = &frame.padding;
                 let (left, top) = (card_padding + own.left, card_padding + own.top);
@@ -502,6 +492,8 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
             ModelChart::Pie(_) => "pie",
             ModelChart::Donut(_) => "pie",
             ModelChart::Scatter(_) => "scatter",
+            ModelChart::Line(_) => "line",
+            ModelChart::Bar(_) => "bar",
             ModelChart::Histogram(_) => "histogram",
             _ => return Err(diag::err_internal(format!("chart {id} has no family"))),
         };
@@ -531,7 +523,17 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
             Some(canvas) => attrs.set("data-dbt-chart-canvas", canvas.as_str()),
             None => attrs,
         };
-        Ok((vec![Node::group(Role::Chrome, attrs, children)], extent_height))
+        // The authored subtitle rides in a leading `<desc>`, written through `escape_attr` (the
+        // `Mdsvg` escape) even as element text; never a `<title>`, which browsers paint as a hover tooltip.
+        let subtitle = match body {
+            Some(Ok(Family::Pie(pie))) => pie.subtitle.as_deref(),
+            _ => drawn.and_then(|chart| chart.subtitle.as_deref()),
+        };
+        let description = subtitle.map(|text| {
+            let desc = scene::Element { tag: "desc".to_string(), attrs: Attrs::new(), children: vec![scene::Child::Text(Chars::new(text, Escape::Mdsvg))] };
+            Node::element(desc)
+        });
+        Ok((vec![Node::group(Role::Chrome, attrs, description.into_iter().chain(children).collect())], extent_height))
     }
 
     fn body(&self, at: &ItemId) -> Result<&'a BoardBody, Diagnostic> {
@@ -558,10 +560,11 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
         if !open {
             return Ok((vec![bar], summary_height));
         }
-        // `details_chrome_height`: the bar and the layout's gap come off the content's box.
-        let content = PlacedBoard { height: (placed.height - summary_height - parent.pitch).max(0.0), ..placed.clone() };
+        // The bar and the content's offset below it come off the section's cell.
+        let content_offset = style.layout.details.content_y_offset;
+        let content = PlacedBoard { height: (placed.height - summary_height - content_offset).max(0.0), ..placed.clone() };
         let (nested, height) = self.nested(&content, self.facts.style(body)?)?;
-        let content_y = px(summary_height + style.layout.details.content_y_offset);
+        let content_y = px(summary_height + content_offset);
         let actual = content_y + height;
         let mut nodes = vec![chrome::draw_details_border(style, placed.width, actual), bar];
         nodes.extend(translated(nested, 0.0, content_y));

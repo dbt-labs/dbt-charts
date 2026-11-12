@@ -13,7 +13,7 @@
 //!   `style/legend.rs` walk (`walked_title`, `walked_legend`); any other leaf a chart or family
 //!   tier sets is refused by name.
 //! - The single-series fill and the canvas read the chart's own tier alone (`own`), never the
-//!   family's, as production does: `_effective_single_series_fill` takes a static fill, then
+//!   family's, as production does: `_effective_single_series_fill` takes the primary mark's paint, then
 //!   the chart's own palette, then the board palette's first stop for a chart with layers, else
 //!   the own or board single-series ink at the rhythm slot.
 //!
@@ -209,16 +209,25 @@ impl Placed<'_> {
         color::ink_canvas(&layers).map_err(|_| unsupported(refuse!("a translucent board background over the theme's is not supported")))
     }
 
-    /// `_effective_single_series_fill`. It reads the chart's own tier alone: its static color,
+    /// `_effective_single_series_fill`. It reads the chart's own tier alone: its primary mark's paint,
     /// else its own categorical palette's first stop; then a chart with layers takes the board
     /// categorical palette's first stop, and one without takes its own `single_series_palette`
     /// or the board's at the chart's rhythm slot. A family's or the board's `color` is not
     /// consulted for the first two.
     pub fn single_series_fill(&self) -> Result<Rgba, Diagnostic> {
-        let own = match self.chart {
-            Chart::Bar(_) | Chart::Histogram(_) => &self.own.charts.bar.cartesian.painted,
-            Chart::Line(_) => &self.own.charts.line.cartesian.painted,
-            Chart::Scatter(_) => &self.own.charts.scatter.cartesian.painted,
+        let (own, paint) = match self.chart {
+            Chart::Bar(_) | Chart::Histogram(_) => {
+                let own = &self.own.charts.bar;
+                (&own.cartesian.painted, own.marks.bar.color.as_ref())
+            }
+            Chart::Line(_) => {
+                let own = &self.own.charts.line;
+                (&own.cartesian.painted, own.marks.line.stroke.color.as_ref())
+            }
+            Chart::Scatter(_) => {
+                let own = &self.own.charts.scatter;
+                (&own.cartesian.painted, own.marks.point.color.as_ref())
+            }
             other => {
                 return Err(diag::err_internal(format!(
                     "style is derived for bar, histogram, line and scatter, asked of a {} chart",
@@ -232,12 +241,17 @@ impl Placed<'_> {
             Chart::Scatter(c) => !c.layers.is_empty(),
             _ => false,
         };
-        self.fill(own, self.scope(), has_layers)
+        // `auto` reads as unset (`_primary_mark_paint`).
+        let paint = match paint {
+            Some(Engine::Value(color)) => Some(color),
+            Some(Engine::Rule(_)) | None => None,
+        };
+        self.fill(own, paint, self.scope(), has_layers)
     }
 
-    fn fill(&self, own: &Patch<PaintedChartStyleBase>, scope: &Style, has_layers: bool) -> Result<Rgba, Diagnostic> {
+    fn fill(&self, own: &Patch<PaintedChartStyleBase>, paint: Option<&Color>, scope: &Style, has_layers: bool) -> Result<Rgba, Diagnostic> {
         let parse = |c: &str| color::parse_css_color(c).map_err(diag::err_internal);
-        if let Tri::Value(fixed) = &own.color.base.r#static {
+        if let Some(fixed) = paint {
             return parse(fixed.as_str());
         }
         let board = scope

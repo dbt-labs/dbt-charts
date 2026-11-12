@@ -899,7 +899,7 @@ pub(crate) fn render_vertical_panel(
         Some(expr) => cat_domain
             .iter()
             .enumerate()
-            .map(|(i, c)| expr.rewrite_band(c, i, cat_domain.len()).map_err(|e| format!("bar: {e}")))
+            .map(|(i, c)| expr.rewrite_band(c, i, cat_domain.len(), &crate::labels_expr::env()).map_err(|e| format!("bar: {e}")))
             .collect::<Result<_, _>>()?,
     };
     let cat_labels = cat_labels
@@ -2161,7 +2161,6 @@ pub(crate) fn render_vertical_panel(
             // literals never anchor, lives in `build_rows_composed`.
             let strip_ordered = detected_data_tu.is_some() || time.is_some();
             let composed = support_table_strip::build_rows_composed(
-                &r.id,
                 cfg,
                 rows,
                 cat_field,
@@ -2169,12 +2168,6 @@ pub(crate) fn render_vertical_panel(
                 &columns,
                 fonts,
                 strip_style,
-                true,
-                val_on_right,
-                // A per_series entry needs `color_field` (`build_rows_composed`'s
-                // own "requires a color encoding" refusal otherwise), a
-                // single-series chart with no color encoding just carries an
-                // empty `per_series_order` below.
                 color_field,
                 &per_series_order,
                 &per_series_ink,
@@ -2218,7 +2211,7 @@ pub(crate) fn render_vertical_panel(
                 }
             }
             if strip_ordered {
-                support_table_strip::skip_strip(&r.id, &mut strip_rows, strip_labeled(w)?.as_deref(), strip_style.row.padding.horizontal, val_on_right.then_some(w + ax_y.labels.padding.unwrap_or(6.0)));
+                support_table_strip::skip_strip(&r.id, &mut strip_rows, strip_labeled(w)?.as_deref(), strip_style.row.padding.horizontal);
             }
             if val_on_right {
                 support_table_strip::clear_right_stubs(&mut strip_rows, w);
@@ -2371,9 +2364,7 @@ pub(crate) fn render_vertical_panel(
                     let band = BandScale::new(cat_domain.clone(), 0.0, w, band_pi, band_po);
                     let columns = strip_columns(&band, &cat_domain, time.as_ref().zip(time_axis.as_ref()), strip_period_centers.as_deref(), w, fonts)?;
                     let mut rows = support_table_strip::build_rows_composed(
-                        &r.id,
-                        cfg, rows, cat_field, &cat_domain, &columns, fonts, strip_style,
-                        true, val_on_right, color_field, &per_series_order, &per_series_ink,
+                        cfg, rows, cat_field, &cat_domain, &columns, fonts, strip_style, color_field, &per_series_order, &per_series_ink,
                         r.strip_linked().then_some(&strip_links), detected_data_tu.is_some() || time.is_some())?;
                     reserved_left_reach = support_table_strip::composed_left_bound(&rows, 0.0);
                     if !val_on_right {
@@ -2801,9 +2792,7 @@ pub(crate) fn render_vertical_panel(
             let columns = strip_columns(&band, &cat_domain, time.as_ref().zip(time_axis.as_ref()), strip_period_centers.as_deref(), plot_w, fonts)?;
             let strip_ordered = detected_data_tu.is_some() || time.is_some();
             let composed = support_table_strip::build_rows_composed(
-                &r.id,
-                cfg, rows, cat_field, &cat_domain, &columns, fonts, strip_style, true,
-                val_on_right, color_field, &per_series_order, &per_series_ink,
+                cfg, rows, cat_field, &cat_domain, &columns, fonts, strip_style, color_field, &per_series_order, &per_series_ink,
                 r.strip_linked().then_some(&strip_links), strip_ordered)?;
             let fit = support_table_strip::fit_strip(&r.id, composed, strip_style.row.padding.horizontal, strip_ordered);
             strip_hidden.set(fit.is_none());
@@ -2814,7 +2803,7 @@ pub(crate) fn render_vertical_panel(
                 let strip_aria = strip_cell_aria(r, &cat_title_text, &cat_domain, time.as_ref(), color_field)?;
                 composed_rows.iter_mut().for_each(|row| row.describe(&strip_aria));
                 if strip_ordered {
-                    support_table_strip::skip_strip(&r.id, &mut composed_rows, strip_labeled(plot_w)?.as_deref(), strip_style.row.padding.horizontal, rail_right.then_some(w + ax_y.labels.padding.unwrap_or(6.0)));
+                    support_table_strip::skip_strip(&r.id, &mut composed_rows, strip_labeled(plot_w)?.as_deref(), strip_style.row.padding.horizontal);
                 }
                 if !support_table_strip::gutter_holds(&r.id, &composed_rows, reserved_left_reach, plot_w) {
                     strip_hidden.set(true);
@@ -4062,7 +4051,8 @@ pub(crate) fn render_vertical_panel(
                     band.push(cat, series, aria.as_deref(), hrefs.get(&key).map(String::as_str), col_x, columns.width, Some(raw_val));
                 }
                 let SegmentSpan { start: cum_before, end: cum_after, .. } = spans[&key];
-                label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None });
+                let patch = r.patch_of(rows, &datum_of, &key)?;
+                label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None, color: patch.label_color.clone(), weight: patch.label_weight.clone(), paint_only: false });
                 if ghosts_on {
                     let fill = crate::common::series_color(base_series(series), palette_domain, &r.series_palette, category_scale, &crate::pattern::PatternPlan::default())?.into_color();
                     ghost_points.push((aria.clone(), col_x + columns.width / 2.0, linear.scale(cum_after), fill, hrefs.get(&key).cloned()));
@@ -4084,7 +4074,7 @@ pub(crate) fn render_vertical_panel(
                 let segment_r = if (if raw_val < 0.0 { outers.1 } else { outers.0 }) == Some(series) { corner_r } else { 0.0 };
                 stack_ends = Some(stack_ends.map_or((top_y, bottom_y), |(top, bottom)| (top.min(top_y), bottom.max(bottom_y))));
                 let (edge, edge_w) = mark.seam(crate::pattern::STACK_EDGE_W);
-                plot.extend(bar_passes(base_mark(&datum_of, &key), false, col_x, top_y, columns.width, seg_h, &mark.fill, mark.ink.as_deref(), r.style.mark.opacity, edge, edge_w,
+                plot.extend(bar_passes(base_mark(&datum_of, &key), false, col_x, top_y, columns.width, seg_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(edge), patch.stroke_w(edge_w),
                     segment_r,
                     Rounded::by_sign(raw_val), false, next_clip().as_deref(), aria.as_deref(), anchor_of(&key))?);
             }
@@ -4149,7 +4139,8 @@ pub(crate) fn render_vertical_panel(
                 )?,
                 _ => plain()?,
             };
-            label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: Some(fill.clone()) });
+            let patch = r.patch_of(rows, &datum_of, &key)?;
+            label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: patch.label_fill(Some(fill.clone())), color: patch.label_color.clone(), weight: patch.label_weight.clone(), paint_only: false });
             if let Some(band) = hover_band.as_mut() {
                 band.push(cat, series, aria.as_deref(), hrefs.get(&key).map(String::as_str), col_x, columns.width, Some(val));
             }
@@ -4158,7 +4149,7 @@ pub(crate) fn render_vertical_panel(
             }
             let mark = paint.for_mark(columns.width.min(bar_h), stroke_color, halo_w(stroke_w, columns.width));
             let (edge, edge_w) = mark.seam(crate::pattern::STACK_EDGE_W);
-            plot.extend(bar_passes(base_mark(&datum_of, &key), false, col_x, bar_top, columns.width, bar_h, &mark.fill, mark.ink.as_deref(), r.style.mark.opacity, edge, edge_w,
+            plot.extend(bar_passes(base_mark(&datum_of, &key), false, col_x, bar_top, columns.width, bar_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(edge), patch.stroke_w(edge_w),
                 corner_r,
                 ends, double_stroke, next_clip().as_deref(), aria.as_deref(), anchor_of(&key))?);
         }
@@ -4211,8 +4202,9 @@ pub(crate) fn render_vertical_panel(
                 )?,
                 _ => plain()?,
             };
-            if ranged.is_some() {
-                label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None });
+            let patch = r.patch_of(rows, &datum_of, &key)?;
+            if ranged.is_some() || patch.paints_label() {
+                label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None, color: patch.label_color.clone(), weight: patch.label_weight.clone(), paint_only: ranged.is_none() });
             }
             if let Some(band) = hover_band.as_mut() {
                 band.push(cat, "", aria.as_deref(), hrefs.get(&key).map(String::as_str), col_x, columns.width, Some(val));
@@ -4221,7 +4213,7 @@ pub(crate) fn render_vertical_panel(
                 ghost_points.push((aria.clone(), col_x + columns.width / 2.0, bar_top, ghost_ink.clone(), hrefs.get(&key).cloned()));
             }
             let mark = r.single_series_paint(rows, &cat_domain, cat)?.for_mark(columns.width.min(bar_h), stroke_color, halo_w(stroke_w, columns.width));
-            plot.extend(bar_passes(base_mark(&datum_of, &key), false, col_x, bar_top, columns.width, bar_h, &mark.fill, mark.ink.as_deref(), r.style.mark.opacity, &mark.stroke, mark.stroke_w, corner_r,
+            plot.extend(bar_passes(base_mark(&datum_of, &key), false, col_x, bar_top, columns.width, bar_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(&mark.stroke), patch.stroke_w(mark.stroke_w), corner_r,
                 ends, double_stroke, next_clip().as_deref(), aria.as_deref(), anchor_of(&key))?);
         }
     }

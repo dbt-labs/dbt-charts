@@ -391,6 +391,23 @@ pub(crate) fn linked(anchor: Option<Anchor<'_>>, mark: scene::Node) -> scene::No
     }
 }
 
+/// Python's `urllib.parse.quote_plus` for a UTF-8 string with the default
+/// (empty) `safe` set: RFC 3986 unreserved bytes (`A-Za-z0-9_.-~`) pass
+/// through, a space becomes `+`, everything else percent-encodes per byte.
+pub(crate) fn quote_plus(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'-' | b'~' => {
+                out.push(b as char)
+            }
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

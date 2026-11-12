@@ -480,6 +480,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
                 "chart_type": "heatmap",
                 "field_labels": {},
                 "style": {
+                    "single_series_fill": "#4C72B0",
                     "color_gradient": None,
                     "rect_mark": {},
                     "tooltip_format": "",
@@ -509,6 +510,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
                 "pin_companions": [],
                 "style": {
                     "inner_radius": 0.0,
+                    "single_series_fill": "#4C72B0",
                     "slice_mark": {},
                     "tooltip_format": "",
                     "total_style": {

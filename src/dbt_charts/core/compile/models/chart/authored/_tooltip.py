@@ -6,7 +6,12 @@ from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
-from dbt_charts.core.compile.models.markers import Channel, DisplayText, Format
+from dbt_charts.core.compile.models.markers import (
+    Channel,
+    ColumnRef,
+    DisplayText,
+    Format,
+)
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.schema_names import FormatAlias
 
@@ -23,7 +28,7 @@ class TooltipField(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    column: Annotated[str, Channel()] = Field(
+    column: Annotated[ColumnRef, Channel()] = Field(
         description="Query column whose value the row shows."
     )
     label: Annotated[str | None, DisplayText()] = Field(

@@ -150,6 +150,36 @@ pub struct Placement {
     pub ticks: Vec<f64>,
     pub labels: Vec<PlacedLabel>,
     pub gutter: Insets,
+    /// The labels stand between period boundaries (`place_intervals`): production draws this axis'
+    /// tick marks (`x_ticks_visible = ticks.visible.unwrap_or(true) || interval_axis.is_some()`).
+    pub interval: bool,
+}
+
+/// The first and last day an axis over `domain` spans: the data's own, or, when the marks span
+/// their buckets, to the end of the last bucket.
+pub fn day_extent(domain: &TimeDomain, spans_buckets: bool) -> (f64, f64) {
+    let days = domain.buckets.iter().map(|b| b.pos);
+    let (first, last) = (
+        days.clone().fold(f64::INFINITY, f64::min),
+        days.fold(f64::NEG_INFINITY, f64::max),
+    );
+    let fiscal_start = domain.fiscal_start.map_or(1, bind::bound::Month::get);
+    match domain.unit.filter(|_| spans_buckets) {
+        Some(unit) => {
+            let (y, m, d) = civil_from_days(last as i64);
+            let (y, m, d) = next_bucket(floor_to_bucket_start((y, m, d), unit, fiscal_start), unit);
+            (first, days_from_civil(y, m, d) as f64)
+        }
+        None => (first, last),
+    }
+}
+
+/// The x of `day` on a plot `width` across when the axis spans `extent` and keeps `inset` px off
+/// each edge: the range collapses to its start once the insets meet, and a single instant stands at
+/// the middle of the range, as d3 centers a degenerate domain.
+pub fn x_on_range(extent: (f64, f64), inset: f64, day: f64, width: f64) -> f64 {
+    let frac = if extent.0 == extent.1 { 0.5 } else { (day - extent.0) / (extent.1 - extent.0) };
+    inset + (width - 2.0 * inset).max(0.0) * frac
 }
 
 /// What a calendar grain adds to an axis: the grain, the fiscal year's first month, every bucket
@@ -238,20 +268,7 @@ impl<'a> TimeAxis<'a> {
         if domain.buckets.is_empty() {
             return Err(diag::err_internal("a time axis over no x values"));
         }
-        let days = domain.buckets.iter().map(|b| b.pos);
-        let (first, last) = (
-            days.clone().fold(f64::INFINITY, f64::min),
-            days.fold(f64::NEG_INFINITY, f64::max),
-        );
-        let fiscal_start = domain.fiscal_start.map_or(1, bind::bound::Month::get);
-        let extent = match domain.unit.filter(|_| labels.spans_buckets) {
-            Some(unit) => {
-                let (y, m, d) = civil_from_days(last as i64);
-                let (y, m, d) = next_bucket(floor_to_bucket_start((y, m, d), unit, fiscal_start), unit);
-                (first, days_from_civil(y, m, d) as f64)
-            }
-            None => (first, last),
-        };
+        let extent = day_extent(domain, labels.spans_buckets);
         let run = book.run("0", &labels.font).map_err(diag::err_internal)?;
         let grained = domain
             .unit
@@ -362,11 +379,9 @@ impl<'a> TimeAxis<'a> {
         ticks.map_err(Diagnostic::refused)
     }
 
-    /// The x of the instant at `frac` of the extent on a plot `width` across: the range is inset on
-    /// both ends, and collapses to its start once the insets meet.
-    fn x_at(&self, frac: f64, width: f64) -> f64 {
-        let inset = self.labels.inset;
-        inset + (width - 2.0 * inset).max(0.0) * frac
+    /// The x of `day` on a plot `width` across (a tick's, where a gridline stands).
+    pub fn x_of(&self, day: f64, width: f64) -> f64 {
+        x_on_range(self.extent, self.labels.inset, day, width)
     }
 
     /// A grained label's anchor: Vega's flush read on the inset range (`flat_label_anchor`), its
@@ -460,7 +475,7 @@ impl<'a> TimeAxis<'a> {
                 );
             }
             let align = flush_align(tick.frac * plot.width, plot.width, self.labels.crowding.flush);
-            let x = self.x_at(tick.frac, plot.width);
+            let x = self.x_of(tick.day, plot.width);
             // Flat labels share one top, so a second row never changes a gap between boxes.
             vega.push(boxed(x, parity.min(limit), align, font.size));
             let ink = boxed(x, ink.min(limit), align, height * rows.len() as f64);
@@ -510,6 +525,7 @@ impl<'a> TimeAxis<'a> {
                 .collect(),
             labels,
             gutter,
+            interval: false,
         })
     }
 
@@ -616,7 +632,7 @@ impl<'a> TimeAxis<'a> {
             let width = w1.max(w2);
             let day = (slice_lo + slice_hi) / 2.0;
             let frac = (day - lo) / (hi - lo);
-            let x = self.x_at(frac, plot.width);
+            let x = self.x_of(day, plot.width);
             let align = self.range_align(frac, plot.width);
             let width = width.min(limit);
             let x1 = match align {
@@ -659,6 +675,7 @@ impl<'a> TimeAxis<'a> {
             ticks,
             labels,
             gutter,
+            interval: true,
         }))
     }
 }

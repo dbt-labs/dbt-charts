@@ -27,6 +27,8 @@ Role-indirection grammar:
     chrome[11]          → theme.palettes[chrome] → palette → stop 11 (an alias "11"
                           if declared, else colors[10])
     category[1]        → theme.palettes[category] → palette → colors[0] (1-indexed)
+                          (the board's own categorical palette, when it sets one,
+                          replaces the role's palette for the bracket form)
     single_series[1]   → theme's single_series_palette[0] (1-indexed; not a
                           palettes: role — the list is authored directly)
     ink                → theme.roles[ink] → recurse as role[N] / role.alias
@@ -1029,6 +1031,7 @@ def color_from_theme(
     palettes: Mapping[str, str],
     roles: dict[str, str] | None = None,
     single_series_palette: Sequence[str] | None = None,
+    categorical_palette: Sequence[str] | None = None,
     _visited_roles: frozenset[str] | None = None,
 ) -> str:
     """Resolve a role-indirected color token against theme palettes and roles.
@@ -1037,7 +1040,9 @@ def color_from_theme(
         ``chrome.white``     — role.alias: look up palettes[role], resolve alias
         ``chrome[11]``        — role[N]: palettes[role], stop N (a declared numeric alias,
             else colors[N-1])
-        ``category[1]``       — role[N]: look up palettes[role], colors[N-1] (1-indexed)
+        ``category[1]``       — role[N]: look up palettes[role], colors[N-1] (1-indexed);
+            when the caller supplies ``categorical_palette`` (the board's effective
+            categorical stops) ``category[N]`` indexes that list instead
         ``single_series[1]``  — the active theme's single-series ink list, N-1
             (1-indexed); not a ``palettes:`` role — themes author
             ``single_series_palette`` as a literal, already-cascaded list
@@ -1054,6 +1059,9 @@ def color_from_theme(
             ``single_series_palette`` (a plain one-series chart's ink list),
             for the ``single_series[N]`` form. ``None`` when the caller has no
             such context (e.g. theme-load time, before the cascade exists).
+        categorical_palette: The board's effective categorical palette, for the
+            ``category[N]`` form. ``None`` when the board authors none: the
+            ``category`` role's bound palette is then the board's palette.
         _visited_roles: Internal cycle-detection set (do not pass from call sites).
 
     Returns:
@@ -1078,7 +1086,12 @@ def color_from_theme(
     raises instead.
     """
     return _color_from_theme_resolve(
-        token, palettes, roles, single_series_palette, _visited_roles
+        token,
+        palettes,
+        roles,
+        single_series_palette,
+        categorical_palette,
+        _visited_roles,
     )[0]
 
 
@@ -1087,6 +1100,7 @@ def _color_from_theme_resolve(
     palettes: Mapping[str, str],
     roles: dict[str, str] | None,
     single_series_palette: Sequence[str] | None,
+    categorical_palette: Sequence[str] | None,
     _visited_roles: frozenset[str] | None,
 ) -> tuple[str, str]:
     """Resolve *token* to ``(hex, family)``.
@@ -1101,7 +1115,12 @@ def _color_from_theme_resolve(
     """
     try:
         return _color_from_theme_dispatch(
-            token, palettes, roles, single_series_palette, _visited_roles
+            token,
+            palettes,
+            roles,
+            single_series_palette,
+            categorical_palette,
+            _visited_roles,
         )
     except UnknownColorError as original:
         base, requested_variant = _split_trailing_variant(token)
@@ -1109,7 +1128,12 @@ def _color_from_theme_resolve(
             raise
         try:
             resolved, family = _color_from_theme_dispatch(
-                base, palettes, roles, single_series_palette, _visited_roles
+                base,
+                palettes,
+                roles,
+                single_series_palette,
+                categorical_palette,
+                _visited_roles,
             )
         except UnknownColorError:
             # The split-off base doesn't resolve either -- re-raise the
@@ -1169,6 +1193,7 @@ def _color_from_theme_dispatch(
     palettes: Mapping[str, str],
     roles: dict[str, str] | None,
     single_series_palette: Sequence[str] | None,
+    categorical_palette: Sequence[str] | None,
     _visited_roles: frozenset[str] | None,
 ) -> tuple[str, str]:
     # Bracket form: role[N] / single_series[N]
@@ -1192,6 +1217,13 @@ def _color_from_theme_dispatch(
             # author drew it from is neither known here nor relevant: a
             # trailing variant on it is plain color math.
             return single_series_palette[n - 1], "literal"
+        if role == "category" and categorical_palette is not None:
+            if not 1 <= n <= len(categorical_palette):
+                raise UnknownColorError(
+                    f"color token {token!r}: the board's categorical palette has "
+                    f"no stop {n}; valid stops 1-{len(categorical_palette)}"
+                )
+            return categorical_palette[n - 1], "categorical"
         palette_name, bound_variant, family, spine = _bound_palette(
             role, token, palettes
         )
@@ -1257,6 +1289,7 @@ def _color_from_theme_dispatch(
         palettes=palettes,
         roles=effective_roles,
         single_series_palette=single_series_palette,
+        categorical_palette=categorical_palette,
         _visited_roles=visited | {token},
     )
 

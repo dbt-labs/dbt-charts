@@ -544,49 +544,6 @@ charts:
     columns:
       - cell_column
     title: Live cells are dark
-    conditional_formatting:
-      c1: &id001
-        when:
-        - eq: '#'
-          background: '#0f172a'
-          font:
-            color: '#f8fafc'
-            weight: 700
-        - eq: .
-          background: '#f8fafc'
-          font:
-            color: '#94a3b8'
-      c2: *id001
-      c3: *id001
-      c4: *id001
-      c5: *id001
-      c6: *id001
-      c7: *id001
-      c8: *id001
-      c9: *id001
-      c10: *id001
-      c11: *id001
-      c12: *id001
-      c13: *id001
-      c14: *id001
-      c15: *id001
-      c16: *id001
-      c17: *id001
-      c18: *id001
-      c19: *id001
-      c20: *id001
-      c21: *id001
-      c22: *id001
-      c23: *id001
-      c24: *id001
-      c25: *id001
-      c26: *id001
-      c27: *id001
-      c28: *id001
-      c29: *id001
-      c30: *id001
-      c31: *id001
-      c32: *id001
     style:
       pagination:
         enabled: false
@@ -596,38 +553,265 @@ charts:
         width: 34
         align: center
       columns:
-        c1: {}
-        c2: {}
-        c3: {}
-        c4: {}
-        c5: {}
-        c6: {}
-        c7: {}
-        c8: {}
-        c9: {}
-        c10: {}
-        c11: {}
-        c12: {}
-        c13: {}
-        c14: {}
-        c15: {}
-        c16: {}
-        c17: {}
-        c18: {}
-        c19: {}
-        c20: {}
-        c21: {}
-        c22: {}
-        c23: {}
-        c24: {}
-        c25: {}
-        c26: {}
-        c27: {}
-        c28: {}
-        c29: {}
-        c30: {}
-        c31: {}
-        c32: {}
+        c1:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: &id001
+                color: "#f8fafc"
+                weight: 700
+            - eq: .
+              background: "#f8fafc"
+              font: &id002
+                color: "#94a3b8"
+        c2:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c3:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c4:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c5:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c6:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c7:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c8:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c9:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c10:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c11:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c12:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c13:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c14:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c15:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c16:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c17:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c18:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c19:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c20:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c21:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c22:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c23:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c24:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c25:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c26:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c27:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c28:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c29:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c30:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c31:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
+        c32:
+          conditional:
+            - eq: "#"
+              background: "#0f172a"
+              font: *id001
+            - eq: .
+              background: "#f8fafc"
+              font: *id002
         row_sort:
           visible: false
       font:

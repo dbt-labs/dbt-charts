@@ -14,6 +14,7 @@ Additional rules:
 
 - Write SQL that matches the database dialect in the schema context.
 - Use real table and column names from the provided schema context.
+- Preserve existing dbt `ref()`/`source()` calls and the query's declared `dialect:` when repairing a board. A missing source or unresolved ref calls for checking the project's default source, warehouse mapping, and target dataset/schema; never replace those calls with a personal dataset's fully qualified tables to bypass setup. If you cannot change the source configuration, report the required configuration change.
 - Use clear column aliases so results are self-describing.
 - Include appropriate aggregations, groupings, and ordering.
 - Prefer explicit column names over `SELECT *`.

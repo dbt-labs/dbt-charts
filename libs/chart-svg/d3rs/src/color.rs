@@ -5,6 +5,8 @@
 //! - https://github.com/d3/d3-interpolate/blob/v3.0.1/src/piecewise.js, `rgb.js`, `hcl.js`
 //! - vega-scale 8.1.3 `src/interpolate.js` (`quantizeInterpolator`)
 
+use crate::invariant::{Invariant, at};
+
 /// An sRGB color, one byte per channel.
 pub type Rgb = (u8, u8, u8);
 
@@ -17,7 +19,7 @@ pub fn rgb_text(color: Rgb) -> String {
 /// `(i + 1) / (n + 1)`. Not d3-interpolate's `quantize`, which samples at `i / (n - 1)`.
 pub fn quantize_sample(scheme: &[Rgb], n: usize, i: usize) -> Rgb {
     let t = (i + 1) as f64 / (n + 1) as f64;
-    piecewise(interpolate_rgb, scheme, t).expect("a scheme has two or more colors")
+    piecewise(interpolate_rgb, scheme, t).held("a scheme has two or more colors")
 }
 
 /// A scheme quantized to two colors and mixed in HCL: the ramp a time scale's
@@ -214,7 +216,7 @@ pub fn piecewise<T: Copy>(interpolate: impl Fn(T, T, f64) -> T, values: &[T], t:
         return Err("piecewise: t is NaN".to_string());
     }
     let i = scaled.floor().clamp(0.0, last_segment as f64) as usize;
-    Ok(interpolate(values[i], values[i + 1], scaled - i as f64))
+    Ok(interpolate(*at(values, i), *at(values, i + 1), scaled - i as f64))
 }
 
 /// [`interpolate_rgb_color`] over opaque byte colors.

@@ -14,13 +14,11 @@ from pydantic import BaseModel
 
 from dbt_charts.core.colors import is_color_token, is_unknown_color_name
 from dbt_charts.core.compile.models.markers import AUTO, Color
-from dbt_charts.core.compile.models.primitives import SingleLineFontStyle
 from dbt_charts.core.compile.models.style.theme import Style
-from dbt_charts.core.compile.models.style.theme.annotations import AnnotationFontStyle
-from dbt_charts.core.compile.models.style.theme.board import ChartTitleFontStyle
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorBinding,
 )
+from dbt_charts.core.compile.resolve.style.fonts import FONT_SLOT_TYPES
 from dbt_charts.core.fonts import NOTO_EMOJI_FONT_FAMILY
 
 # `is_color_token` lives in the neutral core.colors leaf so the authored
@@ -145,6 +143,7 @@ def _resolve_one_color_token(
     palettes: Mapping[str, str] | None,
     roles: dict[str, str] | None,
     single_series_palette: list[str] | None = None,
+    categorical_palette: list[str] | None = None,
 ) -> str:
     """Resolve a single color token (dotted or bracket form) to hex.
 
@@ -179,6 +178,7 @@ def _resolve_one_color_token(
             palettes=palettes,
             roles=roles,
             single_series_palette=single_series_palette,
+            categorical_palette=categorical_palette,
         )
 
     raise UnknownColorError(
@@ -245,6 +245,7 @@ def _resolve_color_tokens(
     single_series_palette: list[str] | None = None,
     keep_self_tokens: bool = False,
     in_annotations: bool = False,
+    categorical_palette: list[str] | None = None,
 ) -> Any:
     """Walk a Style subtree and resolve every dotted palette token to hex.
 
@@ -276,6 +277,12 @@ def _resolve_color_tokens(
     time the theme's own single-series ink is itself mid-resolution, so
     that form only resolves when a caller with an already-cascaded value
     (a board or chart style context) threads it through.
+    ``categorical_palette`` is likewise caller-supplied: the board's effective
+    categorical stops, which a bare ``category[N]`` indexes in place of the
+    ``category`` role's bound palette. The walk withholds it from the
+    ``palette``/``single_series_palette`` lists, whose own ``category[N]`` items
+    name the role's palette (``palette: [category[3], category[1]]`` reorders
+    the theme's colors).
 
     Run once at theme-load time inside ``get_theme_style()`` so cached
     themes carry hex.  Board-level patches that introduce color tokens are
@@ -289,11 +296,7 @@ def _resolve_color_tokens(
     (whole-list), not the generic single-color branch below -- see the
     ``_PALETTE_FIELDS`` check in the model loop.
     """
-    from dbt_charts.core.compile.models.factories import build_patch_model
-    from dbt_charts.core.compile.models.primitives import (
-        CategoricalColorStyle,
-        might_be_palette_role,
-    )
+    from dbt_charts.core.compile.models.primitives import might_be_palette_role
     from dbt_charts.core.compile.models.style.theme import Style
     from dbt_charts.core.compile.resolve.style.palette import (
         UnknownColorError,
@@ -301,12 +304,7 @@ def _resolve_color_tokens(
         resolve_palette_alias,
     )
 
-    # build_patch_model is itself @cache'd, so this is a dict lookup, not a
-    # fresh synthesis, on every call.
-    categorical_color_style_types = (
-        CategoricalColorStyle,
-        build_patch_model(CategoricalColorStyle),
-    )
+    categorical_color_style_types = _categorical_color_style_types()
 
     if isinstance(node, Style):
         # Extract palettes/roles context from the root Style for this walk.
@@ -315,6 +313,12 @@ def _resolve_color_tokens(
     if isinstance(node, BaseModel):
         updates: dict[str, Any] = {}
         for name, value in node:
+            inner_categorical = (
+                None
+                if isinstance(node, categorical_color_style_types)
+                and name in _PALETTE_FIELDS
+                else categorical_palette
+            )
             # `palettes` and `roles` are the resolver's own lookup tables, not
             # styled content: `roles` maps a role name to a token *address*
             # (`ink` -> `chrome[10]`). Resolving those would rewrite the
@@ -394,7 +398,7 @@ def _resolve_color_tokens(
                 continue
             if _is_role_color(node, name, value, roles):
                 updates[name] = _resolve_one_color_token(
-                    value, palettes, roles, single_series_palette
+                    value, palettes, roles, single_series_palette, categorical_palette
                 )
                 continue
             if reason := _unknown_color_name(node, name, value):
@@ -407,6 +411,7 @@ def _resolve_color_tokens(
                 single_series_palette,
                 keep_self_tokens,
                 in_annotations or name == _ANNOTATIONS_FIELD,
+                inner_categorical,
             )
             if new is not value:
                 updates[name] = new
@@ -416,7 +421,7 @@ def _resolve_color_tokens(
             return node
         if is_color_token(node):
             return _resolve_one_color_token(
-                node, palettes, roles, single_series_palette
+                node, palettes, roles, single_series_palette, categorical_palette
             )
         return node
     if isinstance(node, list):
@@ -429,6 +434,7 @@ def _resolve_color_tokens(
                 single_series_palette,
                 keep_self_tokens,
                 in_annotations,
+                categorical_palette,
             )
             for item in node
         ]
@@ -453,6 +459,7 @@ def _resolve_color_tokens(
                 single_series_palette,
                 keep_self_tokens,
                 in_annotations,
+                categorical_palette,
             )
             for k, v in node.items()
         }
@@ -503,9 +510,7 @@ def _append_emoji_family(node: Any, emoji_family: str) -> Any:
     dict values recursively (``style.fonts`` and a table's ``columns`` hold fonts
     in dicts), returning a patched copy only when a field actually changes.
     """
-    if isinstance(
-        node, (SingleLineFontStyle, ChartTitleFontStyle, AnnotationFontStyle)
-    ):
+    if isinstance(node, FONT_SLOT_TYPES):
         if node.family is not None and node.family != AUTO:
             new_family = insert_emoji_family(node.family, emoji_family)
             if new_family != node.family:
@@ -529,6 +534,54 @@ def _append_emoji_family(node: Any, emoji_family: str) -> Any:
         new_dict = {k: _append_emoji_family(v, emoji_family) for k, v in node.items()}
         return new_dict if any(new_dict[k] is not v for k, v in node.items()) else node
     return node
+
+
+def _categorical_color_style_types() -> tuple[type[BaseModel], ...]:
+    from dbt_charts.core.compile.models.factories import build_patch_model
+    from dbt_charts.core.compile.models.primitives import CategoricalColorStyle
+
+    # build_patch_model is @cache'd: a dict lookup, not a fresh synthesis.
+    return (CategoricalColorStyle, build_patch_model(CategoricalColorStyle))
+
+
+def _authored_categorical_stops(
+    patch: Any,  # type-state: explicit_any — a StylePatch whose all-Optional chain is walked
+    palettes: Mapping[str, str],
+    roles: dict[str, str],
+    single_series_palette: list[str] | None,
+) -> list[str] | None:
+    """The stops of the categorical palette ``patch`` authors, else ``None``.
+
+    What a bare ``category[N]`` indexes: the board's own palette (a name or an
+    inline list) beats the ``category`` role's, which is the board's palette
+    only while none is authored. A list's items resolve as tokens against the
+    role, never against itself; the canvas token stays for the board's canvas.
+    """
+    charts = patch.charts
+    color = None if charts is None else charts.color
+    categorical = None if color is None else color.categorical
+    authored = None if categorical is None else categorical.palette
+    if authored is None:
+        return None
+    if isinstance(authored, str):
+        from dbt_charts.core.compile.errors import CompilationError
+
+        # A name with no stops fails the palette's own validation, which names
+        # the field; a token cannot index it either way.
+        try:
+            stops = _resolve_palette_leaf(
+                authored, "style.charts.color.categorical.palette", palettes, False
+            )
+        except CompilationError:
+            return None
+        assert isinstance(stops, list)
+        return stops
+    return [
+        _resolve_one_color_token(item, palettes, roles, single_series_palette)
+        if is_color_token(item) and not _is_kept_token(item, False)
+        else item
+        for item in authored
+    ]
 
 
 def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
@@ -563,12 +616,19 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
     single_series_palette = (
         authored_single_series if isinstance(authored_single_series, list) else None
     )
+    # The theme seeds both maps (see `_with_rebinds`).
+    assert palettes is not None and roles is not None
+    categorical_palette = _authored_categorical_stops(
+        patch, palettes, roles, single_series_palette
+    )
+    categorical_style_types = _categorical_color_style_types()
 
     def _walk(
         node: Any,  # type-state: explicit_any — any Style patch node: model, list, dict, or leaf
         path: str,
         in_keyed_collection: bool = False,
         in_annotations: bool = False,
+        category: list[str] | None = categorical_palette,
     ) -> Any:  # type-state: explicit_any — returns the same node shape it was given
         if isinstance(node, CategoryColorBinding):
             return node.model_copy(
@@ -588,6 +648,12 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
                     continue
                 if node is patch and name in _RESOLUTION_CONTEXT_FIELDS:
                     continue
+                inner_category = (
+                    None
+                    if isinstance(node, categorical_style_types)
+                    and name in _PALETTE_FIELDS
+                    else category
+                )
                 if (
                     in_keyed_collection
                     and isinstance(value, str)
@@ -609,7 +675,7 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
                     continue
                 if _is_role_color(node, name, value, roles):
                     updates[name] = _resolve_one_color_token(
-                        value, palettes, roles, single_series_palette
+                        value, palettes, roles, single_series_palette, category
                     )
                     continue
                 if reason := _unknown_color_name(node, name, value):
@@ -621,6 +687,7 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
                     f"{path}.{name}",
                     in_keyed_collection,
                     in_annotations or name == _ANNOTATIONS_FIELD,
+                    inner_category,
                 )
                 if node is patch and name == "background" and new in _THEME_SELF_TOKENS:
                     new = _self_token_replacement(new, base.background)
@@ -633,7 +700,7 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
             if is_color_token(node):
                 try:
                     return _resolve_one_color_token(
-                        node, palettes, roles, single_series_palette
+                        node, palettes, roles, single_series_palette, category
                     )
                 except UnknownColorError as exc:
                     # No field_path: the patch may come from another file.
@@ -643,7 +710,9 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
             return node
         if isinstance(node, list):
             new_list = [
-                _walk(item, f"{path}.{i}", in_keyed_collection, in_annotations)
+                _walk(
+                    item, f"{path}.{i}", in_keyed_collection, in_annotations, category
+                )
                 for i, item in enumerate(node)
             ]
             return (
@@ -653,7 +722,7 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
             )
         if isinstance(node, dict):
             return {
-                key: _walk(value, f"{path}.{key}", True, in_annotations)
+                key: _walk(value, f"{path}.{key}", True, in_annotations, category)
                 for key, value in node.items()
             }
         return node

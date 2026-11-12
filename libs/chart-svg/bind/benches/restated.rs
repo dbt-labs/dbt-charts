@@ -7,7 +7,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use serde_json::json;
 use std::hint::black_box;
 
-use bind::channel_type::ChannelType;
+use bind::column_kind::ChannelType;
 use bind::style::axis::{AxisLadder, AxisName};
 use bind::style::Tiers;
 use board_model::style::style::Style;

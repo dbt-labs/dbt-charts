@@ -244,7 +244,7 @@ def normalize_chart(
     # --- callout: query-less, chrome-less family ---
     # CalloutChart is the only family whose authored model extends bare
     # BaseModel rather than _BaseChartFields — it has no query/notes/
-    # link/conditional_formatting fields at all. Dispatch it before the
+    # link fields at all. Dispatch it before the
     # shared query-resolution block below, which assumes those fields exist.
     if chart_type == "callout":
         message = authored.message
@@ -360,14 +360,6 @@ def normalize_chart(
     if query is not None and query.variable_dependencies:
         chart_deps |= query.variable_dependencies
 
-    # conditional_formatting is carried through unresolved: role-indirected
-    # color tokens (e.g. category[1]) need theme palettes/roles context that
-    # only exists at style-resolution time, not here. Resolution happens in
-    # resolve/chart/_kwargs.py's _base_kwargs, against chart_style_context.
-    # Absent-by-design on families with no CF lowering path (structurally
-    # narrowed off the authored model), same rationale as title/subtitle above.
-    conditional_formatting = getattr(authored, "conditional_formatting", None)
-
     # An unlinked chart carries the board default too: a link resolve synthesizes
     # for it (links.auto) opens by that mode.
     link: str | Literal[False] | None
@@ -393,7 +385,6 @@ def normalize_chart(
         or "",  # type-state: silent_fallback — as title/subtitle
         "link": link,
         "link_open": chart_link_open,
-        "conditional_formatting": conditional_formatting,
         "warnings_ignore": list(authored.warnings_ignore or []),
         "authored_fields": frozenset(authored.model_fields_set),
     }
@@ -538,7 +529,6 @@ def normalize_chart(
                 support=authored.support,
                 glyph=authored.glyph,
                 good=authored.good,
-                background=authored.background,
                 style=authored_style,
             )
         case "table":

@@ -170,3 +170,21 @@ def test_slices_and_in_range_indexes_still_work() -> None:
     assert result.rows[-1].a == 2
     assert [r.a for r in result.rows[:1]] == [1]
     assert result.columns[0] == "a"
+
+
+def test_a_cell_is_read_ignoring_the_columns_letter_case() -> None:
+    row = _result({"Revenue": 3, "MAU Seat Util %": 0.5}).one
+    assert row.revenue == 3
+    assert row["mau seat util %"] == 0.5
+    assert "REVENUE" in row
+
+
+def test_two_columns_differing_only_in_case_refuse_a_case_free_read() -> None:
+    from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.diagnostics.codes_compile import ERR_COLUMN_REF_AMBIGUOUS
+
+    row = _result({"Revenue": 3, "REVENUE": 4}).one
+    assert row.Revenue == 3
+    with pytest.raises(CompilationError) as exc:
+        _ = row.revenue
+    assert exc.value.code is ERR_COLUMN_REF_AMBIGUOUS

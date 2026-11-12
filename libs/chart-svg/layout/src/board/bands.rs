@@ -94,21 +94,22 @@ const SHARED_DIRECTIVES: &str = "aAbBcdeGHIjLmMpqQSuUVwWxXyY%";
 
 /// `portable_strftime(_SAMPLE_TIMESTAMP, format)`.
 fn sample_stamp(style: &Style) -> Result<String, Diagnostic> {
-    strftime(style, SAMPLE_TIMESTAMP_MS)
+    strftime(style, SAMPLE_TIMESTAMP_MS, "UTC")
 }
 
-/// The timestamp row's text for the render at `rendered_at`, printed in `time_zone`
-/// (`portable_strftime(data_as_of.astimezone(zone), format)`). Only UTC is ported.
-pub fn stamp_text(style: &Style, rendered_at: jiff::Timestamp, time_zone: &str) -> Result<String, Diagnostic> {
-    if time_zone != "UTC" {
-        return Err(Diagnostic::refused(refuse!("a timestamp in a time zone other than UTC is not supported")));
-    }
-    strftime(style, rendered_at.as_millisecond() as f64)
+/// The timestamp row's text for the render at `rendered_at`, printed in the active board zone
+/// (`portable_strftime(data_as_of.astimezone(zone), format)`).
+pub fn stamp_text(style: &Style, rendered_at: jiff::Timestamp) -> Result<String, Diagnostic> {
+    let utc_ms = rendered_at.as_millisecond();
+    let wall = bind::time_zone::wall_ms(utc_ms).map_err(diag::err_internal)?;
+    let (_, abbreviation) = bind::time_zone::zone_names(utc_ms).map_err(diag::err_internal)?;
+    strftime(style, wall as f64, &abbreviation)
 }
 
-/// The timestamp format printed at the UTC instant `at_ms` in the active time locale: `%Z` is "UTC"
-/// (d3's `%Z` is the offset). A directive the two formatters do not share is refused by name.
-fn strftime(style: &Style, at_ms: f64) -> Result<String, Diagnostic> {
+/// The timestamp format printed at the wall clock `wall_ms` (a zone's clock read as UTC milliseconds) in the
+/// active time locale: `%Z` is the zone's abbreviation (d3's `%Z` is the offset). A directive the two
+/// formatters do not share is refused by name.
+fn strftime(style: &Style, wall_ms: f64, zone_abbreviation: &str) -> Result<String, Diagnostic> {
     let format = stamp_format(style)?;
     let mut spec = String::new();
     let mut chars = format.chars().peekable();
@@ -124,7 +125,7 @@ fn strftime(style: &Style, at_ms: f64) -> Result<String, Diagnostic> {
             continue;
         };
         if directive == 'Z' && modifier.is_none() {
-            spec.push_str("UTC");
+            spec.push_str(zone_abbreviation);
         } else if SHARED_DIRECTIVES.contains(directive) {
             spec.push('%');
             spec.extend(modifier);
@@ -134,7 +135,7 @@ fn strftime(style: &Style, at_ms: f64) -> Result<String, Diagnostic> {
         }
     }
     let locale = bind::time_locale::active_time_locale().map_err(diag::err_internal)?;
-    d3rs::time_format::format(&spec, at_ms, 0.0, &locale).map_err(diag::err_internal)
+    d3rs::time_format::format(&spec, wall_ms, 0.0, &locale).map_err(diag::err_internal)
 }
 
 /// The footer's text split around the brand phrase, each run measured (`footer_text_width`,
@@ -280,6 +281,7 @@ pub fn draw(style: &Style, book: &FontBook, page: Page, stamp: &str) -> Result<R
                 .num("font-size", size)
                 .set("fill", footer.font.color.as_str())
                 .set("font-family", family)
+                .set("data-dct-role", "footer-text")
                 .set_if(brand, "font-weight", footer.brand_weight.to_string());
             let run_node = element("text", attrs, text(&run.text));
             nodes.push(Node::element(match (&footer.link, brand) {

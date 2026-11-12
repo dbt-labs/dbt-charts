@@ -16,7 +16,7 @@
 //! of each model replaces them.
 
 use crate::facet::Color;
-use crate::primitives::{BorderStyle, ColorStyle, StaticGradientColorStyle};
+use crate::primitives::{BorderStyle, ColorStyle, GradientColorStyle};
 use crate::style::annotations::AnnotationsStyle;
 use crate::style::axis::{
     AxisXStyle, AxisYStyle, BandAxisStyle, BaseAxisStyle, QuantitativeAxisStyle,
@@ -78,7 +78,7 @@ pub struct PaintedChartStyleBase {
     /// Maximum chart height in pixels.
     #[model(inherit = "Style.charts.max_height")]
     pub max_height: f64,
-    /// Chart color: static mark paint, categorical palette, and/or gradient scale. Only the
+    /// Chart color scales: categorical palette and/or gradient. Only the
     /// single-series ink is the enclosing tier's when unset; the rest of the slot is local.
     #[model(inherit_slot = "Style.charts.color")]
     pub color: ColorStyle,
@@ -197,9 +197,9 @@ pub struct GeoChartStyle {
     /// Maximum chart height in pixels.
     #[model(inherit = "Style.charts.max_height")]
     pub max_height: f64,
-    /// Geo color: static paint or gradient scale only (no categorical arm).
+    /// Geo color: gradient scale only (no categorical arm).
     #[model(default_empty)]
-    pub color: StaticGradientColorStyle,
+    pub color: GradientColorStyle,
     #[flatten]
     pub card: ChartCardStyleMixin,
     /// Chart card border style.

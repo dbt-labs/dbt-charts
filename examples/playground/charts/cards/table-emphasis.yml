@@ -218,15 +218,6 @@ charts:
     query: company_revenue
     title: Company Revenue
     subtitle: M3a — Text color only (no background fill)
-    conditional_formatting:
-      growth_rate:
-        when:
-        - gt: 0
-          font:
-            color: '#16a34a'
-        - lt: 0
-          font:
-            color: '#dc2626'
     style:
       columns:
         quarterly_revenue:
@@ -235,6 +226,13 @@ charts:
         growth_rate:
           label: Growth
           format: percent
+          conditional:
+            - gt: 0
+              font:
+                color: "#16a34a"
+            - lt: 0
+              font:
+                color: "#dc2626"
         margin:
           format: percent
         nrr:
@@ -248,13 +246,6 @@ charts:
     query: company_revenue
     title: Company Revenue
     subtitle: M3b — Bold + red on negative growth
-    conditional_formatting:
-      growth_rate:
-        when:
-        - lt: 0
-          font:
-            color: '#dc2626'
-            weight: '600'
     style:
       columns:
         quarterly_revenue:
@@ -263,6 +254,11 @@ charts:
         growth_rate:
           label: Growth
           format: percent
+          conditional:
+            - lt: 0
+              font:
+                color: "#dc2626"
+                weight: "600"
         margin:
           format: percent
         nrr:
@@ -276,20 +272,18 @@ charts:
     query: company_revenue
     title: Company Revenue
     subtitle: M3c — Background scale (M2a) vs text color (M3a) side-note
-    conditional_formatting:
-      growth_rate:
-        when:
-        - gt: 0
-          font:
-            color: '#16a34a'
-        - lt: 0
-          font:
-            color: '#dc2626'
     style:
       columns:
         growth_rate:
           label: Text color
           format: percent
+          conditional:
+            - gt: 0
+              font:
+                color: "#16a34a"
+            - lt: 0
+              font:
+                color: "#dc2626"
         quarterly_revenue:
           visible: false
         margin:
@@ -305,17 +299,6 @@ charts:
     query: company_revenue
     title: Company Revenue
     subtitle: M4a — Threshold alert on margin (amber < 30%, red < 20%)
-    conditional_formatting:
-      margin:
-        when:
-        - lt: 0.3
-          background: '#fffbeb'
-          font:
-            color: '#d97706'
-        - lt: 0.2
-          background: '#fef2f2'
-          font:
-            color: '#dc2626'
     style:
       columns:
         quarterly_revenue:
@@ -326,6 +309,15 @@ charts:
           format: percent
         margin:
           format: percent
+          conditional:
+            - lt: 0.3
+              background: "#fffbeb"
+              font:
+                color: "#d97706"
+            - lt: 0.2
+              background: "#fef2f2"
+              font:
+                color: "#dc2626"
         nrr:
           visible: false
         headcount:
@@ -337,18 +329,16 @@ charts:
     query: company_revenue
     title: Company Revenue
     subtitle: M4b — Threshold highlights on growth rate
-    conditional_formatting:
-      growth_rate:
-        when:
-        - lt: 0
-          background: '#fef2f2'
-        - gte: 0.15
-          background: '#f0fdf4'
     style:
       columns:
         growth_rate:
           label: Growth
           format: percent
+          conditional:
+            - lt: 0
+              background: "#fef2f2"
+            - gte: 0.15
+              background: "#f0fdf4"
         margin:
           format: percent
         quarterly_revenue:
@@ -364,15 +354,6 @@ charts:
     query: company_revenue
     title: Company Revenue
     subtitle: M5a — Trend arrows on growth (▲ positive, ▼ negative)
-    conditional_formatting:
-      growth_rate:
-        when:
-        - gt: 0
-          glyph: ▲
-          glyph_color: '#16a34a'
-        - lt: 0
-          glyph: ▼
-          glyph_color: '#dc2626'
     style:
       columns:
         quarterly_revenue:
@@ -381,6 +362,13 @@ charts:
         growth_rate:
           label: Growth
           format: percent
+          conditional:
+            - gt: 0
+              glyph: ▲
+              glyph_color: "#16a34a"
+            - lt: 0
+              glyph: ▼
+              glyph_color: "#dc2626"
         margin:
           format: percent
         nrr:
@@ -394,12 +382,6 @@ charts:
     query: company_revenue
     title: Company Revenue
     subtitle: M5b — Warning triangle on low margin (< 30%)
-    conditional_formatting:
-      margin:
-        when:
-        - lt: 0.3
-          glyph: ⚠
-          glyph_color: '#d97706'
     style:
       columns:
         growth_rate:
@@ -407,6 +389,10 @@ charts:
           format: percent
         margin:
           format: percent
+          conditional:
+            - lt: 0.3
+              glyph: ⚠
+              glyph_color: "#d97706"
         quarterly_revenue:
           visible: false
         nrr:
@@ -466,17 +452,6 @@ charts:
     query: company_revenue_total
     title: Company Revenue
     subtitle: M6b — Threshold alert + total row (total row is uncolored)
-    conditional_formatting:
-      growth_rate:
-        when:
-        - lt: 0
-          background: '#fef2f2'
-          font:
-            color: '#dc2626'
-        - gte: 0.15
-          background: '#f0fdf4'
-          font:
-            color: '#16a34a'
     row_role: row_role
     style:
       columns:
@@ -486,6 +461,15 @@ charts:
         growth_rate:
           label: Growth
           format: percent
+          conditional:
+            - lt: 0
+              background: "#fef2f2"
+              font:
+                color: "#dc2626"
+            - gte: 0.15
+              background: "#f0fdf4"
+              font:
+                color: "#16a34a"
         margin:
           format: percent
       row:

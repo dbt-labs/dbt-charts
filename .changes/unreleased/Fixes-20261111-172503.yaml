@@ -1,0 +1,3 @@
+kind: Fixes
+body: Hover now recedes bars drawn with opacity, such as conditional opacity.
+time: 2026-11-11T17:25:03.085632-08:00

@@ -98,8 +98,12 @@ pub struct CustomChartStyle {
 /// Custom chart: a project template or inline SVG source, and the columns its header declares.
 #[derive(Debug, Clone, PartialEq, Model)]
 #[model(
-    constraint(at_least_one_of(template, svg)),
-    constraint(at_most_one_of(template, svg))
+    constraint(at_least_one_of(template, svg,
+        message = "Custom chart needs `template:` (a project template name) or `svg:` (inline template source)."
+    )),
+    constraint(at_most_one_of(template, svg,
+        message = "Custom chart takes `template:` or `svg:`, not both."
+    ))
 )]
 pub struct CustomChart {
     #[flatten]

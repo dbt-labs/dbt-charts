@@ -179,6 +179,13 @@ fn spine(name: &str) -> Result<&'static Spine, PaletteError> {
     }
 }
 
+/// Every shipped palette name, sorted (Python's `list_palettes`).
+pub fn palette_names() -> Result<Vec<String>, PaletteError> {
+    let mut names: Vec<String> = catalog().as_ref().map_err(Clone::clone)?.keys().cloned().collect();
+    names.sort_unstable();
+    Ok(names)
+}
+
 /// Whether `name` is a shipped palette.
 pub fn is_palette(name: &str) -> bool {
     spine(name).is_ok()
@@ -364,12 +371,15 @@ fn apply_variant(c: &str, kind: &str) -> Result<String, PaletteError> {
     color::variant(c, kind).map_err(PaletteError)
 }
 
-/// A theme's palette bindings and role aliases, and the single-series ink list: the context a
-/// role-indirected token resolves in.
+/// A theme's palette bindings and role aliases, the single-series ink list, and the board's
+/// categorical palette: the context a role-indirected token resolves in.
 pub struct ThemeColors<'a> {
     pub palettes: &'a IndexMap<String, String>,
     pub roles: &'a IndexMap<String, String>,
     pub single_series: Option<&'a [String]>,
+    /// The board's own categorical palette, what `category[N]` indexes. `None` when the board
+    /// authors none: the `category` role's bound palette is then the board's palette.
+    pub category: Option<&'a [String]>,
 }
 
 fn bound(
@@ -437,6 +447,18 @@ fn dispatch(
                         Some(i) => Ok((list.get(i - 1).cloned().unwrap_or_default(), "literal")),
                         None => err(format!(
                             "single-series palette has {} slot(s); requested slot {n}",
+                            list.len()
+                        )),
+                    };
+                }
+                if let ("category", Some(list)) = (role, t.category) {
+                    return match usize::try_from(n)
+                        .ok()
+                        .filter(|i| (1..=list.len()).contains(i))
+                    {
+                        Some(i) => Ok((list.get(i - 1).cloned().unwrap_or_default(), "categorical")),
+                        None => err(format!(
+                            "color token '{token}': the board's categorical palette has no stop {n}; valid stops 1-{}",
                             list.len()
                         )),
                     };
@@ -702,6 +724,23 @@ pub fn resolve_palette_ref(
     Ok(substituted)
 }
 
+/// Carry the categorical palette a board authors into the theme-derived `context` its tokens
+/// resolve against, so a bare `category[N]` indexes the board's palette.
+pub fn adopt_board_palette(
+    context: &mut crate::style::style::StylePatch,
+    own: &crate::style::style::StylePatch,
+) {
+    let model_core::Tri::Value(authored) = &own.charts.color.categorical else {
+        return;
+    };
+    let Some(palette) = &authored.palette else {
+        return;
+    };
+    if let model_core::Tri::Value(theirs) = &mut context.charts.color.categorical {
+        theirs.palette = Some(palette.clone());
+    }
+}
+
 /// What the generated color pass calls: the palette bindings and roles of the patch being
 /// resolved, and one token at a time.
 pub mod hook {
@@ -714,6 +753,20 @@ pub mod hook {
         roles: IndexMap<String, String>,
         /// The theme's single-series ink list, what `single_series[N]` indexes.
         single_series: Option<Vec<String>>,
+        /// The board's categorical palette, what `category[N]` indexes; the error when the list
+        /// the board authors does not resolve, which every token then reports.
+        category: Result<Option<Vec<String>>, String>,
+    }
+
+    impl Ctx {
+        fn theme(&self) -> Result<ThemeColors<'_>, String> {
+            Ok(ThemeColors {
+                palettes: &self.palettes,
+                roles: &self.roles,
+                single_series: self.single_series.as_deref(),
+                category: self.category.as_ref().map_err(Clone::clone)?.as_deref(),
+            })
+        }
     }
 
     pub fn ctx(style: &StylePatch) -> Ctx {
@@ -728,10 +781,56 @@ pub mod hook {
             .filter_map(|(k, v)| Some((k.clone(), v.as_ref()?.clone())))
             .collect();
         let single_series = single_series_list(style, &palettes, &roles);
+        let category = category_list(style, &palettes, &roles, single_series.as_deref());
         Ctx {
             palettes,
             roles,
             single_series,
+            category,
+        }
+    }
+
+    /// The categorical palette the patch authors, as colors: a palette name's stops, or the listed
+    /// colors with their tokens resolved against the role, never against the list itself, and the
+    /// canvas token `theme.background` kept for the board's canvas. `None` when it authors none.
+    fn category_list(
+        style: &StylePatch,
+        palettes: &IndexMap<String, String>,
+        roles: &IndexMap<String, String>,
+        single_series: Option<&[String]>,
+    ) -> Result<Option<Vec<String>>, String> {
+        let model_core::Tri::Value(categorical) = &style.charts.color.categorical else {
+            return Ok(None);
+        };
+        let Some(leaf) = categorical.palette.as_ref() else {
+            return Ok(None);
+        };
+        match PaletteLeaf::name(leaf) {
+            Some(name) => {
+                let r = resolve_palette_ref(&name, palettes).map_err(|e| e.0)?;
+                palette_list(&r)
+                    .map(Some)
+                    .map_err(|e| format!("unknown palette {name:?}: {}", e.0))
+            }
+            None => {
+                let theme = ThemeColors {
+                    palettes,
+                    roles,
+                    single_series,
+                    category: None,
+                };
+                PaletteLeaf::colors(leaf)
+                    .iter()
+                    .map(|c| {
+                        if c != "theme.background" && color::is_color_token(c) {
+                            resolve_token(c, &theme).map_err(|e| e.0)
+                        } else {
+                            Ok(c.clone())
+                        }
+                    })
+                    .collect::<Result<_, _>>()
+                    .map(Some)
+            }
         }
     }
 
@@ -754,6 +853,7 @@ pub mod hook {
                     palettes,
                     roles,
                     single_series: None,
+                    category: None,
                 };
                 PaletteLeaf::colors(leaf)
                     .iter()
@@ -772,11 +872,7 @@ pub mod hook {
         if !color::is_color_token(s) && !ctx.roles.contains_key(s) {
             return Ok(None);
         }
-        let theme = ThemeColors {
-            palettes: &ctx.palettes,
-            roles: &ctx.roles,
-            single_series: ctx.single_series.as_deref(),
-        };
+        let theme = ctx.theme()?;
         resolve_token(s, &theme).map(Some).map_err(|e| e.0)
     }
 
@@ -795,11 +891,7 @@ pub mod hook {
         if s == "theme.background" || !color::is_color_token(s) {
             return Ok(None);
         }
-        let theme = ThemeColors {
-            palettes: &ctx.palettes,
-            roles: &ctx.roles,
-            single_series: ctx.single_series.as_deref(),
-        };
+        let theme = ctx.theme()?;
         resolve_token(s, &theme).map(Some).map_err(|e| e.0)
     }
 
@@ -816,10 +908,18 @@ pub mod hook {
                 palette_list(&r).map_err(|e| named_unknown(&name, e))?
             }
             None => {
+                // These colors define a palette, so `category[N]` among them names the role's
+                // palette, never the list being defined.
+                let theme = ThemeColors {
+                    palettes: &ctx.palettes,
+                    roles: &ctx.roles,
+                    single_series: ctx.single_series.as_deref(),
+                    category: None,
+                };
                 let mut colors = leaf.colors();
                 for c in &mut colors {
-                    if let Some(resolved) = resolve_column(ctx, c)? {
-                        *c = resolved;
+                    if c != "theme.background" && color::is_color_token(c) {
+                        *c = resolve_token(c, &theme).map_err(|e| e.0)?;
                     }
                 }
                 colors
@@ -880,6 +980,7 @@ pub mod hook {
             palettes: IndexMap::new(),
             roles: IndexMap::new(),
             single_series: None,
+            category: Ok(None),
         };
         name_only_ref(&ctx, name).map(drop)
     }
@@ -942,7 +1043,9 @@ pub mod hook {
     /// the shipped palette `name` is closest to.
     fn unknown_message(name: &str, authored: &str) -> String {
         if let Some(now) = migrate::respell_retired_variant(authored) {
-            return format!("unknown palette '{name}'. '{authored}' was retired; use '{now}' instead.");
+            return format!(
+                "unknown palette '{name}'. '{authored}' was retired; use '{now}' instead."
+            );
         }
         let names: Vec<&str> = match super::catalog() {
             Ok(c) => c.keys().map(String::as_str).collect(),

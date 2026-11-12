@@ -126,9 +126,17 @@ struct ColorChannel {
 #[derive(Deserialize)]
 struct Style {
     point_mark: PointMark,
+    point_map: Option<PointMapSlot>,
     single_series_fill: String,
     tooltip_format: FormatSlot,
     title_font: Option<Font>,
+}
+
+/// The family style the cascade merged; the chart's `style.conditional` rides on it.
+#[derive(Deserialize)]
+struct PointMapSlot {
+    #[serde(default)]
+    conditional: Option<std::collections::BTreeMap<String, Vec<crate::point_conditional::PointRule>>>,
 }
 
 #[derive(Deserialize)]
@@ -160,6 +168,8 @@ struct Point {
     fill: Option<String>,
     label: String,
     href: Option<String>,
+    /// What `style.conditional` sets on this circle.
+    patch: crate::point_conditional::PointPatch,
 }
 
 /// The rows of a collapsed map sharing one coordinate: one circle.
@@ -568,6 +578,7 @@ fn bind_marks(
                 fill: Some(r.style.single_series_fill.clone()),
                 label: describe(described),
                 href,
+                patch: Default::default(),
             });
         }
         let fit_points = groups.iter().filter(|g| g.in_fit).filter_map(|g| g.at).collect();
@@ -616,6 +627,8 @@ fn bind_marks(
             _ => row.get(field).map(|cell| list_text(cell, affixed)).ok_or_else(|| format!("point_map: a row lacks the field {field:?}")),
         }
     };
+    let rules = r.style.point_map.as_ref().and_then(|slot| slot.conditional.as_ref());
+    let patch_of = |row: &Map<String, Value>| crate::point_conditional::patch_of(rules, row, &[]);
     for (i, row) in rows.iter().enumerate() {
         let at = coords[i];
         let coordinate_text = |field: &str| quantitative_text(row.get(field));
@@ -639,7 +652,7 @@ fn bind_marks(
             let label = rows_described.into_iter().map(|(title, value)| format!("{title}: {value}")).collect::<Vec<_>>().join("; ");
             let href = if layered { None } else { href_of(payload, r, Some(row), color_field)? };
             let area = if r.size.is_some() { area_of(size_values[i], size_max) } else { default_area };
-            points.push(Point { at, area, fill: fills[i].clone(), label, href });
+            points.push(Point { at, area, fill: fills[i].clone(), label, href, patch: patch_of(row)? });
             continue;
         }
         // Vega-Lite's description: each described channel, then the tooltip list.
@@ -668,7 +681,7 @@ fn bind_marks(
         }
         let href = if layered { None } else { href_of(payload, r, Some(row), color_field)? };
         let area = if r.size.is_some() { area_of(size_values[i], size_max) } else { default_area };
-        points.push(Point { at, area, fill: fills[i].clone(), label: describe(rows_described), href });
+        points.push(Point { at, area, fill: fills[i].clone(), label: describe(rows_described), href, patch: patch_of(row)? });
     }
     let fit_points = match fields {
         Some((lat_field, lon_field)) => all_rows
@@ -987,14 +1000,32 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             .set("aria-label", p.label.as_str())
             .set("role", "graphics-symbol")
             .set("aria-roledescription", "circle");
+        let patch = &p.patch;
         // A cell the color scale does not know gets no fill attribute.
-        let attrs = match &p.fill {
-            Some(fill) => attrs.set("fill", fill.as_str()),
-            None => attrs,
+        let ink = patch.color.as_ref().or(p.fill.as_ref());
+        let attrs = if patch.filled == Some(false) {
+            let interior = patch.fill.as_deref().ok_or("point_map: a conditional rule that unfills a point needs a fill")?;
+            let attrs = attrs.set("fill", interior);
+            match ink {
+                Some(stroke) => attrs.set("stroke", stroke.as_str()),
+                None => attrs,
+            }
+        } else {
+            match ink {
+                Some(fill) => attrs.set("fill", fill.as_str()),
+                None => attrs,
+            }
         };
-        let attrs = attrs.num("stroke-width", 2.0).num("opacity", r.style.point_mark.opacity);
+        let attrs = attrs
+            .num("stroke-width", patch.stroke_width.unwrap_or(2.0))
+            .num("opacity", patch.opacity.unwrap_or(r.style.point_mark.opacity));
         let role = Role::Mark { layer: usize::from(layered), series: None, datum: Some(i) };
-        let path = Node::path(role, circle_glyph(p.area), attrs).translate(xy[0], xy[1]);
+        let area = patch.size.unwrap_or(p.area);
+        let glyph = match patch.shape.as_deref() {
+            Some(symbol) => crate::families::scatter_shape::path(symbol, crate::common::symbol_radius(area))?,
+            None => circle_glyph(area),
+        };
+        let path = Node::path(role, glyph, attrs).translate(xy[0], xy[1]);
         circles.push(match &p.href {
             Some(url) => {
                 let attrs = Attrs::new().set("href", url.as_str());

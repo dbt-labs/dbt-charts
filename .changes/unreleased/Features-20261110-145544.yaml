@@ -1,0 +1,3 @@
+kind: Features
+body: A query that reads `{{ queries.X.cache }}` can now set `dialect:` and be written in your warehouse's SQL, which is translated to DuckDB.
+time: 2026-11-10T14:55:44.856011-08:00

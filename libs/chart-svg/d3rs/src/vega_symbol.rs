@@ -5,6 +5,8 @@
 //! `sqrt(size / PI)`), and the triangles and wedge are Vega's.
 //! References: https://github.com/vega/vega/blob/v6.2.0/packages/vega-scenegraph/src/path/symbols.js
 
+use crate::invariant::Invariant;
+
 use crate::path::Path;
 use crate::path::Command;
 
@@ -68,8 +70,14 @@ impl VegaSymbol {
         })
     }
 
+    /// The radius of a symbol of area `size`: half the side of its bounding square. A circle is
+    /// drawn at exactly this radius.
+    pub fn radius(size: f64) -> f64 {
+        size.sqrt() / 2.0
+    }
+
     fn outline(self, size: f64) -> Outline {
-        let r = size.sqrt() / 2.0;
+        let r = Self::radius(size);
         let h = HALF_SQRT_3 * r;
         let closed = |points: Vec<(f64, f64)>| Outline::Polygon { points, closed: true };
         match self {
@@ -119,7 +127,7 @@ impl VegaSymbol {
                 path.rect(x, x, w, w);
             }
             Outline::Polygon { points, closed } => {
-                let (first, rest) = points.split_first().expect("a polygon has points");
+                let (first, rest) = points.split_first().held("a polygon has points");
                 path.move_to(first.0, first.1);
                 for &(x, y) in rest {
                     path.line_to(x, y);

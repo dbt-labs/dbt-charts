@@ -1,11 +1,11 @@
 //! `chart/authored/kpi.py`: a headline number with an optional support line.
 
-use super::{ChartBase, ConditionalFormattingField};
-use crate::facet::{Channel, DisplayText};
+use super::ChartBase;
+use crate::facet::{Channel, Color, DisplayText};
 use crate::string_enum;
 use crate::style::kpi::KpiChartStyle;
-use diagnostic::{diag, Diagnostic};
-use model_core::{Authored, Spell, Tri};
+use crate::primitives::ScaleTargetConfig;
+use model_core::{Cx, FromNode, Leaf, Node, ReadScalar, Spell};
 use model_derive::Model;
 
 string_enum!(
@@ -17,9 +17,15 @@ string_enum!(
 #[derive(Debug, Clone, PartialEq, Model)]
 #[allow(clippy::duplicated_attributes)]
 #[model(
-    constraint(at_least_one_of(value, label, glyph)),
-    constraint(requires(value, when(set(good)))),
-    constraint(at_most_one_of(good, glyph))
+    constraint(at_least_one_of(value, label, glyph,
+        message = "Empty `support:` block. Set at least one of `value`, `label`, or `glyph`, or omit the block entirely."
+    )),
+    constraint(requires(value, when(set(good)),
+        message = "`support.good` needs `support.value`: the direction is read from the value's sign."
+    )),
+    constraint(at_most_one_of(good, glyph,
+        message = "`support.good` and `support.glyph` cannot both be set: `good` picks the glyph from the value's sign. Choose the symbols with `style.support.glyph.up`, `.down`, and `.neutral`."
+    ))
 )]
 pub struct KpiSupportConfig {
     /// Column reference (string column name) for the support number/text.
@@ -40,12 +46,14 @@ pub struct KpiSupportConfig {
 #[derive(Debug, Clone, PartialEq, Model)]
 #[allow(clippy::duplicated_attributes)]
 #[model(
-    constraint(at_most_one_of(good, glyph)),
-    constraint(forbids("style.support.tone", when(set("support.good"))))
+    constraint(at_most_one_of(good, glyph,
+        message = "`good` and the chart-root `glyph` cannot both be set: `good` picks the glyph from the value's sign. Choose the symbols with `style.value.glyph.up`, `.down`, and `.neutral`."
+    )),
+    constraint(forbids("style.support.tone", when(set("support.good")),
+        message = "`support.good` and `style.support.tone` cannot both be set: `good` picks the tone from the value's sign. Remove one."
+    ))
 )]
 pub struct KpiChart {
-    #[flatten]
-    pub formatting: ConditionalFormattingField,
     #[flatten]
     pub base: ChartBase,
     /// Column reference (string column name) for the headline number/text.
@@ -66,84 +74,65 @@ pub struct KpiChart {
     /// Appearance overrides for this chart alone.
     #[model(fill = fill_style, nullable)]
     pub style: KpiChartStyle,
-    /// Gradient background channel, {column, scale} shape. Paints the card background by the value's position in the scale.
-    #[model(absent = "a plain card background")]
-    pub background: Option<KpiBackground>,
 }
 
-/// The KPI's `background:`: a column name, or a `{column, scale}` channel object, read by the
-/// style-channel parser at bind time.
+/// A card background painted by the value's position in a color scale.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct KpiBackgroundGradient {
+    /// Query column whose value positions the color.
+    pub column: String,
+    /// Color scale the column's value is read against.
+    pub scale: ScaleTargetConfig,
+}
+
+/// A card background: a color, or a `{column, scale}` gradient by value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum KpiBackground {
-    Column(String),
-    Channel(serde_json::Value),
+    Color(Color),
+    Gradient(<KpiBackgroundGradient as Leaf>::Whole),
 }
 
-impl model_core::ReadScalar for KpiBackground {
-    fn read(node: &model_core::Node, cx: &mut model_core::Cx) -> Option<Self> {
-        match &node.kind {
-            model_core::Kind::Map(_) => Some(Self::Channel(node.to_json())),
-            _ => String::read(node, cx).map(Self::Column),
+impl ReadScalar for KpiBackground {
+    fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
+        if matches!(node.kind, model_core::Kind::Map(_)) {
+            return KpiBackgroundGradient::whole(node, cx).map(Self::Gradient);
         }
+        Color::read(node, cx).map(Self::Color)
     }
 }
 impl Spell for KpiBackground {
     fn spell(&self) -> serde_json::Value {
         match self {
-            Self::Column(c) => c.as_str().into(),
-            Self::Channel(c) => c.clone(),
+            Self::Color(c) => c.spell(),
+            Self::Gradient(g) => g.spell(),
         }
+    }
+}
+
+/// The cascade resolves a color slot's tokens through these two: a gradient reads as no token and
+/// is left as written, and a resolved token is always a color.
+impl AsRef<str> for KpiBackground {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Color(c) => c.as_str(),
+            Self::Gradient(_) => "",
+        }
+    }
+}
+impl TryFrom<String> for KpiBackground {
+    type Error = <Color as TryFrom<String>>::Error;
+    fn try_from(resolved: String) -> Result<Self, Self::Error> {
+        Color::try_from(resolved).map(Self::Color)
     }
 }
 
 union_leaf!(
     KpiBackground,
     ::model_core::TypeExpr::Either(
-        &::model_core::TypeExpr::Facet("style_channel", ::model_core::Scalar::Str),
-        &::model_core::TypeExpr::Scalar(::model_core::Scalar::Object),
+        &::model_core::TypeExpr::Ref(
+            "KpiBackgroundGradient",
+            <KpiBackgroundGradient as model_core::Model>::info
+        ),
+        &<Color as Leaf>::EXPR,
     )
 );
-
-impl KpiChart {
-    /// `good` lowers to sign rules on its column, which cover every nonzero value: a `default:
-    /// true` rule on that column would apply only at zero or null. The rule reads the chart's
-    /// `conditional_formatting:` beside `good:` and `support.good:`, which no `constraint` kind
-    /// does across a map's entries. A column the support shares with the headline keeps its rules
-    /// on the headline.
-    pub fn good_rules(chart: &Authored<KpiChart>) -> Vec<Diagnostic> {
-        let rules = &chart.formatting.conditional_formatting;
-        let beside = |column: &str, key: &str| -> Vec<Diagnostic> {
-            let Some(entry) = rules.get(column) else {
-                return Vec::new();
-            };
-            let catch_all = entry
-                .when
-                .iter()
-                .flatten()
-                .any(|r| matches!(r.predicate.default, Tri::Value(_)));
-            if !catch_all {
-                return Vec::new();
-            }
-            vec![diag::err_validation_field(
-                "conditional_formatting",
-                format!("Value error, conditional_formatting.{column} has a `default: true` rule beside `{key}`, whose sign rules cover every nonzero value, so the default rule would apply only at zero or null. Replace it with an explicit predicate such as `eq: 0` or `between`."),
-            )]
-        };
-        let value = match &chart.value {
-            Tri::Value(v) => Some(v.as_str()),
-            _ => None,
-        };
-        let mut out = Vec::new();
-        if let (Tri::Value(_), Some(value)) = (&chart.good, value) {
-            out.extend(beside(value, "good"));
-        }
-        if let Tri::Value(support) = &chart.support {
-            if let (Tri::Value(_), Tri::Value(column)) = (&support.good, &support.value) {
-                if Some(column.as_str()) != value {
-                    out.extend(beside(column.as_str(), "support.good"));
-                }
-            }
-        }
-        out
-    }
-}

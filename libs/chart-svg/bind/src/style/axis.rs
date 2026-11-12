@@ -22,7 +22,7 @@ use crate::plot::zero::Setting;
 use model_core::{Engine, Leaf, Patch, Spell, Tri};
 
 use super::{Tier, Tiers};
-use crate::channel_type::ChannelType;
+use crate::column_kind::ChannelType;
 use crate::formats::{self, AuthoredFormat};
 use crate::walk::{absent, sparse, Ladder};
 

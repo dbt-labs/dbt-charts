@@ -1,0 +1,3 @@
+kind: Fixes
+body: Percent axes whose values stay within 0–100% no longer extend past 100% or below 0%.
+time: 2026-11-10T16:40:24.634824-08:00

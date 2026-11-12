@@ -6,7 +6,9 @@
 
 mod board;
 mod compile;
+mod escape;
 mod plan;
+mod render;
 mod sql;
 
 use diagnostic::Diagnostic;
@@ -29,7 +31,8 @@ fn fonts_for(fonts_dir: Option<&str>) -> Result<Arc<FontBook>, String> {
     let Some(dir) = fonts_dir else {
         return Ok(Arc::new(FontBook::empty()));
     };
-    let mut guard = FONT_BOOKS.lock().expect("font cache mutex poisoned");
+    // An entry is inserted whole, so a lock poisoned by a panic elsewhere is still a sound cache.
+    let mut guard = FONT_BOOKS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let books = guard.get_or_insert_with(HashMap::new);
     if let Some(book) = books.get(dir) {
         return Ok(book.clone());
@@ -49,7 +52,7 @@ pyo3::create_exception!(
 
 /// `json.loads` of a serialized value, so `params` arrive as plain Python data.
 fn json_to_py<'py>(py: Python<'py>, value: &impl serde::Serialize) -> PyResult<Bound<'py, PyAny>> {
-    let text = serde_json::to_string(value).expect("diagnostics serialize");
+    let text = serde_json::to_string(value).map_err(|e| PyValueError::new_err(e.to_string()))?;
     py.import("json")?.call_method1("loads", (text,))
 }
 
@@ -321,6 +324,7 @@ fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     board::register(m)?;
     compile::register(m)?;
     plan::register(m)?;
+    render::register(m)?;
     m.add("RenderDiagnosticError", m.py().get_type::<RenderDiagnosticError>())?;
     Ok(())
 }

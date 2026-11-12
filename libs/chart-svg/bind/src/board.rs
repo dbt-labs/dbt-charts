@@ -106,6 +106,11 @@ pub fn bind(board: &Board, styles: &ChartStyles, run: &RunResult) -> Result<boun
     let mut diagnostics = Vec::new();
     for (at, id) in drawn.charts(board).map_err(internal)? {
         let bound = bind_chart(board, styles, &at, id, run, &scales)?;
+        if bound.family.is_ok() {
+            let chart = chart_named(board, id)?;
+            let dataset = crate::query_id(chart)?.map(|query| run.dataset(query, id)).transpose()?;
+            diagnostics.extend(crate::checks::of(styles.public_id(id)?, chart, dataset));
+        }
         match &bound.family {
             Ok(Family::Cartesian(bound::Cartesian::Plane(plot))) => diagnostics.extend_from_slice(plot.diagnostics()),
             Ok(Family::Cartesian(bound::Cartesian::NoData(_))) => diagnostics.push(diag::warn_query_returned_zero_rows(styles.public_id(id)?)),
@@ -216,6 +221,12 @@ fn hide(body: &BoardBody, at: &ItemId, styles: &ChartStyles, run: &RunResult, st
     Ok(())
 }
 
+fn chart_named<'a>(board: &'a Board, id: &ChartId) -> Result<&'a Chart, Diagnostic> {
+    board.body.charts.get(id.as_str()).ok_or_else(|| {
+        diag::err_unknown_chart(id.as_str(), board.body.charts.keys().map(String::as_str).collect::<Vec<_>>())
+    })
+}
+
 /// Binds the chart `id` placed at `at` on `board` to `run`: its error card when its query failed, else
 /// what its family binds. `scales` is the board-wide category color plan ([`crate::plan_colors`]),
 /// from which a chart's `color:` series take their paint.
@@ -227,12 +238,19 @@ pub fn bind_chart(
     run: &RunResult,
     scales: &[CategoryColorScale],
 ) -> Result<bound::Chart, Diagnostic> {
-    let chart = board.body.charts.get(id.as_str()).ok_or_else(|| {
-        diag::err_unknown_chart(id.as_str(), board.body.charts.keys().map(String::as_str).collect::<Vec<_>>())
-    })?;
+    let chart = chart_named(board, id)?;
     if let Some(error) = run.chart_errors.get(id) {
         let family = Err(Failure { chart: id.clone(), diagnostic: error.clone() });
         return Ok(bound::Chart { title: None, subtitle: None, frame: None, family });
+    }
+    if let Chart::Scatter(scatter) = chart {
+        let public = styles.public_id(id)?;
+        let query = crate::query_id(chart)?.ok_or_else(|| diag::err_internal("a scatter reaches bind with its query"))?;
+        let dataset = run.dataset(query, id)?;
+        if let Some(diagnostic) = crate::checks::scatter_invalid(public, scatter, &dataset.schema, &dataset.rows)? {
+            let family = Err(Failure { chart: id.clone(), diagnostic });
+            return Ok(bound::Chart { title: None, subtitle: None, frame: None, family });
+        }
     }
     match chart {
         Chart::Bar(bar) => {

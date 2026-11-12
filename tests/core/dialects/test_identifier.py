@@ -104,14 +104,17 @@ class TestResultColumnName:
         ("name", "dialect", "expected"),
         [
             ("PRIORITY", "snowflake", "priority"),
-            ("Priority", "snowflake", "priority"),
-            ("Priority", "bigquery", "priority"),
+            ("Q3_25", "snowflake", "q3_25"),
+            ("MAU Seat Util %", "snowflake", "MAU Seat Util %"),
+            ("Priority", "bigquery", "Priority"),
+            ("PRIORITY", "bigquery", "PRIORITY"),
+            ("Priority", "postgres", "Priority"),
             ("Priority", "duckdb", "Priority"),
             ("Priority", "sqlite", "Priority"),
             ("PRIORITY", None, "PRIORITY"),
         ],
     )
-    def test_lowercases_except_on_local_engines(
+    def test_keeps_the_spelling_but_snowflake_default_uppercase(
         self, name: str, dialect: str | None, expected: str
     ) -> None:
         assert result_column_name(name, dialect) == expected

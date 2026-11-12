@@ -6,14 +6,18 @@
 //! - A `None` that only meant "not authored" is a total field (`border`, `label.overflow`);
 //!   one that is a state is `Option<T>` with `absent` (`format`, `align`).
 
+use crate::chart::conditional_formatting::Predicate;
+use crate::chart::kpi::KpiBackground;
 use crate::facet::{Color, FontFamily, FontWeightValue};
 use crate::primitives::{BorderStyle, FormatSpec, SpacingValues, Tone};
 use crate::rule::Auto;
 use crate::string_enum;
 use crate::style::board::OverflowMode;
-use crate::style::chart_base::ChartStyleBase;
+use crate::style::board::PaddingStyle;
 use crate::style::font::{FontSlant, LetterCase, SingleLineFontStyle, TextDecoration};
-use model_core::Engine;
+use indexmap::IndexMap;
+use diagnostic::{diag, Diagnostic};
+use model_core::{Authored, Engine, Tri};
 use model_derive::Model;
 
 string_enum!(
@@ -171,12 +175,20 @@ pub struct KpiTonesStyle {
 
 /// KPI chart style.
 ///
-/// KPI uses a fixed sizing contract and paints no legend or color: it builds on
-/// [`ChartStyleBase`] alone, and each text slot paints from its own block.
+/// KPI uses a fixed sizing contract and paints no legend or color. It carries the geometry of
+/// `ChartStyleBase` itself, since its `background` also takes a scale and a flatten cannot
+/// retype a field; each text slot paints from its own block.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct KpiChartStyle {
-    #[flatten]
-    pub base: ChartStyleBase,
+    /// Preferred chart width in pixels.
+    #[model(inherit = "Style.charts.preferred_width")]
+    pub preferred_width: f64,
+    /// Padding as {top, right, bottom, left} in pixels, never one number.
+    #[model(inherit_slot = "Style.charts.padding")]
+    pub padding: PaddingStyle,
+    /// Card background color, or a {column, scale} gradient by value
+    #[model(absent = "the theme's background")]
+    pub background: Option<KpiBackground>,
     /// Font every KPI text slot starts from.
     #[model(inherit_slot = "Style.charts.font")]
     pub font: SingleLineFontStyle,
@@ -201,4 +213,126 @@ pub struct KpiChartStyle {
     /// Horizontal alignment of the value, label, and support text within the card.
     #[model(absent = "left-anchored content")]
     pub align: Option<KpiAlign>,
+    /// Rules that restyle the card by value, keyed by column name
+    #[model(fill = fill_empty, local)]
+    pub conditional: IndexMap<String, Vec<KpiChartStyleConditional>>,
+}
+
+/// The part of [`SingleLineFontStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[model(shorthand = "extends")]
+pub struct SingleLineFontStyleConditional {
+    /// Name of a `style.fonts` entry this slot starts from; the fields set beside it override that entry.
+    #[model(absent = "no named font")]
+    pub extends: Option<String>,
+    /// Text color as a CSS color string.
+    #[model(absent = "the slot's own color")]
+    pub color: Option<Color>,
+    /// How heavy the type is drawn (e.g., 'bold', 400, 700).
+    #[model(absent = "the slot's own weight")]
+    pub weight: Option<FontWeightValue>,
+}
+
+/// The part of [`KpiSupportFontStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[model(shorthand = "extends")]
+pub struct KpiSupportFontStyleConditional {
+    /// Name of a `style.fonts` entry this slot starts from; the fields set beside it override that entry.
+    #[model(absent = "no named font")]
+    pub extends: Option<String>,
+    /// Text color. 'auto' is the support tone's color, or the muted ink when the row has no tone.
+    #[model(absent = "the slot's own color")]
+    pub color: Option<Color>,
+    /// How heavy the type is drawn (e.g., 'bold', 400, 700).
+    #[model(absent = "the slot's own weight")]
+    pub weight: Option<FontWeightValue>,
+}
+
+/// The part of [`KpiValueStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct KpiValueStyleConditional {
+    /// Headline value font.
+    #[model(absent = "the headline's own font")]
+    pub font: Option<SingleLineFontStyleConditional>,
+}
+
+/// The part of [`KpiLabelStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct KpiLabelStyleConditional {
+    /// Label font.
+    #[model(absent = "the label's own font")]
+    pub font: Option<SingleLineFontStyleConditional>,
+}
+
+/// The part of [`KpiSupportStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct KpiSupportStyleConditional {
+    /// Support row font; its color paints the support value.
+    #[model(absent = "the support row's own font")]
+    pub font: Option<KpiSupportFontStyleConditional>,
+    /// Semantic color for the support value and glyph. On a delta format the color follows
+    /// the sign and tone is the direction: positive (the default) means up is good, negative
+    /// means up is bad; zero is muted. warning and info are fixed colors, as is any tone on a
+    /// non-delta format.
+    #[model(absent = "muted ink")]
+    pub tone: Option<Tone>,
+}
+
+/// The part of [`KpiChartStyle`] a conditional rule may set: one predicate plus the card style
+/// that varies per row.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[allow(clippy::duplicated_attributes)]
+#[model(
+    constraint(at_least_one_of(eq, ne, lt, lte, gt, gte, between, "in", is_null, default,
+        message = "A conditional rule requires exactly one condition operator"
+    )),
+    constraint(at_most_one_of(eq, ne, lt, lte, gt, gte, between, "in", is_null, default,
+        message = "A conditional rule requires exactly one condition operator, got: {set}"
+    )),
+    constraint(at_least_one_of(background, value, label, support,
+        message = "A conditional rule requires at least one style to apply"
+    ))
+)]
+pub struct KpiChartStyleConditional {
+    #[flatten]
+    pub predicate: Predicate,
+    /// Card background color, or a {column, scale} gradient by value
+    #[model(absent = "the card's own background")]
+    pub background: Option<Color>,
+    /// KPI headline value slot.
+    #[model(absent = "the headline's own style")]
+    pub value: Option<KpiValueStyleConditional>,
+    /// KPI card label slot.
+    #[model(absent = "the label's own style")]
+    pub label: Option<KpiLabelStyleConditional>,
+    /// KPI support row slot.
+    #[model(absent = "the support row's own style")]
+    pub support: Option<KpiSupportStyleConditional>,
+}
+
+impl KpiChartStyle {
+    /// A `default: true` rule is allowed only last in a column's rule list: a positional rule
+    /// over an element field, which no `constraint` kind tests.
+    pub fn default_position(style: &Authored<KpiChartStyle>) -> Vec<Diagnostic> {
+        style
+            .conditional
+            .iter()
+            .flat_map(|(column, rules)| {
+                let rules = rules.as_deref().unwrap_or_default();
+                rules
+                    .iter()
+                    .enumerate()
+                    .filter(move |(i, r)| matches!(r.predicate.default, Tri::Value(_)) && i + 1 != rules.len())
+                    .map(move |(i, _)| {
+                        diag::err_validation_field(
+                            format!("conditional.{column}"),
+                            format!(
+                                "Value error, A rule with default: true must be the last entry in a column's rules (found at position {i} of {})",
+                                rules.len()
+                            ),
+                        )
+                    })
+            })
+            .collect()
+    }
 }

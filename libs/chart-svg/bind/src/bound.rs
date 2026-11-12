@@ -46,6 +46,8 @@ pub enum Invalid {
     EmptyPlot,
     /// A point layer on a plot whose mark style walked no point mark.
     PointsUnstyled { layer: usize },
+    /// A bar layer on a plot whose mark style walked no bar mark.
+    BarsUnstyled { layer: usize },
     BinsUnstyled { layer: usize },
     /// A layer reads a measure scale `y` does not hold.
     LayerYScale {
@@ -341,6 +343,8 @@ pub struct Pie {
     pub background: String,
     /// The chart's title as authored; production tests `not title`, so an empty one is untitled.
     pub title: Option<String>,
+    /// The chart's subtitle as authored, under a title; an empty one is none.
+    pub subtitle: Option<String>,
     /// Hole to disk ratio of the wheel.
     pub hole: f64,
     pub slices: Vec<PieSlice>,
@@ -501,6 +505,9 @@ impl Plane {
             }
             if matches!(mark_layer.mark, Mark::Points { .. }) && mark_style.points.is_none() {
                 return Err(Invalid::PointsUnstyled { layer });
+            }
+            if matches!(mark_layer.mark, Mark::Bars) && mark_style.bars.is_none() {
+                return Err(Invalid::BarsUnstyled { layer });
             }
             if matches!(mark_layer.mark, Mark::Bins) && mark_style.bins.is_none() {
                 return Err(Invalid::BinsUnstyled { layer });
@@ -729,20 +736,40 @@ pub enum Pos {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RowRef(pub usize);
 
+/// A hover's heading row and the invisible code point the front end tells its role by.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TooltipHeader {
+    pub marker: char,
+    pub text: String,
+}
+
+impl TooltipHeader {
+    /// A temporal x's date: U+2061 (function application) is what production stamps on that row.
+    pub fn date(text: String) -> Self {
+        Self { marker: '\u{2061}', text }
+    }
+
+    /// The series name that is the color dimension, which the runtime draws swatched
+    /// (`_tooltip.py`'s `ROLE_HEADER_SWATCHED`).
+    pub fn swatched(text: String) -> Self {
+        Self { marker: crate::pie::ROLE_HEADER_SWATCHED, text }
+    }
+}
+
 /// A datum's hover entries, formatted.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tooltip {
-    /// The series name that heads the hover when the header is the color dimension, which the runtime
-    /// draws as a swatched header (`_tooltip.py`'s `ROLE_HEADER_SWATCHED`).
-    pub header: Option<String>,
+    /// The row that heads the hover: a temporal x's date (production words it ahead of the entries) or
+    /// the series name when the header is the color dimension (a swatched header).
+    pub header: Option<TooltipHeader>,
     pub entries: Vec<TooltipEntry>,
 }
 
 impl Tooltip {
-    /// The hover text a mark carries as its `aria-label`: the swatched header, then each row's
-    /// `title: value`, joined `; `.
+    /// The hover text a mark carries as its `aria-label`: the header behind its role marker, then each
+    /// row's `title: value`, joined `; `.
     pub fn text(&self) -> String {
-        let header = self.header.iter().map(|name| format!("{}{name}", crate::pie::ROLE_HEADER_SWATCHED));
+        let header = self.header.iter().map(|header| format!("{}{}", header.marker, header.text));
         header.chain(self.entries.iter().map(|entry| format!("{}: {}", entry.title, entry.value))).collect::<Vec<_>>().join("; ")
     }
 }
@@ -845,10 +872,27 @@ pub struct AxisStyle {
     /// draw; `auto` is none.
     pub offset: f64,
     pub grid: Option<Line>,
+    /// The heavy rule at the value axis's crossing point (`grid.threshold`), where it is shown;
+    /// whether it draws is [`Baselines`]'s.
+    pub threshold: Option<Line>,
     pub domain: Option<Line>,
     pub ticks: Option<Ticks>,
     pub labels: Option<Labels>,
     pub title: Option<Title>,
+    /// What only a time axis' labels read; `Some` exactly on the x axis of a temporal scale.
+    pub time: Option<TimeLabelStyle>,
+}
+
+/// How a time axis crowds its labels, as the board's theme sets it (`labels.overlap`,
+/// `labels.tilt_increments`, `charts.label_usable_ratio`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimeLabelStyle {
+    /// `labels.overlap.skip`: the cadence ladder may step to a coarser grain.
+    pub skip: bool,
+    /// The tilt angles, shallowest first, when `labels.overlap.tilt` is on; `None` never tilts.
+    pub tilt: Option<Vec<f64>>,
+    /// The fraction of the chart's width its labels may use before they crowd.
+    pub usable_ratio: f64,
 }
 
 /// The edge of the plot an axis sits on: an x axis bottom or top, a y axis left or right.
@@ -904,12 +948,44 @@ pub struct Title {
     pub align: Engine<TextAlign, Auto>,
 }
 
-/// The walked mark, label and legend slots; only the point mark has leaves yet. A plot with a
-/// point layer always carries its point mark.
+/// The walked mark, label and legend slots; only the point, line and histogram-bar marks have leaves
+/// yet. A plot with a point layer always carries its point mark; a line mark is walked by the line
+/// family alone and a bin's by the histogram's.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MarkStyle {
     pub points: Option<PointStyle>,
+    pub lines: Option<LineStyle>,
+    pub bars: Option<BarStyle>,
     pub bins: Option<BinStyle>,
+}
+
+/// A bar mark's walked leaves, as production draws them: the chart's total `marks.bar` and the
+/// grouped band padding. A plot with a bar layer always carries its bar mark.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BarStyle {
+    /// The bar's thickness as a share of its band.
+    pub band_width: f64,
+    /// The thickest a bar may be, in pixels.
+    pub max_size: Option<f64>,
+    /// The end corner radius in pixels.
+    pub radius: f64,
+    /// The outline `border.color` and `border.width`; `None` draws none.
+    pub outline: Option<(String, f64)>,
+    /// The fill opacity; `None` leaves it to the renderer's default (opaque).
+    pub opacity: Option<f64>,
+    /// The band scale's padding between and around bands, as shares of the step.
+    pub padding_inner: f64,
+    pub padding_outer: f64,
+    /// The share of the card's width the band labels may use before they tilt or collide.
+    pub label_usable_ratio: f64,
+}
+
+/// A line mark's walked leaves. Its stroke width and point size are the density-adaptive law's,
+/// which layout derives from the cell.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LineStyle {
+    /// The canvas-colored halo's width as a multiple of the stroke's; 0 draws no halo.
+    pub halo_multiplier: f64,
 }
 
 /// A histogram bar's walked leaves.

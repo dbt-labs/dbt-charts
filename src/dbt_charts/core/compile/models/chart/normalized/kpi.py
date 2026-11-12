@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import Field
 
 from dbt_charts.core.compile.models.chart.authored import KpiSupportConfig
+from dbt_charts.core.compile.models.markers import ColumnRef
 from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
 
 from ._base import _BaseChartFields
@@ -21,7 +22,7 @@ class KpiChart(_BaseChartFields):
 
     type: Literal["kpi"]
     # None until resolve binds it from the query's one column.
-    value: str | None = Field(
+    value: ColumnRef | None = Field(
         default=None, description="Column reference for the headline number."
     )
     label: str = Field(
@@ -36,13 +37,6 @@ class KpiChart(_BaseChartFields):
     good: Literal["up", "down"] | None = Field(
         default=None,
         description="Which direction of the headline value is good; drives its glyph and tone.",
-    )
-    background: str | dict[str, Any] | None = Field(
-        default=None,
-        description=(
-            "KPI gradient background channel — {column, scale} shape. "
-            "Parsed at render time via parse_style_channel."
-        ),
     )
     style: KpiChartStylePatch | None = Field(
         default=None, description="Chart-local style overrides."

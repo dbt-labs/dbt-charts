@@ -10,6 +10,7 @@
 //! production would have colored the block; an alias Pygments does not know
 //! is `Ok(None)`, the plain block, as in Python.
 
+use d3rs::invariant::{broken, Invariant};
 use std::collections::HashSet;
 
 use crate::pygments_data::{PygmentsStyle, LEXER_ALIASES, STANDARD_TYPES, STYLES};
@@ -23,11 +24,11 @@ pub type CodeSegment = (String, String);
 /// `#rrggbb` -> `rrggbb`, `#rgb` -> `rrggbb` (`StyleMeta.colorformat`,
 /// `pygments/style.py:60-70`). `gen_pygments_data.py` admits only these.
 fn color_format(word: &str) -> String {
-    let hex = word.strip_prefix('#').expect("style colors are hex");
+    let hex = word.strip_prefix('#').held("style colors are hex");
     match hex.len() {
         6 => hex.to_string(),
         3 => hex.chars().flat_map(|c| [c, c]).collect(),
-        _ => unreachable!("gen_pygments_data.py admits #rgb and #rrggbb"),
+        _ => broken("gen_pygments_data.py admits #rgb and #rrggbb"),
     }
 }
 
@@ -78,7 +79,7 @@ fn token_color(style: &PygmentsStyle, known: &HashSet<String>, token: &str) -> S
         if known.contains(ttype) {
             return style_color(style.definitions, ttype);
         }
-        ttype = ttype.rsplit_once('.').expect("Token is always known").0;
+        ttype = ttype.rsplit_once('.').held("Token is always known").0;
     }
 }
 
@@ -117,10 +118,13 @@ pub fn highlight_code(
     theme: &str,
 ) -> Result<Option<Vec<Vec<CodeSegment>>>, String> {
     let alias = language.to_lowercase();
-    let Ok(at) = LEXER_ALIASES.binary_search_by_key(&alias.as_str(), |(a, _)| a) else {
+    let Some(&(_, class)) = LEXER_ALIASES
+        .binary_search_by_key(&alias.as_str(), |(a, _)| a)
+        .ok()
+        .and_then(|found| LEXER_ALIASES.get(found))
+    else {
         return Ok(None);
     };
-    let class = LEXER_ALIASES[at].1;
     let port = match (class, pygments_lexer::lexer(class)) {
         ("YamlLexer", _) => None,
         (_, Some(lexer)) => Some(lexer),
@@ -157,7 +161,7 @@ pub fn highlight_code(
             if !part.is_empty() {
                 lines
                     .last_mut()
-                    .expect("lines is never empty")
+                    .held("lines is never empty")
                     .push((part.to_string(), fill.clone()));
             }
         }

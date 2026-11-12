@@ -133,7 +133,6 @@ fn read(
     };
     chain.pop();
     inlined?;
-    imports.boards = true;
     Ok(Some(NestedBoardAuthored {
         body,
         ..NestedBoardAuthored::default()

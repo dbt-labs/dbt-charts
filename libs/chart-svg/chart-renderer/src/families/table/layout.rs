@@ -3,7 +3,7 @@
 
 use super::bind::build_cell_data;
 use super::bind::cell_text_with_glyph;
-use super::bind::coerce_numeric_cell;
+use crate::conditional::coerce_numeric_cell;
 use super::bind::column_font_lanes;
 use super::bind::glyph_possible;
 use super::bind::glyph_run;
@@ -23,7 +23,7 @@ use super::bind::spark_series;
 use super::bind::spark_threshold_color;
 use super::bind::swatch_color;
 use super::bind::unpadded_cell_text;
-use super::bind::urlencode_plus;
+use crate::href::quote_plus;
 use super::bind::wants_tabular_font;
 use super::numeral_paint_family;
 use super::sanitize_color;
@@ -636,7 +636,7 @@ pub(super) fn column_demand(
         .take(measure::SAMPLE_ROWS)
         .map(|(cell, row)| {
             let raw_value = row.get(col.name.as_str()).filter(|v| !v.is_null());
-            let text = cell_text_with_glyph(col, raw_value, &measured_cell_text(cell))?;
+            let text = cell_text_with_glyph(col, row, raw_value, &measured_cell_text(cell))?;
             Ok((text, cell_measure_family(col, row, families)))
         })
         .collect::<Result<Vec<(String, &str)>, String>>()?;
@@ -2555,6 +2555,7 @@ impl TableBody<'_> {
                     Role::Label,
                     (x, text_y),
                     Attrs::new()
+                        .quick("data-dct-role", "table-cell")
                         .quick("font-size", font_size.to_string())
                         .quick("fill", ink)
                         .quick("text-anchor", anchor)
@@ -2719,8 +2720,8 @@ impl TableBody<'_> {
                         .map(|v| {
                             format!(
                                 "?{}={}",
-                                urlencode_plus(col.name.as_str()),
-                                urlencode_plus(&py_str(v))
+                                quote_plus(col.name.as_str()),
+                                quote_plus(&py_str(v))
                             )
                         }),
                 };
@@ -2818,6 +2819,7 @@ impl TableBody<'_> {
                         Role::Label,
                         (cx + col_ws[ci] / 2.0, text_y),
                         Attrs::new()
+                            .quick("data-dct-role", "table-cell")
                             .quick_some("class", cell_link_class)
                             .quick("font-size", font_size.to_string())
                             .quick("fill", fill_color)
@@ -2877,6 +2879,7 @@ impl TableBody<'_> {
                         Role::Label,
                         (first_x, text_y),
                         Attrs::new()
+                            .quick("data-dct-role", "table-cell")
                             .quick_some("class", cell_link_class)
                             .quick_some("text-anchor", left_run.then_some("start"))
                             .quick("font-size", font_size.to_string())
@@ -2984,6 +2987,7 @@ impl TableBody<'_> {
                                 Role::Label,
                                 (tx, first_y),
                                 Attrs::new()
+                                    .quick("data-dct-role", "table-cell")
                                     .quick_some("class", cell_link_class)
                                     .quick("font-size", font_size.to_string())
                                     .quick("fill", fill_color)
@@ -3024,6 +3028,7 @@ impl TableBody<'_> {
                                 Role::Label,
                                 (tx, text_y),
                                 Attrs::new()
+                                    .quick("data-dct-role", "table-cell")
                                     .quick_some("class", cell_link_class)
                                     .quick("font-size", font_size.to_string())
                                     .quick("fill", fill_color)
@@ -3685,7 +3690,7 @@ pub(super) fn column_inputs(
             let mut glyph_term = 0.0_f64;
             for (row, text) in rows.iter().zip(&texts) {
                 let raw_value = row.get(col.name.as_str()).filter(|v| !v.is_null());
-                let glyph = resolve_cell_glyph(&col.cfg, &col.when_rules, raw_value)?;
+                let glyph = resolve_cell_glyph(col, row, raw_value)?;
                 let glyph_w =
                     fonts.measure(&glyph_run(glyph.as_deref()), families.body, font_size)?;
                 glyph_term =
@@ -4002,7 +4007,7 @@ pub(crate) fn lay_out(
                 let rendered = unpadded_cell_text(cell);
                 let raw_value = rows[ri].get(col.name.as_str()).filter(|v| !v.is_null());
                 let w = fonts.measure(
-                    &cell_text_with_glyph(col, raw_value, &rendered)?,
+                    &cell_text_with_glyph(col, &rows[ri], raw_value, &rendered)?,
                     cell_measure_family(col, &rows[ri], &measure_fonts),
                     font_now,
                 )?;
@@ -4186,7 +4191,7 @@ pub(crate) fn lay_out(
                 // over after it — subtracted only past the guard above, so
                 // a glyph never pushes a cell through it.
                 let raw_value = rows[ri].get(col.name.as_str()).filter(|v| !v.is_null());
-                let glyph = resolve_cell_glyph(&col.cfg, &col.when_rules, raw_value)?;
+                let glyph = resolve_cell_glyph(col, &rows[ri], raw_value)?;
                 let glyph_w =
                     fonts.measure(&glyph_run(glyph.as_deref()), measure_family, font_size)?;
                 let cell_content_w = content_w - glyph_w;
@@ -4317,7 +4322,7 @@ pub(crate) fn lay_out(
             // A glyph sits left of the prefix lane; both are measured so the
             // lane reserves glyph + gap + prefix.
             let raw_value = rows[ri].get(col.name.as_str()).filter(|v| !v.is_null());
-            let glyph = resolve_cell_glyph(&col.cfg, &col.when_rules, raw_value)?;
+            let glyph = resolve_cell_glyph(col, &rows[ri], raw_value)?;
             if let Some(g) = glyph.as_deref() {
                 max_glyph_w = max_glyph_w.max(fonts.measure(g, tab_measure_family, font_size)?);
             }
@@ -4922,6 +4927,7 @@ pub(crate) fn lay_out(
                     Role::Label,
                     (center_x, label_y),
                     Attrs::new()
+                        .quick("data-dct-role", "table-header")
                         .quick("font-size", header_size.to_string())
                         .quick("font-weight", header_weight.as_str())
                         .quick("fill", header_color)
@@ -5000,6 +5006,7 @@ pub(crate) fn lay_out(
             Role::Label,
             (x, header_text_y),
             Attrs::new()
+                .quick("data-dct-role", "table-header")
                 .quick("font-size", header_size.to_string())
                 .quick("font-weight", header_weight.as_str())
                 .quick("fill", header_color)
@@ -5035,6 +5042,7 @@ pub(crate) fn lay_out(
                 && col.cfg.header_link.is_none();
             let header_attrs = || {
                 Attrs::new()
+                    .quick("data-dct-role", "table-header")
                     .set_if(
                         pool_page_rows.is_some(),
                         "data-col",

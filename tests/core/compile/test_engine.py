@@ -1,13 +1,15 @@
 """`engine_compile` reads a project and calls the Rust compile with the live analyzer."""
 
 import json
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 
 from dbt_charts import _engine
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.compile.engine import engine_compile, engine_index
+from dbt_charts.core.compile import sql_analysis
+from dbt_charts.core.compile.engine import _Files, engine_compile, engine_index
 
 from ..._paths import DBT_CHARTS_DIR
 
@@ -50,11 +52,152 @@ def test_a_board_compiles_through_the_project_and_its_sql_is_analyzed(
     assert board.diagnostics() == []
 
 
+def test_a_content_override_stands_in_for_the_boards_file_alone(
+    tmp_path: Path,
+) -> None:
+    proj = project(tmp_path, {"charts/a.yml": BOARD, "base.yml": "title: Base"})
+    buffer = BOARD.replace("title: Sales", "title: Unsaved")
+    board = engine_compile(proj.path("charts/a.yml"), content=buffer)
+    assert json.loads(board.index_json())["title"] == "Unsaved"
+    # Without one, the file on disk is read, and the `extends` still reads `base.yml`.
+    assert (
+        json.loads(engine_compile(proj.path("charts/a.yml")).index_json())["title"]
+        == "Sales"
+    )
+
+
+def test_a_board_with_no_path_inherits_no_meta_and_reads_no_relative_ref(
+    tmp_path: Path,
+) -> None:
+    meta = "regional:\n  time_zone: Asia/Tokyo\n"
+    proj = project(
+        tmp_path,
+        {"meta.yml": meta, "a.yml": BOARD, "base.yml": "title: Base"},
+    )
+    zone = lambda board: json.loads(  # noqa: E731
+        _engine.plan(board, "{}", "{}", 1_770_000_000, False, False, True, None)
+    )["time_zone"]
+    assert zone(engine_compile(proj.path("a.yml"))) == "Asia/Tokyo"
+    pathless = engine_compile(
+        None, content=BOARD.replace("extends: base\n", ""), project=proj
+    )
+    assert zone(pathless) == "UTC"
+    with pytest.raises(_engine.CompileError, match="no project location"):
+        engine_compile(None, content=BOARD, project=proj)  # `extends: base` is a ref
+    with pytest.raises(ValueError, match="needs its text"):
+        engine_compile(None, project=proj)
+
+
+def test_a_board_with_no_path_reads_its_template_from_the_project_root(
+    tmp_path: Path,
+) -> None:
+    proj = project(tmp_path, {"templates/x.svg.j2": "<svg/>"})
+    text = (
+        "source: wh\ncharts:\n  c:\n    type: custom\n    template: x\n"
+        "    query:\n      sql: select 1 as a\nrows:\n  - c\n"
+    )
+    assert engine_compile(None, content=text, project=proj).diagnostics() == []
+    with pytest.raises(_engine.CompileError, match="templates/y.svg.j2 not found"):
+        engine_compile(None, content=text.replace("x\n", "y\n"), project=proj)
+
+
 def test_a_refused_board_raises_with_its_codes(tmp_path: Path) -> None:
     proj = project(tmp_path, {"charts/a.yml": "bogus_key: 1\n"})
     with pytest.raises(_engine.CompileError) as raised:
         engine_compile(proj.path("charts/a.yml"))
     assert [d["code"] for d in raised.value.diagnostics] == ["ERR-EXTRA-FIELD"]
+
+
+class _Denied(FilesystemProject):
+    """A project whose reads of one file fail as a permission error does."""
+
+    denied = ""
+
+    def read_text(self, relpath: str) -> str:
+        if relpath == self.denied:
+            raise PermissionError(13, "Permission denied", relpath)
+        return super().read_text(relpath)
+
+
+@pytest.mark.parametrize("denied", ["charts/a.yml", "base.yml"])
+def test_a_project_read_that_raises_is_a_registered_refusal_not_a_panic(
+    tmp_path: Path, denied: str
+) -> None:
+    proj = project(tmp_path, {"charts/a.yml": BOARD, "base.yml": "title: Base"})
+    host = _Denied(proj.root)
+    host.denied = denied
+    with pytest.raises(_engine.CompileError) as raised:
+        engine_compile(host.path("charts/a.yml"))
+    [d] = raised.value.diagnostics
+    assert d["code"] == "ERR-PROJECT-FILE-UNREADABLE"
+    assert denied in d["params"]["path"]
+    assert "Permission denied" in d["params"]["reason"]
+
+
+def test_a_keyboard_interrupt_from_the_project_reaches_the_caller(
+    tmp_path: Path,
+) -> None:
+    class Interrupting(FilesystemProject):
+        def read_text(self, relpath: str) -> str:
+            if relpath == "base.yml":
+                raise KeyboardInterrupt
+            return super().read_text(relpath)
+
+    proj = project(tmp_path, {"charts/a.yml": BOARD, "base.yml": "title: Base"})
+    with pytest.raises(KeyboardInterrupt):
+        engine_compile(Interrupting(proj.root).path("charts/a.yml"))
+
+
+def test_a_keyboard_interrupt_from_the_analyzer_reaches_the_caller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def interrupted(*_: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(sql_analysis, "analyze_all", interrupted)
+    proj = project(tmp_path, {"charts/a.yml": BOARD, "base.yml": "title: Base"})
+    with pytest.raises(KeyboardInterrupt):
+        engine_compile(proj.path("charts/a.yml"))
+
+
+def test_a_folder_that_cannot_be_listed_raises_instead_of_listing_short(
+    tmp_path: Path,
+) -> None:
+    class Locked(FilesystemProject):
+        def iter_files(
+            self,
+            under: str,
+            *,
+            recursive: bool,
+            onerror: Callable[[str, OSError], None] | None = None,
+        ) -> Iterator[str]:
+            assert onerror is not None
+            onerror("templates/locked", PermissionError(13, "Permission denied"))
+            yield from ()
+
+    with pytest.raises(PermissionError):
+        _Files(Locked(tmp_path), {}).list("templates")
+
+
+def test_an_analyzer_that_raises_refuses_the_board_not_panics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*_: object) -> None:
+        raise RuntimeError("analyzer exploded")
+
+    monkeypatch.setattr(sql_analysis, "analyze_all", broken)
+    proj = project(tmp_path, {"charts/a.yml": BOARD, "base.yml": "title: Base"})
+    with pytest.raises(_engine.CompileError) as raised:
+        engine_compile(proj.path("charts/a.yml"))
+    [d] = raised.value.diagnostics
+    assert "analyzer exploded" in json.dumps(d)
+
+
+def test_a_missing_file_is_still_missing_not_unreadable(tmp_path: Path) -> None:
+    proj = project(tmp_path, {})
+    with pytest.raises(_engine.CompileError) as raised:
+        engine_compile(proj.path("charts/gone.yml"))
+    assert [d["code"] for d in raised.value.diagnostics] == ["ERR-FILE-NOT-FOUND"]
 
 
 RETIRED_KEY_BOARD = """\
@@ -88,7 +231,7 @@ def test_a_refusal_names_the_successor_of_a_retired_key_and_keeps_the_migration_
     with pytest.raises(_engine.CompileError) as raised:
         engine_compile(proj.path("charts/a.yml"))
 
-    errors = _refusal_diagnostics(raised.value, "charts/a.yml")
+    errors = _refusal_diagnostics(raised.value)
     zero = next(e for e in errors if e.code == "ERR-RETIRED-FIELD")
     assert (
         "'zero' at charts.revenue_trend.style.axis_y.grid was renamed" in zero.message
@@ -113,6 +256,29 @@ def test_the_compile_reads_the_projects_own_html_ceiling(tmp_path: Path) -> None
     )
     with pytest.raises(_engine.CompileError, match="html_policy_ceiling"):
         engine_compile(proj.path("charts/a.yml"))
+
+
+def test_the_plan_resolves_the_cache_through_the_project_root_and_the_sources_layer(
+    tmp_path: Path,
+) -> None:
+    config = (
+        "cache: 4h\nsources:\n  wh:\n    type: duckdb\n    path: wh.duckdb\n"
+        "    cache: false\n"
+    )
+    proj = project(
+        tmp_path,
+        {"dbt_charts.yml": config, "charts/a.yml": BOARD, "base.yml": "title: Base"},
+    )
+    board = engine_compile(proj.path("charts/a.yml"))
+    plan = json.loads(
+        _engine.plan(board, "{}", "{}", 1_770_000_000, False, False, True, None)
+    )
+    # The root's 4h reaches the query; the source's `cache: false` switches it off.
+    assert plan["queries"]["q"]["cache"] == {
+        "enabled": False,
+        "ttl": "4h",
+        "prefetch": False,
+    }
 
 
 def test_a_dbt_projects_implicit_source_serves_a_query_naming_none(

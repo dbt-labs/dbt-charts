@@ -365,7 +365,7 @@ def test_style_font_chains_in_graph():
 
     # title.font inherits from root font
     assert graph.get("Style.title.font.color") == "Style.font.color"
-    assert graph.get("Style.title.font.size") == "Style.font.size"
+    assert "Style.title.font.size" not in graph
 
     # title.subtitle.font inherits from root font
     assert graph.get("Style.title.subtitle.font.color") == "Style.font.color"

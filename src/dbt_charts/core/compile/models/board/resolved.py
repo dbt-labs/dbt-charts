@@ -45,25 +45,20 @@ def _is_magnitude_colored(channels: dict[str, ResolvedStyleChannel]) -> bool:
     """True when this chart's ``color`` channel paints a quantitative value.
 
     ``"gradient"`` mode is always a continuous sequential/diverging ramp.
-    ``"conditional"`` mode is also unsafe when it carries a continuous
-    ``fallback_scale`` — a Looker-style "scale with rule override" is still a
-    quantitative ramp wherever no threshold rule matches. ``quantitative_data``
+    ``quantitative_data``
     covers bare, undecorated color authoring (``color: <field>``) that IS a
     magnitude ramp by data, even though that authoring never sets mode to
     "gradient" — every cartesian family's own emitter renders exactly this
     shape as a continuous gradient legend (see
     ``ResolvedStyleChannel.quantitative_data``, set generically for every
     family by ``_flag_quantitative_color`` in ``compile/resolve/chart/
-    _channels.py``). Plain rule-based conditional colors (no fallback scale),
-    a genuinely categorical ``"series"``, and ``"literal"`` all stay
-    eligible: rewriting them does not change what any of them mean.
+    _channels.py``). A genuinely categorical ``"series"`` and ``"literal"``
+    stay eligible: rewriting them does not change what either means.
     """
     color = channels.get("color")
     if color is None:
         return False
-    if color.mode == "gradient" or color.quantitative_data:
-        return True
-    return color.mode == "conditional" and color.fallback_scale is not None
+    return color.mode == "gradient" or color.quantitative_data
 
 
 @dataclass(frozen=True)

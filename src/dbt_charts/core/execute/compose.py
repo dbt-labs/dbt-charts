@@ -14,9 +14,7 @@ from typing import TYPE_CHECKING
 
 from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
 from dbt_charts.core.compile.models.query.normalized import (
-    AnyQuery,
     SqlQuery,
-    is_sql_query,
 )
 from dbt_charts.core.compile.models.source import SemanticSourceConfig, is_file_source
 from dbt_charts.core.compile.sql_guard import validate_select_only, validate_setup_sql
@@ -46,6 +44,7 @@ from dbt_charts.core.execute.sql_literals import (
     inline_params_for_dialect,
 )
 from dbt_charts.core.execute.sql_translate import (
+    QueryRegistry,
     dialect_differs,
     dialect_unsupported,
     engine_dialect,
@@ -93,11 +92,16 @@ def _file_source_refs_error(sql: str) -> QueryResult:
 
 
 def compose(
-    query: SqlQuery,
+    sql: str,
     *,
+    setup_sql: str | None,
+    dialect: str | None,
+    strict: bool,
+    limit: RowFetchLimit,
+    queries: QueryRegistry | None,
+    time_zone: TimeZoneName,
     variables: VariableValues | None,
     params: QueryParams,
-    board: Board | None,
     source_config: ResolvedSourceConfig,
     dialect_name: str,
     render_dialect: SQLDialect,
@@ -107,11 +111,16 @@ def compose(
     """Resolve, compose, translate, render and guard one SQL query.
 
     Args:
-        query: The planned query.
+        sql: The query's SQL, ``{{ queries.X }}`` still unexpanded.
+        setup_sql: The preamble that runs before it, already chained.
+        dialect: The warehouse the SQL is written in, when not the source's.
+        strict: Whether an undefined variable raises.
+        limit: The row limit the backend fetches to.
+        queries: Supplies the ``{{ queries.X }}`` registry (name to an entry with ``sql``).
+        time_zone: The session zone the query runs in.
         variables: Variable values the SQL and ``setup_sql`` render with.
         params: Bindings the caller already rendered the SQL against, or None
             to render here. Pre-rendered SQL cannot be translated.
-        board: Supplies the ``{{ queries.X }}`` registry.
         source_config: The query's resolved source.
         dialect_name: The warehouse that parses the final SQL.
         render_dialect: Placeholder style of the SQL and params returned.
@@ -123,14 +132,12 @@ def compose(
         with, so one error shape propagates whichever step produced it.
     """
     target_path = source_target_path(source_config)
-    queries = board.queries if board is not None else None
-    strict = not query.lenient_variables
     bound_variables = variables if variables is not None else {}
 
     translate = semantic is not None and params is None
-    if query.dialect is not None:
+    if dialect is not None:
         try:
-            translate = translate or dialect_differs(query.dialect, source_config)
+            translate = translate or dialect_differs(dialect, source_config)
         except DbtChartsError as exc:
             return handle_adapter_error("Dialect translation", exc)
 
@@ -140,19 +147,19 @@ def compose(
             return handle_adapter_error(
                 "Dialect translation",
                 dialect_unsupported(
-                    query.dialect if query.dialect is not None else source_config.type,
+                    dialect if dialect is not None else source_config.type,
                     source_config.type,
                     "its SQL arrived already rendered with bound parameters",
                 ),
             )
         try:
             read = (
-                query.dialect
-                if query.dialect is not None
+                dialect
+                if dialect is not None
                 else engine_dialect(source_config.type, source_config)
             )
             sql, rendered_params = render_in_dialect(
-                query.sql,
+                sql,
                 read,
                 engine_dialect(read, source_config),
                 bound_variables,
@@ -169,11 +176,11 @@ def compose(
             return plain_error(str(exc))
     else:
         file_source = is_file_source(source_config)
-        if file_source and has_dbt_jinja(query.sql):
-            return _file_source_refs_error(query.sql)
+        if file_source and has_dbt_jinja(sql):
+            return _file_source_refs_error(sql)
         try:
             sql, relations = (
-                (query.sql, []) if file_source else refs.resolve(query.sql, target_path)
+                (sql, []) if file_source else refs.resolve(sql, target_path)
             )
         except DbtChartsError as exc:
             return handle_adapter_error("dbt ref resolution", exc)
@@ -204,26 +211,26 @@ def compose(
         else:
             rendered_params = list(params)
 
-    setup_sql: tuple[str, ...] = ()
-    if query.setup_sql:
-        resolved_setup = resolve_setup_sql(query.setup_sql, variables)
+    setup_statements: tuple[str, ...] = ()
+    if setup_sql:
+        resolved_setup = resolve_setup_sql(setup_sql, variables)
         if isinstance(resolved_setup, QueryResult):
             return resolved_setup
-        setup_sql = (resolved_setup,)
+        setup_statements = (resolved_setup,)
 
     resolved = ResolvedQuery(
         sql=sql,
         params=tuple(rendered_params),
-        setup_sql=setup_sql,
-        limit=resolve_effective_row_limit(query.limit),
-        time_zone=board.regional.time_zone if board is not None else UTC,
+        setup_sql=setup_statements,
+        limit=limit,
+        time_zone=time_zone,
         resolved_relations=tuple(relations),
     )
     try:
         # setup_sql and the main statement have different allowlists, and the
         # guard parses literals: inline-style placeholders are not SQL any
         # engine reads, so they are flattened for the check only.
-        for statement in setup_sql:
+        for statement in setup_statements:
             validate_setup_sql(statement, dialect=dialect_name)
         validate_select_only(
             resolved.inline(dialect_name)
@@ -261,6 +268,84 @@ def semantic_layer(
 
 
 def compose_sql(
+    sql: str,
+    *,
+    setup_sql: str | None,
+    dialect: str | None,
+    strict: bool,
+    limit: RowFetchLimit,
+    queries: QueryRegistry | None,
+    time_zone: TimeZoneName,
+    variables: VariableValues | None,
+    params: QueryParams,
+    source_config: ResolvedSourceConfig,
+    render_dialect: SQLDialect,
+    refs: DbtRefResolver,
+    project: Project,
+) -> ResolvedQuery | QueryResult:
+    """``compose`` for the source's own dialect, loading its MetricFlow bundle."""
+    try:
+        semantic = semantic_layer(project, source_config)
+    except DbtChartsError as exc:
+        return handle_adapter_error("MetricFlow", exc)
+    return compose(
+        sql,
+        setup_sql=setup_sql,
+        dialect=dialect,
+        strict=strict,
+        limit=limit,
+        queries=queries,
+        time_zone=time_zone,
+        variables=variables,
+        params=params,
+        source_config=source_config,
+        dialect_name=source_config.type,
+        render_dialect=render_dialect,
+        refs=refs,
+        semantic=semantic,
+    )
+
+
+def compose_file_source(
+    sql: str,
+    *,
+    setup_sql: str | None,
+    dialect: str | None,
+    strict: bool,
+    limit: RowFetchLimit,
+    queries: QueryRegistry | None,
+    time_zone: TimeZoneName,
+    variables: VariableValues | None,
+    params: QueryParams,
+    source_config: ResolvedSourceConfig,
+    render_dialect: SQLDialect,
+    refs: DbtRefResolver,
+) -> ResolvedQuery | QueryResult:
+    """``compose`` for a file source, whose SQL is DuckDB's: *render_dialect* is the placeholder
+    style, DuckDB's for the materializer (what ``materialize_and_run``'s own render would
+    have used) or the inline style for a caller that only wants the text."""
+    try:
+        return compose(
+            sql,
+            setup_sql=setup_sql,
+            dialect=dialect,
+            strict=strict,
+            limit=limit,
+            queries=queries,
+            time_zone=time_zone,
+            variables=variables,
+            params=params,
+            source_config=source_config,
+            dialect_name="duckdb",
+            render_dialect=render_dialect,
+            refs=refs,
+            semantic=None,
+        )
+    except DbtChartsError as exc:
+        return handle_adapter_error("File-source execution", exc)
+
+
+def compose_pydantic(
     query: SqlQuery,
     variables: VariableValues | None,
     params: QueryParams,
@@ -271,93 +356,22 @@ def compose_sql(
     refs: DbtRefResolver,
     project: Project,
 ) -> ResolvedQuery | QueryResult:
-    """``compose`` for the source's own dialect, loading its MetricFlow bundle."""
-    try:
-        semantic = semantic_layer(project, source_config)
-    except DbtChartsError as exc:
-        return handle_adapter_error("MetricFlow", exc)
-    return compose(
-        query,
+    """``compose_sql`` over a compiled ``SqlQuery`` and its board."""
+    return compose_sql(
+        query.sql,
+        setup_sql=query.setup_sql,
+        dialect=query.dialect,
+        strict=not query.lenient_variables,
+        limit=resolve_effective_row_limit(query.limit),
+        queries=board.queries if board is not None else None,
+        time_zone=board.regional.time_zone if board is not None else UTC,
         variables=variables,
         params=params,
-        board=board,
         source_config=source_config,
-        dialect_name=source_config.type,
         render_dialect=render_dialect,
         refs=refs,
-        semantic=semantic,
-    )
-
-
-def compose_query(
-    query: AnyQuery,
-    *,
-    board: Board,
-    variables: VariableValues,
-    source_config: ResolvedSourceConfig,
-    refs: DbtRefResolver,
-    project: Project,
-) -> ResolvedQuery | QueryResult:
-    """The query a run would send, composed but not sent.
-
-    Same composition a run does, stopping at the connection, with params in
-    the inline style. This is what a caller needs when the warehouse itself
-    offers a way to inspect a query it never runs, such as a BigQuery dry run.
-    The caller resolves the source, which it has to know anyway to decide that
-    a dry run is the right mechanism.
-    """
-    if not is_sql_query(query):
-        return plain_error(f"Expected SQL query, got {query.query_type}")
-    return compose_sql(
-        query,
-        variables,
-        None,
-        board,
-        source_config,
-        INLINE_PLACEHOLDERS,
-        refs=refs,
         project=project,
     )
-
-
-def translate_query(
-    query: SqlQuery,
-    *,
-    board: Board,
-    variables: VariableValues,
-    source_config: ResolvedSourceConfig,
-    refs: DbtRefResolver,
-    project: Project,
-) -> SqlQuery | QueryResult:
-    """The query as its source's engine would receive it, values inlined.
-
-    For a caller that must put text of its own around the SQL, like a
-    ``EXPLAIN`` prefix, and so cannot let a run translate afterwards. The query
-    must carry a ``dialect:``; the result carries none. One already in its
-    source's dialect comes back unchanged. A translation failure comes back as
-    the error a run would have returned.
-    """
-    assert query.dialect is not None
-    try:
-        differs = dialect_differs(query.dialect, source_config)
-    except DbtChartsError as exc:
-        return handle_adapter_error("Dialect translation", exc)
-    if not differs:
-        return query
-    if is_file_source(source_config):
-        return file_source_dialect_refusal(query.dialect)
-    resolved = compose_query(
-        query,
-        board=board,
-        variables=variables,
-        source_config=source_config,
-        refs=refs,
-        project=project,
-    )
-    if isinstance(resolved, QueryResult):
-        return resolved
-    sql = resolved.inline(engine_dialect(query.dialect, source_config))
-    return query.model_copy(update={"sql": sql, "dialect": None})
 
 
 def file_source_dialect_refusal(dialect: str) -> QueryResult:

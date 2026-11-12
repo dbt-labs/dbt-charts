@@ -7,28 +7,10 @@ to avoid code duplication.
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
-
-from dbt_charts.core.utils import Rows
-
-if TYPE_CHECKING:
-    from dbt_charts.core.compile.models.primitives import ToneLiteral
-    from dbt_charts.core.compile.models.style.theme import KpiTonesStyle
-
-
-def resolve_tone_color(tone: ToneLiteral, tones: KpiTonesStyle) -> str:
-    """Resolve a semantic tone name to its theme-provided color.
-
-    The single tone->color resolver shared by KPI value/glyph rendering and
-    table conditional-formatting glyphs, so both surfaces read tone hexes
-    from the same theme-provided ``KpiTonesStyle`` rather than duplicating
-    the lookup. Both callers guard ``None`` before delegating, so ``tone``
-    is always an authored tone name here.
-    """
-    return getattr(tones, tone)
-
+from typing import Any
 
 from dbt_charts.core.text.humanize import slug_to_text as slug_to_text  # re-exported
+from dbt_charts.core.utils import Rows
 
 
 def normalize_scalar_for_json(value: Any) -> Any:

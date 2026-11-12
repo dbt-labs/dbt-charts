@@ -126,7 +126,7 @@ _QUERY_NAME_RE = re.compile(r"^(?:queries\.)?[a-zA-Z_][a-zA-Z0-9_]*$")
 _SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # The row count a column-bound options query returns beside each value, for the
-# menu to draw and sort by. Lowercase: adapters lowercase result column names.
+# menu to draw and sort by. Lowercase, as every adapter reports an unquoted alias.
 # Never one of the names the option reader takes for the value column.
 OPTION_COUNT_COLUMN = "dbt_option_count"
 

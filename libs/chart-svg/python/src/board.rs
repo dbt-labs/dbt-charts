@@ -242,7 +242,7 @@ fn seg_text(seg: &migrate::Seg) -> String {
 fn edit_to_py<'py>(py: Python<'py>, edit: &migrate::Edit) -> PyResult<Bound<'py, PyDict>> {
     let out = PyDict::new(py);
     match edit {
-        migrate::Edit::Move { from, to, before, after, rewrite, value_map, expansion, declared, .. } => {
+        migrate::Edit::Move { from, to, before, after, rewrite, value_map, expansion, declared, merged_into, .. } => {
             out.set_item("kind", "move")?;
             out.set_item("item", matches!(from.last(), Some(migrate::Seg::Index(_))))?;
             out.set_item("from", from.iter().map(seg_text).collect::<Vec<_>>())?;
@@ -256,6 +256,9 @@ fn edit_to_py<'py>(py: Python<'py>, edit: &migrate::Edit) -> PyResult<Bound<'py,
             out.set_item("value_map", *value_map)?;
             out.set_item("expansion", *expansion)?;
             out.set_item("declared", declared)?;
+            if let Some(held) = merged_into {
+                out.set_item("merged_into", json_to_py(py, held.as_ref())?)?;
+            }
         }
         migrate::Edit::Write { path, value } => {
             out.set_item("kind", "write")?;
@@ -285,7 +288,8 @@ fn edit_to_py<'py>(py: Python<'py>, edit: &migrate::Edit) -> PyResult<Bound<'py,
 /// `error_kind` one of `unsupported`, `incomplete`, `conflict`, `migration`.
 /// What a `dct migrate` text writer replays: each edit a dict (`kind` `move`
 /// with `from`, `to`, `before`, `after` (absent when `dropped`), `rewrite`,
-/// `value_map`, `expansion`, `item` (the value sat in a list), `declared`;
+/// `value_map`, `expansion`, `item` (the value sat in a list), `declared`,
+/// `merged_into` (present when the move merged into a mapping the destination held: that mapping);
 /// `write` with `path` and `value`, `None` to strike the key; or `delete` with
 /// `path`, a list position an int).
 #[pyfunction]

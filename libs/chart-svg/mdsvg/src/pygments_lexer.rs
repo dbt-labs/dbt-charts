@@ -7,6 +7,7 @@
 //! The YAML lexer is an `ExtendedRegexLexer` with callbacks and lives in
 //! `pygments_yaml.rs`; it shares the state-stack transition below.
 
+use d3rs::invariant::Invariant;
 use std::collections::HashMap;
 
 use once_cell::sync::Lazy;
@@ -128,8 +129,12 @@ impl Compiled {
     fn run(&self, text: &str, offset: usize, out: &mut Vec<Span>) {
         let (mut pos, mut stack) = (0, vec!["root"]);
         'lex: loop {
-            let state = *stack.last().expect("state stack is never empty");
-            for (pattern, rule) in &self.rules[state] {
+            let state = *stack.last().held("state stack is never empty");
+            let rules = self
+                .rules
+                .get(state)
+                .held("a rule's push names a state of this lexer");
+            for (pattern, rule) in rules {
                 let Some(hit) = pattern.find(text, pos) else {
                     continue;
                 };
@@ -201,6 +206,24 @@ pub fn lexer(class: &str) -> Option<&'static Lexer> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_pushed_state_is_a_state_of_its_lexer() {
+        for def in [&tables::SQL, &tables::PYTHON, &tables::BASH] {
+            assert!(def.states.iter().any(|s| s.name == "root"), "{}", def.class);
+            for rule in def.states.iter().flat_map(|s| s.rules) {
+                if let Next::Push(targets) = rule.next {
+                    for target in targets {
+                        assert!(
+                            def.states.iter().any(|s| s.name == *target),
+                            "{} pushes `{target}`",
+                            def.class
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn the_heredoc_pattern_is_the_one_in_the_table() {

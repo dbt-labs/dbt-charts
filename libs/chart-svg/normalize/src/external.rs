@@ -93,7 +93,7 @@ impl External<'_> {
         let dir_name = if dir.is_empty() { "." } else { dir };
         let path = ProjectPath::anchored(dir, file)
             .map_err(|e| unresolved(spec, format!("{} \u{2014} {e}", py_str_repr(dir_name))))?;
-        let text = self.files.read(&path).ok_or_else(|| {
+        let text = self.files.read(&path)?.ok_or_else(|| {
             unresolved(
                 spec,
                 format!(
@@ -327,7 +327,7 @@ impl External<'_> {
     fn imported_chart(&self, spec: &str, dir: &str) -> Result<(yaml::Node, Origin), HoistError> {
         let (mut hop, mut hop_dir) = (spec.to_string(), dir.to_string());
         let mut visited: Vec<String> = Vec::new();
-        let (chart, path, file) = loop {
+        let (chart, name, path, file) = loop {
             let (file_part, name) = RefKind::Chart.parse(&hop).map_err(HoistError::Message)?;
             let (path, file) = self.open(&hop, &hop_dir, &with_suffix(file_part))?;
             let charts = Self::section("charts", &hop, &path, &file)?;
@@ -342,7 +342,7 @@ impl External<'_> {
                 ));
             };
             let Some(next) = ref_of(&entry.value, RefKind::Chart) else {
-                break (entry.value.clone(), path, file);
+                break (entry.value.clone(), name, path, file);
             };
             let site = format!("{path}.charts.{name}");
             if visited.contains(&site) {
@@ -354,13 +354,14 @@ impl External<'_> {
             hop_dir = dir_of(&path).to_string();
             hop = next;
         };
-        refuse_text_queries(&chart, spec)?;
         let source = self.declared_source(&path, &file)?;
         let origin = Origin {
             spec: spec.to_string(),
             path,
             file,
             source,
+            chart: chart.clone(),
+            name,
         };
         Ok((chart, origin))
     }
@@ -397,7 +398,10 @@ impl External<'_> {
                     yaml::Kind::Seq(_) => "list",
                     yaml::Kind::Map(_) => "dict",
                 };
-                Err(HoistError::refused(diag::err_board_source_invalid(path.as_str(), got)))
+                Err(HoistError::refused(diag::err_board_source_invalid(
+                    path.as_str(),
+                    got,
+                )))
             }
         }
     }
@@ -450,6 +454,51 @@ impl External<'_> {
         let queries = Self::section("queries", &origin.spec, &path, &file)?;
         let source = self.declared_source(&path, &file)?;
         self.walk_query(query, &path, Some(queries), source.as_deref(), &mut walk)
+    }
+
+    /// The query each `queries.<name>` an imported chart's display text reads stands for (Python's
+    /// `text_query_keys`): the chart's own file declares it, or a `<file>#<name>` ref reaches it.
+    /// A bare name that file does not declare is `ERR-TEXT-UNKNOWN-QUERY`, whatever the importer
+    /// declares.
+    pub(crate) fn imported_text_queries(
+        &self,
+        origin: &Origin,
+        out: &mut Vec<(String, QueryPatch)>,
+        uses: &mut Vec<SourceUse>,
+    ) -> Result<BTreeMap<String, QueryId>, HoistError> {
+        let declared: Vec<String> = match &origin.file.kind {
+            yaml::Kind::Map(top) => match top.get("queries").map(|e| &e.value.kind) {
+                Some(yaml::Kind::Map(q)) => {
+                    let mut names: Vec<String> = q.keys().cloned().collect();
+                    names.sort();
+                    names
+                }
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        let mut read = BTreeMap::new();
+        for (field, text) in display_texts(&origin.chart) {
+            if !text.contains("queries") || !(text.contains("{{") || text.contains("{%")) {
+                continue;
+            }
+            let Ok(info) = template::parse(&text, template::Kind::Label) else {
+                continue;
+            };
+            for name in info.queries {
+                if !name.contains('#') && !declared.contains(&name) {
+                    return Err(HoistError::refused(diag::err_text_unknown_query(
+                        format!("Chart '{}' {field}", origin.name),
+                        name,
+                        declared,
+                    )));
+                }
+                if let std::collections::btree_map::Entry::Vacant(slot) = read.entry(name.clone()) {
+                    slot.insert(self.imported_query(&name, origin, out, uses)?);
+                }
+            }
+        }
+        Ok(read)
     }
 
     /// Query `name` of the file at `path` (Python's `_resolve_cross_board_query`): `queries` is that
@@ -574,6 +623,9 @@ pub struct Origin {
     path: ProjectPath,
     file: yaml::Node,
     source: Option<String>,
+    /// The chart as its file declares it, and its name there.
+    chart: yaml::Node,
+    name: String,
 }
 
 /// The charts of a board that a ref brought in, by their name in the importing board.
@@ -584,8 +636,6 @@ pub struct Imports {
     /// The `queries:` entries of the importing board that a ref stands in for: Python reads them
     /// as another file's queries, not as the board's own.
     pub queries: BTreeSet<String>,
-    /// Whether a layout placed a board file, which Python then compiles into the root's registry.
-    pub boards: bool,
     /// The positions of placed boards that are long prose, which the adjacent-text-rows warning
     /// counts toward a run without reporting them as authored rows.
     pub prose: BTreeSet<board_model::ids::ItemId>,
@@ -702,35 +752,47 @@ fn ref_of(node: &yaml::Node, kind: RefKind) -> Option<String> {
     kind.parse(text).ok().map(|_| text.to_string())
 }
 
-/// An imported chart whose display text reads a query (`{{ queries.x.one }}`) means one of its own
-/// file's, which only the chart's file can say; the text's query bindings are not carried yet, so
-/// the chart is refused rather than left to read the importer's query of that name.
-fn refuse_text_queries(chart: &yaml::Node, spec: &str) -> Result<(), HoistError> {
+/// The display-text fields of an authored chart, by path (Python's `display_texts`): a KPI's label
+/// and support label, a callout's title and message, any other family's title and subtitle, and a
+/// cartesian layer's label.
+fn display_texts(chart: &yaml::Node) -> Vec<(String, String)> {
     let yaml::Kind::Map(m) = &chart.kind else {
-        return Ok(());
+        return Vec::new();
     };
-    let mut texts: Vec<&yaml::Entry> = ["title", "subtitle", "label", "message"]
-        .into_iter()
-        .filter_map(|k| m.get(k))
-        .collect();
-    if let Some(yaml::Kind::Map(support)) = m.get("support").map(|e| &e.value.kind) {
-        texts.extend(support.get("label"));
+    let text = |node: Option<&yaml::Entry>| match node.map(|e| &e.value.kind) {
+        Some(yaml::Kind::Scalar(yaml::Value::Str(s))) => Some(s.clone()),
+        _ => None,
+    };
+    let kind = text(m.get("type")).unwrap_or_default();
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut add =
+        |field: &str, found: Option<String>| out.extend(found.map(|t| (field.to_string(), t)));
+    match kind.as_str() {
+        "kpi" => {
+            add("label", text(m.get("label")));
+            let support = match m.get("support").map(|e| &e.value.kind) {
+                Some(yaml::Kind::Map(s)) => text(s.get("label")),
+                _ => None,
+            };
+            add("support.label", support);
+        }
+        "callout" => {
+            add("title", text(m.get("title")));
+            add("message", text(m.get("message")));
+        }
+        _ => {
+            add("title", text(m.get("title")));
+            add("subtitle", text(m.get("subtitle")));
+        }
     }
-    if let Some(yaml::Kind::Seq(layers)) = m.get("layers").map(|e| &e.value.kind) {
-        for layer in layers {
-            if let yaml::Kind::Map(layer) = &layer.kind {
-                texts.extend(layer.get("label"));
+    if matches!(kind.as_str(), "area" | "bar" | "line" | "scatter") {
+        if let Some(yaml::Kind::Seq(layers)) = m.get("layers").map(|e| &e.value.kind) {
+            for (i, layer) in layers.iter().enumerate() {
+                if let yaml::Kind::Map(layer) = &layer.kind {
+                    add(&format!("layers[{i}].label"), text(layer.get("label")));
+                }
             }
         }
     }
-    for entry in texts {
-        if let yaml::Kind::Scalar(yaml::Value::Str(text)) = &entry.value.kind {
-            if text.contains("queries") && (text.contains("{{") || text.contains("{%")) {
-                return Err(HoistError::NotYet(format!(
-                    "chart ref '{spec}': display text reading a query of the imported chart's file is not compiled yet"
-                )));
-            }
-        }
-    }
-    Ok(())
+    out
 }

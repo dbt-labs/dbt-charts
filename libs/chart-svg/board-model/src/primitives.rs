@@ -481,12 +481,9 @@ pub struct ScaleTargetConfig {
     pub rest: ScaleTargetRest,
 }
 
-/// Color config for geo, point_map and table families: no categorical arm.
+/// Color-scale config for the geo families, no categorical arm. Constant paint lives on the chart's primary mark.
 #[derive(Debug, Clone, PartialEq, Model)]
-pub struct StaticGradientColorStyle {
-    /// One color for all marks: a hex, CSS name, `rgb()`/`oklch()` or theme token (`category[1]`, `positive.solid`, `dbt-grays.8`). A token follows the theme, a hex stays put.
-    #[model(absent = "no explicit color", local)]
-    pub r#static: Option<Color>,
+pub struct GradientColorStyle {
     /// Continuous gradient scale for the color encoding.
     #[model(absent = "no gradient", local)]
     pub gradient: Option<ScaleTargetConfig>,
@@ -502,11 +499,11 @@ pub struct CategoricalColorStyle {
     pub single_series_palette: SeriesInk,
 }
 
-/// Unified chart color config: static paint, categorical palette, gradient scale.
+/// Unified chart color config: categorical palette and gradient scale.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct ColorStyle {
     #[flatten]
-    pub base: StaticGradientColorStyle,
+    pub base: GradientColorStyle,
     /// Palettes used when color encodes distinct categories, or a lone series.
     #[model(absent = "the chart's own palette")]
     pub categorical: Option<CategoricalColorStyle>,

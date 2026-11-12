@@ -415,7 +415,6 @@ dependencies = [
  "model-core",
  "normalize",
  "print",
- "regex",
  "scene",
  "serde",
  "serde_json",
@@ -825,6 +824,7 @@ version = "0.0.1"
 dependencies = [
  "diagnostic",
  "indexmap",
+ "regex",
  "serde_json",
  "yaml",
 ]

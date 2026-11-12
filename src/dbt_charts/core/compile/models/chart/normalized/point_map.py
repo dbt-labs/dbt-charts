@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from dbt_charts.core.compile.models.markers import ColumnRef
 from dbt_charts.core.compile.models.style.authored import PointMapChartStylePatch
 
 from ._base import _GeoChartFields
@@ -15,13 +16,13 @@ class PointMapChart(_GeoChartFields):
     """Normalized point map or bubble map chart."""
 
     type: Literal["point_map", "bubble_map"]
-    latitude: str | None = Field(
+    latitude: ColumnRef | None = Field(
         default=None, description="Field supplying latitude values."
     )
-    longitude: str | None = Field(
+    longitude: ColumnRef | None = Field(
         default=None, description="Field supplying longitude values."
     )
-    size: str | None = Field(
+    size: ColumnRef | None = Field(
         default=None,
         description="Quantitative column that scales point area. Mutually exclusive with `collapse`.",
     )

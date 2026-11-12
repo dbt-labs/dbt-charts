@@ -20,7 +20,6 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import get_execution_config
-from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import (
     LakeComputeTokenSource,
     TrinoSourceConfig,
@@ -45,7 +44,7 @@ from dbt_charts.core.execute.query_result import (
     WarehouseStatementError,
     resolve_effective_row_limit,
 )
-from dbt_charts.core.execute.run import execute_resolved
+from dbt_charts.core.execute.run import execute_on_backend
 from dbt_charts.core.text.time_zones import UTC, TimeZoneName
 
 _OPEN = "dbt_charts.core.execute.drivers.lakecompute.open_lakecompute"
@@ -120,8 +119,7 @@ def _prepared(
 
 
 def _run(adapter: ExecEnv, prepared: ResolvedQuery, source: Any = None) -> Any:
-    query = SqlQuery(sql=prepared.sql, source="lake")
-    return execute_resolved(adapter, prepared, query, source_config=source or _source())
+    return execute_on_backend(adapter, source or _source(), "lake", lambda _: prepared)
 
 
 @contextmanager

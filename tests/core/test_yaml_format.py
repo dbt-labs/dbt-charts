@@ -135,8 +135,8 @@ class TestYamlFormat:
         assert chart_def["value"] == "revenue"
 
     def test_kpi_support_rules_are_not_serialized(self, make_chart):
-        """Rules on the support column stay under `conditional_formatting`;
-        `support.rules` is resolved-only and would fail re-compile."""
+        """`support.rules` (baked from `good`) is resolved-only and would
+        fail re-compile."""
         data = [{"total": 100, "change": 12}]
         chart = make_chart(
             "kpi",
@@ -144,18 +144,14 @@ class TestYamlFormat:
             x=None,
             y=None,
             id="kpi_rev",
-            support={"value": "change"},
-            conditional_formatting={
-                "change": {"when": [{"gt": 0, "glyph": "▲", "font": {"color": "#0a0"}}]}
-            },
+            support={"value": "change", "good": "up"},
         )
         board = _make_board([chart])
 
         result = render_via(_make_executor(data), board, format="yaml").output
 
         chart_def = yaml.safe_load(result)["charts"]["kpi_rev"]
-        assert chart_def["support"] == {"value": "change"}
-        assert "change" in chart_def["conditional_formatting"]
+        assert chart_def["support"] == {"value": "change", "good": "up"}
 
     def test_unauthored_collapse_is_not_serialized(self, make_chart):
         """`collapse` defaults to False on every point_map — an author who
@@ -594,4 +590,4 @@ rows:
     assert "sign_placement" not in round_tripped, round_tripped
     for svg in (render_board_to_svg(source), render_board_to_svg(round_tripped)):
         assert "ERR-" not in svg, svg
-        assert ">€120,000<" in svg, svg
+        assert ">120,000<" in svg and ">Net, €<" in svg, svg

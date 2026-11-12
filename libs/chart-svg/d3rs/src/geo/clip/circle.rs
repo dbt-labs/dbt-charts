@@ -1,6 +1,8 @@
 //! d3-geo 3.1.1 `src/clip/circle.js`: clips to the small circle of a given angular radius about the origin
 //! (`projection.clipAngle`).
 
+use crate::invariant::Invariant;
+
 use super::{Clip, ClipGeometry, ClipLine, READ_OF_UNDEFINED};
 use crate::geo::cartesian::{
     cartesian, cartesian_add_in_place, cartesian_cross, cartesian_dot, cartesian_scale, spherical,
@@ -220,7 +222,7 @@ impl ClipLine for CircleLine {
             }
         }
         if v != self.v0 {
-            let point0 = self.point0.expect("the first point of a line is as visible as itself");
+            let point0 = self.point0.held("the first point of a line is as visible as itself");
             self.clean = 0;
             if v {
                 // outside going in

@@ -2,6 +2,7 @@
 //! (`compile/template/markdown_fence.py`): the one masker compile's
 //! template scans and the renderer's prose share.
 
+use d3rs::invariant::Invariant;
 use std::collections::HashMap;
 
 use d3rs::py_str::is_py_space;
@@ -69,7 +70,7 @@ fn is_fence_close(line: &str, opening_marker: &str) -> bool {
     let marker_char = opening_marker
         .chars()
         .next()
-        .expect("a marker is non-empty");
+        .held("a marker is non-empty");
     !closing.is_empty()
         && closing.chars().count() >= opening_marker.chars().count()
         && closing.chars().all(|c| c == marker_char)

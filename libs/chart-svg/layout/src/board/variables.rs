@@ -246,7 +246,7 @@ fn label_text(label: &str) -> Result<String, Diagnostic> {
 }
 
 /// `lay_out_variables`: each control in document order into rows no wider than `width`, and the reset
-/// item after the last when there are two or more.
+/// item after the last when there are two or more; a wrapped strip balanced by `_balanced_limit`.
 fn lay_out(
     controls: &[Control],
     width: f64,
@@ -256,54 +256,95 @@ fn lay_out(
     let vars = &style.variables;
     let (gap, row_height, font_size) = (vars.gap, vars.container_height, vars.font.size);
     let available = width.max(1.0);
-    let (mut boxes, mut x, mut row) = (Vec::new(), 0.0, 0_u32);
+    let mut labels = Vec::with_capacity(controls.len());
+    let mut widths = Vec::with_capacity(controls.len() + 1);
     for control in controls {
         let label = label_text(&control.label)?;
         let label_width = text_width(book, &label, font_size)?;
-        let control_width = label_width
-            + vars.control_gap
-            + input_width(control, style, font_size, book)?
-            + ornament_gap(control.widget, font_size)
-            + ornament_width(control.widget, font_size);
-        // The first control of a row is placed wherever it lands: an overrun is visible, a dropped filter is not.
-        if !boxes.is_empty() && x + control_width > available + WRAP_EPSILON {
-            row += 1;
-            x = 0.0;
-        }
-        boxes.push(Placed {
+        widths.push(
+            label_width
+                + vars.control_gap
+                + input_width(control, style, font_size, book)?
+                + ornament_gap(control.widget, font_size)
+                + ornament_width(control.widget, font_size),
+        );
+        labels.push((label, label_width));
+    }
+    if controls.len() >= MIN_CONTROLS_FOR_RESET {
+        let padding = &vars.input.padding;
+        widths.push(
+            text_width(book, &word("controls.reset")?, font_size)? + padding.left + padding.right,
+        );
+    }
+    let places = flow(&widths, gap, balanced_limit(&widths, gap, available));
+    let y = |row: u32| f64::from(row) * (row_height + gap);
+    let boxes = labels
+        .into_iter()
+        .zip(widths.iter().zip(&places))
+        .map(|((label, label_width), (&width, &(x, row)))| Placed {
             x,
-            y: f64::from(row) * (row_height + gap),
-            width: control_width,
+            y: y(row),
+            width,
             height: row_height,
             label_width,
             label,
-        });
-        x += control_width + gap;
-    }
-    let reset = if controls.len() >= MIN_CONTROLS_FOR_RESET {
-        let padding = &vars.input.padding;
-        let width =
-            text_width(book, &word("controls.reset")?, font_size)? + padding.left + padding.right;
-        if x + width > available + WRAP_EPSILON {
-            row += 1;
-            x = 0.0;
-        }
-        Some(Reset {
-            x,
-            y: f64::from(row) * (row_height + gap),
-            width,
-            height: row_height,
         })
-    } else {
-        None
-    };
-    let rows = f64::from(row + 1);
+        .collect();
+    let (last_x, last_row) = places.last().copied().unwrap_or((0.0, 0));
+    let reset = (widths.len() > controls.len()).then(|| Reset {
+        x: last_x,
+        y: y(last_row),
+        width: widths.last().copied().unwrap_or_default(),
+        height: row_height,
+    });
+    let rows = f64::from(last_row + 1);
     Ok(Layout {
         boxes,
         reset,
-        rows: row + 1,
+        rows: last_row + 1,
         height: rows * row_height + (rows - 1.0) * gap,
     })
+}
+
+/// `variables_layout.py::_flow`: each item's `(x, row)`, rows no wider than `limit`. The first item
+/// of a row is placed wherever it lands: an overrun is visible, a dropped filter is not.
+fn flow(widths: &[f64], gap: f64, limit: f64) -> Vec<(f64, u32)> {
+    let mut places = Vec::with_capacity(widths.len());
+    let (mut x, mut row) = (0.0_f64, 0_u32);
+    for &w in widths {
+        if !places.is_empty() && x + w > limit + WRAP_EPSILON {
+            row += 1;
+            x = 0.0;
+        }
+        places.push((x, row));
+        x += w + gap;
+    }
+    places
+}
+
+/// `variables_layout.py::_balanced_limit`: the narrowest run width that packs into as few rows as
+/// `available` does.
+fn balanced_limit(widths: &[f64], gap: f64, available: f64) -> f64 {
+    let rows_at = |limit: f64| flow(widths, gap, limit).last().map_or(0, |p| p.1);
+    let rows = rows_at(available);
+    if rows == 0 {
+        return available;
+    }
+    let mut runs = Vec::new();
+    for start in 0..widths.len() {
+        let mut x = 0.0_f64;
+        for &w in widths.iter().skip(start) {
+            if x + w > available + WRAP_EPSILON {
+                break;
+            }
+            runs.push(x + w);
+            x += w + gap;
+        }
+    }
+    runs.sort_by(f64::total_cmp);
+    runs.into_iter()
+        .find(|&limit| rows_at(limit) == rows)
+        .unwrap_or(available)
 }
 
 fn word(id: &str) -> Result<String, Diagnostic> {
@@ -729,6 +770,7 @@ fn draw_slider(
         ),
         text_el(
             Attrs::new()
+                .set("data-dbt-ornament", "slider-value")
                 .set("x", px(x + track + vars.control_gap))
                 .set("y", px(baseline))
                 .set("font-size", px(ink.font_size))

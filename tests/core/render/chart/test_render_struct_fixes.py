@@ -97,10 +97,20 @@ def test_effective_single_series_fill_uses_rhythm_slot() -> None:
     assert len(pal) >= 1
 
     # Slot 0 → pal[0]
-    assert _effective_single_series_fill(rcs, None, rhythm_slot=0) == pal[0]
+    assert (
+        _effective_single_series_fill(
+            rcs, None, ("marks", "bar", "color"), rhythm_slot=0
+        )
+        == pal[0]
+    )
     # Slot 1 → pal[1 % len(pal)]
     expected_slot1 = pal[1 % len(pal)]
-    assert _effective_single_series_fill(rcs, None, rhythm_slot=1) == expected_slot1
+    assert (
+        _effective_single_series_fill(
+            rcs, None, ("marks", "bar", "color"), rhythm_slot=1
+        )
+        == expected_slot1
+    )
 
 
 def test_resolved_bar_chart_uses_rhythm_slot_for_single_series_fill() -> None:

@@ -17,7 +17,7 @@ use d3rs::bin::{bin, vega_constant_extent, Thresholds};
 use diagnostic::{diag, refuse, Diagnostic};
 use model_core::SetLeaves;
 
-use crate::channel_type::ChannelType;
+use crate::column_kind::ChannelType;
 use crate::bound::{
     self, AuthoredLegend, Baselines, BinStyle, Bounds, BoundsReason, Datum, Extent, FixedLadder, Ladder, Mark, MarkLayer, MarkStyle,
     Naming, Orient, Panels, Pos, RowRef, Rung, Scale, ScaleKind, Side, Tooltip, TooltipEntry, ValueAxis, ValueDomain, Zero,
@@ -57,10 +57,10 @@ fn refuse_unported(chart: &BarChart) -> Result<(), Diagnostic> {
     }
 }
 
-/// The leaves of the chart's own style the walks read: its axes, legend, title and static color. A histogram's
+/// The leaves of the chart's own style the walks read: its axes, legend, title and bar paint. A histogram's
 /// own `style:` is written into `charts.bar` (`family_slots!`) while its marks and frame are read from
 /// `charts.histogram`, so any other leaf would draw with the theme's value.
-const OWN_WALKED: [&str; 5] = ["axis_x", "axis_y", "legend", "title", "color.static"];
+const OWN_WALKED: [&str; 5] = ["axis_x", "axis_y", "legend", "title", "marks.bar.color"];
 
 fn refuse_own_style(placed: &Placed<'_>) -> Result<(), Diagnostic> {
     let mut unwalked = None;
@@ -204,7 +204,7 @@ pub fn bind(id: &ChartId, chart: &BarChart, board: &Board, run: &RunResult, plac
         baselines,
         axis_styles,
         diagnostics: crate::restated::axes(&p.tiers, [&p.x_ladder, &p.y_ladder], placed.public_id),
-        mark_style: MarkStyle { points: None, bins: Some(BinStyle { radius: bar.border.radius, band_width: bar.band_width }) },
+        mark_style: MarkStyle { points: None, lines: None, bars: None, bins: Some(BinStyle { radius: bar.border.radius, band_width: bar.band_width }) },
     })
     .map_err(internal("plot"))?;
     Ok(bound::Chart { title, subtitle, frame, family: Ok(bound::Family::Cartesian(bound::Cartesian::Plane(Box::new(plot)))) })

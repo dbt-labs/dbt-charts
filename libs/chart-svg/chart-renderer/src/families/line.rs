@@ -177,6 +177,7 @@ const X_AXIS_OFFSET: f64 = 1.0;
 
 pub mod bind;
 pub mod layout;
+pub(crate) mod segments;
 
 // ── Payload structs ──────────────────────────────────────────────────────────
 
@@ -368,6 +369,183 @@ pub(crate) struct LineStyle {
     /// gate, same law as bar/pie/scatter/heatmap).
     #[serde(default)]
     pub tooltip_format: FormatSlot,
+    /// `style.conditional`: per-column rules restyling a point and its value label by its own row.
+    #[serde(default)]
+    pub conditional: Option<std::collections::BTreeMap<String, Vec<PointRule>>>,
+}
+
+/// One `style.conditional` rule (`LineChartStyleConditional` / `AreaChartStyleConditional`): a
+/// predicate beside the per-point style it applies. An area has no `text` slot.
+#[derive(Deserialize)]
+pub(crate) struct PointRule {
+    #[serde(flatten)]
+    predicate: crate::conditional::Predicate,
+    #[serde(default)]
+    marks: Option<PointRuleMarks>,
+}
+
+#[derive(Deserialize)]
+struct PointRuleMarks {
+    #[serde(default)]
+    point: Option<PointRulePoint>,
+    #[serde(default)]
+    text: Option<PointRuleText>,
+    #[serde(default)]
+    line: Option<PointRuleLine>,
+    #[serde(default)]
+    area: Option<PointRuleArea>,
+}
+
+#[derive(Deserialize)]
+struct PointRuleLine {
+    #[serde(default)]
+    stroke: Option<PointRuleStroke>,
+}
+
+#[derive(Deserialize)]
+struct PointRuleStroke {
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    width: Option<f64>,
+    #[serde(default)]
+    dasharray: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PointRuleArea {
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    opacity: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct PointRulePoint {
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    fill: Option<String>,
+    #[serde(default)]
+    filled: Option<bool>,
+    #[serde(default)]
+    size: Option<f64>,
+    #[serde(default)]
+    shape: Option<String>,
+    #[serde(default)]
+    opacity: Option<f64>,
+    #[serde(default)]
+    stroke_width: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct PointRuleText {
+    #[serde(default)]
+    font: Option<PointRuleFont>,
+}
+
+#[derive(Deserialize)]
+struct PointRuleFont {
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    weight: Option<Value>,
+}
+
+/// What the matched rules set on one datum's point, value label and the line and area it
+/// starts or ends, key by key; unset keys keep the static style.
+#[derive(Default, Clone)]
+pub(crate) struct PointPatch {
+    pub(crate) color: Option<String>,
+    pub(crate) fill: Option<String>,
+    pub(crate) filled: Option<bool>,
+    pub(crate) size: Option<f64>,
+    pub(crate) shape: Option<String>,
+    pub(crate) opacity: Option<f64>,
+    pub(crate) stroke_width: Option<f64>,
+    pub(crate) label_color: Option<String>,
+    pub(crate) label_weight: Option<String>,
+    pub(crate) line: segments::LineStyle,
+    pub(crate) area: segments::AreaStyle,
+}
+
+impl LineResolved {
+    /// The patch `style.conditional` makes to the point drawn for `row`. Rules on different
+    /// columns never set the same key (resolve refuses it), so column order is immaterial.
+    pub(crate) fn patch_of(&self, row: &serde_json::Map<String, Value>) -> Result<PointPatch, String> {
+        let mut patch = PointPatch::default();
+        for (column, rules) in self.style.conditional.iter().flatten() {
+            if crate::conditional::other_series(row, column, &self.wide_measures) {
+                continue;
+            }
+            for rule in crate::conditional::matching(rules, |r| &r.predicate, row.get(column))? {
+                let Some(marks) = &rule.marks else { continue };
+                if let Some(point) = &marks.point {
+                    patch.color = point.color.clone().or(patch.color);
+                    patch.fill = point.fill.clone().or(patch.fill);
+                    patch.filled = point.filled.or(patch.filled);
+                    patch.size = point.size.or(patch.size);
+                    patch.shape = point.shape.clone().or(patch.shape);
+                    patch.opacity = point.opacity.or(patch.opacity);
+                    patch.stroke_width = point.stroke_width.or(patch.stroke_width);
+                }
+                if let Some(stroke) = marks.line.as_ref().and_then(|l| l.stroke.as_ref()) {
+                    patch.line.color = stroke.color.clone().or(patch.line.color);
+                    patch.line.width = stroke.width.or(patch.line.width);
+                    if let Some(raw) = &stroke.dasharray {
+                        patch.line.dasharray = Some(crate::step_band::dasharray(&crate::step_band::parse("line", raw, false)?, None));
+                    }
+                }
+                if let Some(area) = &marks.area {
+                    patch.area.color = area.color.clone().or(patch.area.color);
+                    patch.area.opacity = area.opacity.or(patch.area.opacity);
+                }
+                if let Some(font) = marks.text.as_ref().and_then(|t| t.font.as_ref()) {
+                    patch.label_color = font.color.clone().or(patch.label_color);
+                    if let Some(weight) = &font.weight {
+                        let css = super::table::bind::font_weight_as_css(weight);
+                        if !super::table::VALID_FONT_WEIGHTS.contains(&css.as_str()) {
+                            return Err(format!("line: conditional font weight {css:?} is not a CSS weight"));
+                        }
+                        patch.label_weight = Some(css);
+                    }
+                }
+            }
+        }
+        Ok(patch)
+    }
+
+    /// Every datum's patch, keyed like the rows it reads. Empty when the chart has no rules.
+    pub(crate) fn patches(
+        &self,
+        label_rows: &HashMap<(String, String), &serde_json::Map<String, Value>>,
+    ) -> Result<HashMap<(String, String), PointPatch>, String> {
+        if self.style.conditional.as_ref().is_none_or(|c| c.is_empty()) {
+            return Ok(HashMap::new());
+        }
+        label_rows.iter().map(|(key, row)| Ok((key.clone(), self.patch_of(row)?))).collect()
+    }
+
+    /// Whether any rule restyles the line or the area, which are drawn between points.
+    pub(crate) fn sets_segment_style(&self) -> bool {
+        self.style.conditional.iter().flat_map(|c| c.values()).flatten().any(|rule| {
+            rule.marks.as_ref().is_some_and(|marks| marks.line.is_some() || marks.area.is_some())
+        })
+    }
+
+    /// The largest point any datum can draw: the fit reserves its reach whichever datum is
+    /// the biggest.
+    pub(crate) fn point_size_ceiling(&self) -> Option<f64> {
+        let base = self.style.point_mark.as_ref().and_then(|pm| pm.size);
+        let ruled = self
+            .style
+            .conditional
+            .iter()
+            .flat_map(|c| c.values())
+            .flatten()
+            .filter_map(|rule| rule.marks.as_ref()?.point.as_ref()?.size);
+        ruled.chain(base).reduce(f64::max)
+    }
 }
 
 #[derive(Deserialize)]
@@ -1794,6 +1972,160 @@ mod tests {
         FontBook::load_dir(&dir).expect("test fonts load")
     }
 
+    #[test]
+    fn a_line_without_points_or_rules_draws_no_halo_layer() {
+        let mut json = make_fit_line_payload();
+        json["resolved"]["style"]["point_mark"]["size"] = serde_json::json!(0.0);
+        let svg = render(&crate::test_payload(json), &test_fonts()).expect("renders");
+        assert!(!svg.contains("mark-symbol role-mark layer_1_marks"), "{svg}");
+    }
+
+    #[test]
+    fn null_style_conditional_renders_like_none() {
+        let mut json = make_fit_line_payload();
+        json["style"]["conditional"] = serde_json::Value::Null;
+        render(&crate::test_payload(json), &test_fonts()).expect("a null style.conditional renders");
+    }
+
+    /// Six x values 1 to 6, `fc` true from index `from` on, and one rule on `fc` setting `marks`.
+    fn segment_payload(marks: serde_json::Value, from: usize, curve: Option<&str>) -> serde_json::Value {
+        let mut p = make_line_payload(true, false);
+        let signups = [100.0, 150.0, 130.0, 180.0, 155.0, 200.0];
+        p["rows"] = serde_json::json!(signups
+            .iter()
+            .enumerate()
+            .map(|(i, v)| serde_json::json!({"week": i + 1, "signups": v, "fc": i >= from}))
+            .collect::<Vec<_>>());
+        p["resolved"]["style"]["conditional"] = serde_json::json!({"fc": [{"eq": true, "marks": marks}]});
+        p["resolved"]["style"]["area_mark"] = serde_json::json!({"opacity": 0.16, "backdrop": false, "curve": curve});
+        p["resolved"]["style"]["line_mark"]["curve"] = serde_json::json!(curve);
+        p
+    }
+
+    const GRAY: &str = "#8a8a8a";
+
+    fn gray_line() -> serde_json::Value {
+        serde_json::json!({"line": {"stroke": {"color": GRAY, "dasharray": "4 4"}}})
+    }
+
+    /// Every `<path>` tag of `svg` as `(d, tag)`.
+    fn path_tags(svg: &str) -> Vec<(String, String)> {
+        svg.split("<path ")
+            .skip(1)
+            .map(|rest| {
+                let tag = rest.split("/>").next().unwrap().to_string();
+                let d = tag.split("d=\"").nth(1).unwrap().split('"').next().unwrap().to_string();
+                (d, tag)
+            })
+            .collect()
+    }
+
+    fn drawn_with<'a>(paths: &'a [(String, String)], needle: &str) -> Vec<&'a (String, String)> {
+        paths.iter().filter(|(_, tag)| tag.contains(needle)).collect()
+    }
+
+    fn render_segments(json: serde_json::Value, draw_areas: bool) -> Result<String, Diagnostic> {
+        render_inner(&crate::test_payload(json), &test_fonts(), draw_areas)
+    }
+
+    #[test]
+    fn a_run_of_matching_points_restyles_its_segments_but_not_the_boundary_one() {
+        let svg = render_segments(segment_payload(gray_line(), 2, None), false).unwrap();
+        let paths = path_tags(&svg);
+        let gray = drawn_with(&paths, &format!("stroke=\"{GRAY}\""));
+        let base = drawn_with(&paths, "stroke=\"#3164a3\"");
+        assert_eq!((gray.len(), base.len()), (1, 1), "{paths:?}");
+        assert!(gray[0].1.contains("stroke-dasharray=\"4,4\""), "{}", gray[0].1);
+        assert!(!base[0].1.contains("stroke-dasharray"));
+        // Mar is the first forecast row, and the Feb-Mar segment has one actual endpoint:
+        // the base line ends where the gray one starts, and the gray one has four points.
+        let last_of = |d: &str| d.rsplit('L').next().unwrap().to_string();
+        assert_eq!(gray[0].0.split('L').next().unwrap().trim_start_matches('M'), last_of(&base[0].0));
+        assert_eq!(gray[0].0.matches('L').count(), 3);
+    }
+
+    #[test]
+    fn an_isolated_matching_point_restyles_no_line() {
+        let svg = render_segments(segment_payload(gray_line(), 5, None), false).unwrap();
+        let mut p = segment_payload(gray_line(), 6, None);
+        p["rows"][3]["fc"] = serde_json::json!(true);
+        let lone = render_segments(p, false).unwrap();
+        for svg in [svg, lone] {
+            assert!(drawn_with(&path_tags(&svg), GRAY).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_line_without_a_segment_rule_draws_the_path_it_always_did() {
+        let ruled = segment_payload(serde_json::json!({"point": {"color": GRAY}}), 2, None);
+        let svg = render_segments(ruled, false).unwrap();
+        let base = drawn_with(&path_tags(&svg), "stroke=\"#3164a3\"").len();
+        assert_eq!(base, 1);
+    }
+
+    #[test]
+    fn the_cut_runs_trace_the_unstyled_curve() {
+        use d3rs::path::testing::{flatten, hausdorff, parse_d};
+        for curve in ["linear", "monotone", "natural", "cardinal", "step", "step-before", "step-after"] {
+            let styled = path_tags(&render_segments(segment_payload(gray_line(), 2, Some(curve)), false).unwrap());
+            let whole = path_tags(&render_segments(segment_payload(gray_line(), 6, Some(curve)), false).unwrap());
+            let (gray, base) = (&drawn_with(&styled, GRAY)[0].0, &drawn_with(&styled, "stroke=\"#3164a3\"")[0].0);
+            let whole = &drawn_with(&whole, "stroke=\"#3164a3\"")[0].0;
+            let mut stitched = parse_d(base);
+            stitched.extend(parse_d(gray).into_iter().skip(1));
+            let drawn = flatten(&stitched, 0.5);
+            assert!(hausdorff(&drawn, &flatten(&parse_d(whole), 0.5)) < 1e-6, "{curve}");
+        }
+    }
+
+    #[test]
+    fn a_curve_that_misses_its_points_is_refused_by_name() {
+        let err = render_segments(segment_payload(gray_line(), 2, Some("basis")), false).unwrap_err();
+        assert!(err.contains("basis") && err.contains("is not supported"), "{err}");
+        render_segments(segment_payload(serde_json::json!({"point": {"color": GRAY}}), 2, Some("basis")), false)
+            .expect("a point-only rule keeps drawing on a basis curve");
+    }
+
+    #[test]
+    fn a_step_curve_over_a_category_axis_is_refused_by_name() {
+        let mut p = segment_payload(gray_line(), 2, Some("step"));
+        for (row, month) in p["rows"].as_array_mut().unwrap().iter_mut().zip(["Jan", "Feb", "Mar", "Apr", "May", "Jun"]) {
+            row["week"] = serde_json::json!(month);
+        }
+        let err = render_segments(p, false).unwrap_err();
+        assert!(err.contains("step curve over a categorical x axis is not supported"), "{err}");
+    }
+
+    #[test]
+    fn an_area_rule_splits_the_fill_at_the_run() {
+        let marks = serde_json::json!({"area": {"color": GRAY, "opacity": 0.4}});
+        let svg = render_segments(segment_payload(marks, 2, None), true).unwrap();
+        let paths = path_tags(&svg);
+        let gray = drawn_with(&paths, &format!("fill=\"{GRAY}\""));
+        assert_eq!(gray.len(), 1, "{paths:?}");
+        assert!(gray[0].1.contains("fill-opacity=\"0.4\""));
+        assert!(gray[0].0.ends_with('Z'));
+        // Four top vertices (Mar to Jun), the drop, and four baseline vertices.
+        assert_eq!(gray[0].0.matches('L').count(), 7);
+    }
+
+    #[test]
+    fn an_area_rule_restyles_a_run_of_the_top_edge_and_leaves_the_fill() {
+        let svg = render_segments(segment_payload(gray_line(), 2, None), true).unwrap();
+        let paths = path_tags(&svg);
+        let gray = drawn_with(&paths, &format!("stroke=\"{GRAY}\""));
+        assert_eq!(gray.len(), 1, "{paths:?}");
+        assert_eq!(gray[0].0.matches('L').count(), 3);
+        assert!(drawn_with(&paths, &format!("fill=\"{GRAY}\"")).is_empty());
+    }
+
+    #[test]
+    fn an_isolated_area_match_restyles_no_fill() {
+        let marks = serde_json::json!({"area": {"color": GRAY}});
+        let svg = render_segments(segment_payload(marks, 5, None), true).unwrap();
+        assert!(drawn_with(&path_tags(&svg), GRAY).is_empty());
+    }
+
     /// The composed arm grows its canvas around the strip's ink, so
     /// `render_fitted` shrinks the width and re-renders; the dump must
     /// describe THAT render. Deletion counterfactual: dumping the caller's
@@ -1809,7 +2141,7 @@ mod tests {
         assert_eq!(crate::families::line::flush_anchor_px(0.0, 0.0, Some(1.0)), "end");
     }
 
-    /// A percent strip over twenty categories has no narrower form and no room: it
+    /// A percent strip over forty categories has no narrower form and no room: it
     /// hides whole, and a line or area chart is then exactly the chart authored
     /// without it.
     #[test]
@@ -1819,9 +2151,8 @@ mod tests {
             let svg = |strip: bool| {
                 let mut p = make_line_payload(true, false);
                 p["resolved"]["chart_type"] = serde_json::json!(chart_type);
-                p["rows"] = serde_json::json!((b'A'..=b'T').map(|c| (c as char).to_string()).collect::<Vec<_>>()
-                    .iter()
-                    .map(|c| serde_json::json!({"week": c, "signups": 0.1234}))
+                p["rows"] = serde_json::json!((0..40)
+                    .map(|i| serde_json::json!({"week": format!("c{i:02}"), "signups": 0.1234}))
                     .collect::<Vec<_>>());
                 if strip {
                     p["resolved"]["support_table"] = serde_json::json!({
@@ -2018,6 +2349,7 @@ mod tests {
                 "label": {"font": {"family": TEST_FONT, "size": 11.0}}
             },
             "style": {
+                "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"},
                 "axis_x": axis_json(titles_visible, None),
                 "axis_y": line_value_axis_json(titles_visible, y_on_right),
                 "line_mark": {"stroke": {"width": 4.0, "cap": "round", "join": "round"}, "halo_multiplier": 1.5}, "point_mark": {"edge_size": AUTO_EDGE_SIZE},
@@ -4657,6 +4989,7 @@ mod tests {
                 "label": {"padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}
             },
             "style": {
+                "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"},
                 "axis_x": axis_json(false, None),
                 "axis_y": value_axis_json(false, None),
                 "line_mark": {"stroke": {"width": 4.0, "cap": "round", "join": "round"}, "halo_multiplier": 1.5}, "point_mark": {"edge_size": AUTO_EDGE_SIZE},
@@ -5091,6 +5424,7 @@ mod tests {
                 "label": {"padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}
             },
             "style": {
+                "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"},
                 "axis_x": axis_json(false, None),
                 "axis_y": value_axis_json(false, None),
                 "line_mark": {"stroke": {"width": 4.0, "cap": "round", "join": "round"}, "halo_multiplier": 1.5}, "point_mark": {"edge_size": AUTO_EDGE_SIZE},
@@ -8066,13 +8400,13 @@ mod tests {
     /// The left gutter reserves room for the axis alone once the labels leave it.
     #[test]
     fn the_plots_left_edge_no_longer_includes_a_stub_that_moved_to_the_rail() {
-        let first_cell_x = |label: &str| {
+        let plot_left = |label: &str| {
             let mut p = make_rail_strip_payload();
             p["resolved"]["support_table"]["entries"][0]["label"] = serde_json::json!(label);
             let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
-            text_at(&svg, "$140", false).0
+            svg.split("<g transform=\"translate(").nth(1).unwrap().split(',').next().unwrap().parse::<f64>().unwrap()
         };
-        assert_eq!(first_cell_x("Total $"), first_cell_x("A very long strip row label"));
+        assert_eq!(plot_left("Total $"), plot_left("A very long strip row label"));
     }
 
     /// A label wider than the rail's own names widens the rail column rather than
@@ -8080,9 +8414,9 @@ mod tests {
     #[test]
     fn a_wide_strip_row_label_widens_the_rails_column_instead_of_clipping() {
         let fonts = test_fonts();
-        let label = "Avg order";
+        let label = "Avg order, $";
         let mut p = make_rail_strip_payload();
-        p["resolved"]["support_table"]["entries"][0]["label"] = serde_json::json!(label);
+        p["resolved"]["support_table"]["entries"][0]["label"] = serde_json::json!("Avg order");
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &fonts).expect("renders");
         let (stub_x, _) = text_at(&svg, label, false);
         let (canvas_w, _) = canvas_dims(&svg);
@@ -8617,18 +8951,17 @@ mod tests {
         );
     }
 
-    /// A trimmed (`$,.0f`) symbol row anchors on a left-oriented value axis
-    /// too: every cell ends at the lane's right edge, so the `$` is declared
-    /// once on the anchor and the other cells are bare.
+    /// A `$,.0f` row on a left-oriented value axis prints bare cells and names the `$` in its
+    /// row label.
     #[test]
-    fn support_table_on_the_rail_concat_declares_a_trimmed_symbol_row_once() {
+    fn support_table_on_the_rail_concat_names_a_symbol_row_in_its_label() {
         let mut payload_json = make_rail_strip_payload();
         payload_json["resolved"]["support_table"]["entries"][0]["format"] = serde_json::json!({"spec": "$,.0f", "raw": "currency_whole"});
         let payload: Payload = serde_json::from_value(payload_json).unwrap();
         let svg = render(&payload, &test_fonts()).expect("support_table rail concat renders");
         // aggregate: sum over both series — week 1: 100+40=140, week 2: 150+60=210.
-        assert!(svg.contains(">$140<"), "the anchor cell declares the $: {svg}");
-        assert!(svg.contains(">210<") && !svg.contains(">$210<"), "every OTHER cell is bare: {svg}");
+        assert!(svg.contains(">210<") && !svg.contains(">$210<"), "cells are bare: {svg}");
+        assert!(svg.contains(">Total $<") && !svg.contains(">$140<"), "the row label declares the $: {svg}");
     }
 
     /// Pane 0's own plot width — the line's own path spans `[pad, plot_w - pad]`, the edge pad
@@ -9134,6 +9467,7 @@ mod tests {
                 "label": {"font": {"family": TEST_FONT, "size": 11.0}}
             },
             "style": {
+                "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"},
                 "axis_x": axis_x_json,
                 "axis_y": value_axis_json(false, None),
                 "line_mark": line_mark,
@@ -9619,9 +9953,7 @@ mod tests {
     fn chart_title_applies_font_case_like_other_families() {
         let mut payload_json = make_line_payload(false, false);
         payload_json["resolved"]["title"] = serde_json::json!("Third width — line");
-        payload_json["resolved"]["title_style"] = serde_json::json!({
-            "font": {"family": TEST_FONT, "size": 18.0, "weight": "500", "color": "#494A4C", "case": "title"}
-        });
+        payload_json["resolved"]["style"]["title_font"] = serde_json::json!({"family": TEST_FONT, "size": 18.0, "weight": "500", "color": "#494A4C", "case": "title"});
         let payload: Payload = serde_json::from_value(payload_json).unwrap();
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("renders");

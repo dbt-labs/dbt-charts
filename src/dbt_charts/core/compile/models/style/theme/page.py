@@ -18,6 +18,7 @@ from dbt_charts.core.compile.models.markers import (
     AUTO,
     Absent,
     Color,
+    FontWeightValue,
     Inherit,
     InheritSlot,
     Url,
@@ -84,6 +85,34 @@ class InputStyle(BaseModel):
         )
     )
     background: Annotated[str, Color()] = Field(description="Input background color.")
+    selected_background: Annotated[
+        str | None, Color(), Absent("a light tint of the label ink")
+    ] = Field(
+        default=None,
+        description=(
+            "Fill of the selected segment in a button row. Unset draws a "
+            "light tint of the label ink over the input background."
+        ),
+    )
+    selected_color: Annotated[
+        str | None,
+        Inherit(from_path="Style.variables.value.font.color"),
+        Color(),
+    ] = Field(
+        default=None,
+        description="Text color of the selected segment in a button row.",
+    )
+    selected_tint: float = Field(
+        ge=0,
+        le=1,
+        description=(
+            "Opacity of the label-ink tint behind the selected segment of a "
+            "button row; unused when a selected fill is set."
+        ),
+    )
+    selected_weight: Annotated[str | float, FontWeightValue()] = Field(
+        description="Font weight of the selected segment in a button row."
+    )
     padding: SpacingValues = Field(description="Input inner padding in pixels.")
     widths: InputWidths = Field(description="Per-input-type default widths.")
     range: RangeDefaults = Field(description="Range input default min/max/step values.")

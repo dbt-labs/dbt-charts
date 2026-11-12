@@ -22,7 +22,9 @@ ChartValue = str | int | float | Decimal
 _RowData = list[dict[str, Any]]
 
 
-def apply_headroom(value: float, headroom: float | None) -> float:
+def apply_headroom(
+    value: float, headroom: float | None, cap: float | None = None
+) -> float:
     """Multiply a positive domain top by ``1 + headroom``, exact (no rounding).
 
     ``headroom`` of ``None`` or ``0`` is a no-op. Negative headroom is rejected
@@ -31,10 +33,14 @@ def apply_headroom(value: float, headroom: float | None) -> float:
     Only applies to a positive ``value`` — a non-positive measure-axis max (all
     data at or below zero) has no well-defined multiplicative "top", so it
     passes through unchanged rather than growing more negative.
+
+    ``cap`` is a ceiling the headroom may not cross (a percent axis stops at
+    1.0); it never lowers ``value`` itself.
     """
     if not headroom or value <= 0:
         return value
-    return value * (1.0 + headroom)
+    top = value * (1.0 + headroom)
+    return top if cap is None else max(value, min(top, cap))
 
 
 def numeric_domain_bounds(domain: object) -> tuple[float, float] | None:

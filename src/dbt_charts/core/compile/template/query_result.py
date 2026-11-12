@@ -1,7 +1,7 @@
 """Query results as templates read them: ``queries.<name>.rows`` / ``.one`` / ``.columns``.
 
-Both types raise only ``ChartDataError``. Jinja falls back from ``getattr`` to
-``getitem`` on ``AttributeError``/``KeyError`` and would turn either into an
+Neither type raises ``AttributeError`` or ``KeyError`` for a bad read. Jinja
+falls back from ``getattr`` to ``getitem`` on either and would turn it into an
 undefined value, so an error that must reach the author cannot be one of them.
 """
 
@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, SupportsIndex, TypeVar, overload
 
+from dbt_charts.core.compile.column_match import match_column
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_TEXT_QUERY_ACCESS,
@@ -20,7 +21,10 @@ from dbt_charts.core.diagnostics.codes_render import (
 
 
 class QueryRow:
-    """One result row. Cells are reached by name only, so no column can be shadowed."""
+    """One result row. Cells are reached by name only, so no column can be shadowed.
+
+    A name reads the column ``match_column`` picks, as a chart's references do.
+    """
 
     __slots__ = ("_cells", "_query_name")
 
@@ -33,18 +37,23 @@ class QueryRow:
         self._cells = cells
 
     def __getitem__(self, column: str) -> Any:  # type-state: explicit_any — DB cell
-        try:
-            return self._cells[column]
-        except KeyError:
+        found = self._match(column)
+        if found is None:
             raise ChartDataError.from_code(
                 ERR_TEXT_QUERY_UNKNOWN_COLUMN,
                 query_name=self._query_name,
                 column=column,
                 available=list(self._cells),
-            ) from None
+            )
+        return self._cells[found]
 
     def __contains__(self, column: str) -> bool:
-        return column in self._cells
+        return self._match(column) is not None
+
+    def _match(self, column: str) -> str | None:
+        return match_column(
+            column, self._cells.keys(), f"query {self._query_name!r} row"
+        )
 
     def __getattr__(self, column: str) -> Any:  # type-state: explicit_any — DB cell
         # Protocol probes (copy, pickle, hasattr) expect AttributeError for dunders.

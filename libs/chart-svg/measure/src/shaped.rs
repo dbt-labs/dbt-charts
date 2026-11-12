@@ -12,6 +12,9 @@
 //! when the face asks for them, else hhea), at the instance.
 
 use std::path::Path;
+use std::sync::Arc;
+
+use crate::fonts::FontFile;
 
 use rustybuzz::Face;
 
@@ -79,81 +82,80 @@ pub struct Wrapped {
 }
 
 pub struct FontBook {
-    /// Indexed like `PAINTED_FACES`.
-    data: Vec<Vec<u8>>,
-    /// Every `.ttf` of the fonts directory as production's measurer loads them, by
-    /// normalized stem (sorted): the faces [`Self::raw_advance`] and [`Self::weighted_advance`] resolve among.
-    shipped: Vec<Shipped>,
+    /// Every `.ttf` the host handed over, by normalized stem (sorted): the faces [`Self::raw_advance`]
+    /// and [`Self::weighted_advance`] resolve among, production's measurer's set.
+    files: Vec<File>,
+    /// Indexed like `PAINTED_FACES`: the index into `files` of each painted face.
+    painted: Vec<usize>,
 }
 
-/// A shipped face: the file is read on first use, once. A painted face is already in
-/// [`FontBook::data`] and never read again.
-struct Shipped {
+/// A font file: its normalized stem and the file the host handed over.
+struct File {
     stem: String,
-    path: std::path::PathBuf,
-    bytes: std::sync::OnceLock<Result<Vec<u8>, String>>,
+    file: Arc<FontFile>,
 }
 
 impl FontBook {
-    /// Reads every painted face from `dir`; a missing or unreadable file is an
-    /// error, so a book never measures with a face missing.
-    pub fn load_dir(dir: &Path) -> Result<Self, String> {
-        let data = PAINTED_FACES
+    /// A book of the font files `files` (file name and bytes), which the host reads and owns: the
+    /// book does no I/O. Every painted face must be among them and parse, so a book never measures
+    /// with a face missing; any other `.ttf` is a shipped face of production's measurer. A name
+    /// that is not a `.ttf` is skipped.
+    pub fn from_files(files: impl IntoIterator<Item = (String, Vec<u8>)>) -> Result<Self, String> {
+        let mut files: Vec<File> = files
+            .into_iter()
+            .filter_map(|(name, bytes)| {
+                let stem = name.strip_suffix(".ttf")?;
+                Some(File { stem: normalize(stem), file: Arc::new(FontFile::new(name, bytes)) })
+            })
+            .collect();
+        files.sort_by(|a, b| a.stem.cmp(&b.stem).then_with(|| a.file.name.cmp(&b.file.name)));
+        let painted = PAINTED_FACES
             .iter()
             .map(|(_, _, file)| {
-                let path = dir.join(file);
-                let bytes =
-                    std::fs::read(&path).map_err(|e| format!("font {}: {e}", path.display()))?;
-                ttf_parser::Face::parse(&bytes, 0)
-                    .map_err(|e| format!("font {}: {e}", path.display()))?;
-                Ok(bytes)
+                let at = files.iter().position(|f| f.file.name == *file).ok_or_else(|| format!("font {file}: not handed to the book"))?;
+                ttf_parser::Face::parse(files[at].file.bytes(), 0).map_err(|e| format!("font {file}: {e}"))?;
+                Ok(at)
             })
             .collect::<Result<_, String>>()?;
-        let mut shipped = Vec::new();
-        for entry in std::fs::read_dir(dir)
-            .map_err(|e| format!("font {}: {e}", dir.display()))?
-            .flatten()
-        {
+        Ok(FontBook { files, painted })
+    }
+
+    /// A book of every `.ttf` of `dir`, read now: a host convenience over [`Self::from_files`].
+    pub fn load_dir(dir: &Path) -> Result<Self, String> {
+        let mut files = Vec::new();
+        for entry in std::fs::read_dir(dir).map_err(|e| format!("font {}: {e}", dir.display()))?.flatten() {
             let path = entry.path();
-            let (Some(stem), Some("ttf")) = (
-                path.file_stem().and_then(|s| s.to_str()),
-                path.extension().and_then(|e| e.to_str()),
-            ) else {
+            let (Some(name), Some("ttf")) = (path.file_name().and_then(|s| s.to_str()), path.extension().and_then(|e| e.to_str())) else {
                 continue;
             };
-            shipped.push(Shipped {
-                stem: normalize(stem),
-                path,
-                bytes: std::sync::OnceLock::new(),
-            });
+            let bytes = std::fs::read(&path).map_err(|e| format!("font {}: {e}", path.display()))?;
+            files.push((name.to_string(), bytes));
         }
-        shipped.sort_by(|a, b| a.stem.cmp(&b.stem).then_with(|| a.path.cmp(&b.path)));
-        Ok(FontBook { data, shipped })
+        Self::from_files(files)
+    }
+
+    /// The file called `name` (a painted face's name, e.g. `InterVariable.ttf`), as the host handed it over.
+    pub fn file(&self, name: &str) -> Result<Arc<FontFile>, String> {
+        let found = self.files.iter().find(|f| f.file.name == name);
+        found.map(|f| f.file.clone()).ok_or_else(|| format!("font {name}: not handed to the book"))
+    }
+
+    /// The bytes of painted face `i` (an index into `PAINTED_FACES`).
+    fn painted_bytes(&self, i: usize) -> &[u8] {
+        self.files[self.painted[i]].file.bytes()
     }
 
     /// The bytes of the face production's `FontBook::face_for` picks for a CSS family list: only
     /// the first entry names the face, matched against the shipped stems (exact, then a prefix
     /// with "regular" or "variable" after it, then any prefix, then containment, the first of
     /// the sorted stems winning a tie), else the body face. Only [`Self::raw_advance`] and [`Self::weighted_advance`] read it.
-    fn production_face(&self, family_list: &str) -> Result<&[u8], String> {
+    fn production_face(&self, family_list: &str) -> &[u8] {
         let primary = family_list.split(',').next().unwrap_or_default();
         let found = self
             .match_shipped(primary)
             .or_else(|| self.match_shipped(DEFAULT_SANS))
             .expect("the body face is a shipped file");
-        let shipped = &self.shipped[found];
-        let file = shipped.path.file_name().and_then(|f| f.to_str());
-        match PAINTED_FACES.iter().position(|(_, _, f)| Some(*f) == file) {
-            Some(i) => Ok(&self.data[i]),
-            None => shipped
-                .bytes
-                .get_or_init(|| {
-                    std::fs::read(&shipped.path)
-                        .map_err(|e| format!("font {}: {e}", shipped.path.display()))
-                })
-                .as_deref()
-                .map_err(Clone::clone),
-        }
+        self.files[found].file.bytes()
     }
 
     fn match_shipped(&self, family: &str) -> Option<usize> {
@@ -162,7 +164,7 @@ impl FontBook {
             return None;
         }
         let mut best: Option<(u8, usize)> = None;
-        for (i, Shipped { stem: n, .. }) in self.shipped.iter().enumerate() {
+        for (i, File { stem: n, .. }) in self.files.iter().enumerate() {
             let score = if *n == f {
                 0
             } else if n.starts_with(&f)
@@ -212,7 +214,7 @@ impl FontBook {
     /// Face `i` instanced at `weight`, clamped to its `wght` axis; a face
     /// with no `wght` axis paints every weight with its one instance.
     fn instance(&self, i: usize, weight: f32) -> Result<Face<'_>, String> {
-        let mut face = Face::from_slice(&self.data[i], 0).ok_or("rustybuzz refused a face")?;
+        let mut face = Face::from_slice(self.painted_bytes(i), 0).ok_or("rustybuzz refused a face")?;
         let wght = ttf_parser::Tag::from_bytes(b"wght");
         let axis = face
             .variation_axes()
@@ -264,14 +266,14 @@ impl FontBook {
     pub fn centered_baseline_offset(&self, family: &str, size: f64) -> Result<f64, String> {
         let painted = if crate::weighted::registry_family(family) == "Source Serif 4" { "Source Serif 4" } else { DEFAULT_SANS };
         let face = PAINTED_FACES.iter().position(|(name, italic, _)| *name == painted && !italic).expect("a served face");
-        let face = ttf_parser::Face::parse(&self.data[face], 0).map_err(|e| e.to_string())?;
+        let face = ttf_parser::Face::parse(self.painted_bytes(face), 0).map_err(|e| e.to_string())?;
         let hhea = face.tables().hhea;
         let upem = f64::from(face.units_per_em());
         Ok(crate::centered_baseline(f64::from(hhea.ascender) / upem, f64::from(hhea.descender).abs() / upem, size))
     }
 
     fn production_sum(&self, text: &str, font: &Font, instanced: bool) -> Result<f64, String> {
-        let bytes = self.production_face(font.family)?;
+        let bytes = self.production_face(font.family);
         let face = ttf_parser::Face::parse(bytes, 0).map_err(|e| e.to_string())?;
         let wght = ttf_parser::Tag::from_bytes(b"wght");
         let has_axis = face.variation_axes().into_iter().any(|a| a.tag == wght);
@@ -308,15 +310,11 @@ impl FontBook {
         Ok(units / face.units_per_em() as f64 * font.size)
     }
 
-    fn advance(&self, text: &str, font: &Font) -> Result<f64, String> {
-        Ok(self.run(text, font)?.advance)
-    }
-
     /// `text` whole when it fits `width`; otherwise its longest prefix, with
     /// trailing spaces dropped, that fits with an ellipsis after it, and when
     /// not even that fits, its first character. The flag says whether it was cut.
     pub fn truncate(&self, text: &str, font: &Font, width: f64) -> Result<(String, bool), String> {
-        if text.is_empty() || self.advance(text, font)? <= width {
+        if text.is_empty() || self.run(text, font)?.advance <= width {
             return Ok((text.to_string(), false));
         }
         let chars: Vec<char> = text.chars().collect();
@@ -328,7 +326,7 @@ impl FontBook {
         while lo <= hi {
             let mid = (lo + hi) / 2;
             let c = candidate(mid);
-            if self.advance(&c, font)? <= width {
+            if self.run(&c, font)?.advance <= width {
                 best = Some(c);
                 lo = mid + 1;
             } else if mid == 0 {
@@ -364,7 +362,7 @@ impl FontBook {
         for &(piece, joins) in &pieces {
             if let Some(line) = lines.last_mut() {
                 let candidate = join(line.iter().copied().chain([(piece, joins)]));
-                if self.advance(&candidate, font)? <= width {
+                if self.run(&candidate, font)?.advance <= width {
                     line.push((piece, joins));
                     continue;
                 }
@@ -400,12 +398,12 @@ impl FontBook {
     ) -> Result<(), String> {
         let mut rest = word;
         let mut spaced = true;
-        while self.advance(rest, font)? > width {
+        while self.run(rest, font)?.advance > width {
             let mut cut = None;
             for (at, c) in rest.char_indices().skip(1) {
                 if SEAM_CHARS.contains(&c) {
                     let end = at + c.len_utf8();
-                    if self.advance(&rest[..end], font)? > width {
+                    if self.run(&rest[..end], font)?.advance > width {
                         break;
                     }
                     cut = Some(end);
@@ -424,7 +422,7 @@ impl FontBook {
                     let (mut lo, mut hi) = (0, ends.len() - 1);
                     while lo <= hi {
                         let mid = (lo + hi) / 2;
-                        if self.advance(&rest[..ends[mid]], font)? <= width {
+                        if self.run(&rest[..ends[mid]], font)?.advance <= width {
                             best = ends[mid];
                             lo = mid + 1;
                         } else if mid == 0 {

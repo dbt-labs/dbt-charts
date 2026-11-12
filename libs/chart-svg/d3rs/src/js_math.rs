@@ -1,5 +1,7 @@
 //! JavaScript numeric semantics the d3 and Vega ports depend on.
 
+use crate::invariant::{Invariant, at};
+
 /// JavaScript truthiness of a number: 0 and NaN are falsy.
 pub fn js_truthy(x: f64) -> bool {
     x != 0.0 && !x.is_nan()
@@ -247,12 +249,12 @@ pub fn pow(x: f64, y: f64) -> f64 {
         };
         ax = with_hi(ax, ix);
 
-        let u = ax - BP[k];
-        let v = 1.0 / (ax + BP[k]);
+        let u = ax - *at(&BP, k);
+        let v = 1.0 / (ax + *at(&BP, k));
         let ss = u * v;
         let s_h = with_lo(ss, 0);
         let t_h = with_hi(0.0, ((ix >> 1) | 0x20000000) + 0x00080000 + ((k as i32) << 18));
-        let t_l = ax - (t_h - BP[k]);
+        let t_l = ax - (t_h - *at(&BP, k));
         let s_l = v * ((u - s_h * t_h) - s_h * t_l);
         let s2 = ss * ss;
         let mut r = s2 * s2 * (L1 + s2 * (L2 + s2 * (L3 + s2 * (L4 + s2 * (L5 + s2 * L6)))));
@@ -265,10 +267,10 @@ pub fn pow(x: f64, y: f64) -> f64 {
         let p_h = with_lo(u + v, 0);
         let p_l = v - (p_h - u);
         let z_h = CP_H * p_h;
-        let z_l = CP_L * p_h + p_l * CP + DP_L[k];
+        let z_l = CP_L * p_h + p_l * CP + *at(&DP_L, k);
         let t = f64::from(n);
-        t1 = with_lo(((z_h + z_l) + DP_H[k]) + t, 0);
-        t2 = z_l - (((t1 - t) - DP_H[k]) - z_h);
+        t1 = with_lo(((z_h + z_l) + *at(&DP_H, k)) + t, 0);
+        t2 = z_l - (((t1 - t) - *at(&DP_H, k)) - z_h);
     }
 
     let y1 = with_lo(y, 0);
@@ -335,9 +337,9 @@ pub fn js_number_string(v: f64) -> String {
     }
     let sign = if v < 0.0 { "-" } else { "" };
     let scientific = format!("{:e}", v.abs());
-    let (mantissa, exponent) = scientific.split_once('e').unwrap();
+    let (mantissa, exponent) = scientific.split_once('e').held("a LowerExp string has an exponent");
     let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
-    let n = exponent.parse::<i32>().unwrap() + 1;
+    let n = exponent.parse::<i32>().held("the LowerExp exponent is an integer") + 1;
     let k = digits.len() as i32;
     let body = if k <= n && n <= 21 {
         format!("{digits}{}", "0".repeat((n - k) as usize))
@@ -404,9 +406,9 @@ pub fn exp(x: f64) -> f64 {
             if x == 1.0 {
                 return std::f64::consts::E;
             }
-            (x - LN2_HI[xsb], LN2_LO[xsb], 1 - xsb as i32 - xsb as i32)
+            (x - *at(&LN2_HI, xsb), *at(&LN2_LO, xsb), 1 - xsb as i32 - xsb as i32)
         } else {
-            let k = (INVLN2 * x + HALF[xsb]) as i32;
+            let k = (INVLN2 * x + *at(&HALF, xsb)) as i32;
             let t = f64::from(k);
             (x - t * LN2_HI[0], t * LN2_LO[0], k)
         };

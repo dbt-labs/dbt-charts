@@ -111,6 +111,10 @@ def _fit_tables(
     def height(table: Table, width: float) -> float:
         return renderer.measure_blocks([table], width=width)[0].line_advances[0]
 
+    if len(boxes) == 1:
+        # A lone span caps prose, not tables: a table wider than the span keeps
+        # the card's slot.
+        boxes = ((0.0, slot + 2 * pad),)
     unwrapped = [height(table, slot) for table in tables]
     floor = renderer.min_content_width([*tables])
 
@@ -419,6 +423,11 @@ def _prose_flow(
             renderer.max_content_width(blocks),
             _measure(width, col.max_chars, char_px),
         )
+        if len(boxes) == 1:
+            # A card's lone span is a snapped-board measure; here the text
+            # aligns in the whole card the author sees.
+            boxes = ((0.0, width + 2 * pad),)
+            table_box = boxes[0]
     if wanted > measure:
         measure = wanted
         boxes = ((0.0, width + 2 * pad),)

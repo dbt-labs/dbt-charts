@@ -32,7 +32,7 @@ from dbt_charts.core.execute.query_result import (
     WarehouseStatementError,
     resolve_effective_row_limit,
 )
-from dbt_charts.core.execute.run import execute_resolved, run_query
+from dbt_charts.core.execute.run import execute_on_backend, run_query
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 from dbt_charts.core.text.time_zones import UTC
 
@@ -148,8 +148,8 @@ def _observed_run(
     query = SqlQuery(sql="SELECT n FROM t", source="lake")
     try:
         with patch(_OPEN, return_value=connection):
-            result = execute_resolved(
-                registry, _resolved("SELECT n FROM t"), query, source_config=_LAKE
+            result = execute_on_backend(
+                registry, _LAKE, query.source, lambda _: _resolved("SELECT n FROM t")
             )
     finally:
         close_env(registry)
@@ -255,7 +255,7 @@ def test_a_driver_source_with_no_route_is_refused_by_name(
         project=local_project(tmp_path), backends=BackendRegistry({})
     )
     query = SqlQuery(sql="SELECT 1", source="lake")
-    result = execute_resolved(registry, _resolved(), query, source_config=_LAKE)
+    result = execute_on_backend(registry, _LAKE, query.source, lambda _: _resolved())
     assert result.error is not None
     assert result.error.code is ERR_ADAPTER_UNAVAILABLE
     assert "no backend for source kind 'lakecompute'" in str(result.error)

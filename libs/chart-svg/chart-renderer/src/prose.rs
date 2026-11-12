@@ -67,9 +67,7 @@ pub struct ProsePlan {
 /// the renderer paints with (mdsvg's own HVAR-exact measurer, not chart-
 /// renderer's simpler `measure::FontBook`).
 fn prose_char_ratio(regular: &FontSlot) -> f64 {
-    let measurer =
-        measure::fonts::cached_measurer(&regular.path, regular.font_number, regular.weight);
-    measurer.measure(PROSE_SAMPLE, 1.0) / PROSE_SAMPLE.chars().count() as f64
+    regular.measurer().measure(PROSE_SAMPLE, 1.0) / PROSE_SAMPLE.chars().count() as f64
 }
 
 /// `markdown_style.py::max_chars_to_px`.
@@ -107,7 +105,7 @@ fn span_boxes(container: f64, plan: &ProsePlan) -> Vec<(f64, f64)> {
     let fits = py_floor_div(container + plan.gap + slack, span + plan.gap) as i64;
     let count = fits.min(plan.grid).max(1);
     if count == 1 {
-        return vec![(0.0, container)];
+        return vec![(0.0, container.min(span))];
     }
     (0..count)
         .map(|i| {
@@ -154,6 +152,9 @@ fn fit_tables(
     char_px: f64,
     slot: f64,
 ) -> Result<(Vec<(f64, f64)>, f64), String> {
+    // A lone span caps prose, not tables: a table wider than the span keeps the card's slot.
+    let whole = [(0.0, slot + 2.0 * pad)];
+    let boxes = if boxes.len() == 1 { &whole[..] } else { boxes };
     let height = |table: &mdsvg::types::AnyBlock, width: f64| -> Result<f64, String> {
         Ok(renderer.measure_blocks(&vec![table.clone()], width)?[0].line_advances[0])
     };
@@ -610,6 +611,12 @@ fn prose_flow(
         wanted = renderer
             .max_content_width(&blocks)?
             .min(capped_measure(width, col.max_chars, char_px));
+        if boxes.len() == 1 {
+            // A card's lone span is a snapped-board measure; here the text
+            // aligns in the whole card the author sees.
+            boxes = vec![(0.0, width + 2.0 * pad)];
+            table_box = boxes[0];
+        }
     }
     if wanted > measure {
         measure = wanted;
@@ -982,6 +989,16 @@ mod tests {
         let assignment = pack_earned(&units, 3, 20.0);
         let sizes: Vec<usize> = (0..3).map(|c| assignment.iter().filter(|&&a| a == c).count()).collect();
         assert_eq!(sizes, vec![5, 5, 5]);
+    }
+
+    #[test]
+    fn a_card_between_one_and_two_spans_offers_one_span() {
+        let plan = ProsePlan { grid: 3, board_width: 1128.0, gap: 20.0, snap: true };
+        let span = grid_span(1128.0, 3, 20.0);
+        for fraction in [0.35, 0.4, 0.45] {
+            assert_eq!(span_boxes(1128.0 * fraction, &plan), vec![(0.0, span)]);
+        }
+        assert_eq!(span_boxes(1128.0 * 0.25, &plan), vec![(0.0, 1128.0 * 0.25)]);
     }
 
     #[test]

@@ -153,6 +153,8 @@ impl Default for Path {
 
 /// Test support: reads a `d` string back into commands and compares outlines.
 pub mod testing {
+    use crate::invariant::{self, at, Invariant};
+
     use super::{arc_sweep, Command, PATH_COORD_TOLERANCE, TAU};
 
     /// The `d` d3 prints: absolute `M L C A Z`, plus the relative `h`/`v` of d3-path's `rect`.
@@ -163,7 +165,7 @@ pub mod testing {
             let end = rest[1..].find(|c: char| c.is_ascii_alphabetic()).map_or(rest.len(), |i| i + 1);
             let (segment, tail) = rest.split_at(end);
             rest = tail;
-            let n: Vec<f64> = segment[1..].split(',').filter(|t| !t.is_empty()).map(|t| t.parse().expect("a number")).collect();
+            let n: Vec<f64> = segment[1..].split(',').filter(|t| !t.is_empty()).map(|t| t.parse().held("a number")).collect();
             commands.push(match (&segment[..1], n.as_slice()) {
                 ("M", &[x, y]) => Command::MoveTo(x, y),
                 ("L", &[x, y]) => Command::LineTo(x, y),
@@ -180,16 +182,16 @@ pub mod testing {
                     let (x, y) = end_point(&commands);
                     Command::LineTo(x, y + dy)
                 }
-                other => panic!("unreadable path segment {other:?}"),
+                other => invariant::broken(&format!("unreadable path segment {other:?}")),
             });
         }
         commands
     }
 
     fn end_point(commands: &[Command]) -> (f64, f64) {
-        match commands.last().expect("a relative segment follows a command") {
+        match commands.last().held("a relative segment follows a command") {
             Command::MoveTo(x, y) | Command::LineTo(x, y) | Command::BezierCurveTo(.., x, y) | Command::SvgArc { x, y, .. } => (*x, *y),
-            Command::Arc { .. } | Command::ClosePath => panic!("a relative segment after an arc or Z"),
+            Command::Arc { .. } | Command::ClosePath => invariant::broken("a relative segment after an arc or Z"),
         }
     }
 
@@ -244,7 +246,7 @@ pub mod testing {
                     let (nx, ny) = (-cy / chord, cx / chord);
                     let cross = |c: (f64, f64)| (from.0 - c.0) * (y - c.1) - (from.1 - c.1) * (x - c.0);
                     let candidates = [(mx + h * nx, my + h * ny), (mx - h * nx, my - h * ny)];
-                    let center = *candidates.iter().find(|c| ((cross(**c) > 0.0) == sweep) != large).unwrap();
+                    let center = *candidates.iter().find(|c| ((cross(**c) > 0.0) == sweep) != large).held("one of the two arc centers matches the sweep");
                     let a0 = (from.1 - center.1).atan2(from.0 - center.0);
                     let mut da = (y - center.1).atan2(x - center.0) - a0;
                     if sweep && da < 0.0 {
@@ -263,7 +265,7 @@ pub mod testing {
     /// The farthest either outline's sample sits from the other's.
     pub fn hausdorff(a: &[(f64, f64)], b: &[(f64, f64)]) -> f64 {
         let reach = |from: &[(f64, f64)], to: &[(f64, f64)]| {
-            from.iter().map(|p| to.windows(2).map(|w| segment_distance(*p, w[0], w[1])).fold(f64::MAX, f64::min)).fold(0.0, f64::max)
+            from.iter().map(|p| to.windows(2).map(|w| segment_distance(*p, *at(w, 0), *at(w, 1))).fold(f64::MAX, f64::min)).fold(0.0, f64::max)
         };
         reach(a, b).max(reach(b, a))
     }

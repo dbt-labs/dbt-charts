@@ -614,7 +614,7 @@ def test_a_charts_whole_style_graph_is_reachable() -> None:
     )
     assert targets["rows.0"].model == "KpiChart"
     keys = _flat(targets["rows.0"])
-    assert "style.background" in keys
+    assert "style.align" in keys
     assert [key for key in keys if key.startswith("style.value.")]
 
 
@@ -2420,7 +2420,7 @@ def test_every_family_marks_the_fields_that_name_a_column(chart, expected) -> No
     The rule is "this field holds a column name of the chart's query" — so
     pie's `theta`, kpi's `value` and the maps' `latitude`/`longitude` are in,
     while `sort` and `multiples` (specs that *contain* a column — `ChartSort.by`
-    names one, but `sort` itself holds a model) and `conditional_formatting`
+    names one, but `sort` itself holds a model) and `style.conditional`
     (keyed by column, holding style) are out. The facet marks the field the
     panel would offer a column control for; a nested spec has no such control
     at all, so marking its container would name a widget that does not exist —

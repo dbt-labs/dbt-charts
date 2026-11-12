@@ -17,6 +17,7 @@ from dbt_charts.core.render.column_packer import (
     PackUnit,
     choose_grid,
     columns_earned,
+    grid_span,
     pack_columns,
     pack_earned,
     span_boxes,
@@ -333,8 +334,17 @@ class TestSpanBoxes:
         assert len(boxes) == 2
         assert boxes[1][0] + boxes[1][1] == pytest.approx(container)
 
-    @pytest.mark.parametrize("fraction", [0.25, 1 / 3, 0.5])
-    def test_a_card_under_two_spans_offers_itself_whole(self, fraction: float) -> None:
+    @pytest.mark.parametrize("fraction", [0.35, 0.4, 0.45])
+    def test_a_card_between_one_and_two_spans_offers_one_span(
+        self, fraction: float
+    ) -> None:
+        span = grid_span(1128.0, 3, 20.0)
+        assert span_boxes(1128.0 * fraction, 1128.0, 3, 20.0) == ((0.0, span),)
+
+    @pytest.mark.parametrize("fraction", [0.25, 0.3])
+    def test_a_card_narrower_than_a_span_offers_itself_whole(
+        self, fraction: float
+    ) -> None:
         container = 1128.0 * fraction
         assert span_boxes(container, 1128.0, 3, 20.0) == ((0.0, container),)
 

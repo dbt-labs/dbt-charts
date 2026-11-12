@@ -158,7 +158,7 @@ impl FrameTitle {
     ) -> Result<Self, String> {
         let style = crate::common::effective_title_style(title_font, title_style)
             .or_else(|| title_style.cloned());
-        let font_size = style.as_ref().map_or(18.0, |t| t.font.size_or(18.0));
+        let font_size = crate::common::painted_title_size(title.is_some() || subtitle.is_some(), style.as_ref())?;
         let text = title
             .map(|t| {
                 let case = style.as_ref().and_then(|s| s.font.case.as_deref()).unwrap_or("none");
@@ -170,7 +170,6 @@ impl FrameTitle {
             subtitle,
             style.as_ref(),
             font_size,
-            crate::common::title_measure_font_size(title_style),
             wrap_w,
             fonts,
         )?;

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A table's conditional formatting moves to `style.columns.<column>.conditional`, where each rule sets the column's cell style (`background`, `font`, `glyph`); existing boards migrate automatically.
+time: 2026-11-04T06:18:45.000000+00:00

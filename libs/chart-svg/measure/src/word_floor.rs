@@ -16,7 +16,7 @@ fn sets_floor(token: &str) -> bool {
 
 /// The widest whitespace token of `text` that [`sets_floor`] admits, and its width under `width`;
 /// `(0.0, "")` when none qualifies. The measurer is the caller's: a table measures raw advances.
-pub fn widest_word_with<'t>(text: &'t str, mut width: impl FnMut(&str) -> Result<f64, String>) -> Result<(f64, &'t str), String> {
+pub fn widest_word_with(text: &str, mut width: impl FnMut(&str) -> Result<f64, String>) -> Result<(f64, &str), String> {
     let mut widest = (0.0_f64, "");
     for token in text.split_whitespace().filter(|t| sets_floor(t)) {
         let token_width = width(token)?;

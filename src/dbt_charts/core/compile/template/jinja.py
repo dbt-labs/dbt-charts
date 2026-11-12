@@ -87,7 +87,6 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_QUERY_NAME_RESERVED_WORD,
     ERR_TEXT_QUERIES_NONLITERAL,
 )
-from dbt_charts.core.diagnostics.codes_execute import ERR_SQL_DIALECT_UNSUPPORTED
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_TEXT_EMPTY_SEQUENCE,
     ERR_TEXT_MAPPING_VALUE,
@@ -672,26 +671,14 @@ def check_dialect_composition(queries: Mapping[str, AnyQuery]) -> None:
     """Enforce the compile-time rules for queries that set `dialect:`.
 
     Every `{{ queries.X }}` embedding must share its host's dialect, an unset
-    `dialect:` counting as a value. A `{{ queries.X.cache }}` reference runs the
-    composing SQL on DuckDB, so its `dialect:` must be duckdb or unset.
+    `dialect:` counting as a value.
 
     Raises:
-        CompilationError: ERR-QUERY-DIALECT-MIXED or ERR-SQL-DIALECT-UNSUPPORTED
-            on the first violation.
+        CompilationError: ERR-QUERY-DIALECT-MIXED on the first violation.
     """
     for name, query in queries.items():
         if not is_sql_query(query):
             continue
-        if query.dialect not in (None, "duckdb") and _CACHE_REF_RE.search(query.sql):
-            raise CompilationError.from_code(
-                ERR_SQL_DIALECT_UNSUPPORTED,
-                read=query.dialect,
-                write="duckdb",
-                reason=(
-                    f"query {name!r} reads {{{{ queries.X.cache }}}}, which "
-                    "composes over cached rows in duckdb, so write it in duckdb"
-                ),
-            )
         for dep_name in _QUERY_REF_RE.findall(query.sql):
             dep = queries.get(dep_name)
             if dep is not None and is_sql_query(dep) and dep.dialect != query.dialect:

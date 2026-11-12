@@ -26,7 +26,6 @@ from dbt_charts.core.compile.resolve import (
     AutomaticLinkCandidate,
     bind_channels,
     columns_of,
-    is_unbound,
     layers_own_y_scale,
     resolve,
 )
@@ -200,10 +199,36 @@ def _map_charts(board: Board, fn: Callable[[Chart], Chart]) -> Board:
     return walk(board)
 
 
+def _layer_queries(chart: Chart) -> set[str]:
+    """The queries a cartesian chart's layers read in place of its own."""
+    if not isinstance(chart, (BarChart, LineChart, AreaChart, ScatterChart)):
+        return set()
+    return {
+        layer.query
+        for layer in chart.layers
+        if layer.query is not None and layer.query != chart.query_name
+    }
+
+
+def _layer_columns(
+    chart: Chart, results: ChartDataProvider, variables: VariableValues
+) -> dict[str, list[str]]:
+    """Each layer query's columns; a failing one is left out, so its layer keeps
+    its authored spelling and reports the failure where it resolves."""
+    columns: dict[str, list[str]] = {}
+    for name in _layer_queries(chart):
+        try:
+            columns[name] = columns_of(results.execute_query(name, variables))
+        except DbtChartsError:
+            continue
+    return columns
+
+
 def with_bound_channels(
     board: Board, results: ChartDataProvider, variables: VariableValues
 ) -> Board:
-    """The board with every placed chart's channels bound to its query's columns.
+    """The board with every placed chart's column references and channels bound
+    to its query's columns (``bind_channels``).
 
     Runs before the board-wide passes (category colors, automatic links,
     sizing), which read a chart's channels. A query that fails, or columns
@@ -219,11 +244,13 @@ def with_bound_channels(
 
     def bind(chart: Chart) -> Chart:
         nonlocal lost_eligibility
-        if chart.query_name is None or not is_unbound(chart):
+        if chart.query_name is None:
             return chart
         try:
             rows = results.execute_query(chart.query_name, variables)
-            bound = bind_channels(chart, columns_of(rows))
+            bound = bind_channels(
+                chart, columns_of(rows), _layer_columns(chart, results, variables)
+            )
         except DbtChartsError:
             return chart
         lost_eligibility |= is_single_series_eligible(
@@ -274,6 +301,13 @@ def resolve_chart_with_runtime_inputs(
     """
     raise_column_format_error(chart, results)
     layer_datasets = collect_layer_datasets(chart, data, results, variables)
+    # Bound here, not only inside resolve(), so the missing-column check below
+    # reads the same spellings resolve drew.
+    chart = bind_channels(
+        chart,
+        columns_of(data),
+        {name: columns_of(layer_datasets[name]) for name in _layer_queries(chart)},
+    )
     resolved = resolve(
         chart,
         data,

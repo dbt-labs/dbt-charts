@@ -12,6 +12,8 @@ _HOST = {
     "default_theme": "clarity",
     "html_policy_ceiling": None,
     "sources": {"db": "{}"},
+    "cache_root": (True, "24h", False),
+    "source_caches": {"db": (None, None, None)},
     "implicit_source": None,
 }
 

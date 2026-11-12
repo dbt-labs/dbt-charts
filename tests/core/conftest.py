@@ -43,7 +43,7 @@ from dbt_charts.core.execute.backends.typed_fetch import TypedRows
 from dbt_charts.core.execute.compose import ResolvedQuery
 from dbt_charts.core.execute.env import close_env, make_exec_env
 from dbt_charts.core.execute.query_result import QueryResult
-from dbt_charts.core.execute.run import execute_resolved, run_query
+from dbt_charts.core.execute.run import execute_on_backend, run_query
 
 # Ink palette slot 0 from the default resolved theme.
 # This is rcs.single_series_palette[0] for the built-in theme.
@@ -247,6 +247,7 @@ def heatmap_style() -> ResolvedHeatmapStyle:
 
     ax, ay = _bake_axes("heatmap", "nominal", "nominal")
     return ResolvedHeatmapStyle(
+        single_series_fill="#40639c",
         color_gradient=None,
         rect_mark=RectMarkStyle(),
         tooltip_format=ResolvedFormat(spec=""),
@@ -286,6 +287,7 @@ def pie_style() -> ResolvedPieStyle:
     )
     return ResolvedPieStyle(
         inner_radius=0.0,
+        single_series_fill="#40639c",
         slice_mark=slice_mark,
         tooltip_format=tooltip_format,
         total_style=resolved_as(
@@ -464,11 +466,11 @@ class DbtHarness:
     ) -> QueryResult:
         """Send *resolved* to the backend for *source*, as a check that wraps the
         rendered statement does."""
-        return execute_resolved(
+        return execute_on_backend(
             self.registry,
-            resolved,
-            query,
-            source_config=DbtTargetSourceConfig(**source),
+            DbtTargetSourceConfig(**source),
+            query.source,
+            lambda _: resolved,
         )
 
     def close(self) -> None:

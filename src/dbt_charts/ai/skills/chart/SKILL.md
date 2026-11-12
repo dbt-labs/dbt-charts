@@ -63,7 +63,7 @@ Also exist: `notes`, `tags`, `aliases`, `html_policy`, `cache`, `incremental`, `
 ## Queries
 
 `queries.<name>`:
-- `sql`: The SQL to run, as Jinja2. `{{ queries.base }}` inlines another query of the same source as a subquery already aliased to its name (add no `AS`), so base reruns inside every query that reads it; a bare `FROM base` fails. `{{ queries.base.cache }}` runs base once and composes over its cached rows in DuckDB SQL: use it when several charts read one expensive base. Variables go in through `filter()`, `filter_date_range()` or `{{ name }}`
+- `sql`: The SQL to run, as Jinja2. `{{ queries.base }}` inlines another query of the same source as a subquery already aliased to its name (add no `AS`), so base reruns inside every query that reads it; a bare `FROM base` fails. `{{ queries.base.cache }}` runs base once and composes over its cached rows in DuckDB (write DuckDB SQL or set `dialect:`): use it when several charts read one expensive base. Variables go in through `filter()`, `filter_date_range()` or `{{ name }}`
 - `source` (text|map of any): Source name reference, or an inline file path (e.g. `./data/sales.csv`)
 - `notes`: What this query returns; handed to tooling with its results, never drawn
 - `formats` (map of name|text): A column's format, set once on its query, only where the default would misread (currency, percent, a unit); counts and plain numbers need none. Every chart showing the column follows it; a chart sets its own only to differ. A d3 spec is rejected
@@ -82,7 +82,7 @@ Jinja helpers in query SQL:
 - `subtitle`: Supporting text beneath the chart title; a KPI uses `support.label` instead
 - `x`: X-axis column name from the query result
 - `y` (text|list of text): Y-axis column name(s)
-- `color`: Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only; a literal color goes in `style.color.static`
+- `color`: Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only; a literal color goes on the chart's mark, e.g. `style.marks.bar.color`
 - `sort` ({by, order}): Which column orders the marks, and in which direction (asc/desc)
 - `x_label`: X axis title, replacing the column-derived one (`model_year` reads "Model year")
 - `y_label`: Y axis title, replacing the derived one (`model_year` reads "Model year")
@@ -116,13 +116,10 @@ Every chart needs `type:`, one of those below.
   - `label`: Caption naming what the headline value measures; `style.variant` places it
   - `glyph`: Text shown before the headline value (e.g. '▲', '●')
   - `support` ({value, label, glyph, good}): Secondary block, a delta, comparison, or note; `style.variant` places it
-  - `background` (text|map of any): Gradient background channel, {column, scale} shape
-  - `conditional_formatting` (map of mapping): Discrete rule-driven style overrides indexed by column name
 - `table`: rejects `x`, `y`, `color`, `sort`, `x_label`, `y_label`, `field_labels`, `layers`, `multiples`, `width`, `height`
   - `rows` (list of text): Fields whose distinct values form the row dimension of a pivot cross-tab
   - `columns` (list of text): Fields whose distinct values become column headers in a pivot cross-tab
   - `values` (list of text): Measure fields that fill pivot cells
-  - `conditional_formatting` (map of mapping): Discrete rule-driven style overrides indexed by column name
 - `callout`: requires `message`; takes `title`; rejects `query`, `subtitle`, `x`, `y`, `color`, `sort`, `x_label`, `y_label`, `field_labels`, `layers`, `multiples`, `width`, `height`
   - `message`: Body text the callout displays
 Also exist: `pie`, `donut`, `point_map`, `bubble_map`, `map`, `geoshape`, `spark_bar`, `custom`.
@@ -193,7 +190,7 @@ rows:
       - split
 ```
 
-A `rows` or `cols` entry may be an inline board with its own `title`, `variables`, `queries`, `charts` and `style`. A text row that starts a section puts its title on `title:`, not in a `##` opening its `text:`. Every name in `rows` or `cols` is a key under `charts:`, spelled the same. Also exists: `grid:`, only when the user asks for a grid.
+A `rows` or `cols` entry may be an inline board with its own `title`, `variables`, `queries`, `charts` and `style`. A text row that starts a section puts its title on `title:`, not in a `##` opening its `text:`. Every name in `rows` or `cols` is a key under `charts:`, spelled the same. Read `board-layout` to lay out a board. Also exists: `grid:`, only when the user asks for a grid.
 
 ## Formats
 

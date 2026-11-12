@@ -210,8 +210,13 @@ class TestDesignGuides:
         [
             ("chart", ("dbt Charts", "## Board"), ("kpi",)),
             ("report-design", ("Report Design", "Executive Summary"), ("narrative",)),
+            (
+                "board-layout",
+                ("Board Layout", "A lead reads as the lead"),
+                ("column edges line up",),
+            ),
         ],
-        ids=["chart", "report-design"],
+        ids=["chart", "report-design", "board-layout"],
     )
     def test_design_guide_loads(
         self,

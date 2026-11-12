@@ -125,7 +125,7 @@ class CartesianPlan:
     ``_resolved_series_label``, ``_effective_single_series_fill``) instead
     take ``_HasColor | None``, and pyright's Protocol matching for a mutable
     attribute is invariant — ``_CartesianChartStyle.color: ColorStyle | None``
-    does not satisfy ``_HasColor.color: ColorStyle | StaticGradientColorStyle
+    does not satisfy ``_HasColor.color: ColorStyle | GradientColorStyle
     | None``, even though every real value trivially would. Narrowing
     ``_HasColor`` would under-type pie/geo's own callers (which need the
     wider union); widening ``_CartesianChartStyle.color`` reverses a
@@ -233,10 +233,19 @@ def _series_axis_ink(
         or _effective_single_series_fill(
             chart_style_context,
             primary,
+            _PRIMARY_MARK_PAINT[type(normalized)],
             rhythm_slot=normalized.rhythm_slot,
             has_layers=bool(normalized.layers),
         ),
     )
+
+
+_PRIMARY_MARK_PAINT: dict[type, tuple[str, ...]] = {
+    BarChart: ("marks", "bar", "color"),
+    LineChart: ("marks", "line", "stroke", "color"),
+    AreaChart: ("marks", "area", "color"),
+    ScatterChart: ("marks", "point", "color"),
+}
 
 
 def _authored_base_ink(

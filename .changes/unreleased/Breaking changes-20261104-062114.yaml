@@ -1,0 +1,3 @@
+kind: Breaking changes
+body: A KPI's conditional formatting moves to `style.conditional` and its background to `style.background`; a `default` rule now applies only when no other rule in its column matched, and a rule that sets a glyph or a headline `tone` no longer migrates, so remove it (`good` picks the glyph).
+time: 2026-11-04T06:21:14.000000+00:00

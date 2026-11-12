@@ -3,6 +3,8 @@
 //! (`core/text/numeral_scale.py`'s ladder slice): does a ladder compact and at what magnitude,
 //! and the fixed-point precision a ladder that does not compact writes its rungs with.
 
+use crate::invariant::at;
+
 /// `text/numeral_scale.py`'s `_D3_PREFIX_BY_EXPONENT` keys — the SI tiers a
 /// shared scale may land on.
 pub const TIERS: &[i32] = &[3, 6, 9, 12];
@@ -80,7 +82,7 @@ pub fn shared_scale_for_ladder(ticks: &[f64]) -> Option<SharedScale> {
     if ticks.len() < 2 {
         return None;
     }
-    let step = (ticks[1] - ticks[0]).abs();
+    let step = (*at(ticks, 1) - *at(ticks, 0)).abs();
     let tier = largest_tier_dividing(step)?;
     let extreme = ticks.iter().fold(0.0_f64, |acc, &t| acc.max(t.abs()));
     if integer_digit_count(extreme) < COMPACTION_DIGIT_THRESHOLD {
@@ -310,11 +312,11 @@ pub struct TickLabelChoice {
 pub fn decide_tick_label(inputs: &LabelInputs, ticks: &[f64], drawn_ticks: &[f64]) -> Result<Option<TickLabelChoice>, String> {
     let compacts = !ticks.is_empty() && shared_scale_for_ladder(ticks).is_some();
     let step_format = inputs.fixed_decimal_format.or(if compacts { None } else { inputs.si_format });
-    let two_distinct_rungs = ticks.len() >= 2 && ticks[0] != ticks[1];
+    let two_distinct_rungs = ticks.len() >= 2 && *at(ticks, 0) != *at(ticks, 1);
     let (Some(step_format), true, true) = (step_format, two_distinct_rungs, inputs.format_is_house && !inputs.label_expr_authored) else {
         return Ok(None);
     };
-    let (prefix, digit_spec, precision) = non_compacting_tick_format(step_format, (ticks[1] - ticks[0]).abs())?;
+    let (prefix, digit_spec, precision) = non_compacting_tick_format(step_format, (*at(ticks, 1) - *at(ticks, 0)).abs())?;
     let anchored = match inputs.repeat {
         None => inputs.column_forming,
         Some(repeat) => repeat == "anchor",

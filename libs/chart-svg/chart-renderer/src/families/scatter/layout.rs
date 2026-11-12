@@ -2051,9 +2051,11 @@ pub(super) fn fit(
     // With a shape channel the ghost rule layer carries a small point per datum beside its rule.
     let mut ghost_symbols: Vec<(PathData, f64, f64, String, String, Option<String>)> = Vec::new();
     let value_label_ink = value_label_font.and_then(|f| f.color.as_deref()).unwrap_or("#313233");
-    let mut value_label_marks: Vec<(f64, f64, Option<String>, String, Option<String>, f64)> = Vec::new();
+    let mut value_label_marks: Vec<(f64, f64, Option<String>, String, Option<String>, Option<String>, f64)> = Vec::new();
     for (datum, (x_frac, y_frac, series, mark_r, row)) in points_data.iter().enumerate() {
         let (cx, cy) = (x_pos(*x_frac), y_pos(*y_frac));
+        let patch = crate::point_conditional::patch_of(r.style.conditional.as_ref(), row, &r.wide_measures)?;
+        let mark_r = &patch.size.map_or(*mark_r, crate::common::symbol_radius);
         let channel_ink = match &color_scale {
             Some(scale) => {
                 let field = r.color.as_deref().expect("a color scale implies a color channel");
@@ -2063,15 +2065,24 @@ pub(super) fn fit(
         };
         // An unfilled mark keeps the authored interior and strokes in the
         // color channel's ink, or the mark's own color with no channel.
-        let (fill, stroke) = if unfilled {
-            let stroke = if r.color.is_some() { channel_ink.as_str() } else { unfilled_stroke(r) };
-            (
-                r.style.point_mark.fill.clone().expect("an unfilled mark's interior is checked in bind"),
-                Some(stroke.to_string()),
-            )
+        let point_unfilled = patch.filled.map_or(unfilled, |filled| !filled);
+        let (fill, stroke) = if point_unfilled {
+            let stroke = match &patch.color {
+                Some(color) => color.as_str(),
+                None if r.color.is_some() => channel_ink.as_str(),
+                None => unfilled_stroke(r),
+            };
+            let interior = patch
+                .fill
+                .clone()
+                .or_else(|| r.style.point_mark.fill.clone())
+                .ok_or("scatter: a conditional rule that unfills a point needs a fill")?;
+            (interior, Some(stroke.to_string()))
         } else {
-            (channel_ink.clone(), None)
+            (patch.color.clone().unwrap_or_else(|| channel_ink.clone()), None)
         };
+        let point_sw = patch.stroke_width.unwrap_or(mark_sw);
+        let point_opacity = patch.opacity.unwrap_or(mark_opacity);
         let extra = crate::families::tooltip_extra::rows_for(&r.tooltip, row, &bound.payload.schema.rows)?;
         let aria = if tooltip_labels && dot_plot {
             let (category_field, measure_field, value_title) =
@@ -2174,20 +2185,20 @@ pub(super) fn fit(
             None
         };
         let label_attrs = ::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::Point)?;
-        let d = point_glyph(r, row, &shape_domain, *mark_r)?;
+        let d = point_glyph(r, row, &shape_domain, *mark_r, patch.shape.as_deref())?;
         let href = datum_link.as_ref().filter(|_| base_linked).map(|link| link.href(row)).transpose()?;
         let anchor = r.link_open.anchor(href.as_deref());
         let glyph = Attrs::new().set("fill", fill.as_str());
         let glyph = match &stroke {
             Some(stroke) => glyph
                 .set("stroke", stroke.as_str())
-                .num("stroke-width", mark_sw)
+                .num("stroke-width", point_sw)
                 .set_if(miter_limit.is_some(), "stroke-miterlimit", miter_limit.unwrap_or_default()),
-            None if mark_sw > 0.0 => glyph.num("stroke-width", mark_sw),
+            None if point_sw > 0.0 => glyph.num("stroke-width", point_sw),
             None => glyph,
         };
         let role = Role::Mark { layer: 0, series: Some(series.clone()).filter(|series| !series.is_empty()), datum: Some(datum) };
-        let mark = crate::href::linked(anchor, Node::path(role, d, glyph.num("opacity", mark_opacity).extend(label_attrs)).translate(cx, cy));
+        let mark = crate::href::linked(anchor, Node::path(role, d, glyph.num("opacity", point_opacity).extend(label_attrs)).translate(cx, cy));
         plot.push(if aria.is_some() { ::layout::contract::mark_group("symbol", &points_layer_name, vec![mark])? } else { mark });
         if value_labels.is_some() && !y_nominal {
             let ink = match value_label_font.and_then(|f| f.color.as_deref()) {
@@ -2196,13 +2207,14 @@ pub(super) fn fit(
                 None if r.color.is_some() => channel_ink.clone(),
                 None => value_label_ink.to_string(),
             };
-            value_label_marks.push((cx, cy, aria.clone(), ink, href.clone(), *mark_r));
+            let ink = patch.label_color.clone().unwrap_or(ink);
+            value_label_marks.push((cx, cy, aria.clone(), ink, patch.label_weight.clone(), href.clone(), *mark_r));
         }
         if let (true, Some(label)) = (ghosts_on, &aria) {
             let stroke = if r.color.is_some() { channel_ink.clone() } else { ghost_ink.clone() };
             ghost_points.push((label.clone(), cx, cy, stroke, href.clone()));
             if r.shape.is_some() {
-                let glyph = point_glyph(r, row, &shape_domain, crate::common::symbol_radius(RULE_POINT_SIZE))?;
+                let glyph = point_glyph(r, row, &shape_domain, crate::common::symbol_radius(RULE_POINT_SIZE), None)?;
                 ghost_symbols.push((glyph, cx, cy, fill.clone(), label.clone(), href.clone()));
             }
         }
@@ -2302,7 +2314,7 @@ pub(super) fn fit(
             .iter()
             .zip(&value_label_texts)
             .enumerate()
-            .map(|(owner, ((cx, cy, _, _, _, mark_r), (_, w)))| crate::placement::LabelReq {
+            .map(|(owner, ((cx, cy, _, _, _, _, mark_r), (_, w)))| crate::placement::LabelReq {
                 anchor: (*cx, *cy),
                 width: *w,
                 preferred: sides[owner].filter(|_| movable).map_or(preferred, |side| crate::placement::pair_spot(side, (*cx, *cy), *w, value_label_size, plot_w, &grid_rows)),
@@ -2317,7 +2329,7 @@ pub(super) fn fit(
         let mut field = crate::placement::Field { plot: (plot_w, plot_h), obstacles, paths: reqs.iter().map(|req| vec![req.anchor]).collect() };
         let order: Vec<usize> = (0..reqs.len()).collect();
         let spots = crate::placement::place_value_labels(&reqs, &order, value_label_size, &mut field);
-        for ((cx, cy, aria, color, href, _), ((text, w), spot)) in value_label_marks.iter().zip(value_label_texts.iter().zip(&spots)) {
+        for ((cx, cy, aria, color, label_weight, href, _), ((text, w), spot)) in value_label_marks.iter().zip(value_label_texts.iter().zip(&spots)) {
             let Some(spot) = spot else { continue };
             let ink = vega_fit::text_ink(cx + spot.dx, cy + spot.dy, *w, value_label_size, spot.align, spot.baseline);
             let label_attrs = ::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::TextMark)?;
@@ -2328,7 +2340,7 @@ pub(super) fn fit(
                 spot.align,
                 value_label_family,
                 value_label_size,
-                &weight,
+                label_weight.as_deref().unwrap_or(&weight),
                 font_style,
                 color,
                 label_attrs,

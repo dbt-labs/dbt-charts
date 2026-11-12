@@ -69,7 +69,7 @@ Also exist: `link`, `font`, `y_offset`, `brand_weight`.
 - `notation` (analytic|narrative): Notation style: 'analytic' for SI-prefix (1B, 1M) or 'narrative' for prose-style (1bn, 1m)
 Also exist: `sign_placement`, `repeat`.
 
-`style.variables`: `visible`, `position`, `title_inline_band_bottom_pad`, `gap`, `label_position`, `title_inline_title_max_width`, `font`, `label`, `value`, `placeholder`, `container_height`, `border`, `control_gap`, `input`, `presets`.
+`style.variables`: `visible`, `position`, `title_inline_band_bottom_pad`, `gap`, `label_position`, `title_inline_title_max_width`, `font`, `label`, `value`, `placeholder`, `container_height`, `compact_height`, `border`, `control_gap`, `input`, `presets`, `presets_display`, `overflow`.
 
 ## Charts
 
@@ -87,7 +87,7 @@ Also exist: `legend`, `preferred_width`, `padding`, `background`, `aspect_ratio`
 - `background`: Chart-local background color override; None inherits from theme
 - `padding` ({left, right, top, bottom}): Padding as {top, right, bottom, left} in pixels, never one number
 - `aspect_ratio` (number): Chart aspect ratio (width/height)
-- `color` ({static, gradient: {}, categorical: {}}): Chart color: static mark paint, categorical palette, and/or gradient scale
+- `color` ({gradient: {}, categorical: {}}): Chart color scales: categorical palette and/or gradient
 - `axis_x` (mapping): The category or time axis, in either orientation (a horizontal bar's category axis is still `axis_x`). Inherits the global axis_x
 - `axis_y` (mapping): The measure axis, in either orientation: its number format goes here, a horizontal bar's too. Inherits the global axis_y
 - `legend` (mapping): Chart legend style
@@ -95,7 +95,7 @@ Also exist: `legend`, `preferred_width`, `padding`, `background`, `aspect_ratio`
 - `stack` (none|zero|normalize|center): Default stack mode for bar charts; none renders side-by-side columns
 - `orientation` (horizontal|vertical|auto): Preferred bar orientation
 - `endpoint_labels` ({label_offset, height}): Styling of the series names printed on stacked bars (`legend.position.edge: endpoints`)
-Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `stack_order`, `grouped`, `pattern`.
+Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `stack_order`, `grouped`, `pattern`, `conditional`.
 
 ### Axes
 
@@ -131,7 +131,7 @@ Also exist: `log`, `pow`, `symlog`.
 - `border` (text|{radius, color, width, dash_array, line_cap, dash_offset}): Bar border style (color/width also serve as the bar stroke)
 - `labels` (mapping): Value label style for bar marks
 - `total_label` ({visible, format, dx, dy, font: {}}): Stack total label style
-Also exist: `padding`, `size`, `gap`, `min_size`, `max_size`, `opacity`.
+Also exist: `color`, `padding`, `size`, `gap`, `min_size`, `max_size`, `opacity`.
 
 `marks.bar.labels`:
 - `visible` (bool|last): Show numeric value labels on every mark or on listed anchors
@@ -148,7 +148,7 @@ Also exist: `connect`, `disconnected_cap`, `disconnected_width`, `halo_multiplie
 
 `marks.point`: `size`, `color`, `shape`, `opacity`, `filled`, `fill`, `stroke_width`, `labels`.
 
-`marks.area`: `opacity`, `curve`, `backdrop`, `stacked`.
+`marks.area`: `color`, `opacity`, `curve`, `backdrop`, `stacked`.
 
 ### Legend and color
 
@@ -159,7 +159,6 @@ Also exist: `connect`, `disconnected_cap`, `disconnected_width`, `halo_multiplie
 Also exist: `direction`, `columns`, `compact_columns`, `row`, `label`, `title`, `symbol_limit`, `symbol_shape`, `symbol_fill`.
 
 `color`:
-- `static`: One color for all marks: a hex, CSS name, `rgb()`/`oklch()` or theme token (`category[1]`, `positive.solid`, `dbt-grays.8`). A token follows the theme, a hex stays put
 - `categorical` ({palette, single_series_palette}): Palettes used when color encodes distinct categories, or a lone series
 - `gradient` (mapping): Continuous gradient scale for the color encoding
 
@@ -189,7 +188,9 @@ A color request ("make Created orange") pins `category.<hue>` under `style.chart
 - `value` ({font: {}, format, compact: {}, affix: {}, glyph: {}}): KPI headline value slot
 - `label` ({font: {}, overflow}): KPI card label slot
 - `support` ({font: {}, format, tone, glyph: {}}): KPI support row slot
-Also exist: `preferred_width`, `padding`, `background`, `font`, `min_card_width`, `default_height`, `border`, `content_padding`.
+- `background` (text|{column, scale: {}}): Card background color, or a {column, scale} gradient by value
+- `conditional` (map of list of mapping): Rules that restyle the card by value, keyed by column name
+Also exist: `preferred_width`, `padding`, `font`, `min_card_width`, `default_height`, `border`, `content_padding`.
 
 `kpi style.value`: `font`, `format`, `compact`, `affix`, `glyph`.
 
@@ -197,12 +198,14 @@ Also exist: `preferred_width`, `padding`, `background`, `font`, `min_card_width`
 - `tone` (positive|negative|warning|info): Semantic color for the support value and glyph
 Also exist: `font`, `format`, `glyph`.
 
+`style.conditional.<column>[], on a kpi`: `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `between`, `in`, `is_null`, `default`, `background`, `value`, `label`, `support`.
+
 ## Table
 
 `a table's style`:
 - `wrap` (bool): Allow cell text wrapping; false clips to single line
 - `header` (mapping): Table header row style
-- `row` ({height, stripe: {}, divider: {}, roles: {}}): Table body row style
+- `row` ({height, stripe: {}, divider: {}, roles: {}, conditional}): Table body row style
 - `pagination` ({enabled, page_rows, mode}): Client-side pagination defaults for table charts
 - `column_defaults` ({width, align, format, background, font: {}}): Table-level column defaults applied to every column; None means no defaults authored
 - `columns` (map of mapping): Per-column display configuration keyed by column name (label, format, width, etc.)
@@ -211,9 +214,17 @@ Also exist: `title`, `preferred_width`, `padding`, `background`, `font`, `border
 
 `table style.header`: `visible`, `height`, `font`, `font_compact`, `background`, `overflow`, `divider`.
 
+`table style.column_defaults`:
+- `width` (int|text): Override column width in pixels (integer) or a CSS width string
+- `align` (left|center|right): Override cell text alignment (left, center, or right)
+- `background`: Override cell background color (CSS color string), or a column ID
+- `font` (mapping): Override cell font style (size, weight, color, family)
+Also exist: `format`.
+
 `table style.row`:
 - `height` (number): Body row height in pixels
 - `stripe` ({color}): Alternating row stripe style; None means no stripe
+- `conditional` (map of list of mapping): Rules that restyle a row by any column's value, hidden ones included
 Also exist: `divider`, `roles`.
 
 `table style.pagination`: `enabled`, `page_rows`, `mode`.
@@ -230,11 +241,18 @@ Also exist: `divider`, `roles`.
 - `scale` ({background: {}, color: {}}): Continuous color mapping configuration for this column
 - `glyph`: Text shown before every cell value
 - `spark` (line|area|bar|bar-normalize|column|columns): Miniature chart drawn inside each cell
+- `conditional` (list of mapping): Rules that restyle this column's cells by the cell's own value
 Also exist: `swatch`, `max_width`, `header_overflow`, `header_link`, `glyph_color`.
 
-`conditional_formatting.<column>.when[], on a table or kpi`: `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `between`, `in`, `is_null`, `default`, `background`, `font`, `glyph`, `glyph_color`, `tone`.
-- ConditionalRule requires exactly one condition operator
-- ConditionalRule glyph_color requires glyph to be set
+`style.columns.<column>.conditional[]`: `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `between`, `in`, `is_null`, `default`, `tone`, `background`, `font`, `glyph`, `glyph_color`.
+- A conditional rule requires exactly one condition operator
+- A conditional rule requires at least one style to apply
+
+`style.row.conditional.<column>[]`: `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `between`, `in`, `is_null`, `default`, `background`, `font`, `columns`.
+- A conditional rule requires exactly one condition operator
+- A conditional rule requires at least one style to apply
+- A row rule's `background` and `font` paint the whole row; `columns.<column>` paints one cell and alone takes `glyph`, `glyph_color` and `tone`. A cell's own `conditional` and `scale` beat it. Not for pivot or `transpose`.
+- A condition on several columns (`profit < 0 and region = 'EU'`, `actual < target`) becomes a hidden underscore column in SQL (`_flag`) that a row rule keys on: `style.row.conditional._flag: [{eq: true, background: warning.bg}]`.
 
 Layouts with `grid:` (rare; a chart spanning rows):
 

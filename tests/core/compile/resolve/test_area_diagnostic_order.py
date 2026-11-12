@@ -59,7 +59,7 @@ def test_area_encoding_error_wins_over_axis_bake_error() -> None:
 def test_area_encoding_error_wins_over_axis_bake_error_with_stack_set() -> None:
     """Same as above, with chart-root `stack` set -- the branch that resolves
     `resolved_stack` without needing the chart-local style context at all.
-    `style.color` also carries an unknown palette token, which
+    `style.marks.area.color` also carries an unknown palette token, which
     `build_chart_style_context` rejects with `UnknownColorError`. If that
     context is built before `_validate_area_encoding` runs, the chart raises
     `UnknownColorError` instead of the encoding error."""
@@ -74,7 +74,7 @@ def test_area_encoding_error_wins_over_axis_bake_error_with_stack_set() -> None:
         variable_dependencies=set(),
         style=AreaChartStylePatch.model_validate(
             {
-                "color": {"static": "dbt-creams.does-not-exist"},
+                "marks": {"area": {"color": "dbt-creams.does-not-exist"}},
                 "axis_y": {"ticks": {"step": 5}},
             }
         ),

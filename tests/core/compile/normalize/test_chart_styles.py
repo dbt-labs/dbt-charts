@@ -89,8 +89,9 @@ charts:
     {_QUERY}
     style:
       background: '#abcdef'
-      color:
-        static: '#aa0000'
+      marks:
+        bar:
+          color: '#aa0000'
       axis_x:
         title:
           visible: false
@@ -106,10 +107,10 @@ charts:
     assert styled.family.marks.bar.border.width == 3.5
     assert plain.family.marks.bar.border.width == 3.5
     assert styled.background == "#abcdef"
-    assert styled.color == "#aa0000"
+    assert styled.family.marks.bar.color == "#aa0000"
     assert styled.axis_x is not None and styled.axis_x.title.visible is False
     assert plain.background != "#abcdef"
-    assert plain.color is None
+    assert plain.family.marks.bar.color is None
     assert plain.axis_x is None
 
 
@@ -185,7 +186,6 @@ def test_chart_styles_equal_what_the_resolvers_paint_with() -> None:
         else:
             built = build_chart_style_context(context, chart)
         shared = {
-            "color": built.color,
             "palette": built.palette,
             "single_series_palette": built.single_series_palette,
             "requested_alias_palette": built.requested_alias_palette,
@@ -301,8 +301,9 @@ charts:
     y: r
     {_QUERY}
     style:
-      color:
-        static: nosuch.shade
+      marks:
+        bar:
+          color: nosuch.shade
 rows:
   - good
   - bad

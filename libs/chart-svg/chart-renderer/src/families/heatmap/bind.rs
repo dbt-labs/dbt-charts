@@ -224,6 +224,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         mirror: ghost.is_some(),
         ghost_titles: None,
         patterns: &r.patterns,
+        conditional: r.style.conditional.as_ref(),
     };
     let cells = bind_cells(&rows, &x_domain, &y_domain, &paint)?;
     let marks = CellMarks::of(&r.style.rect_mark)?;

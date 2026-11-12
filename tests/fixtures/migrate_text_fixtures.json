@@ -77,12 +77,12 @@
  {
   "text": "title: T\nqueries:\n  q1:\n    sql: \"select 1 as a, 2 as b\"\n    source: test\nrows:\n  - type: bar\n    query: q1\n    x: a\n    y: b\n    conditional_formatting:\n      b:\n        when:\n          - gt: 1\n            background: \"#ff0000\"\n  - type: table\n    query: q1\n    conditional_formatting:\n      b:\n        when:\n          - gt: 1\n            background: \"#ff0000\"\n",
   "stop": null,
-  "ok": "title: T\nqueries:\n  q1:\n    sql: \"select 1 as a, 2 as b\"\n    source: test\nrows:\n  - type: bar\n    query: q1\n    x: a\n    y: b\n  - type: table\n    query: q1\n    conditional_formatting:\n      b:\n        when:\n          - gt: 1\n            background: \"#ff0000\"\n"
+  "ok": "title: T\nqueries:\n  q1:\n    sql: \"select 1 as a, 2 as b\"\n    source: test\nrows:\n  - type: bar\n    query: q1\n    x: a\n    y: b\n  - type: table\n    query: q1\n    style:\n      columns:\n        b:\n          conditional:\n            - gt: 1\n              background: \"#ff0000\"\n"
  },
  {
   "text": "title: T\nqueries:\n  q1:\n    sql: \"select 1 as a, 2 as b\"\n    source: test\ncharts:\n  b:\n    type: bar\n    query: q1\n    x: a\n    y: b\n    conditional_formatting:\n      b:\n        when:\n          - gt: 1\n            background: \"#ff0000\"\n  t:\n    type: table\n    query: q1\n    conditional_formatting:\n      b:\n        when:\n          - gt: 1\n            background: \"#ff0000\"\nrows: [b, t]\n",
   "stop": null,
-  "ok": "title: T\nqueries:\n  q1:\n    sql: \"select 1 as a, 2 as b\"\n    source: test\ncharts:\n  b:\n    type: bar\n    query: q1\n    x: a\n    y: b\n  t:\n    type: table\n    query: q1\n    conditional_formatting:\n      b:\n        when:\n          - gt: 1\n            background: \"#ff0000\"\nrows: [b, t]\n"
+  "ok": "title: T\nqueries:\n  q1:\n    sql: \"select 1 as a, 2 as b\"\n    source: test\ncharts:\n  b:\n    type: bar\n    query: q1\n    x: a\n    y: b\n  t:\n    type: table\n    query: q1\n    style:\n      columns:\n        b:\n          conditional:\n            - gt: 1\n              background: \"#ff0000\"\nrows: [b, t]\n"
  },
  {
   "text": "title: Accounts\ndescription: Won revenue by account.\n\n# Industry cells filter the list.\nqueries:\n  description:\n    sql: SELECT 1 AS month, 2 AS revenue\n    description: prose on the query named 'description'\ncharts:\n  directory:\n    type: bar\n    query: description\n    x: month\n    y: revenue\nrows: [directory]\n",
@@ -252,7 +252,7 @@
  {
   "text": "title: Test\nqueries:\n  q: {type: values, rows: [{n: 1}]}\nstyle:\n  color: '#bf8700'\n  background: '#ffffff'\ncharts:\n  k:\n    query: q\n    type: line\n    x: n\n    y: n\n    style:\n      color:\n        static: '#123456'\nrows:\n- style:\n    color: '#abcdef'\n  rows:\n  - k\n",
   "stop": null,
-  "ok": "title: Test\nqueries:\n  q: {type: values, rows: [{n: 1}]}\nstyle:\n  background: '#ffffff'\ncharts:\n  k:\n    query: q\n    type: line\n    x: n\n    y: n\n    style:\n      color:\n        static: '#123456'\nrows:\n- rows:\n  - k\n"
+  "ok": "title: Test\nqueries:\n  q: {type: values, rows: [{n: 1}]}\nstyle:\n  background: '#ffffff'\ncharts:\n  k:\n    query: q\n    type: line\n    x: n\n    y: n\n    style:\n      marks:\n        line:\n          stroke:\n            color: \"#123456\"\nrows:\n- rows:\n  - k\n"
  },
  {
   "text": "title: T\ntext: Some prose.\nstyle:\n  text:\n    column:\n      max_number: 2\n      gap: 24\n      divider:\n        visible: true\n        width: 1\n        color: \"#ccc\"\nrows:\n  - text: A nested block.\n    style:\n      text:\n        column:\n          gap: 40\n",

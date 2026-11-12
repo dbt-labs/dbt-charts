@@ -1,0 +1,3 @@
+kind: Fixes
+body: Text in a card slightly wider than one column now wraps at the same width as the board's other single columns.
+time: 2026-11-10T16:44:34.945948-08:00

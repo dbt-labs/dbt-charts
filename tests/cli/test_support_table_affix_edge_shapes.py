@@ -50,17 +50,17 @@ def test_alias_spelling_of_spec_less_support_table_affix_renders_same_digits(
     ``FormatConfig``) must resolve exactly like the inline spelling ``format.
     """
     svg = _render_svg(tmp_path)
-    assert "EUR 168k" in svg, svg
-    assert "EUR −41.5k" in svg, svg
+    assert ">168<" in svg and ">−41.5<" in svg, svg
+    assert ", EUR K<" in svg, svg
 
 
 def test_accounting_sign_flag_survives_support_table_affix_composition(
     tmp_path: Path,
 ) -> None:
     svg = _render_svg(tmp_path)
-    assert "(41,500) EUR" in svg
-    assert "−41,500 EUR" not in svg
-    assert "-41,500 EUR" not in svg
+    assert ">(41,500)<" in svg
+    assert ">−41,500<" not in svg
+    assert ">-41,500<" not in svg
 
 
 def test_spec_less_donut_total_affix_does_not_crash(tmp_path: Path) -> None:

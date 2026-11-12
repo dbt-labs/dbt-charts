@@ -107,6 +107,14 @@ class VariablesStyle(BaseModel):
     container_height: float = Field(
         description="Height of the variables panel container in pixels."
     )
+    compact_height: float = Field(
+        gt=0,
+        description=(
+            "Height in pixels of every control, and of each row of controls, "
+            "in a nested board's variable band; a board's own band keeps "
+            "`input.height` and `container_height`."
+        ),
+    )
     border: BorderStyle = Field(description="Variables panel border style.")
     control_gap: float = Field(
         description="Gap between label and input within a single control in pixels."
@@ -119,6 +127,22 @@ class VariablesStyle(BaseModel):
             "variable's own `presets:` replaces it. Each is a preset name "
             "(`last_30_days`, `previous_3_quarters`, `this_fiscal_quarter`)."
         ),
+    )
+
+    presets_display: Literal["buttons", "menu"] = Field(
+        description=(
+            "How a daterange offers its presets: `menu` keeps them in the "
+            "picker's rail behind the field; `buttons` draws them inline as a row "
+            "of compact buttons, so every preset is visible without opening "
+            "anything."
+        )
+    )
+    overflow: Literal["menu", "wrap"] = Field(
+        description=(
+            "What a button row does when it is wider than its slot: `menu` "
+            "draws the dropdown form instead and reports a render warning; "
+            "`wrap` flows the buttons onto further rows."
+        )
     )
 
     @field_validator("presets")

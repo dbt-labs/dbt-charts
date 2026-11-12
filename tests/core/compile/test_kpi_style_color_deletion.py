@@ -67,7 +67,7 @@ def test_kpi_style_color_migrates_and_other_families_keep_theirs(
                 "query": "q",
                 "x": "n",
                 "y": "n",
-                "style": {"color": {"static": "#123456"}},
+                "style": {"color": {"categorical": {"palette": ["#123456"]}}},
             },
         },
         "rows": ["k", "l"],
@@ -76,7 +76,9 @@ def test_kpi_style_color_migrates_and_other_families_keep_theirs(
     migrated = _migrate(raw, catalog)
 
     assert "style" not in migrated["charts"]["k"]
-    assert migrated["charts"]["l"]["style"]["color"] == {"static": "#123456"}
+    assert migrated["charts"]["l"]["style"]["color"] == {
+        "categorical": {"palette": ["#123456"]}
+    }
     AuthoredBoard.model_validate(migrated)
 
 

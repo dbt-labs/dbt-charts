@@ -111,6 +111,7 @@ After setup, your AI assistant has access to these tools:
 | Resource | Content |
 |----------|---------|
 | `dct://guide/chart` | Board and chart grammar, build-render-fix loop |
+| `dct://guide/board-layout` | Arranging a board's elements |
 | `dct://guide/report-design` | Report design principles and narrative structure |
 | `dct://boards` | List of all dashboards in the project |
 | `dct://board/{path}` | YAML content and compiled structure of a specific dashboard |

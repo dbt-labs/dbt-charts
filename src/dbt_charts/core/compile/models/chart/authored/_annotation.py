@@ -30,6 +30,7 @@ from dbt_charts.core.compile.models.constraints import (
     Requires,
     ValueIn,
 )
+from dbt_charts.core.compile.models.markers import ColumnRef
 from dbt_charts.core.compile.models.style.authored._base import (
     BandAnnotationStylePatch,
     NoteAnnotationStylePatch,
@@ -266,7 +267,7 @@ class _AnnotationBase(ConstrainedModel):
             "pools every series' rows, or takes the per-x sum on a stacked chart."
         ),
     )
-    y_column: Annotated[str, StringConstraints(min_length=1)] | None = Field(
+    y_column: Annotated[ColumnRef, StringConstraints(min_length=1)] | None = Field(
         default=None,
         description=(
             "The y column the annotation refers to: it picks the y axis that "

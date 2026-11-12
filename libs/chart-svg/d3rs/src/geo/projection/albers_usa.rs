@@ -11,6 +11,8 @@
 //! `multiplex` sends every event to the three insets' streams in order; their clip regions are mutually
 //! exclusive on the sphere, which is what keeps their lines and polygons from interleaving.
 
+use crate::invariant;
+
 use super::conic_equal_area::conic_equal_area;
 use super::fit::Fit;
 use super::albers::albers;
@@ -204,7 +206,7 @@ impl Fit for AlbersUsa {
     }
 
     fn set_clip_extent(&mut self, _: Option<[[f64; 2]; 2]>) -> &mut Self {
-        unreachable!("albersUsa has no clipExtent, so fit never restores one")
+        invariant::broken("albersUsa has no clipExtent, so fit never restores one")
     }
 
     fn set_scale(&mut self, k: f64) -> &mut Self {

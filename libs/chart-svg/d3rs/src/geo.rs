@@ -2,6 +2,9 @@
 //! no projection), with d3-array's exact [`Adder`]. The pipeline modules (`stream`, `rotation`, `compose`,
 //! `transform`) transliterate their upstream files of the same name.
 
+
+use crate::invariant::{at, Invariant};
+
 pub mod cartesian;
 pub mod circle;
 pub mod clip;
@@ -303,11 +306,11 @@ impl Bounds {
             if ranges.iter().any(|r| r[0].is_nan()) {
                 js_sort(&mut ranges, |a, b| a[0] - b[0])?;
             } else {
-                ranges.sort_by(|a, b| a[0].partial_cmp(&b[0]).expect("NaN ranges take the js_sort branch"));
+                ranges.sort_by(|a, b| a[0].partial_cmp(&b[0]).held("NaN ranges take the js_sort branch"));
             }
-            let mut merged = vec![ranges[0]];
+            let mut merged = vec![*at(&ranges, 0)];
             for b in ranges.iter().skip(1) {
-                let a = merged.last_mut().expect("merged starts non-empty");
+                let a = merged.last_mut().held("merged starts non-empty");
                 if range_contains(a, b[0]) || range_contains(a, b[1]) {
                     if angle(a[0], b[1]) > angle(a[0], a[1]) {
                         a[1] = b[1];
@@ -320,7 +323,7 @@ impl Bounds {
                 }
             }
             let n = merged.len() - 1;
-            let mut a = merged[n];
+            let mut a = *at(&merged, n);
             let mut delta_max = f64::NEG_INFINITY;
             for b in &merged {
                 let delta = angle(a[1], b[0]);

@@ -5,6 +5,7 @@
 pub mod board;
 pub mod contract;
 pub mod families;
+pub mod family;
 pub mod geom;
 pub mod knockout;
 pub mod labels_expr;

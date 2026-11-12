@@ -122,10 +122,12 @@ class TestTopLevelChartStyleTokenResolution:
         effective = build_chart_style_context(
             _board(),
             BarChart(
-                id="t", type="bar", style=_patch({"bar": {"color": {"static": TOKEN}}})
+                id="t",
+                type="bar",
+                style=_patch({"bar": {"marks": {"bar": {"color": TOKEN}}}}),
             ),
         )
-        assert effective.color == HEX
+        assert effective.bar.marks.bar.color == HEX
 
 
 # ── Title and legend ──────────────────────────────────────────────────────────
@@ -255,16 +257,16 @@ class TestTableTokenResolution:
 
 
 class TestConditionalFormattingTokenResolution:
-    """Tokens in conditional_formatting rules resolve at style-resolution time.
+    """Tokens in a table column's ``conditional`` rules resolve at style-resolution time.
 
     Normalization carries the token through unresolved: a role-indirected
     token (e.g. ``category[1]``) needs the active theme's palettes/roles
     context, which only exists once resolve() runs against a
-    ChartStyleContext — not at normalize_chart() time. See GH
+    ChartStyleContext, not at normalize_chart() time. See GH
     dbt-labs/dbt-charts#34.
     """
 
-    def _normalized_chart(self, rule: dict):
+    def _normalized_chart(self, text: dict):
         from dbt_charts.core.compile.normalize.charts import normalize_chart
 
         return normalize_chart(
@@ -272,44 +274,40 @@ class TestConditionalFormattingTokenResolution:
             chart_def={
                 "type": "table",
                 "query": {"columns": ["x"], "values": [["a"], ["b"]]},
-                "conditional_formatting": {"x": {"when": [rule]}},
+                "style": {"columns": {"x": {"conditional": [{"eq": "x", **text}]}}},
             },
             query_registry={},
             sources={},
         )
 
-    def _resolved_chart(self, rule: dict):
+    def _resolved_rule(self, text: dict):
         from dbt_charts.core.compile.resolve import resolve
 
-        chart = self._normalized_chart(rule)
-        return resolve(chart, [{"x": "a"}], chart_style_context=_board())
+        chart = self._normalized_chart(text)
+        resolved = resolve(chart, [{"x": "a"}], chart_style_context=_board())
+        return resolved.columns["x"].conditional[0]
 
     def test_normalize_leaves_background_token_unresolved(self) -> None:
-        chart = self._normalized_chart({"eq": "x", "background": TOKEN})
-        assert chart.conditional_formatting is not None
-        assert chart.conditional_formatting["x"].when[0].background == TOKEN
+        chart = self._normalized_chart({"background": TOKEN})
+        assert chart.style.columns["x"].conditional[0].background == TOKEN
 
     def test_rule_background_token_resolves_at_resolve_time(self) -> None:
-        chart = self._resolved_chart({"eq": "x", "background": TOKEN})
-        assert chart.conditional_formatting is not None
-        assert chart.conditional_formatting["x"].when[0].background == HEX
+        rule = self._resolved_rule({"background": TOKEN})
+        assert rule.background == HEX
 
     def test_rule_font_color_token_resolves_at_resolve_time(self) -> None:
-        chart = self._resolved_chart({"eq": "x", "font": {"color": TOKEN}})
-        assert chart.conditional_formatting is not None
-        rule = chart.conditional_formatting["x"].when[0]
-        assert rule.font is not None
+        rule = self._resolved_rule({"font": {"color": TOKEN}})
         assert rule.font.color == HEX
 
     def test_unknown_background_token_raises_at_resolve_time(self) -> None:
         from dbt_charts.core.compile.errors import CompilationError
 
         with pytest.raises(CompilationError, match="'test_chart'"):
-            self._resolved_chart({"eq": "x", "background": UNKNOWN})
+            self._resolved_rule({"background": UNKNOWN})
 
     def test_bracket_role_token_in_font_color_resolves(self) -> None:
         """The exact crash reported in GH dbt-labs/dbt-charts#34: category[1] in
-        conditional_formatting raised UnknownColorError because normalize-time
+        a conditional rule raised UnknownColorError because normalize-time
         resolution had no theme palettes/roles context. It now resolves like
         every other role-indirected token."""
         from dbt_charts.core.compile.resolve.style.tokens import (
@@ -317,10 +315,7 @@ class TestConditionalFormattingTokenResolution:
         )
 
         board = _board()
-        chart = self._resolved_chart({"eq": "x", "font": {"color": "category[1]"}})
-        assert chart.conditional_formatting is not None
-        rule = chart.conditional_formatting["x"].when[0]
-        assert rule.font is not None
+        rule = self._resolved_rule({"font": {"color": "category[1]"}})
         assert rule.font.color == _resolve_one_color_token(
             "category[1]", board.palettes, board.roles
         )
@@ -328,15 +323,37 @@ class TestConditionalFormattingTokenResolution:
     def test_predicate_value_shaped_like_a_token_is_left_alone(self) -> None:
         """A scalar predicate operand or glyph is data/text, not a color --
         even when its value happens to be shaped like a color token, it must
-        not be silently rewritten to hex (non-negotiable #4: no magic). This
-        does not cover a token-shaped value inside a list predicate (e.g.
-        `in:`) -- the keyed-collection guard is field-name-based, and a list
-        carries no field name to check."""
-        chart = self._resolved_chart(
-            {"eq": "category[1]", "glyph": "positive.solid", "background": TOKEN}
+        not be silently rewritten to hex (no magic). This does not cover a
+        token-shaped value inside a list predicate (e.g. `in:`) -- the
+        keyed-collection guard is field-name-based, and a list carries no
+        field name to check."""
+        from dbt_charts.core.compile.normalize.charts import normalize_chart
+        from dbt_charts.core.compile.resolve import resolve
+
+        chart = normalize_chart(
+            chart_id="test_chart",
+            chart_def={
+                "type": "table",
+                "query": {"columns": ["x"], "values": [["a"], ["b"]]},
+                "style": {
+                    "columns": {
+                        "x": {
+                            "conditional": [
+                                {
+                                    "eq": "category[1]",
+                                    "glyph": "positive.solid",
+                                    "background": TOKEN,
+                                }
+                            ]
+                        }
+                    }
+                },
+            },
+            query_registry={},
+            sources={},
         )
-        assert chart.conditional_formatting is not None
-        rule = chart.conditional_formatting["x"].when[0]
+        resolved = resolve(chart, [{"x": "a"}], chart_style_context=_board())
+        rule = resolved.columns["x"].conditional[0]
         assert rule.eq == "category[1]"
         assert rule.glyph == "positive.solid"
         assert rule.background == HEX

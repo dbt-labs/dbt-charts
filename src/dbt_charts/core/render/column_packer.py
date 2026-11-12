@@ -98,8 +98,9 @@ def span_boxes(
     spans it contains (a 2/3 card on thirds offers 2), each on the board grid's
     own offsets from the card's left edge, so the second column of a 2/3 card
     meets the second card of the 3-up row below. A card narrower than two spans
-    offers itself whole: its left edge is already a card content edge. A card
-    contains a span when it is within half a gap (and never less than a pixel)
+    offers one box at its left edge, no wider than a span, so a 40% card wraps
+    like every other lone column on the board. A card contains a span when it
+    is within half a gap (and never less than a pixel)
     of holding it, because an authored ``66.67%`` is a few pixels short of two
     thirds and a row with no gap still divides unevenly; a last box never
     passes the container's right edge.
@@ -108,7 +109,7 @@ def span_boxes(
     slack = max(gap / 2, 1.0)
     count = max(1, min(grid, int((container + gap + slack) // (span + gap))))
     if count == 1:
-        return ((0.0, container),)
+        return ((0.0, min(container, span)),)
     return tuple(
         (i * (span + gap), min(span, container - i * (span + gap)))
         for i in range(count)

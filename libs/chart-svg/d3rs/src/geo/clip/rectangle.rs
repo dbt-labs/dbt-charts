@@ -1,6 +1,9 @@
 //! d3-geo 3.1.1 `src/clip/rectangle.js`: clips to an axis-aligned rectangle. It is planar, so it runs after
 //! projection (`projection.clipExtent`). Like d3's, the stream has no `sphere`: the pre-clip stage consumes it.
 
+
+use crate::invariant::{self, at, Invariant};
+
 use super::buffer::{BufferPoint, ClipBuffer};
 use super::line::clip_line;
 use super::rejoin::clip_rejoin;
@@ -124,8 +127,9 @@ pub fn clip_rectangle<S: GeoStream>(x0: f64, y0: f64, x1: f64, y1: f64, sink: S)
 fn polygon_inside(polygon: &[Vec<[f64; 2]>], x0: f64, y1: f64) -> i32 {
     let mut winding = 0;
     for ring in polygon {
-        let (mut b0, mut b1) = (ring[0][0], ring[0][1]);
-        for point in &ring[1..] {
+        let first = at(ring, 0);
+        let (mut b0, mut b1) = (first[0], first[1]);
+        for point in at(ring, 1..) {
             let (a0, a1) = (b0, b1);
             (b0, b1) = (point[0], point[1]);
             if a1 <= y1 {
@@ -170,7 +174,7 @@ impl<S: GeoStream> ClipRectangle<S> {
         let mut y = y;
         let v = self.rect.visible(x, y);
         if let Some(pending) = &mut self.pending {
-            pending.polygon.last_mut().expect("lineStart opened a ring").push([x, y]);
+            pending.polygon.last_mut().held("lineStart opened a ring").push([x, y]);
         }
         if self.first {
             self.first_point = [x, y];
@@ -244,7 +248,7 @@ impl<S: GeoStream> GeoStream for ClipRectangle<S> {
                 self.buffer.rejoin();
             }
             let lines = self.buffer.result();
-            self.pending.as_mut().expect("checked above").segments.extend(lines);
+            self.pending.as_mut().held("checked above").segments.extend(lines);
         }
         self.in_line = false;
         if self.previous_visible {
@@ -266,7 +270,7 @@ impl<S: GeoStream> GeoStream for ClipRectangle<S> {
         if self.error.is_some() {
             return;
         }
-        let Pending { segments, polygon } = self.pending.take().expect("polygonEnd without polygonStart");
+        let Pending { segments, polygon } = self.pending.take().held("polygonEnd without polygonStart");
         let start_inside = polygon_inside(&polygon, self.rect.x0, self.rect.y1) != 0;
         let clean_inside = self.clean && start_inside;
         let visible = !segments.is_empty();
@@ -300,6 +304,6 @@ impl<S: GeoStream> GeoStream for ClipRectangle<S> {
     }
 
     fn sphere(&mut self) {
-        unreachable!("clipRectangle has no sphere: the pre-clip stage consumes it");
+        invariant::broken("clipRectangle has no sphere: the pre-clip stage consumes it");
     }
 }

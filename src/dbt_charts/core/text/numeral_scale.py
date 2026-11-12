@@ -214,36 +214,6 @@ def _natural_tier(value: float) -> int | None:
     return None
 
 
-def tier_distance(value: float, majority_exponent: int) -> int | None:
-    """How many SI tiers below ``majority_exponent`` ``value``'s own natural
-    tier sits.
-
-    ``None`` when ``value`` has no natural tier at all (below the smallest
-    SI tier) -- further below than any finite distance expresses. ``0``
-    means ``value``'s own tier *is* the majority tier; ``1`` means one tier
-    below (e.g. a thousands-range value inside a millions-majority column).
-    Never negative: a value voted into a column's majority-tier tally can
-    only sit at or below the tier the vote produced.
-
-    Exists so a column-wide digit_spec's precision can be bounded: deriving
-    precision from an arbitrarily-far-below-tier value (``column_digit_format``'s
-    ``finest_scaled`` argument) has no natural ceiling on its own -- a value
-    a majority tier's straggler is one step below (e.g. thousands inside a
-    millions column) legitimately needs a few extra decimals to stay
-    accurate; a value with no tier at all needs so many that every other row
-    in the column inherits far more precision than the format's own
-    significant-figure count ever asked for. See
-    ``compile/resolve/chart/_table.py``'s shared-scale bake, which refuses
-    the whole column rather than let one outlier dictate everyone else's
-    precision.
-    """
-    value_tier = _natural_tier(value)
-    if value_tier is None:
-        return None
-    tiers_ascending = sorted(_TIERS)
-    return tiers_ascending.index(majority_exponent) - tiers_ascending.index(value_tier)
-
-
 def _printed_si_suffix(formatted: str) -> str:
     """The trailing SI magnitude-suffix letters a d3 ``s``-type spec printed
     (``k``, ``M``, ``m``, the micro sign, ...), or ``""`` when the value
@@ -519,7 +489,7 @@ def ruler_digit_format(format_spec: str) -> tuple[str, str]:
 
 
 def column_digit_format(
-    format_spec: str, finest_scaled: float, min_precision: int = 0
+    format_spec: str, majority_scaled: float, min_precision: int = 0
 ) -> tuple[str, str]:
     """Split a table column's SI format spec into (currency prefix, digit-only spec).
 
@@ -533,18 +503,16 @@ def column_digit_format(
     1-decimal spec would under- or over-represent precision depending on how
     many integer digits a given row's scaled value has.
 
-    ``finest_scaled`` must be the column's *smallest* non-zero scaled value
-    (fewest integer digits), not its largest. That row needs the *most*
-    decimals to hit the format's significant-figure count, so pinning
-    precision to it guarantees no row in the column undershoots its own sig
-    figs -- the same "decide once" pattern ``anchor_at_start`` uses for axis
-    rulers, applied to the opposite extreme: rows with *more* integer digits
-    then show more precision than their own significant-figure count
-    strictly needs (harmless extra precision, never wrong), and the
-    resulting alignment gap is exactly what ``decimal_pad_table``
-    compensates for, as it already does for axis rulers. Passing the
-    largest value instead silently truncates every smaller row (e.g. a
-    column's 3.46 rounding to a bare "3").
+    ``majority_scaled`` is the smallest non-zero scaled value at or above the
+    unit (the majority tier's fewest-integer-digit row), not the column's
+    overall smallest. That row needs the most decimals of any row in the unit
+    to reach the format's significant-figure count, so pinning precision to it
+    caps the column at ``sig_figs - 1`` decimals. A row below the unit prints
+    on that same grid and may undershoot its own significant figures; one too
+    small to show a non-zero digit prints the grid's smallest step as a bound.
+    Rows with more integer digits show more precision than their own count
+    needs, and ``decimal_pad_table`` covers the resulting alignment gap, as it
+    does for axis rulers.
 
     ``min_precision`` is the maximum precision a sibling column on the same
     scale needs; the digit spec is trim-enabled, so a value prints only the
@@ -553,7 +521,7 @@ def column_digit_format(
     parsed = _d3_parse(format_spec)
     sig_figs = parsed.precision if parsed.precision is not None else 6
     decimal_precision = max(
-        min_precision, sig_figs - _decimal_exponent(finest_scaled), 0
+        min_precision, sig_figs - _decimal_exponent(majority_scaled), 0
     )
     digit_spec = _digit_spec(parsed, decimal_precision)
     return parsed.symbol, digit_spec

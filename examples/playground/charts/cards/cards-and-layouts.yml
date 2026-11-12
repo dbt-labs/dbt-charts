@@ -208,15 +208,13 @@ charts:
         growth_pct:
           label: First week → last week
           format: percent_delta
-    conditional_formatting:
-      growth_pct:
-        when:
-          - gte: 0
-            glyph: "▲"
-            tone: positive
-          - lt: 0
-            glyph: "▼"
-            tone: negative
+          conditional:
+            - gte: 0
+              glyph: ▲
+              tone: positive
+            - lt: 0
+              glyph: ▼
+              tone: negative
   category_region_pivot:
     type: table
     query: category_region_pivot

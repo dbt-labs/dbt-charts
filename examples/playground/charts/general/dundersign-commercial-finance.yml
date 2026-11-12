@@ -420,20 +420,6 @@ charts:
     # Explicit empty title suppresses the normalizer's auto-fill (which
     # otherwise humanizes chart_id → "Accounts Table").
     title: ""
-    conditional_formatting:
-      days_since_close:
-        when:
-        - lte: 30
-          glyph: "●"
-          tone: info                # recent — neutral blue
-        - gt: 90
-          glyph: "○"
-          tone: negative             # gone cold
-      deals_lost:
-        when:
-        - gt: 40
-          glyph: "⚠"
-          tone: warning              # leaky
     style:
       pagination:
         enabled: false
@@ -463,6 +449,10 @@ charts:
           label: Lost
           format: ",.0f"
           align: right
+          conditional:
+            - gt: 40
+              glyph: ⚠
+              tone: warning
         win_rate:
           format: ".0%"
           align: right
@@ -486,6 +476,13 @@ charts:
             spec: ",.0f"
             suffix: " d"
           align: right
+          conditional:
+            - lte: 30
+              glyph: ●
+              tone: info
+            - gt: 90
+              glyph: ○
+              tone: negative
         top_plan:
           label: Plan
           width: 80

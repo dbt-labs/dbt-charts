@@ -1,0 +1,3 @@
+kind: Features
+body: 'A board''s column references match query result columns ignoring letter case, so `y: revenue` reads a `Revenue` column; two columns differing only in case raise instead of guessing. Warehouse sources now keep a quoted alias''s spelling (`Q3-25`) instead of lowercasing it.'
+time: 2026-11-09T15:50:18.116687-08:00

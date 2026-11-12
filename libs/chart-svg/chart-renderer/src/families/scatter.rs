@@ -190,7 +190,7 @@ impl LinearX {
                         Some(slot) => ::bind::formats::locale::d3_format(&slot.spec, tv).map_err(|e| format!("scatter x label format: {e}"))?,
                         None => label.clone(),
                     };
-                    ::layout::labels_expr::speak_value("x", src, tv, &digits, i, values.len())
+                    ::layout::labels_expr::speak_value("x", src, tv, &digits, i, values.len(), &crate::labels_expr::env())
                 })
                 .collect::<Result<Vec<String>, String>>()?,
             None => labels,
@@ -307,6 +307,9 @@ struct ScatterStyle {
     axis_x: AxisStyle,
     axis_y: AxisStyle,
     point_mark: PointMark,
+    /// `style.conditional`: per-column rules restyling a base-layer point by its own row.
+    #[serde(default)]
+    conditional: Option<std::collections::BTreeMap<String, Vec<crate::point_conditional::PointRule>>>,
     /// Width-resolved title font (production's `chart_title_spec` output) —
     /// always preferred over the un-tiered `title_style.font`.
     #[serde(default)]
@@ -563,7 +566,11 @@ fn point_glyph(
     row: &serde_json::Map<String, Value>,
     shape_domain: &[String],
     radius: f64,
+    rule_shape: Option<&str>,
 ) -> Result<PathData, String> {
+    if let Some(symbol) = rule_shape {
+        return crate::families::scatter_shape::path(symbol, radius);
+    }
     if let Some(shape_field) = r.shape.as_deref() {
         let category = row_str(row, shape_field);
         let i = shape_domain
@@ -2679,6 +2686,7 @@ mod tests {
                 "label": {"font": {"family": TEST_FONT, "size": 11.0, "weight": "400", "color": "#626366"}, "padding": 8.0}
             },
             "style": {
+                "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"},
                 "axis_x": axis_json(None),
                 "axis_y": ay,
                 "point_mark": {"size": 60.0, "opacity": 1.0, "stroke_width": 2.5},
@@ -5947,6 +5955,23 @@ mod tests {
         ay["tick_values"] = serde_json::json!([]);
         ay["labels"]["align"] = serde_json::Value::Null;
         json
+    }
+
+    /// `style.conditional` restyles the points whose row matches, key by key; the rest keep
+    /// the static style.
+    #[test]
+    fn a_conditional_rule_restyles_only_the_matching_points() {
+        let mut json = fit_unbaked_payload(&[(10.0, 100.0), (20.0, 180.0), (30.0, 220.0)]);
+        json["resolved"]["style"]["conditional"] = serde_json::json!({
+            "pipeline": [
+                {"gt": 150, "marks": {"point": {"color": "#c62828", "opacity": 0.5, "shape": "square"}}},
+                {"default": true, "marks": {"point": {"opacity": 0.2}}},
+            ]
+        });
+        let svg = render_json(json);
+        assert_eq!(svg.matches("fill=\"#c62828\"").count(), 2, "{svg}");
+        assert_eq!(svg.matches("opacity=\"0.5\"").count(), 2, "{svg}");
+        assert_eq!(svg.matches("opacity=\"0.2\"").count(), 1, "{svg}");
     }
 
     /// The color scale reads the filtered dataset too (`filterinvalid.ts`

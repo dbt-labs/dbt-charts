@@ -9,6 +9,7 @@ measure slot meets the family's own not-numeric error.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 from typing import TypeVar
 
 from dbt_charts.core.compile.errors import CompilationError
@@ -24,6 +25,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     LineChart,
     ScatterChart,
 )
+from dbt_charts.core.compile.resolve.chart.column_refs import match_column_refs
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_CHART_CHANNELS_INCOMPLETE,
     ERR_CHART_CHANNELS_NO_QUERY,
@@ -31,6 +33,8 @@ from dbt_charts.core.diagnostics.codes_compile import (
 )
 
 _C = TypeVar("_C", bound=Chart)
+
+_NO_LAYER_COLUMNS: Mapping[str, Sequence[str]] = MappingProxyType({})
 
 _CARTESIAN: Mapping[int, tuple[str, ...]] = {2: ("x", "y"), 3: ("x", "color", "y")}
 _RADIAL: Mapping[int, tuple[str, ...]] = {1: ("theta",), 2: ("color", "theta")}
@@ -196,7 +200,11 @@ def channel_error(chart: Chart, columns: Sequence[str]) -> CompilationError | No
     pinned = _named(chart, PINNED_FIELDS[chart.type])
     if named or pinned:
         missing = [c for c in REQUIRED_CHANNELS[chart.type] if c not in named]
-        return incomplete_error(chart, named + pinned, missing) if missing else None
+        return (
+            incomplete_error(chart.id, chart.type, named + pinned, missing)
+            if missing
+            else None
+        )
     if chart.query_name is None:
         return CompilationError.from_code(
             ERR_CHART_CHANNELS_NO_QUERY,
@@ -204,31 +212,62 @@ def channel_error(chart: Chart, columns: Sequence[str]) -> CompilationError | No
             chart_type=chart.type,
             channels=_names(REQUIRED_CHANNELS[chart.type]),
         )
+    return unbound_columns_error(
+        chart.id,
+        chart.type,
+        columns,
+        {field: _side_columns(chart, field) for field in SIDE_FIELDS[chart.type]},
+    )
+
+
+def unbound_columns_error(
+    chart_id: str,
+    chart_type: str,
+    columns: Sequence[str],
+    side_columns: Mapping[str, Sequence[str]],
+) -> CompilationError | None:
+    """Why a chart naming no channel cannot bind ``columns``; None when it can.
+
+    ``side_columns`` is the columns it names for a side use, by field (``SIDE_FIELDS``).
+    """
     if not columns:
         return None
-    order = POSITIONAL_CHANNELS[chart.type].get(len(columns))
+    order = POSITIONAL_CHANNELS[chart_type].get(len(columns))
     if order is None:
-        return unbound_error(chart, columns)
-    if len(order) > len(REQUIRED_CHANNELS[chart.type]):
+        return unbound_error(chart_id, chart_type, columns)
+    if len(order) > len(REQUIRED_CHANNELS[chart_type]):
         measure = columns[-1]
         sided = [
             field
-            for field in SIDE_FIELDS[chart.type]
-            if any(c in columns and c != measure for c in _side_columns(chart, field))
+            for field in SIDE_FIELDS[chart_type]
+            if field in side_columns
+            and any(c in columns and c != measure for c in side_columns[field])
         ]
         if sided:
-            return incomplete_error(chart, sided, REQUIRED_CHANNELS[chart.type])
+            return incomplete_error(
+                chart_id, chart_type, sided, REQUIRED_CHANNELS[chart_type]
+            )
     return None
 
 
-def bind_channels(chart: _C, columns: Sequence[str]) -> _C:
-    """The chart with its channels bound to ``columns`` in order.
+def bind_channels(
+    chart: _C,
+    columns: Sequence[str],
+    layer_columns: Mapping[str, Sequence[str]] = _NO_LAYER_COLUMNS,
+) -> _C:
+    """The chart with its column references and channels bound to ``columns``.
 
-    A chart that names a column or a family that binds none comes back
-    untouched; the error ``channel_error`` finds is raised. A result with no
-    columns (zero rows, or the data-free skeleton) leaves the chart unbound
-    and drops its ``ATTACHMENTS``, which resolve against the channels.
+    Every column reference first takes the result's own spelling
+    (``match_column_refs``); a layer naming its own query reads that query's
+    columns from ``layer_columns``, and keeps its references as authored when
+    the query is not there. Then a chart that names a column or a family that
+    binds none comes back as is; the error ``channel_error`` finds is raised.
+    A result with no columns (zero rows, or the data-free skeleton) leaves the
+    chart unbound and drops its ``ATTACHMENTS``, which resolve against the
+    channels.
     """
+    if chart.query_name is not None:
+        chart = match_column_refs(chart, {**layer_columns, chart.query_name: columns})
     error = channel_error(chart, columns)
     if error is not None:
         raise error
@@ -257,22 +296,24 @@ def _names(channels: Sequence[str], joiner: str = "and") -> str:
 
 
 def incomplete_error(
-    chart: Chart, named: Sequence[str], missing: Sequence[str]
+    chart_id: str, chart_type: str, named: Sequence[str], missing: Sequence[str]
 ) -> CompilationError:
     """The error for a chart that names part of its channel set."""
     return CompilationError.from_code(
         ERR_CHART_CHANNELS_INCOMPLETE,
-        chart_id=chart.id,
-        chart_type=chart.type,
+        chart_id=chart_id,
+        chart_type=chart_type,
         named=_names(named),
         missing=_names(missing),
-        required=_names(REQUIRED_CHANNELS[chart.type]),
+        required=_names(REQUIRED_CHANNELS[chart_type]),
     )
 
 
-def unbound_error(chart: Chart, columns: Sequence[str]) -> CompilationError:
+def unbound_error(
+    chart_id: str, chart_type: str, columns: Sequence[str]
+) -> CompilationError:
     """The error for a chart that names no channel and cannot bind ``columns``."""
-    shapes = POSITIONAL_CHANNELS[chart.type]
+    shapes = POSITIONAL_CHANNELS[chart_type]
     channels = _names(
         list(dict.fromkeys(c for order in shapes.values() for c in order)), "or"
     )
@@ -284,8 +325,8 @@ def unbound_error(chart: Chart, columns: Sequence[str]) -> CompilationError:
     )
     return CompilationError.from_code(
         ERR_CHART_CHANNELS_UNBOUND,
-        chart_id=chart.id,
-        chart_type=chart.type,
+        chart_id=chart_id,
+        chart_type=chart_type,
         channels=channels,
         shapes="; ".join(
             f"{count} column{'s bind' if count != 1 else ' binds'} {', '.join(order)}"

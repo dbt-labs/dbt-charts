@@ -55,6 +55,7 @@ from dbt_charts.core.compile.models.markers import (
     Inherit,
     Merge,
     Palette,
+    ResultColumn,
     Strategy,
 )
 from dbt_charts.core.compile.models.palette import (
@@ -122,9 +123,7 @@ Curve = Literal[
 ]
 
 # Semantic tone vocabulary shared by KPI value/glyph and table conditional
-# glyphs. Lives here (not in the authored kpi model) because
-# _conditional_formatting.py needs it too, and importing from the kpi model would
-# create an import cycle (kpi -> _base -> _conditional_formatting).
+# glyphs.
 ToneLiteral = Literal["positive", "negative", "warning", "info"]
 # How much of a pie its box lets it draw: slice labels and a legend, labels on
 # the big slices beside a table of the small ones, or a wheel over a full table.
@@ -988,7 +987,7 @@ class FontStyle(SingleLineFontStyle):
 class ColumnFontStyle(FontStyle):
     """A table column's font. ``color`` may name a query column, so it is not a color field."""
 
-    color: Annotated[str | None, Color(column_ref=True)] = Field(
+    color: Annotated[str | None, Color(column_ref=True), ResultColumn()] = Field(
         default=None,
         description=(
             "Text color (CSS color string), or a column ID: a value matching a "
@@ -1437,7 +1436,7 @@ class ScaleTargetConfig(ScaleTargetPaletteValidationMixin):
     """Scale configuration for a single style target (background or color).
 
     Base of ``ColumnScaleTargetConfig`` and the ``gradient`` field of
-    ``ColorStyle`` / ``StaticGradientColorStyle``.
+    ``ColorStyle`` / ``GradientColorStyle``.
     Lives in primitives so both ``chart/authored.py`` and ``style/authored.py``
     can import it without creating a circular dependency.
     """
@@ -1577,7 +1576,7 @@ def bake_scale_target_stops(target: ScaleTargetConfig) -> ResolvedScaleTargetCon
 
 # Patch type for ScaleTargetConfig — generated (and registered) here, right after
 # the compiled class, so every later recursive build_patch_model_ext call that
-# encounters ScaleTargetConfig as a nested field (StaticGradientColorStyle.gradient)
+# encounters ScaleTargetConfig as a nested field (GradientColorStyle.gradient)
 # reuses this exact registered class instead of a vanilla auto-generated one with
 # no palette validation.
 #
@@ -1700,31 +1699,29 @@ class CategoricalColorStyle(BaseModel):
         return data
 
 
-class StaticGradientColorStyle(BaseModel):
-    """Color config for geo/point_map/table families, no categorical arm.
+class GradientColorStyle(BaseModel):
+    """Color-scale config for the geo families, no categorical arm.
 
-    Authoring ``categorical`` on these families raises a pydantic.ValidationError
-    (extra_forbidden). Use ``ColorStyle`` for cartesian/pie families.
+    Constant paint is not authored here: it lives on the chart's primary mark
+    (``style.marks.<mark>``). Authoring ``categorical`` on these families
+    raises a pydantic.ValidationError (extra_forbidden). Use ``ColorStyle`` for
+    cartesian/pie families.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    static: Annotated[str | None, Color(), Absent("no explicit color")] = Field(
-        default=None,
-        description="One color for all marks: a hex, CSS name, `rgb()`/`oklch()` or theme token (`category[1]`, `positive.solid`, `dbt-grays.8`). A token follows the theme, a hex stays put.",
-    )
     gradient: Annotated[ScaleTargetConfig | None, Absent("no gradient")] = Field(
         default=None,
         description="Continuous gradient scale for the color encoding.",
     )
 
 
-class ColorStyle(StaticGradientColorStyle):
-    """Unified chart color config: static paint, categorical palette, gradient scale.
+class ColorStyle(GradientColorStyle):
+    """Unified chart color config: categorical palette and gradient scale.
 
     Cartesian and radial families use this type; ``categorical`` carries the
-    series color palette. Geo/table families use the narrower
-    ``StaticGradientColorStyle`` (no ``categorical`` arm).
+    series color palette. Geo families use the narrower ``GradientColorStyle``
+    (no ``categorical`` arm).
     """
 
     categorical: CategoricalColorStyle | None = Field(

@@ -338,7 +338,8 @@ class ChartTitleFontStyle(FontSlotBase):
     color: Annotated[str | None, Color()] = Field(
         default=None, description="Text color as a CSS color string."
     )
-    size: float | Literal["auto"] | None = Field(
+    # No size to inherit from Style.title.font: a title's size is the ramp's.
+    size: Annotated[float | Literal["auto"] | None, SkipInheritSlots()] = Field(
         default=None,
         description="Font size in pixels, or 'auto' to follow the card width.",
     )
@@ -424,11 +425,53 @@ class _TitleBase(BaseModel):
     )
 
 
+class TitleFontStyle(FontSlotBase):
+    """The font of a board, section, or prose title. It has no ``size``: a
+    title's size comes from the heading ramp (``style.fonts.heading.sizes``,
+    ``style.fonts.section.sizes``), so there is no number to author here."""
+
+    extends: FontAlias | None = Field(
+        default=None,
+        description=(
+            "Name of a ``style.fonts`` entry this slot starts from; the fields "
+            "set beside it override that entry."
+        ),
+    )
+    family: Annotated[str | None, FontFamily()] = Field(
+        default=None,
+        description="Font family or CSS stack; single-quote multiword names: \"'Source Serif 4', serif\".",
+    )
+    color: Annotated[str | None, Color()] = Field(
+        default=None, description="Text color as a CSS color string."
+    )
+    weight: Annotated[str | float | None, FontWeightValue()] = Field(
+        default=None,
+        description="How heavy the type is drawn (e.g., 'bold', 400, 700).",
+    )
+    style: Literal["normal", "italic"] | None = Field(
+        default=None, description="Upright or slanted type (normal or italic)."
+    )
+    decoration: Literal["none", "line-through", "underline"] | None = Field(
+        default=None,
+        description="Line drawn on the text (underline, line-through, or none).",
+    )
+    case: (
+        Literal["none", "sentence", "title", "upper", "lower", "slug", "camel"] | None
+    ) = Field(
+        default=None,
+        description="Letter-case transform applied at render time.",
+    )
+    line_height: float | None = Field(
+        default=None,
+        description="Line height as a unitless multiple of font size.",
+    )
+
+
 class TitleStyle(_TitleBase):
     """Typography shared by every heading: board, prose, chart, table, and spark titles."""
 
-    font: Annotated[FontStyle, InheritSlot(from_path="Style.font")] = Field(
-        default_factory=FontStyle, description="Title font style overrides."
+    font: Annotated[TitleFontStyle, InheritSlot(from_path="Style.font")] = Field(
+        default_factory=TitleFontStyle, description="Title font style overrides."
     )
 
 

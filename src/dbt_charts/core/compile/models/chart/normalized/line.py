@@ -8,6 +8,7 @@ from pydantic import Field
 
 from dbt_charts.core.compile.models.chart.authored._annotation import Annotation
 from dbt_charts.core.compile.models.chart.authored._layer import CartesianLayer
+from dbt_charts.core.compile.models.markers import ColumnRef
 from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
 
 from ._base import _CartesianChartFields, _TooltipFields
@@ -20,7 +21,7 @@ class LineChart(_CartesianChartFields, _TooltipFields):
     style: LineChartStylePatch | None = Field(
         default=None, description="Chart-local style overrides."
     )
-    connect: str | None = Field(
+    connect: ColumnRef | None = Field(
         default=None, description="Column whose order the line follows, instead of x."
     )
     layers: list[CartesianLayer] = Field(

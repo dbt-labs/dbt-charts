@@ -14,7 +14,6 @@
 
 use board_model::board::Board;
 use board_model::chart::query::ChartQuery;
-use board_model::chart::conditional_formatting::ConditionalRule;
 use board_model::chart::kpi::KpiSupportConfig;
 use board_model::chart::KpiChart;
 use board_model::facet::{Color, FormatName};
@@ -30,7 +29,7 @@ use indexmap::IndexMap;
 use model_core::{Engine, Patch, Tri};
 use serde_json::{json, Value};
 
-use crate::conditional::{self, good_overrides, resolve_conditional_styles, RuleOverrides};
+use crate::conditional::{self, good_overrides, support_patch, Signed, SupportPatch};
 use crate::formats::locale::NumberLocale;
 use crate::formats::{column_format, AuthoredFormat, Formats, Kind, Notation, Repeat, SignPlacement, Tiers};
 use crate::bound::{Family, Failure, Kpi, KpiSupport};
@@ -43,7 +42,7 @@ use crate::run::RunResult;
 /// warning this stage does not raise.
 pub fn bind_kpi(id: &ChartId, chart: &KpiChart, style: &Style, own: &Patch<Style>, scope: &Style, board: &Board, run: &RunResult) -> Result<Result<Family, Failure>, Diagnostic> {
     let kpi = &style.charts.kpi;
-    refuse_unmodeled(chart, board, run)?;
+    refuse_unmodeled(chart, board)?;
     let Some(ChartQuery::Hoisted(query)) = &chart.base.query else {
         return Err(diag::err_internal(format!("chart {id} has no hoisted query")));
     };
@@ -104,11 +103,9 @@ pub fn bind_kpi(id: &ChartId, chart: &KpiChart, style: &Style, own: &Patch<Style
         Ok(lanes) => lanes,
         Err(error) => return percent_range(error),
     };
-    let rules: &[ConditionalRule] = support_column
-        .and_then(|column| chart.formatting.conditional_formatting.get(column))
-        .map_or(&[], |field| field.when.as_slice());
+    let patch = support_patch(&chart.style.conditional, row)?;
     let support = match &chart.support {
-        Some(support) => match bind_support(support, rules, kpi, style, row, dataset) {
+        Some(support) => match bind_support(support, &patch, kpi, style, row, dataset) {
             Ok(support) => support,
             Err(error) => return percent_range(error),
         },
@@ -118,7 +115,7 @@ pub fn bind_kpi(id: &ChartId, chart: &KpiChart, style: &Style, own: &Patch<Style
     // run in the tone's color.
     let signed = match chart.good {
         Some(good) => good_overrides(good, &kpi.value.glyph.glyphs, &style.tones, Some(cell))?,
-        None => RuleOverrides::default(),
+        None => Signed::default(),
     };
     let drawn_by_good = signed.glyph.is_some();
     let glyph = signed.glyph.or_else(|| chart.glyph.clone()).unwrap_or_default();
@@ -128,7 +125,7 @@ pub fn bind_kpi(id: &ChartId, chart: &KpiChart, style: &Style, own: &Patch<Style
 /// `resolve_support_row` (`chart-renderer/src/families/kpi.rs`): the support value as one string
 /// (affix gaps kept), its glyph, the explainer and the inks each paints in. `None` when all three
 /// are empty.
-fn bind_support(support: &KpiSupportConfig, rules: &[ConditionalRule], kpi: &KpiChartStyle, style: &Style, row: &serde_json::Map<String, Value>, dataset: &Dataset) -> Result<Option<KpiSupport>, Diagnostic> {
+fn bind_support(support: &KpiSupportConfig, patch: &SupportPatch, kpi: &KpiChartStyle, style: &Style, row: &serde_json::Map<String, Value>, dataset: &Dataset) -> Result<Option<KpiSupport>, Diagnostic> {
     let secondary = style
         .fonts
         .get("secondary")
@@ -160,15 +157,13 @@ fn bind_support(support: &KpiSupportConfig, rules: &[ConditionalRule], kpi: &Kpi
         }
         _ => return Err(Diagnostic::refused(refuse!("a KPI support value that is not a number or text is not supported"))),
     };
-    // The rules see the raw cell (a null cell is none); a matched rule's glyph replaces the authored
-    // one, even an empty one.
+    // `good` sees the raw cell (a null cell is none).
     let cell_or_null = Some(cell).filter(|cell| !cell.is_null());
     let signed = match (support.good, support.value.is_some()) {
         (Some(good), true) => good_overrides(good, &kpi.support.glyph.glyphs, &style.tones, cell_or_null)?,
-        _ => RuleOverrides::default(),
+        _ => Signed::default(),
     };
-    let styled = resolve_conditional_styles(rules, cell_or_null, &style.tones, signed)?;
-    let glyph = styled.glyph.clone().or_else(|| support.glyph.clone()).unwrap_or_default();
+    let glyph = signed.glyph.clone().or_else(|| support.glyph.clone()).unwrap_or_default();
     let explainer = match &support.label {
         Some(label) => plain_text(label.as_str(), "a KPI support label with template syntax is not supported")?.unwrap_or_default(),
         None => String::new(),
@@ -180,10 +175,11 @@ fn bind_support(support: &KpiSupportConfig, rules: &[ConditionalRule], kpi: &Kpi
     let is_delta = resolved.as_ref().and_then(|format| format.raw.as_deref()).is_some_and(|raw| DELTA_FORMATS.contains(&raw));
     // A delta value is colored by its sign and `tone` is the direction (positive, the default: up is
     // good; negative: up is bad); zero and a non-number stay un-toned. Any other tone is a fixed color.
-    let tone = match (kpi.support.tone, is_delta) {
+    let authored_tone = patch.tone.or(kpi.support.tone);
+    let tone = match (authored_tone, is_delta) {
         (None, false) => None,
         (None | Some(Tone::Positive | Tone::Negative), true) => {
-            let up_is_good = kpi.support.tone != Some(Tone::Negative);
+            let up_is_good = authored_tone != Some(Tone::Negative);
             match cell.as_f64() {
                 Some(v) if v != 0.0 => Some(tone_color(if (v > 0.0) == up_is_good { Tone::Positive } else { Tone::Negative })),
                 _ => None,
@@ -196,10 +192,12 @@ fn bind_support(support: &KpiSupportConfig, rules: &[ConditionalRule], kpi: &Kpi
         Engine::Rule(_) => None,
     };
     let (row_color, glyph_ink) = (ink(&kpi.support.font.color), ink(&kpi.support.glyph.font.color));
-    // A matched rule's `tone` colors the value like its `font.color` does.
-    let rule_color = styled.color.filter(|color| !color.is_empty()).or(styled.tone_color);
+    // `good`'s tone colors the value and glyph unless a matched rule sets the tone itself; a matched
+    // rule's `font.color` outranks both.
+    let good_color = if patch.tone.is_some() { None } else { signed.tone_color };
+    let rule_color = patch.color.clone().filter(|color| !color.is_empty()).or(good_color);
     let value_fill = rule_color.clone().or_else(|| row_color.clone()).or_else(|| tone.clone()).unwrap_or_else(|| secondary.clone());
-    let glyph_fill = styled.glyph_color.filter(|color| !color.is_empty()).or(rule_color).or(glyph_ink).or(tone).or(row_color).unwrap_or_else(|| secondary.clone());
+    let glyph_fill = rule_color.or(glyph_ink).or(tone).or(row_color).unwrap_or_else(|| secondary.clone());
     Ok(Some(KpiSupport { glyph, value, explainer, value_fill, glyph_fill, explainer_fill: secondary }))
 }
 
@@ -248,26 +246,11 @@ pub(crate) fn declared_formats(query: &Query) -> &IndexMap<String, FormatName> {
 }
 
 /// Every chart field, style and board fact that changes what the card says and is not modeled.
-fn refuse_unmodeled(chart: &KpiChart, board: &Board, run: &RunResult) -> Result<(), Diagnostic> {
+fn refuse_unmodeled(chart: &KpiChart, board: &Board) -> Result<(), Diagnostic> {
     let unmodeled = [
-        (chart.background.is_some(), "a KPI `background` channel"),
-        (
-            chart.formatting.conditional_formatting.keys().any(|column| Some(column.as_str()) != chart.support.as_ref().and_then(|support| support.value.as_ref()).map(|value| value.as_str())),
-            "a KPI `conditional_formatting` on a column other than its support value",
-        ),
-        (
-            chart.support.as_ref().and_then(|support| support.value.as_ref()).is_some_and(|support| Some(support) == chart.value.as_ref() && chart.formatting.conditional_formatting.contains_key(support.as_str())),
-            "a KPI `conditional_formatting` on the column that is also its headline value",
-        ),
-        (
-            chart.support.as_ref().is_some_and(|support| {
-                support.good.is_some()
-                    && support.value.as_ref().and_then(|value| chart.formatting.conditional_formatting.get(value.as_str())).is_some_and(|field| field.when.iter().any(|rule| rule.predicate.default.is_some()))
-            }),
-            "a KPI `default` rule beside `support.good`",
-        ),
+        (chart.style.background.is_some(), "a KPI `style.background`"),
         (chart.base.link.is_some(), "a KPI `link`"),
-        (board.regional.is_some() || run.env.locale != "en-US", "a number locale other than en-US"),
+        (board.regional.is_some(), "a number locale other than en-US"),
     ];
     match unmodeled.iter().find(|(set, _)| *set) {
         Some((_, what)) => Err(Diagnostic::refused(refuse!("{what} is not supported"))),

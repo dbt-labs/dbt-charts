@@ -191,7 +191,7 @@ fn move_value(
     }
     let same_slot = dest_parent == src_parent && dest_key == src_key;
     let occupied = child(parent, dest_key).is_some();
-    if occupied && !same_slot && in_document.is_none() {
+    if occupied && !same_slot && in_document.is_none() && !m.merge {
         return Err(MigrationError::Conflict(format!(
             "Cannot move {} to {}: both fields exist. Choose one value and migrate manually.",
             quoted_path(&m.old_path),
@@ -241,6 +241,16 @@ fn move_value(
             quoted_path(&m.old_path)
         ));
     };
+    if m.merge && occupied && !same_slot {
+        let Some(held) = dest.get_mut(dest_key).map(|e| &mut e.value) else {
+            return other(format!("Cannot move {}: destination vanished", quoted_path(&m.old_path)));
+        };
+        let into = held.to_json();
+        let merged = value.to_json();
+        let mut at = destination.to_vec();
+        merge_into(held, value, m, &mut at)?;
+        return Ok(Landed::Merged { value: merged, into });
+    }
     dest.insert(
         dest_key.clone(),
         yaml::Entry::string_key(key_span, dest_key, value),
@@ -253,6 +263,41 @@ enum Landed {
     Dropped,
     Same,
     Changed(Json),
+    /// `value` merged into the mapping at the destination, which held `into`.
+    Merged { value: Json, into: Json },
+}
+
+fn merge_conflict(m: &Move, at: &[String]) -> MigrationError {
+    MigrationError::Conflict(format!(
+        "Cannot move {} to {}: {} is also set. Choose one value and migrate manually.",
+        quoted_path(&m.old_path),
+        quoted_path(&m.new_path),
+        quoted_path(at)
+    ))
+}
+
+/// Adds the keys of `value` that `existing` lacks, recursing into mappings both
+/// hold; any other collision refuses.
+fn merge_into(
+    existing: &mut Node,
+    value: Node,
+    m: &Move,
+    at: &mut Vec<String>,
+) -> Result<(), MigrationError> {
+    let (Kind::Map(held), Kind::Map(incoming)) = (&mut existing.kind, value.kind) else {
+        return Err(merge_conflict(m, at));
+    };
+    for (key, entry) in incoming {
+        at.push(key.clone());
+        match held.get_mut(&key) {
+            Some(slot) => merge_into(&mut slot.value, entry.value, m, at)?,
+            None => {
+                held.insert(key, entry);
+            }
+        }
+        at.pop();
+    }
+    Ok(())
 }
 
 fn pop(doc: &mut Node, parent: &[String], key: &str) -> Option<(yaml::Span, Node)> {
@@ -362,10 +407,11 @@ pub fn apply_move(
             m,
             rewrote.as_ref().map(|r| &r.value),
         )?;
-        let after = match landed {
-            Landed::Dropped => None,
-            Landed::Same => Some(before.clone()),
-            Landed::Changed(j) => Some(j),
+        let (after, merged_into) = match landed {
+            Landed::Dropped => (None, None),
+            Landed::Same => (Some(before.clone()), None),
+            Landed::Changed(j) => (Some(j), None),
+            Landed::Merged { value, into } => (Some(value), Some(Box::new(into))),
         };
         out.edits.push(Edit::Move {
             from,
@@ -378,6 +424,7 @@ pub fn apply_move(
             value_map: m.value_map.is_some(),
             expansion: false,
             declared: format_path(&m.old_path),
+            merged_into,
         });
         for (path, value) in rewrote.map(|r| r.writes).unwrap_or_default() {
             let at = segs(doc, &path);
@@ -451,6 +498,7 @@ fn apply_expansion(doc: &mut Node, m: &Move, out: &mut Applied) -> Result<(), Mi
             value_map: false,
             expansion: true,
             declared: format_path(&m.old_path),
+            merged_into: None,
         });
         if let Some(slot) = at_mut(doc, &loc.path) {
             *slot = json;
@@ -847,6 +895,7 @@ fn try_conditional_move(
         value_map: false,
         expansion: false,
         declared: format_path(&rule.old_tail),
+        merged_into: None,
     });
     Ok(())
 }

@@ -1270,6 +1270,7 @@ fn render_facet(
         mirror,
         ghost_titles: Some((x_title.as_str(), y_title.as_str())),
         patterns: &r.patterns,
+        conditional: r.style.conditional.as_ref(),
     };
     let style = PanelStyle {
         ax_x,

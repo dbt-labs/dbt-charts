@@ -17,7 +17,8 @@ use yaml::{Kind, Node};
 /// The root board file a compile read, and its node as migration left it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Source {
-    pub file: ProjectPath,
+    /// `None` for a board with no project location, whose findings then carry no range.
+    pub file: Option<ProjectPath>,
     pub text: String,
     pub node: Node,
 }
@@ -115,7 +116,11 @@ pub fn stamp(diagnostics: &mut [Diagnostic], root: &Node, text: &str) {
             .and_then(Value::as_str)
             .map(str::to_string);
         if d.range.is_none() {
-            if let Some(path) = &d.path {
+            // Python ranges a finding that sets no path from its `field_path` param.
+            let named = d.params.get("field_path").and_then(Value::as_str).map(|p| {
+                ModelPath(p.split('.').map(str::to_string).collect())
+            });
+            if let Some(path) = d.path.as_ref().or(named.as_ref()) {
                 d.range = resolve(root, text, path, needle.as_deref());
             }
         }
@@ -198,7 +203,7 @@ fn wire_range(source: &Source, r: &SourceRange) -> Option<WireRange> {
     let last_char = text[..r.end].chars().next_back().map_or(0, char::len_utf8);
     let last = position(text, r.end.saturating_sub(last_char).max(r.start)).0;
     Some(WireRange {
-        file: source.file.as_str().into(),
+        file: source.file.as_ref()?.as_str().into(),
         start_line,
         end_line: last,
         columns: (!r.lines_only && start_line == end_line)
@@ -214,6 +219,48 @@ fn wire_related(source: &Source, r: &Related) -> WireRelated {
     }
 }
 
+/// A syntax error in `file` (the board, or the fragment a refusal is located in), ranged as Python
+/// does: at its own `line` and `column` (the column twice). libyaml's position can lie past the
+/// file's last character, so no byte range holds it. The error names its file as `source`, an
+/// `extends:` entry as `extends: <file>`; an error in any other file has no range here.
+fn syntax_range(d: &Diagnostic, file: &ProjectPath) -> Option<WireRange> {
+    let source = d.params.get("source")?.as_str()?;
+    let named = source.strip_prefix("extends: ").unwrap_or(source);
+    if d.code != "ERR-YAML-SYNTAX" || named != file.as_str() {
+        return None;
+    }
+    let at = |name: &str| d.params.get(name).and_then(Value::as_u64).map(|n| n as usize);
+    let (line, column) = (at("line")?, at("column")?);
+    Some(WireRange {
+        file: file.as_str().into(),
+        start_line: line,
+        end_line: line,
+        columns: Some(WireColumns {
+            start_col: column,
+            end_col: column,
+        }),
+    })
+}
+
+/// The one order a compile reports its findings in: by where they sit in the board file (a finding
+/// with no range first), then path, then code, then params. Every range indexes the board file, so no file
+/// term is needed. Producers append in any order.
+pub fn canonical_order(diagnostics: &mut [Diagnostic]) {
+    diagnostics.sort_by(|a, b| {
+        let key = |d: &Diagnostic| {
+            (
+                d.range.map(|r| r.start),
+                d.path.as_ref().map(|p| p.0.clone()),
+            )
+        };
+        key(a).cmp(&key(b)).then(a.code.cmp(b.code)).then_with(|| {
+            serde_json::json!(a.params)
+                .to_string()
+                .cmp(&serde_json::json!(b.params).to_string())
+        })
+    });
+}
+
 /// The diagnostic in Python's wire shape: `code`, `params`, `level`, and when known `path`,
 /// `range`, `hint` and `related`. Message and fix are the host's to render from `code` and
 /// `params`.
@@ -223,7 +270,8 @@ pub fn wire(d: &Diagnostic, source: &Source) -> Value {
         params: &d.params,
         level: d.registered().map(|code| code.level.as_str()),
         path: d.path.as_ref().map(ToString::to_string),
-        range: d.range.as_ref().and_then(|r| wire_range(source, r)),
+        range: source.file.as_ref().and_then(|file| syntax_range(d, file))
+            .or_else(|| d.range.as_ref().and_then(|r| wire_range(source, r))),
         hint: d.hint(),
         related: d.related.iter().map(|r| wire_related(source, r)).collect(),
     };
@@ -286,7 +334,7 @@ mod tests {
     #[test]
     fn a_range_outside_the_text_or_inside_a_character_is_dropped() {
         let source = Source {
-            file: ProjectPath::try_from("b.yaml").unwrap(),
+            file: Some(ProjectPath::try_from("b.yaml").unwrap()),
             text: "a: \u{e9}\n".to_string(),
             node: yaml::parse_node("a: 1\n").unwrap(),
         };

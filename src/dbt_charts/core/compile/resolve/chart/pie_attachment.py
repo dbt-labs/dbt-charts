@@ -297,8 +297,11 @@ def build_attached_table_columns(
 
 
 def resolve_hybrid_heading_font(table_style: TableChartStyle) -> ResolvedFontStyle:
-    color_override = table_style.color.static if table_style.color is not None else None
-    color = sanitize_color(color_override, table_style.font.color)
+    defaults = table_style.column_defaults
+    cell_font = defaults.font if defaults is not None else None
+    color = sanitize_color(
+        cell_font.color if cell_font is not None else None, table_style.font.color
+    )
     return ResolvedFontStyle(
         **(
             table_style.font.model_dump(exclude={"extends"})

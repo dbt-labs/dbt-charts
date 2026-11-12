@@ -4,9 +4,14 @@
 //! and the zero-rule gate. A row with a null y keeps its place in x order and breaks the path.
 //! What the bind does not model yet refuses by name.
 //!
+//! A datum's hover text opens with its date's tooltip header (`temporal::tooltip_header_date`), the
+//! x axis' style carries how its labels crowd (`bound::TimeLabelStyle`), and the mark style the halo
+//! multiplier; the stroke and the points are the density-adaptive law's, which layout derives from
+//! the cell.
+//!
 //! Binds a date x and one value y to a `Family::Cartesian` of one `Mark::Lines` series on a time x;
 //! a quantitative x is refused by name. A y that production's sampled rule
-//! (`channel_type::y_is_numeric`: the first 20 non-null cells, numeric-looking text counting as
+//! (`column_kind::y_is_numeric`: the first 20 non-null cells, numeric-looking text counting as
 //! a number, no cell never tripping it) calls non-numeric is the chart's
 //! `ERR-LINE-Y-NOT-NUMERIC` error card (a bar's is `ERR-BAR-Y-NOT-NUMERIC`), named by its public
 //! id. A text-declared y the rule does not call non-numeric is refused by name.
@@ -17,20 +22,21 @@ use std::collections::HashSet;
 use board_model::board::Board;
 use board_model::chart::{Columns, LineChart};
 use board_model::ids::ChartId;
-use board_model::primitives::Curve;
+use board_model::primitives::{Curve, LineCap, LineJoin};
 use board_model::style::axis::FillMode;
 use board_model::style::marks::LabelVisible;
 use diagnostic::{codes, diag, py_str_repr, refuse, Diagnostic};
+use board_model::rule::Auto;
 use model_core::Engine;
 
-use crate::channel_type::{classify, y_is_numeric, ChannelType};
+use crate::column_kind::{field_channel, y_is_numeric, ChannelType, Role};
 use crate::decode::decode;
 use crate::derived::{DerivedChart, Placed};
 use crate::families::cartesian::{self, axis_format, measure_axis, no_data, plain_text, single_series, unsupported, value, zero_rule, Prelude};
 use crate::formats::locale::active_number_locale;
 use crate::bound::{self,
-    AuthoredLegend, AxisStyles, Baselines,  Datum, Failure, GrainDrop, Key, Mark, MarkLayer, MarkStyle, Naming, Orient,
-    Panels, Pos, RowRef, Scale, ScaleKind, Series, Tooltip, TooltipEntry,
+    AuthoredLegend, AxisStyles, Baselines,  Datum, Failure, GrainDrop, Key, LineStyle, Mark, MarkLayer, MarkStyle, Naming, Orient,
+    Panels, Pos, RowRef, Scale, ScaleKind, Series, Tooltip, TooltipEntry, TooltipHeader,
 };
 use crate::plot::domain;
 use crate::plot::time::{time_domain, TimeInput, TimeUnitSetting};
@@ -38,7 +44,7 @@ use crate::plot::zero::{self, Family};
 use crate::rows::is_year_shaped;
 use crate::run::RunResult;
 use crate::style::Tiers as StyleTiers;
-use crate::temporal::VegaType;
+use crate::temporal::{tooltip_header_date, x_is_standard_date, VegaType};
 use crate::x_type::{resolve_cartesian_x_type, Grain, XAxis};
 
 /// `core/constants/axis.py::MAX_ORDINAL_BUCKETS`: the most empty buckets a calendar grain may
@@ -57,6 +63,8 @@ pub struct Lines {
     pub axis_styles: AxisStyles,
     /// The frame, fill and legend the placement derives, after the chart's data has passed its refusals.
     pub derived: DerivedChart,
+    /// `marks.line.halo_multiplier`.
+    pub halo_multiplier: f64,
     /// The chart's own axis keys the other tiers already answer.
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -82,6 +90,7 @@ fn refuse_unported(chart: &LineChart) -> Result<(), Diagnostic> {
         ("`link:`", fields.shared.base.link.is_some()),
         ("`x_label:` or `y_label:`", fields.x_label.is_some() || fields.y_label.is_some()),
         ("`support_table:`", fields.support_table.is_some()),
+        ("`style.conditional`", !chart.style.conditional.is_empty()),
         (
             "value labels",
             marks.line.labels.base.visible != LabelVisible::Off || marks.point.labels.base.visible != LabelVisible::Off,
@@ -94,11 +103,24 @@ fn refuse_unported(chart: &LineChart) -> Result<(), Diagnostic> {
     if marks.line.curve != Curve::Linear {
         return Err(unsupported(refuse!("a line whose curve is not `linear` is not supported")));
     }
+    let round = |leaf: Option<Engine<LineCap, Auto>>| leaf.is_none_or(|cap| cap == Engine::Value(LineCap::Round));
     let stroked = !matches!(stroke.color, Engine::Rule(_))
         || !matches!(stroke.width, Engine::Rule(_))
-        || stroke.dasharray.is_some();
+        || stroke.dasharray.is_some()
+        || !round(stroke.cap.clone())
+        || stroke.join.as_ref().is_some_and(|join| *join != Engine::Value(LineJoin::Round));
     if stroked {
         return Err(unsupported(refuse!("a line with a `marks.line.stroke` is not supported")));
+    }
+    if marks.line.halo_multiplier < 0.0 {
+        return Err(unsupported(refuse!("a line with a negative `marks.line.halo_multiplier` is not supported")));
+    }
+    let point = &marks.point;
+    let point_styled = !matches!((&point.color, &point.shape, &point.stroke_width), (Engine::Rule(_), Engine::Rule(_), Engine::Rule(_)))
+        || !point.filled
+        || point.opacity != 1.0;
+    if point_styled {
+        return Err(unsupported(refuse!("a line with a `marks.point` color, shape, stroke width, opacity or `filled: false` is not supported")));
     }
     Ok(())
 }
@@ -138,7 +160,7 @@ pub fn lines(
     if dataset.rows.is_empty() {
         return Ok(None);
     }
-    let x_type = classify(&dataset.schema, &dataset.rows, Some(x_field), true)?;
+    let x_type = field_channel(&dataset.schema, &dataset.rows, x_field, Role::Dimension)?;
     if !y_is_numeric(&dataset.schema, &dataset.rows, y_field)? {
         let error = diag::err_line_y_not_numeric(placed.public_id, y_field);
         return Err(match x_type {
@@ -213,10 +235,17 @@ pub fn lines(
     // A single series is production's `apply_nice == false` arm: its baked headroom bounds stand
     // unrounded (`resolve_measure_domain`; only a rail or layers re-nice).
     let y_axis = measure_axis(&p.y_ladder, y_zero, &drawn, y_format, domain::Mark::Plotted, Some(false))?;
-    let (axis_styles, [x_shown, y_shown]) = cartesian::axes((&p.x_ladder, p.x_title.clone(), false), (&p.y_ladder, p.y_title.clone(), false), &y_axis.domain, placed.scope, "line", false, false)?;
+    let (axis_styles, [x_shown, y_shown]) = cartesian::axes((&p.x_ladder, p.x_title.clone(), false), (&p.y_ladder, p.y_title.clone(), false), &y_axis.domain, placed.scope, "line", false, true)?;
 
     let tooltip_format = p.tooltip_format(&drawn)?;
+    if tooltip_format.spec.is_empty() {
+        return Err(diag::err_internal("a line's tooltip format resolves to a spec (production paints no hover text without one)"));
+    }
     let locale = active_number_locale();
+    let standard = x_is_standard_date(&dataset.schema, x_field, &texts).map_err(diag::err_internal)?;
+    if domain.unit.is_none() && !standard {
+        return Err(diag::err_internal("a line's x reads as neither a grained nor a standard date"));
+    }
     let datums = order
         .into_iter()
         .map(|row| {
@@ -225,6 +254,7 @@ pub fn lines(
                 Some(y) => vec![TooltipEntry { title: p.y_title.clone(), value: tooltip_format.paint(&locale, y)? }],
                 None => Vec::new(),
             };
+            let header = tooltip_header_date(instants[row].date, domain.unit).map_err(diag::err_internal)?;
             Ok(Datum {
                 x: Pos::Time(instants[row].clone()),
                 y0: 0.0,
@@ -232,7 +262,7 @@ pub fn lines(
                 series: 0,
                 row: RowRef(row),
                 label: None,
-                tooltip: Tooltip { header: None, entries },
+                tooltip: Tooltip { header: Some(TooltipHeader::date(header)), entries },
                 href: None,
                 defined: y.is_some(),
             })
@@ -250,6 +280,7 @@ pub fn lines(
         baselines,
         axis_styles,
         derived,
+        halo_multiplier: chart.style.marks.line.halo_multiplier,
         diagnostics: crate::restated::axes(&p.tiers, [&p.x_ladder, &p.y_ladder], placed.public_id),
     }))
 }
@@ -296,7 +327,7 @@ pub fn bind(
         baselines: lines.baselines,
         axis_styles: lines.axis_styles,
         diagnostics: lines.diagnostics,
-        mark_style: MarkStyle { points: None, bins: None },
+        mark_style: MarkStyle { points: None, lines: Some(LineStyle { halo_multiplier: lines.halo_multiplier }), bars: None, bins: None },
     })
     .map_err(internal)?;
     Ok(bound::Chart { title, subtitle, frame, family: Ok(bound::Family::Cartesian(bound::Cartesian::Plane(Box::new(plot)))) })

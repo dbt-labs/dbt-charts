@@ -154,6 +154,10 @@ pub fn err_board_import_cycle(chain: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_BOARD_IMPORT_CYCLE, [("chain", chain.into())])
 }
 
+pub fn err_board_import_unresolved(path: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_BOARD_IMPORT_UNRESOLVED, [("path", path.into()), ("reason", reason.into())])
+}
+
 pub fn err_board_query_not_found(path: impl Into<Value>, query_name: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_BOARD_QUERY_NOT_FOUND, [("path", path.into()), ("query_name", query_name.into()), ("available", available.into())])
 }
@@ -170,12 +174,20 @@ pub fn err_board_source_invalid(file: impl Into<Value>, got: impl Into<Value>) -
     Diagnostic::new(&codes::ERR_BOARD_SOURCE_INVALID, [("file", file.into()), ("got", got.into())])
 }
 
+pub fn err_builtin_shadows_variable(name: impl Into<Value>, origin: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_BUILTIN_SHADOWS_VARIABLE, [("name", name.into()), ("origin", origin.into())])
+}
+
 pub fn err_cache_file_unavailable(path: impl Into<Value>, seconds: impl Into<Value>, detail: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_CACHE_FILE_UNAVAILABLE, [("path", path.into()), ("seconds", seconds.into()), ("detail", detail.into())])
 }
 
 pub fn err_cache_not_attached(query: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_CACHE_NOT_ATTACHED, [("query", query.into())])
+}
+
+pub fn err_cache_prefetch_needs_cache(scope: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_CACHE_PREFETCH_NEEDS_CACHE, [("scope", scope.into())])
 }
 
 pub fn err_cache_sql_failed(detail: impl Into<Value>) -> Diagnostic {
@@ -240,6 +252,14 @@ pub fn err_color_token(scope: impl Into<Value>, reason: impl Into<Value>) -> Dia
 
 pub fn err_column_not_found(column: impl Into<Value>, schema: impl Into<Value>, table: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_COLUMN_NOT_FOUND, [("column", column.into()), ("schema", schema.into()), ("table", table.into())])
+}
+
+pub fn err_column_ref_ambiguous(r#where: impl Into<Value>, r#ref: impl Into<Value>, matches: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_COLUMN_REF_AMBIGUOUS, [("where", r#where.into()), ("ref", r#ref.into()), ("matches", matches.into())])
+}
+
+pub fn err_column_ref_duplicate(r#where: impl Into<Value>, first: impl Into<Value>, second: impl Into<Value>, column: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_COLUMN_REF_DUPLICATE, [("where", r#where.into()), ("first", first.into()), ("second", second.into()), ("column", column.into())])
 }
 
 pub fn err_concat_overshoot_nonpositive(new_w: impl Into<Value>, orig_w: impl Into<Value>, overshoot: impl Into<Value>, target_width: impl Into<Value>) -> Diagnostic {
@@ -922,6 +942,14 @@ pub fn err_project_config_schema(message: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_PROJECT_CONFIG_SCHEMA, [("message", message.into())])
 }
 
+pub fn err_project_file_unreadable(path: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_PROJECT_FILE_UNREADABLE, [("path", path.into()), ("reason", reason.into())])
+}
+
+pub fn err_query_cache_ref_unknown(query: impl Into<Value>, r#ref: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_QUERY_CACHE_REF_UNKNOWN, [("query", query.into()), ("ref", r#ref.into()), ("available", available.into())])
+}
+
 pub fn err_query_dialect_mixed(query_name: impl Into<Value>, dialect: impl Into<Value>, dep_name: impl Into<Value>, dep_dialect: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_QUERY_DIALECT_MIXED, [("query_name", query_name.into()), ("dialect", dialect.into()), ("dep_name", dep_name.into()), ("dep_dialect", dep_dialect.into())])
 }
@@ -1350,6 +1378,10 @@ pub fn err_variable_cycle(cycle: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_VARIABLE_CYCLE, [("cycle", cycle.into())])
 }
 
+pub fn err_variable_default_invalid(name: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_VARIABLE_DEFAULT_INVALID, [("name", name.into()), ("reason", reason.into())])
+}
+
 pub fn err_variable_options_failed(variable: impl Into<Value>, query_name: impl Into<Value>, cause: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_VARIABLE_OPTIONS_FAILED, [("variable", variable.into()), ("query_name", query_name.into()), ("cause", cause.into())])
 }
@@ -1374,8 +1406,12 @@ pub fn err_warehouse_bytes_cap_exceeded(required: impl Into<Value>, cap: impl In
     Diagnostic::new(&codes::ERR_WAREHOUSE_BYTES_CAP_EXCEEDED, [("required", required.into()), ("cap", cap.into())])
 }
 
-pub fn err_warehouse_connection(reason: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::ERR_WAREHOUSE_CONNECTION, [("reason", reason.into())])
+pub fn err_warehouse_connection(source: impl Into<Value>, origin: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_WAREHOUSE_CONNECTION, [("source", source.into()), ("origin", origin.into()), ("reason", reason.into())])
+}
+
+pub fn err_warehouse_permission(source: impl Into<Value>, detail: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_WAREHOUSE_PERMISSION, [("source", source.into()), ("detail", detail.into())])
 }
 
 pub fn err_warehouse_query_invalid(name: impl Into<Value>, mechanism: impl Into<Value>, warehouse_message: impl Into<Value>) -> Diagnostic {
@@ -1580,6 +1616,10 @@ pub fn warn_layout_min_exceeds_height(chart_id: impl Into<Value>, n_categories: 
 
 pub fn warn_legend_hidden_under_edge(chart_id: impl Into<Value>, edge: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_LEGEND_HIDDEN_UNDER_EDGE, [("chart_id", chart_id.into()), ("edge", edge.into())])
+}
+
+pub fn warn_legend_overlay_covers_marks(chart_id: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_LEGEND_OVERLAY_COVERS_MARKS, [("chart_id", chart_id.into())])
 }
 
 pub fn warn_legend_position_width_fallback(chart_id: impl Into<Value>, authored_edge: impl Into<Value>, resolved_edge: impl Into<Value>) -> Diagnostic {
@@ -1800,6 +1840,10 @@ pub fn warn_value_labels_no_markers(chart_id: impl Into<Value>) -> Diagnostic {
 
 pub fn warn_value_labels_thinned(chart_id: impl Into<Value>, dropped: impl Into<Value>, total: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_VALUE_LABELS_THINNED, [("chart_id", chart_id.into()), ("dropped", dropped.into()), ("total", total.into())])
+}
+
+pub fn warn_variable_buttons_overflow(variable: impl Into<Value>, needed: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_VARIABLE_BUTTONS_OVERFLOW, [("variable", variable.into()), ("needed", needed.into()), ("available", available.into())])
 }
 
 pub fn warn_warehouse_check_unavailable(name: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {

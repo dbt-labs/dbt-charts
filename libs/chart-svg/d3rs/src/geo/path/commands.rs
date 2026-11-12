@@ -3,6 +3,8 @@
 //! the same way and hands over the commands, and `print` writes them. A point is a circle of the path's point
 //! radius, as d3 draws it, with its relative moves and arcs resolved to absolute commands.
 
+use crate::invariant;
+
 use crate::geo::stream::GeoStream;
 use crate::js_math::js_round;
 use crate::path::Command;
@@ -88,6 +90,6 @@ impl GeoStream for PathCommands {
     }
 
     fn sphere(&mut self) {
-        unreachable!("d3's PathCommands has no sphere: a projection's pre-clip consumes it, and geoPath rejects it otherwise");
+        invariant::broken("d3's PathCommands has no sphere: a projection's pre-clip consumes it, and geoPath rejects it otherwise");
     }
 }

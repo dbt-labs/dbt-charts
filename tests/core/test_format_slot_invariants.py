@@ -590,7 +590,9 @@ SLOT_FIXTURES: dict[str, SlotFixture] = {
             covers=(("ChartSupportTableSource", "format"),),
             bands=_ALL_BANDS,
             build=_support_table_entry,
-            exact_value=True,
+            # Cells print bare digits and the row label names the unit, so the affix
+            # paints in the label: the cell invariants do not apply.
+            checks_affix_paints=False,
             compacts_full_digits=True,
         ),
         SlotFixture(
@@ -598,7 +600,9 @@ SLOT_FIXTURES: dict[str, SlotFixture] = {
             covers=(("ChartSupportTableAggregate", "format"),),
             bands=_ALL_BANDS,
             build=_support_table_aggregate_entry,
-            exact_value=True,
+            # Cells print bare digits and the row label names the unit, so the affix
+            # paints in the label: the cell invariants do not apply.
+            checks_affix_paints=False,
             compacts_full_digits=True,
         ),
         SlotFixture(
@@ -606,7 +610,9 @@ SLOT_FIXTURES: dict[str, SlotFixture] = {
             covers=(("ChartSupportTablePerSeries", "format"),),
             bands=_ALL_BANDS,
             build=_support_table_per_series_entry,
-            exact_value=True,
+            # Cells print bare digits and the row label names the unit, so the affix
+            # paints in the label: the cell invariants do not apply.
+            checks_affix_paints=False,
             compacts_full_digits=True,
         ),
         SlotFixture(
@@ -1354,6 +1360,10 @@ _SUPPORT_TABLE_BUILDERS = (
 )
 
 
+def _label_texts(svg: str) -> list[str]:
+    return [_TAG_RE.sub("", t) for t in _TEXT_RE.findall(svg)]
+
+
 def _dollar_texts(svg: str) -> list[str]:
     return [t for t in (_TAG_RE.sub("", x) for x in _digit_texts(svg)) if "$" in t]
 
@@ -1363,7 +1373,9 @@ def test_support_table_currency_preset_below_one_paints_plain_digits(
     build: Callable[[str, float], dict[str, Any]],
 ) -> None:
     svg = render_board_to_svg(_to_yaml(build("currency", BANDS["sub_one"])))
-    assert _dollar_texts(svg) == ["$0.67"]
+    painted = [_TAG_RE.sub("", t) for t in _digit_texts(svg)]
+    assert "0.67" in painted and "670m" not in painted, painted
+    assert any(t.endswith("$") for t in _label_texts(svg)), svg
 
 
 @pytest.mark.parametrize("build", _SUPPORT_TABLE_BUILDERS, ids=lambda b: b.__name__)
@@ -1371,7 +1383,9 @@ def test_support_table_currency_preset_at_or_above_one_still_compacts(
     build: Callable[[str, float], dict[str, Any]],
 ) -> None:
     svg = render_board_to_svg(_to_yaml(build("currency", BANDS["large"])))
-    assert any(t.startswith(("$12.4M", "$12.4m")) for t in _dollar_texts(svg))
+    painted = [_TAG_RE.sub("", t) for t in _digit_texts(svg)]
+    assert "12.4" in painted, painted
+    assert any(t.endswith("$M") for t in _label_texts(svg)), svg
 
 
 @pytest.mark.parametrize("build", _SUPPORT_TABLE_BUILDERS, ids=lambda b: b.__name__)
@@ -1581,5 +1595,5 @@ def test_support_table_notation_alone_is_honored_like_with_a_prefix(
 
     notation_only = cells({"spec": ".3~s", "notation": "analytic"})
     with_prefix = cells({"spec": ".3~s", "notation": "analytic", "prefix": "€"})
-    assert "12.4M" in notation_only, notation_only
-    assert "€12.4M" in with_prefix, with_prefix
+    assert "12.4" in notation_only, notation_only
+    assert "12.4" in with_prefix, with_prefix

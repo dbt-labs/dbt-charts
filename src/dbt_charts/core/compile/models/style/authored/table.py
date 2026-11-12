@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
@@ -20,22 +21,34 @@ from pydantic import (
     model_validator,
 )
 
+from dbt_charts.core.compile.models.conditional_predicate import (
+    ConditionalPredicate,
+    default_rule_last,
+)
 from dbt_charts.core.compile.models.constraints import (
     AtMostOneOf,
     ConstrainedModel,
     Constraint,
+    Forbids,
     IsSet,
     Requires,
+    ValueIn,
 )
 from dbt_charts.core.compile.models.factories import (
+    _PatchBase,
+    build_conditional_body,
+    build_conditional_model,
     build_patch_model,
     build_patch_model_ext,
 )
 from dbt_charts.core.compile.models.markers import (
+    ChartLocal,
     Color,
+    Conditionable,
     DisplayText,
     Format,
     Palette,
+    ResultColumn,
     Url,
 )
 from dbt_charts.core.compile.models.primitives import (
@@ -44,11 +57,13 @@ from dbt_charts.core.compile.models.primitives import (
     GlyphText,
     Link,
     ScaleTargetConfig,
+    ToneLiteral,
 )
 from dbt_charts.core.compile.models.schema_names import FormatAlias, ScalePaletteName
 from dbt_charts.core.compile.models.style.theme import (
     SparkStyle,
     TableChartStyle,
+    TableRowStyle,
 )
 from dbt_charts.core.utils import classify_date_column_align
 
@@ -122,7 +137,7 @@ class TableColumnDefaultsConfig(BaseModel):
         default=None,
         description="How values are written in every column, unless a column sets its own.",
     )
-    background: Annotated[str | None, Color(column_ref=True)] = Field(
+    background: Annotated[str | None, Color(column_ref=True), ResultColumn()] = Field(
         default=None,
         description=(
             "Override cell background color (CSS color string), or a column ID: a "
@@ -274,6 +289,13 @@ class TableColumnConfig(ConstrainedModel):
             "TableColumnConfig: 'width' and 'max_width' are mutually exclusive. "
             "Use 'width' for a hard pin, or 'max_width' to cap auto-sizing.",
         ),
+        Forbids(
+            ("conditional",),
+            "TableColumnConfig: 'conditional' rules on a column with "
+            "'visible: false' paint nothing. Remove the rules, show the column, or "
+            "key a rule on it in style.row.conditional.",
+            when=(ValueIn("visible", (False,)),),
+        ),
     )
 
     visible: bool | None = Field(
@@ -339,14 +361,16 @@ class TableColumnConfig(ConstrainedModel):
             "to choose how a click opens the target."
         ),
     )
-    link: Annotated[str | Link | None, Url()] = Field(
+    link: Annotated[str | Link | None, Url(), ResultColumn(template=True)] = Field(
         default=None,
         description=(
             "URL template for cell values, with the row's fields available. "
             "Write {url, open} to choose how a click opens the target."
         ),
     )
-    background: Annotated[str | None, Color(column_ref=True)] = Field(
+    background: Annotated[
+        str | None, Color(column_ref=True), ResultColumn(), Conditionable()
+    ] = Field(
         default=None,
         description=(
             "Cell background color (hex string, or 'transparent'/'none'), or a "
@@ -354,7 +378,10 @@ class TableColumnConfig(ConstrainedModel):
             "value in the named column instead of the literal string."
         ),
     )
-    font: ColumnFontStyle | None = Field(
+    font: Annotated[
+        ColumnFontStyle | None,
+        Conditionable(only=("color", "weight", "style", "decoration")),
+    ] = Field(
         default=None,
         description=(
             "Cell font style overrides. `color` and `weight` resolve column-ID-"
@@ -366,12 +393,32 @@ class TableColumnConfig(ConstrainedModel):
         default=None,
         description="Continuous color mapping configuration for this column.",
     )
-    glyph: GlyphText | None = Field(
+    glyph: Annotated[GlyphText | None, Conditionable()] = Field(
         default=None,
         description="Text shown before every cell value; fills the same slot as format.prefix and wins over it.",
     )
-    glyph_color: Annotated[str | None, Color()] = Field(
+    glyph_color: Annotated[str | None, Color(), Conditionable()] = Field(
         default=None, description="Color for the glyph. Requires glyph to be set."
+    )
+    conditional: Annotated[
+        Annotated[
+            list[TableColumnRule],
+            Field(min_length=1),
+            AfterValidator(default_rule_last),
+        ]
+        | None,
+        ChartLocal(),
+    ] = Field(
+        default=None,
+        description=(
+            "Rules that restyle this column's cells by the cell's own value. "
+            "Each rule is one condition (eq, ne, lt, lte, gt, gte, between, in, "
+            "is_null, or default) plus the cell style it applies: background, "
+            "font color/weight/style/decoration, glyph, glyph_color and tone. "
+            "Every matching rule applies; where two set the same key the later "
+            "one wins, so list the more specific rule last. A `default: true` "
+            "rule applies only when no other rule matched."
+        ),
     )
 
     @field_validator("spark", mode="before")
@@ -388,6 +435,112 @@ class TableColumnConfig(ConstrainedModel):
             return {"type": value}
         return value
 
+
+_RULE_TONE = Field(
+    default=None,
+    description=(
+        "Semantic tone (positive|negative|warning|info) that colors the glyph "
+        "via the theme's tone palette; the theme-adaptive alternative to a raw "
+        "glyph_color. Requires a glyph. An explicit glyph_color wins."
+    ),
+)
+
+
+class _TableRulePredicate(ConditionalPredicate):
+    """A table rule's condition, plus the one key a rule sets that a column does not."""
+
+    tone: ToneLiteral | None = _RULE_TONE
+
+
+class _TableCellTone(_PatchBase):
+    """The one key a rule sets on a cell that a column does not."""
+
+    tone: ToneLiteral | None = _RULE_TONE
+
+
+# A rule's body is the column's own style, restricted to what varies per row.
+if TYPE_CHECKING:
+
+    class TableColumnRule(_TableRulePredicate):
+        background: str | None
+        font: ColumnFontStyle | None
+        glyph: GlyphText | None
+        glyph_color: str | None
+
+else:
+    TableColumnRule = build_conditional_model(TableColumnConfig, _TableRulePredicate)
+
+# The style a row rule applies to one named cell: the column rule's body, no predicate.
+if TYPE_CHECKING:
+
+    class TableCellPatch(_TableCellTone):
+        background: str | None
+        font: ColumnFontStyle | None
+        glyph: GlyphText | None
+        glyph_color: str | None
+
+else:
+    TableCellPatch = build_conditional_body(
+        TableColumnConfig, _TableCellTone, "TableCellPatch"
+    )
+
+
+class _TableRowPaint(BaseModel):
+    """What a row rule may set: the paint of every visible cell, or of named cells.
+
+    Glyphs exist only per cell, so the row level has no glyph key.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    background: Annotated[
+        str | None, Color(column_ref=True), ResultColumn(), Conditionable()
+    ] = Field(
+        default=None,
+        description=(
+            "Background of every visible cell in the row (hex string, or "
+            "'transparent'/'none'), or a column ID: a value matching a query "
+            "column name uses that row's value in the named column."
+        ),
+    )
+    font: Annotated[
+        ColumnFontStyle | None,
+        Conditionable(only=("color", "weight", "style", "decoration")),
+    ] = Field(
+        default=None,
+        description=(
+            "Font of every visible cell in the row. `color` and `weight` resolve "
+            "column-ID-first, the same as `background`."
+        ),
+    )
+    columns: Annotated[
+        dict[str, TableCellPatch] | None,
+        Conditionable(rule_type=dict[str, TableCellPatch]),
+    ] = Field(
+        default=None,
+        description=(
+            "Style for named cells of the row, keyed by a visible query column. "
+            "Beats the row-level style on that cell."
+        ),
+    )
+
+
+if TYPE_CHECKING:
+
+    class TableRowRule(ConditionalPredicate):
+        background: str | None
+        font: ColumnFontStyle | None
+        columns: dict[str, TableCellPatch] | None
+
+else:
+    TableRowRule = build_conditional_model(
+        _TableRowPaint, name="TableRowStyleConditional"
+    )
+
+
+TableColumnConfig.model_rebuild()
+# TableRowStyle names the rule type, which only exists once this module has built it.
+TableRowStyle.model_rebuild(_types_namespace={"TableRowRule": TableRowRule})
 
 _SIZING_FIELDS = frozenset({"width", "max_width"})
 

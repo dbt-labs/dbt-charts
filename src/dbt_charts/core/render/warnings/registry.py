@@ -58,6 +58,7 @@ import dbt_charts.core.render.warnings.layer_x_domain_paint_order as layer_x_dom
 import dbt_charts.core.render.warnings.layered_chart_shared_y_axis_scale_mismatch as layered_chart_shared_y_axis_scale_mismatch
 import dbt_charts.core.render.warnings.layout_min_exceeds_height as layout_min_exceeds_height
 import dbt_charts.core.render.warnings.legend_hidden_under_edge as legend_hidden_under_edge
+import dbt_charts.core.render.warnings.legend_overlay_covers_marks as legend_overlay_covers_marks
 import dbt_charts.core.render.warnings.legend_position_width_fallback as legend_position_width_fallback
 import dbt_charts.core.render.warnings.legend_values_unresolved as legend_values_unresolved
 import dbt_charts.core.render.warnings.line_joins_missing_periods as line_joins_missing_periods
@@ -97,6 +98,7 @@ import dbt_charts.core.render.warnings.trend_on_bars as trend_on_bars
 import dbt_charts.core.render.warnings.value_labels_crowd_width as value_labels_crowd_width
 import dbt_charts.core.render.warnings.value_labels_no_markers as value_labels_no_markers
 import dbt_charts.core.render.warnings.value_labels_thinned as value_labels_thinned
+import dbt_charts.core.render.warnings.variable_buttons_overflow as variable_buttons_overflow
 import dbt_charts.core.render.warnings.wide_measure_label_collision as wide_measure_label_collision
 import dbt_charts.core.render.warnings.y_encoding_mostly_null as y_encoding_mostly_null
 from dbt_charts.core.diagnostics import Diagnostic
@@ -123,6 +125,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     layer_x_domain_paint_order,
     layout_min_exceeds_height,
     legend_hidden_under_edge,
+    legend_overlay_covers_marks,
     legend_position_width_fallback,
     low_text_contrast,
     pattern_fallback_flat,
@@ -175,6 +178,7 @@ _DATA_DETECTORS: list[ModuleType] = [
     temporal_single_point,
     too_many_color_categories,
     too_many_x_categories,
+    variable_buttons_overflow,
     wide_measure_label_collision,
     y_encoding_mostly_null,
 ]

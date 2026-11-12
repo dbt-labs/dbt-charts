@@ -453,7 +453,9 @@ def test_a_lone_control_reserves_no_reset() -> None:
     assert lay_out_variables([_spec("a", "text", "A")], _WIDE, _style()).reset is None
 
 
-def test_the_reset_wraps_to_its_own_row_when_it_does_not_fit() -> None:
+def test_the_reset_wraps_with_the_last_control_when_it_does_not_fit() -> None:
+    """Two rows are needed either way; balanced, the reset keeps the last control
+    company instead of sitting alone."""
     specs = [_spec("a", "text", "A"), _spec("b", "text", "B")]
     both = lay_out_variables(specs, _WIDE, _style())
     last = both.boxes[-1]
@@ -461,8 +463,11 @@ def test_the_reset_wraps_to_its_own_row_when_it_does_not_fit() -> None:
     tight = lay_out_variables(specs, last.x + last.width + 1.0, _style())
 
     assert tight.rows == 2
+    a, b = tight.boxes
     assert tight.reset is not None
-    assert (tight.reset.x, tight.reset.y) == (0.0, last.y + last.height + 10.0)
+    assert (b.x, b.y) == (0.0, a.y + a.height + 10.0)
+    assert tight.reset.y == b.y
+    assert tight.reset.x > b.x + b.width
     assert tight.height == pytest.approx(tight.reset.y + tight.reset.height)
 
 
@@ -504,3 +509,20 @@ def test_a_multiselect_value_that_fits_is_drawn_whole() -> None:
     ).boxes[0]
 
     assert box.value == "(2) North"
+
+
+def test_a_wrapped_strip_balances_its_rows() -> None:
+    """Wrapping keeps the row count greedy packing needs but evens the rows out:
+    five controls that overflow one row by a little split three and three (with
+    the reset), not four over a lone control."""
+    specs = [_spec(f"v{i}", "text", f"Var {i}") for i in range(5)]
+    one_row = lay_out_variables(specs, _WIDE * 4, _style())
+    assert one_row.reset is not None
+    full = one_row.reset.x + one_row.reset.width
+
+    layout = lay_out_variables(specs, full - 1.0, _style())
+
+    assert layout.rows == 2
+    assert [box.y for box in layout.boxes].count(0.0) == 3
+    assert layout.reset is not None
+    assert layout.reset.y > 0.0

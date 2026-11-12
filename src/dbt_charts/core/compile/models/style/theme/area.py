@@ -13,9 +13,19 @@ if TYPE_CHECKING:
         EndpointLabelsConfig,
     )
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-from dbt_charts.core.compile.models.markers import InheritSlot, SkipInheritSlots
+from dbt_charts.core.compile.models.conditional_predicate import (
+    ConditionalPredicate,
+    default_rule_last,
+)
+from dbt_charts.core.compile.models.factories import build_conditional_model
+from dbt_charts.core.compile.models.markers import (
+    ChartLocal,
+    Conditionable,
+    InheritSlot,
+    SkipInheritSlots,
+)
 from dbt_charts.core.compile.models.primitives import PatternStyle
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _AnnotatedChartStyleMixin,
@@ -54,9 +64,11 @@ class AreaLineStyle(BaseModel):
     # Cascade tier sentinel: None means "not specified at this tier".
     # SkipInheritSlots(cascade=True): apply_inherit copies the entire stroke object
     # from the parent slot when stroke is None.
-    stroke: Annotated[StrokeStyle | None, SkipInheritSlots(cascade=True)] = Field(
-        default=None, description="Area top-edge line stroke style."
-    )
+    stroke: Annotated[
+        StrokeStyle | None,
+        SkipInheritSlots(cascade=True),
+        Conditionable(only=("color", "width", "dasharray")),
+    ] = Field(default=None, description="Area top-edge line stroke style.")
     # Halo: a knockout-colored line drawn behind the foreground top-edge line so
     # that crossings between series read cleanly.
     # Cascade tier sentinel: None means "not specified at this tier".
@@ -108,7 +120,7 @@ class AreaLayerStyle(BaseModel):
     )
 
 
-class AreaChartStyle(
+class _AreaChartStyleBase(
     _CartesianChartStyle,
     _LegendedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
@@ -147,4 +159,47 @@ class AreaChartStyle(
     ] = Field(
         default_factory=AreaChartMarksStyle,
         description="Area-family mark overrides.",
+    )
+
+
+if TYPE_CHECKING:
+
+    class AreaConditionalRule(ConditionalPredicate):
+        marks: AreaChartMarksStyle | None
+
+else:
+    AreaConditionalRule = build_conditional_model(
+        _AreaChartStyleBase, name="AreaChartStyleConditional"
+    )
+
+
+class AreaChartStyle(_AreaChartStyleBase):
+    """Area chart style, plus the per-point rules only a chart's own style takes."""
+
+    conditional: Annotated[
+        dict[
+            str,
+            Annotated[
+                list[AreaConditionalRule],
+                Field(min_length=1),
+                AfterValidator(default_rule_last),
+            ],
+        ]
+        | None,
+        ChartLocal(),
+    ] = Field(
+        default=None,
+        description=(
+            "Rules that restyle a point by its row's value, keyed by column name. "
+            "Each rule is one condition (eq, ne, lt, lte, gt, gte, between, in, "
+            "is_null, or default) plus the style it applies: marks.point color, fill, filled, size, shape, opacity and stroke_width, and marks.area color and opacity, and marks.line.stroke color, width and dasharray (the top edge). "
+            "An area segment takes a fill or top-edge key only when both of its end points resolve the same value for it, "
+            "so a run of matching points restyles the fill and edge between them, and the segment stepping into the run keeps the base style; "
+            "include the boundary point in the condition to draw it. "
+            "Curve, stacked and the other whole-series properties cannot vary per row. "
+            "Every matching rule applies; where two set the same key the later one "
+            "wins, so list the more specific rule last. A `default: true` rule "
+            "applies only when no other rule matched. Two columns cannot patch "
+            "the same property. Rules style the base layer, not `layers:`."
+        ),
     )

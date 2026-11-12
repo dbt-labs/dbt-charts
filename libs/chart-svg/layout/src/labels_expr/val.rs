@@ -1,6 +1,8 @@
 //! JavaScript values and the language's own coercions (ECMAScript 2024 abstract operations), as Vega's
 //! generated expression code runs them.
 
+use std::cell::Cell;
+
 use super::date;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,25 +92,66 @@ pub fn small_limits(units: usize, budget: usize) -> impl Drop {
     Restore
 }
 
+const GOLDEN: u64 = 0x9E37_79B9_7F4A_7C15;
+
+/// What one render's expressions read of the host: the instant `now()` and `new Date()` name, and the stream
+/// `random()` draws from, seeded by that instant so the same render gives the same labels. One env serves a whole
+/// render, as one Vega view has one clock and one stream.
+#[derive(Debug)]
+pub struct EvalEnv {
+    now_ms: f64,
+    random: Cell<u64>,
+}
+
+impl EvalEnv {
+    /// An env whose clock reads `now_ms` (milliseconds since the epoch), the render's `rendered_at`.
+    pub fn new(now_ms: f64) -> Self {
+        EvalEnv { now_ms, random: Cell::new((now_ms as u64 ^ GOLDEN).wrapping_mul(GOLDEN)) }
+    }
+}
+
 thread_local! {
     /// The bytes the running evaluation has accounted for, or `None` outside one.
-    static USED: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static USED: Cell<Option<usize>> = const { Cell::new(None) };
+    /// The running evaluation's clock, or `None` outside one.
+    static NOW: Cell<Option<f64>> = const { Cell::new(None) };
+    /// The running evaluation's `random()` state, which it hands back to its env when it drops.
+    static RANDOM: Cell<u64> = const { Cell::new(0) };
 }
 
-/// Holds an evaluation open: the budget counts from zero until it drops.
-pub struct Evaluation;
+/// Holds an evaluation open: the budget counts from zero and the clock and stream are the env's until it drops.
+pub struct Evaluation<'a>(&'a EvalEnv);
 
-impl Evaluation {
-    pub fn begin() -> Evaluation {
+impl<'a> Evaluation<'a> {
+    pub fn begin(env: &'a EvalEnv) -> Self {
         USED.set(Some(0));
-        Evaluation
+        NOW.set(Some(env.now_ms));
+        RANDOM.set(env.random.get());
+        Evaluation(env)
     }
 }
 
-impl Drop for Evaluation {
+impl Drop for Evaluation<'_> {
     fn drop(&mut self) {
+        self.0.random.set(RANDOM.get());
         USED.set(None);
+        NOW.set(None);
     }
+}
+
+/// The milliseconds `now()` reads; an evaluation always holds a clock, so a read outside one is a bug here.
+pub fn now() -> Res<f64> {
+    NOW.get().ok_or_else(|| EvalError::Throws("the render clock was read outside an evaluation".to_string()))
+}
+
+/// The next draw of `random()`, in `[0, 1)` (xorshift64).
+pub fn random() -> f64 {
+    let mut x = RANDOM.get() | 1;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    RANDOM.set(x);
+    (x >> 11) as f64 / (1u64 << 53) as f64
 }
 
 fn over_budget() -> EvalError {

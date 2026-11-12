@@ -12,6 +12,7 @@ pub mod rejoin;
 use super::math::{EPSILON, HALF_PI};
 use super::polygon_contains::polygon_contains;
 use super::stream::GeoStream;
+use crate::invariant::at;
 use buffer::{join_ends, ClipBuffer};
 use rejoin::clip_rejoin;
 
@@ -104,14 +105,14 @@ impl<S: GeoStream, G: ClipGeometry> Clip<S, G> {
 
         // No intersections.
         if clean & 1 != 0 {
-            let segment = &ring_segments[0];
+            let segment = at(&ring_segments, 0);
             if segment.len() > 1 {
                 if !self.polygon_started {
                     self.sink.polygon_start();
                     self.polygon_started = true;
                 }
                 self.sink.line_start();
-                for p in &segment[..segment.len() - 1] {
+                for p in at(segment, ..segment.len() - 1) {
                     self.sink.point(p.xy[0], p.xy[1], None);
                 }
                 self.sink.line_end();

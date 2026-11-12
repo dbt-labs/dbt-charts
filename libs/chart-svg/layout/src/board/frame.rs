@@ -4,13 +4,11 @@
 use board_model::facet::FontWeightValue;
 use d3rs::py_float::float_repr;
 use diagnostic::Diagnostic;
-use layout::board::assemble::StylePatch;
+use super::assemble::{leaf, StylePatch};
 use scene::{Attrs, Chars, Child, Element, Escape, Node, Role, Shape};
 
-use layout::board::assemble::leaf;
-
 /// The root's attributes, the hover facts and the page title included.
-pub(crate) fn root_attrs(style: &StylePatch, family: &str, page_title: &str, rendered_at: &jiff::Timestamp) -> Result<Attrs, Diagnostic> {
+pub fn root_attrs(style: &StylePatch, family: &str, page_title: &str, rendered_at: &jiff::Timestamp) -> Result<Attrs, Diagnostic> {
     let background = leaf(style.background.as_ref(), "style.background")?.as_str();
     Ok(Attrs::new()
         .set("preserveAspectRatio", "xMinYMin meet")
@@ -25,7 +23,7 @@ pub(crate) fn root_attrs(style: &StylePatch, family: &str, page_title: &str, ren
 }
 
 /// `defs > style`: the page's stylesheet.
-pub(crate) fn defs(stylesheet: &str) -> Node {
+pub fn defs(stylesheet: &str) -> Node {
     let style = Element {
         tag: "style".to_string(),
         attrs: Attrs::new().set("type", "text/css"),

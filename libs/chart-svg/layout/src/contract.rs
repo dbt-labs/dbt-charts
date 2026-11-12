@@ -23,6 +23,12 @@ pub fn hidden_mark_group(kind: &str, name: &str, children: Vec<Node>) -> Node {
     Node::group(Role::Chrome, Attrs::new().set("class", mark_class(kind, name)).set("aria-hidden", "true"), children)
 }
 
+/// The `.role-mark` group of a connected mark (`line`, `area`). The path carries no description, so
+/// the group is bare, as Vega leaves it (`chart-renderer`'s `contract::connected_group`).
+pub fn connected_group(kind: &str, name: &str, children: Vec<Node>) -> Node {
+    Node::group(Role::Chrome, Attrs::new().set("class", mark_class(kind, name)), children)
+}
+
 pub fn value_label_group(name: &str, children: Vec<Node>) -> Result<Node, String> {
     Ok(Node::group(Role::Chrome, mark_group_attrs("text", name, true)?, children))
 }

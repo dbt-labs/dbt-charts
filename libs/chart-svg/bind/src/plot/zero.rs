@@ -187,7 +187,7 @@ mod tests {
         assert_eq!(verdict(bar, None, &spans), Zero::Free);
         assert_eq!(verdict(bar, Some(Setting::Auto), &spans), Zero::Anchored);
         let ladder = |zero| {
-            let axis = Axis { zero, headroom: 0.08, count: Some(Count::Auto), values: None, domain: None, min_step: None, independent: false, nice: None, mark: Mark::Bar };
+            let axis = Axis { zero, headroom: 0.08, percent: false, count: Some(Count::Auto), values: None, domain: None, min_step: None, independent: false, nice: None, mark: Mark::Bar };
             let domain = linear(&axis, &spans, &|v: &[f64]| v.iter().map(f64::to_string).collect()).unwrap().unwrap();
             match domain.ladder {
                 Ladder::Fixed(fixed) => fixed.rungs().iter().map(|r| r.value).collect::<Vec<_>>(),

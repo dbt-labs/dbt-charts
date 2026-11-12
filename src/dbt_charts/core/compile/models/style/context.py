@@ -101,7 +101,7 @@ class ChartStyleContext:
 
     Not a resolved value: ``axis``/``axis_x``/``axis_y``/``axis_quantitative``
     are raw theme passthroughs (not yet merged with chart-local overrides),
-    ``axis_overrides_*``/``color`` are chart-local patch sentinels
+    ``axis_overrides_*`` are chart-local patch sentinels
     (``None`` until a chart authors an override), and ``pre_style`` is the
     pre-``apply_inherit`` tree kept around so a chart-local override can
     re-run the full inherit graph. ``build_chart_style_context()`` in
@@ -272,9 +272,6 @@ class ChartStyleContext:
     axis_overrides_y: AxisYStylePatch | None = None
     axis_overrides_quantitative: QuantitativeAxisStylePatch | None = None
     axis_overrides_band: BandAxisStylePatch | None = None
-    # Chart-local-only Vega passthrough, from style.color. None = no
-    # chart-local color override.
-    color: str | None = None
     # Materialized chart background: chart-local style.background when authored,
     # otherwise the board background propagated from ResolvedStyle.background
     # at compile time (transparent when that is translucent: the board paints it).

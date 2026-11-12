@@ -211,7 +211,7 @@ pub struct QueryBase {
 pub struct SqlQuery {
     #[flatten]
     pub base: QueryBase,
-    /// The SQL to run, as Jinja2. `{{ queries.base }}` inlines another query of the same source as a subquery already aliased to its name (add no `AS`), so base reruns inside every query that reads it; a bare `FROM base` fails. `{{ queries.base.cache }}` runs base once and composes over its cached rows in DuckDB SQL: use it when several charts read one expensive base. Variables go in through `filter()`, `filter_date_range()` or `{{ name }}`.
+    /// The SQL to run, as Jinja2. `{{ queries.base }}` inlines another query of the same source as a subquery already aliased to its name (add no `AS`), so base reruns inside every query that reads it; a bare `FROM base` fails. `{{ queries.base.cache }}` runs base once and composes over its cached rows in DuckDB (write DuckDB SQL or set `dialect:`): use it when several charts read one expensive base. Variables go in through `filter()`, `filter_date_range()` or `{{ name }}`.
     pub sql: String,
     /// Non-nestable SQL preamble executed before the main query (e.g., CREATE TEMP FUNCTION).
     #[model(absent = "no preamble")]

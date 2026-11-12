@@ -8,6 +8,7 @@ from pydantic import Field
 
 from dbt_charts.core.compile.models.chart.authored._annotation import Annotation
 from dbt_charts.core.compile.models.chart.authored._layer import CartesianLayer
+from dbt_charts.core.compile.models.markers import ColumnRef
 from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 
 from ._base import _CartesianChartFields, _PatternField, _TooltipFields
@@ -17,7 +18,7 @@ class BarChart(_CartesianChartFields, _TooltipFields, _PatternField):
     """Normalized bar or histogram chart."""
 
     type: Literal["bar", "histogram"]
-    y_start: str | None = Field(
+    y_start: ColumnRef | None = Field(
         default=None,
         description="Column each bar starts from; absent, bars start at zero.",
     )

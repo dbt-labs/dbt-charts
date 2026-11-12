@@ -397,24 +397,30 @@ def test_multiples_different_rows_and_columns_does_not_raise() -> None:
     assert compiled.multiples.columns == "product"
 
 
-def test_kpi_background_passes_through() -> None:
-    """KpiChart.background must be wired from flat Chart through the v2 compiler.
-
-    Regression for the merge-time fix: compiled/kpi.py was missing the field and
-    normalize.charts wasn't passing it, causing channel.py to crash on
-    AttributeError when resolving a KPI chart with a background channel.
-    """
+def test_kpi_style_background_and_conditional_pass_through() -> None:
+    """KpiChart.style carries the authored background and conditional rules."""
     from dbt_charts.core.compile.normalize.charts import normalize_chart
 
     qr = _registry(q=_sql())
     compiled = normalize_chart(
         "kpi1",
-        {"type": "kpi", "value": "revenue", "background": "revenue", "query": "q"},
+        {
+            "type": "kpi",
+            "value": "revenue",
+            "query": "q",
+            "style": {
+                "background": "#fff",
+                "conditional": {"revenue": [{"lt": 0, "background": "#fee2e2"}]},
+            },
+        },
         qr,
         sources={},
     )
     assert isinstance(compiled, KpiChart)
-    assert compiled.background == "revenue"
+    assert compiled.style is not None
+    assert compiled.style.background == "#fff"
+    assert compiled.style.conditional is not None
+    assert compiled.style.conditional["revenue"][0].background == "#fee2e2"
 
 
 def test_authored_table_rejects_x_y_color_sort() -> None:

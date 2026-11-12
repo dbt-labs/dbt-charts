@@ -13,8 +13,8 @@
 //!
 //! Passes and laws: `decode` is the first board-wide pass; `category_colors` the board-wide
 //! value-to-slot plan; `channels` a chart's `color`/`background` series channels;
-//! `channel_type` a field's quantitative/temporal/nominal verdict from its declared column
-//! type; `formats/` the formats law (resolution, tier merge, painter, number locale); `walk` and
+//! `column_kind` a column's kind and, per channel role, its quantitative/temporal/nominal
+//! verdict; `formats/` the formats law (resolution, tier merge, painter, number locale); `walk` and
 //! `style/` the declared priority-list walk and the slots' lists over `board-model`;
 //! `font_stack` the emoji-family law.
 //!
@@ -38,8 +38,8 @@
 pub mod board;
 pub mod callout;
 pub mod category_colors;
-pub mod channel_type;
 pub mod channels;
+pub mod checks;
 pub mod conditional;
 pub mod column_kind;
 pub mod decode;

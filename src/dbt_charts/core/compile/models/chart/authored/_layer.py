@@ -11,7 +11,14 @@ from dbt_charts.core.compile.models.constraints import (
     Constraint,
     NotNull,
 )
-from dbt_charts.core.compile.models.markers import AUTO, Color, DisplayText, Format
+from dbt_charts.core.compile.models.markers import (
+    AUTO,
+    Color,
+    ColumnRef,
+    DisplayText,
+    Format,
+    ResultQuery,
+)
 from dbt_charts.core.compile.models.primitives import (
     CHANNEL_COLUMN,
     NON_BLANK,
@@ -131,7 +138,7 @@ from dbt_charts.core.compile.models.style.authored._base import (
 )
 
 LayerColorColumn = Annotated[
-    str,
+    ColumnRef,
     StringConstraints(pattern=CHANNEL_COLUMN),
     ErrorHint(
         "Layer.color is a data channel (bare field name only). Paint belongs "
@@ -143,7 +150,7 @@ LayerColorColumn = Annotated[
 
 Y_START_NO_COLUMN = "y_start names no column; remove it for bars that start at zero."
 YStartColumn = Annotated[
-    str, StringConstraints(pattern=NON_BLANK), ErrorHint(Y_START_NO_COLUMN)
+    ColumnRef, StringConstraints(pattern=NON_BLANK), ErrorHint(Y_START_NO_COLUMN)
 ]
 # A bare `y_start:` is null, which must not read as "start at zero".
 Y_START_NOT_NULL = NotNull(("y_start",), Y_START_NO_COLUMN)
@@ -154,14 +161,14 @@ class TypedLayerBase(ConstrainedModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    query: str | None = Field(
+    query: Annotated[str, ResultQuery()] | None = Field(
         default=None,
         description="Query name for this layer's data (overrides chart-level query).",
     )
-    x: str | None = Field(
+    x: ColumnRef | None = Field(
         default=None, description="X-axis column name for this layer."
     )
-    y: str | None = Field(
+    y: ColumnRef | None = Field(
         default=None, description="Y-axis column name for this layer."
     )
     label: str | None = Field(

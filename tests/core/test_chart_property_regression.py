@@ -49,11 +49,14 @@ class TestBarApiNarrowingPins:
         with pytest.raises(ValidationError, match="opacity"):
             ChartStylePatch(bar={"opacity": 0.5})
 
-    def test_bar_accepts_color_chart_level(self):
-        """chart.style.bar.color.static is accepted — it's a chart-level paint override."""
-        patch = BarChartStylePatch.model_validate({"color": {"static": "#336699"}})
-        assert patch.color is not None
-        assert patch.color.static == "#336699"
+    def test_bar_accepts_mark_color_chart_level(self):
+        """chart.style.marks.bar.color is the chart-level paint override."""
+        patch = BarChartStylePatch.model_validate(
+            {"marks": {"bar": {"color": "#336699"}}}
+        )
+        assert patch.marks is not None
+        assert patch.marks.bar is not None
+        assert patch.marks.bar.color == "#336699"
 
     def test_bar_rejects_corner_radius_was_markstyle(self):
         """chart.style.bar.corner_radius is rejected — use bar.border.radius instead."""

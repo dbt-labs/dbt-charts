@@ -5,6 +5,7 @@
 pub mod annotation;
 pub mod board;
 pub mod common;
+pub mod conditional;
 pub mod conditions;
 pub mod constants;
 pub mod contract;
@@ -21,6 +22,7 @@ pub(crate) mod legend_view;
 pub mod loaded_rows;
 pub use column_types::SharedRows;
 pub mod payload_schema;
+pub(crate) mod point_conditional;
 pub mod pattern;
 pub mod prose;
 pub(crate) mod selected;
@@ -697,6 +699,7 @@ fn render_in_scope(
         contract::with_placement(payload.placement, || render_family(payload, fonts))
             .map_err(|d| labels_expr::recode(d, payload))
     };
+    labels_expr::fresh_env();
     let needs = labels_expr::needs(&payload.resolved);
     if needs.scales {
         labels_expr::render_passes(&payload.rows, draw)

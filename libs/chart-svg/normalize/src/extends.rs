@@ -6,7 +6,7 @@
 //! `aliases` and `_schema_version` are not inherited. `tests/test_normalize_extends_fixture.py`
 //! is its oracle.
 
-use crate::files::{is_path_ref, ProjectFiles};
+use crate::files::{is_path_ref, ProjectFiles, ReadError};
 use board_model::board::theme::{is_built_in, BASE_THEME};
 use board_model::board::Board;
 use board_model::names::{ThemeName, WarningCode};
@@ -59,25 +59,27 @@ pub enum FoldError {
     Circular(ProjectPath),
     /// The board's directory is not under the boards root that bounds the meta walk.
     NotUnderRoot { dir: String, root: String },
-    /// A fragment that does not parse as YAML, or is not a board patch.
+    /// A fragment that does not parse as YAML, or is not a board patch: the findings themselves,
+    /// located in the fragment's file as in the board's own.
     Invalid {
         fragment: ProjectPath,
-        first: String,
+        diagnostics: Vec<Diagnostic>,
     },
 }
 
 impl FoldError {
     pub(crate) fn diagnostics(&self) -> Vec<Diagnostic> {
-        vec![match self {
-            Self::Diagnostic(d) => d.clone(),
-            Self::Circular(p) => diag::err_extends_cycle(p.to_string()),
+        match self {
+            Self::Diagnostic(d) => vec![d.clone()],
+            Self::Circular(p) => vec![diag::err_extends_cycle(p.to_string())],
             Self::NotUnderRoot { dir, root } => {
-                diag::err_meta_outside_boards_root(dir.as_str(), root.as_str())
+                vec![diag::err_meta_outside_boards_root(
+                    dir.as_str(),
+                    root.as_str(),
+                )]
             }
-            Self::Invalid { fragment, first } => {
-                diag::err_extends_invalid(fragment.to_string(), first.as_str())
-            }
-        }]
+            Self::Invalid { diagnostics, .. } => diagnostics.clone(),
+        }
     }
 }
 
@@ -85,17 +87,24 @@ impl fmt::Display for FoldError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Diagnostic(d) => f.write_str(&d.message().unwrap_or_else(|_| d.code.to_string())),
-            Self::Circular(_) | Self::NotUnderRoot { .. } | Self::Invalid { .. } => {
-                self.diagnostics().iter().try_for_each(|d| match d.message() {
+            Self::Circular(_) | Self::NotUnderRoot { .. } | Self::Invalid { .. } => self
+                .diagnostics()
+                .iter()
+                .try_for_each(|d| match d.message() {
                     Ok(text) => f.write_str(&text),
                     Err(_) => f.write_str(d.code),
-                })
-            }
+                }),
         }
     }
 }
 
 impl std::error::Error for FoldError {}
+
+impl From<crate::files::ReadError> for FoldError {
+    fn from(e: crate::files::ReadError) -> Self {
+        Self::Diagnostic(e.diagnostic())
+    }
+}
 
 pub(crate) struct Cx<'a> {
     files: &'a dyn ProjectFiles,
@@ -157,7 +166,7 @@ impl<'a> Cx<'a> {
     ) -> Result<Patch, FoldError> {
         if !is_path_ref(entry) {
             if let Some((_, to)) = THEME_RENAMES.iter().find(|(from, _)| *from == entry) {
-                if self.named_board(entry).is_none() {
+                if self.named_board(entry)?.is_none() {
                     self.out.notices.push(Notice {
                         file: file.clone(),
                         message: format!(
@@ -196,13 +205,18 @@ impl<'a> Cx<'a> {
     }
 
     /// The board a plain name names at the boards root: `<name>.yaml`, else `<name>.yml`.
-    fn named_board(&self, name: &str) -> Option<(ProjectPath, String)> {
-        ["yaml", "yml"].into_iter().find_map(|ext| {
-            let path =
+    fn named_board(&self, name: &str) -> Result<Option<(ProjectPath, String)>, ReadError> {
+        for ext in ["yaml", "yml"] {
+            let Ok(path) =
                 ProjectPath::try_from(join(self.boards_root, &format!("{name}.{ext}")).as_str())
-                    .ok()?;
-            self.files.read(&path).map(|t| (path, t))
-        })
+            else {
+                continue;
+            };
+            if let Some(text) = self.files.read(&path)? {
+                return Ok(Some((path, text)));
+            }
+        }
+        Ok(None)
     }
 
     fn fragment(&self, entry: &str, dir: &str) -> Result<(ProjectPath, String), FoldError> {
@@ -215,7 +229,7 @@ impl<'a> Cx<'a> {
                 ))
             };
             let path = ProjectPath::anchored(dir, entry).map_err(|e| unresolved(e.to_string()))?;
-            return match self.files.read(&path) {
+            return match self.files.read(&path)? {
                 Some(text) => Ok((path, text)),
                 None => Err(unresolved(format!(
                     "{} does not exist",
@@ -223,7 +237,7 @@ impl<'a> Cx<'a> {
                 ))),
             };
         }
-        self.named_board(entry).ok_or_else(|| {
+        self.named_board(entry)?.ok_or_else(|| {
             FoldError::Diagnostic(diag::err_extends_unresolved(
                 entry,
                 ThemeName::VALUES.to_vec(),
@@ -305,21 +319,36 @@ impl<'a> Cx<'a> {
         text: &str,
         meta: bool,
     ) -> Result<(Patch, Vec<String>), FoldError> {
-        let invalid = |first: String| FoldError::Invalid {
+        let invalid = |diagnostics: Vec<Diagnostic>| FoldError::Invalid {
             fragment: path.clone(),
-            first,
+            diagnostics,
         };
-        let node = match yaml::parse_node(text) {
+        let node = match yaml::parse_any(text) {
             Ok(n) => n,
             Err(d) if d.iter().all(|d| d.code == "ERR-EMPTY-YAML-DOCUMENT") => {
                 return Ok((Patch::default(), Vec::new()));
             }
-            Err(d) => {
-                return Err(invalid(
-                    d.iter().map(|d| d.code).collect::<Vec<_>>().join(", "),
-                ))
+            Err(found) => {
+                // Python names the fragment in its syntax error; an `extends:` entry is named so.
+                let source = if meta {
+                    path.to_string()
+                } else {
+                    format!("extends: {path}")
+                };
+                return Err(invalid(crate::compile::named_source(found, &source)));
             }
         };
+        match &node.kind {
+            Kind::Map(_) => {}
+            // An empty file is a documented empty patch.
+            Kind::Scalar(yaml::Value::Null) => return Ok((Patch::default(), Vec::new())),
+            other => {
+                return Err(invalid(vec![diag::err_extends_invalid(
+                    path.to_string(),
+                    format!("must be a YAML mapping, got {}", yaml::python_type(other)),
+                )]))
+            }
+        }
         let mut node = node;
         if meta {
             if let Kind::Map(m) = &mut node.kind {
@@ -337,11 +366,13 @@ impl<'a> Cx<'a> {
             }));
         let mut node = migrated.node;
         anchor_images(&mut node, parent(path)).map_err(FoldError::Diagnostic)?;
-        crate::shape::refuse(&node, true).map_err(|d| invalid(d.code.to_string()))?;
-        crate::names::refuse(&node, true).map_err(|d| invalid(d.code.to_string()))?;
+        crate::shape::refuse(&node, true).map_err(|d| invalid(vec![d]))?;
+        crate::names::refuse(&node, true).map_err(|d| invalid(vec![d]))?;
         let parsed = parse_patch::<Board>(&node, None);
-        if let Some(e) = parsed.errors.first() {
-            return Err(invalid(format!("{} at {:?}", e.diagnostic.code, e.path())));
+        if !parsed.errors.is_empty() {
+            return Err(invalid(
+                parsed.errors.into_iter().map(|e| e.diagnostic).collect(),
+            ));
         }
         let (own, entries) = split_own(parsed.twin);
         Ok((own, entries))

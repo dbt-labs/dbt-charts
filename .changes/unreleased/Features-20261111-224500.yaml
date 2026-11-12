@@ -1,0 +1,3 @@
+kind: Features
+body: Tables restyle a whole row, or another cell in it, from any column's value with `style.row.conditional`.
+time: 2026-11-11T22:45:00.000000-08:00

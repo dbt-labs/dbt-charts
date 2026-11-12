@@ -17,10 +17,6 @@ from dbt_charts.core.compile.format_value import (
     text_format_link,
 )
 from dbt_charts.core.compile.merge import to_padding_style
-from dbt_charts.core.compile.models.chart.authored import ConditionalRule
-from dbt_charts.core.compile.models.chart.authored.kpi import (
-    default_rule_beside_good,
-)
 from dbt_charts.core.compile.models.chart.normalized import (
     CalloutChart,
     KpiChart,
@@ -32,6 +28,8 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedKpiSupportConfig,
     ResolvedSparkBarChart,
 )
+from dbt_charts.core.compile.models.chart.resolved.kpi import KpiGoodRule
+from dbt_charts.core.compile.models.markers import AUTO
 from dbt_charts.core.compile.models.primitives import (
     ResolvedFormat,
     resolved_as,
@@ -41,7 +39,11 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedKpiStyle,
     ResolvedSparkBarStyle,
 )
-from dbt_charts.core.compile.models.style.theme.kpi import KpiGlyphSet
+from dbt_charts.core.compile.models.style.theme.kpi import (
+    KpiBackgroundGradient,
+    KpiChartStyle,
+    KpiGlyphSet,
+)
 from dbt_charts.core.compile.resolve.chart._channels import _channels_for
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
@@ -53,7 +55,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
 from dbt_charts.core.compile.resolve.chart._palette import (
     _with_color_tokens,
 )
-from dbt_charts.core.compile.resolve.chart.channel import kpi_support_rule_column
+from dbt_charts.core.compile.resolve.chart.channel import kpi_background_channel
 from dbt_charts.core.compile.resolve.style.board import (
     build_resolved_callout_chart,
     unset_auto_support_ink,
@@ -65,7 +67,6 @@ from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
-from dbt_charts.core.diagnostics.codes_compile import ERR_VALIDATION_FIELD
 from dbt_charts.core.diagnostics.codes_render import ERR_KPI_NO_DATA
 from dbt_charts.core.text.predefined_formats import PREDEFINED_TEXT_NAMES
 from dbt_charts.core.utils import coerce_numeric_cell
@@ -96,7 +97,13 @@ def _resolve_kpi(
     kpi = unset_auto_support_ink(
         build_chart_style_context(chart_style_context, normalized).kpi
     )
-    channels = _channels_for(normalized, data)
+    available = set(data[0]) if data else set()
+    _validate_kpi_conditional(kpi, available)
+    channels = (
+        {"background": kpi_background_channel(kpi.background, available)}
+        if isinstance(kpi.background, KpiBackgroundGradient)
+        else {}
+    )
     formats = chart_style_context.formats
     headline = _headline_numeric_value(value, data)
     chart_value = (
@@ -119,11 +126,6 @@ def _resolve_kpi(
         legendless=True,
         wrap_legend=False,
     )
-    support_column = kpi_support_rule_column(normalized)
-    cf = base["conditional_formatting"]
-    authored_rules = (
-        tuple(cf[support_column].when) if cf and support_column in cf else ()
-    )
     support = normalized.support
     support_rules = (
         _good_rules(
@@ -140,17 +142,7 @@ def _resolve_kpi(
         and support.good is not None
         and support.value is not None
         else ()
-    ) + authored_rules
-    if normalized.good is not None and cf is not None and value in cf:
-        # The authored validator makes this check only on a named value; a
-        # bound one is checked here, once the rows have named the column.
-        message = default_rule_beside_good(cf[value], value, "good")
-        if message is not None:
-            raise CompilationError.from_code(
-                ERR_VALIDATION_FIELD,
-                field_path=f"charts.{normalized.id}.conditional_formatting.{value}",
-                pydantic_msg=message,
-            )
+    )
     value_rules = (
         _good_rules(
             normalized.id,
@@ -238,6 +230,29 @@ def _resolve_kpi(
     )
 
 
+def _validate_kpi_conditional(kpi: KpiChartStyle, available: set[str]) -> None:
+    """Raise ValueError for a rule the card cannot paint.
+
+    A rule column must be a query column. ``auto`` is the support ink's own
+    default, not a color a rule can name.
+    """
+    if kpi.conditional is None:
+        return
+    for column, rules in kpi.conditional.items():
+        if available and column not in available:
+            raise ValueError(
+                f"style.conditional targets column '{column}' which is not in the "
+                f"query result. Available: {sorted(available)}"
+            )
+        for rule in rules:
+            support_font = rule.support.font if rule.support is not None else None
+            if support_font is not None and support_font.color == AUTO:
+                raise ValueError(
+                    f"style.conditional.{column} sets support.font.color to 'auto'; "
+                    "name a color, or set support.tone."
+                )
+
+
 def _good_rules(
     chart_id: str,
     key: str,
@@ -246,9 +261,9 @@ def _good_rules(
     good: Literal["up", "down"],
     data: list[dict[str, Any]],  # type-state: explicit_any — rows are raw query output
     glyphs: KpiGlyphSet,
-) -> tuple[ConditionalRule, ...]:
-    """The sign rules ``good`` stands for on ``column``, ahead of the authored
-    ones so an authored rule overrides them output by output."""
+) -> tuple[KpiGoodRule, ...]:
+    """The sign rules ``good`` stands for on ``column``; render applies them
+    before the authored ``style.conditional`` rules."""
     cell = data[0].get(column) if len(data) == 1 else None
     if cell is not None and coerce_numeric_cell(cell) is None:
         raise ValueError(
@@ -264,11 +279,11 @@ def _good_rules(
         ("positive", "negative") if good == "up" else ("negative", "positive")
     )
     rules = [
-        ConditionalRule(gt=0, glyph=glyphs.up, tone=up_tone),
-        ConditionalRule(lt=0, glyph=glyphs.down, tone=down_tone),
+        KpiGoodRule(gt=0, glyph=glyphs.up, tone=up_tone),
+        KpiGoodRule(lt=0, glyph=glyphs.down, tone=down_tone),
     ]
     if glyphs.neutral is not None:
-        rules.append(ConditionalRule(eq=0, glyph=glyphs.neutral))
+        rules.append(KpiGoodRule(eq=0, glyph=glyphs.neutral))
     return tuple(rules)
 
 

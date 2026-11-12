@@ -22,8 +22,6 @@ const TEXT_BASELINE_OFFSET: f64 = 4.0;
 const SIDE_PADDING: f64 = 4.0;
 const AVG_CHAR_WIDTH_PX: f64 = 7.0;
 const TABULAR_NUMS: &str = "font-variant-numeric: tabular-nums lining-nums;";
-/// common.rs:`BAR_CORNER_THICKNESS_SHARE`: a corner is at most this share of the bar's height.
-const CORNER_THICKNESS_SHARE: f64 = 0.25;
 /// spark_bar.rs:`layout`. The bar area is never narrower than this.
 const MIN_BAR_AREA: f64 = 20.0;
 
@@ -105,7 +103,7 @@ pub fn draw(card: &SparkBarCard, plan: &Plan, height: f64) -> Vec<Node> {
     let row_height = style.bar.height + style.bar.padding;
     // spark_bar.rs:`layout`: the row renderer takes `int(bar_height)`, and baselines derive from it.
     let bar_height = style.bar.height.trunc();
-    let radius = |width: f64| style.border.radius.min(CORNER_THICKNESS_SHARE * bar_height).min(width / 2.0);
+    let radius = |width: f64| crate::geom::bar_corner_radius(style.border.radius, bar_height, width);
     let rect = |role: Role, x: f64, y: f64, w: f64, fill: &str| {
         Node::new(role, Attrs::new().quick("fill", fill), Shape::Rect { x, y, w, h: bar_height, rx: radius(w) })
     };
@@ -135,4 +133,16 @@ pub fn draw(card: &SparkBarCard, plan: &Plan, height: f64) -> Vec<Node> {
     }
     let extent = Extent { width: plan.width, height };
     vec![Node::new(Role::Chrome, Attrs::new(), Shape::Svg { extent, children: nodes })]
+}
+
+impl crate::family::Family for SparkBarCard<'_> {
+    type Plan = Plan;
+
+    fn plan(&self, _env: &crate::family::Env, width: f64) -> Result<Plan, Diagnostic> {
+        plan(self, width)
+    }
+
+    fn draw(&self, plan: Plan, height: f64) -> Result<Vec<Node>, Diagnostic> {
+        Ok(draw(self, &plan, height))
+    }
 }

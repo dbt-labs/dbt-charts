@@ -1,103 +1,18 @@
-"""Scale-to-color mapping and conditional-format rules the KPI and Vega-Lite
-renderers share."""
+"""Scale-to-color mapping the table renderers share."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from dbt_charts.core.compile.models.chart.authored import (
-    match_predicate,
-)
-from dbt_charts.core.compile.models.style.theme import (
-    font_weight_as_css,
-)
-from dbt_charts.core.render.utils import resolve_tone_color
 from dbt_charts.core.utils import coerce_numeric_cell
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.chart.authored import (
-        ConditionalRule,
         ScaleTargetConfig,
     )
     from dbt_charts.core.compile.models.primitives import (
         ResolvedScaleTarget,
     )
-    from dbt_charts.core.compile.models.style.theme import (
-        KpiTonesStyle,
-    )
-
-
-def _apply_rule_outputs(
-    rule: ConditionalRule,
-    result: dict[str, Any],
-    tones: KpiTonesStyle | None = None,
-) -> None:
-    """Merge a rule's style outputs into ``result`` (last-match-wins)."""
-    if rule.background is not None:
-        result["background"] = rule.background
-    if rule.font is not None:
-        f = rule.font
-        if f.color is not None:
-            result["color"] = f.color
-        if f.weight is not None:
-            result["weight"] = font_weight_as_css(f.weight)
-        if f.style is not None:
-            result["style"] = f.style
-        if f.decoration is not None:
-            result["decoration"] = f.decoration
-    if rule.glyph is not None:
-        result["glyph"] = rule.glyph
-        # A later rule that swaps the glyph without specifying its color
-        # must not inherit the previous rule's color — clear it so the
-        # cell falls back to default ink.
-        result.pop("glyph_color", None)
-    if rule.glyph_color is not None:
-        result["glyph_color"] = rule.glyph_color
-    elif rule.tone is not None and tones is not None:
-        # tones is None on the two callers that don't consume glyph_color:
-        # the cell background/color path and resolve_cell_glyph (which discards
-        # the color, keeping only the glyph char). The real cell-glyph render
-        # path threads tones. So None here is a reachable, by-design skip.
-        result["glyph_color"] = resolve_tone_color(rule.tone, tones)
-
-
-def resolve_conditional_styles(
-    when_rules: Sequence[ConditionalRule] | None,
-    value: Any,
-    tones: KpiTonesStyle | None = None,
-) -> dict[str, Any]:
-    """Evaluate a list of ``when`` rules and return merged style overrides.
-
-    Non-default rules are evaluated in list order; all matching rules
-    contribute their style keys with last-match-wins semantics.
-
-    A trailing ``default: true`` rule is a catch-all — it only applies when
-    no non-default rule matched. This lets authors write
-    ``[{lt:0, ...}, {gt:100, ...}, {default: true, ...}]`` and have the
-    default fire only for rows in (0, 100]. Position of the default rule is
-    validated on FieldConditionalFormatting; evaluation here is tolerant of
-    ordering.
-
-    Keys: ``background`` (str), ``color`` (str), ``weight`` (str),
-    ``style`` (str), ``decoration`` (str).
-    """
-    if not when_rules:
-        return {}
-
-    result: dict[str, Any] = {}
-    matched_any = False
-    default_rule: ConditionalRule | None = None
-    for rule in when_rules:
-        if rule.default is True:
-            default_rule = rule
-            continue
-        if match_predicate(rule, value):
-            matched_any = True
-            _apply_rule_outputs(rule, result, tones)
-    if not matched_any and default_rule is not None:
-        _apply_rule_outputs(default_rule, result, tones)
-    return result
 
 
 def _expand_hex(c: str) -> str:

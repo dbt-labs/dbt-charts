@@ -28,7 +28,7 @@ use scene::{Attrs, Chars, Escape, Extent, Node, Role, Run, Shape};
 
 use super::failed::Weight;
 use crate::contract::{aria_attrs, hidden_mark_group, mark_group, ItemRole};
-use crate::knockout::knock_out;
+use crate::knockout::{knock_out, safe_scope};
 use crate::scene_path::scene_path;
 use crate::text_ink;
 use crate::title::{chart_title, ChartTitle};
@@ -130,6 +130,13 @@ pub struct Plan {
     title: Option<ChartTitle>,
     /// The title block's top left, the card's padding corner.
     title_at: (f64, f64),
+}
+
+impl Plan {
+    /// The warnings the card's width raised against its title and subtitle.
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        self.title.as_ref().map_or(&[], |title| &title.diagnostics)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -263,8 +270,8 @@ fn solve(card: &PieCard, book: &FontBook, (w, h): (f64, f64), pad: (f64, f64, f6
 pub fn plan(card: &PieCard, book: &FontBook, sized: (f64, f64), (w, h): (f64, f64), pad: (f64, f64, f64, f64)) -> Result<Plan, Diagnostic> {
     let table = || Refused::Table.refusal();
     // The title takes the top of the card's padding box, in the mode guard's solve as in the drawn one.
-    let title = card.pie.title.as_deref().map(|text| chart_title(card.chart_id, text, card.placed, w, w - pad.0 - pad.1, book)).transpose()?.flatten();
-    let title_h = title.as_ref().map_or(0.0, |t| t.metrics.height());
+    let title = card.pie.title.as_deref().map(|text| chart_title(card.chart_id, text, card.pie.subtitle.as_deref(), card.placed, w, w - pad.0 - pad.1, book)).transpose()?.flatten();
+    let title_h = title.as_ref().map_or(0.0, |t| t.band.height());
     let pad = (pad.0, pad.1, pad.2 + title_h, pad.3);
     let solve = |size, labeled| match solve(card, book, size, pad, labeled) {
         Ok(solved) => Ok(Some(solved)),
@@ -322,7 +329,7 @@ pub fn draw(card: &PieCard, plan: &Plan, (w, h): (f64, f64)) -> Result<Node, Dia
     let knocked = knock_out(wedges, &pie_.canvas, "ko0", &safe_scope(card.chart_id), (-radius, -radius, 2.0 * radius, 2.0 * radius));
     let mut nodes = vec![Node::rect(Role::Chrome, (0.0, 0.0, w, h), Attrs::new().set("fill", pie_.background.as_str()))];
     if let Some(title) = &plan.title {
-        nodes.push(title_node(card, title, plan.title_at));
+        nodes.extend(title.nodes(plan.title_at, &card.placed.charts.title, card.emoji));
     }
     nodes.push(Node::group(Role::Chrome, Attrs::new(), knocked.marks).translate(plan.cx, plan.cy));
 
@@ -363,34 +370,4 @@ pub fn draw(card: &PieCard, plan: &Plan, (w, h): (f64, f64)) -> Result<Node, Dia
         nodes.push(mark_group("text", "layer_3_marks", vec![text]).map_err(internal)?);
     }
     Ok(Node::new(Role::Chrome, Attrs::new().set("class", "marks"), Shape::Svg { extent: Extent { width: w, height: h }, children: nodes }))
-}
-
-/// The title as one `<text>` at the block's left and its baseline, in the face `chart_title` picked
-/// (the chart title slot's ink and slant).
-fn title_node(card: &PieCard, title: &ChartTitle, (x, top): (f64, f64)) -> Node {
-    let font = &card.placed.charts.title.font;
-    let face = PieFace::of(&title.family, title.size, &title.weight, font.style.as_str() == "italic", font.color.as_str(), card.emoji);
-    let attrs = Attrs::new()
-        .vega("font-family", face.family.as_str())
-        .num("font-size", face.size)
-        .set("font-style", if face.italic { "italic" } else { "normal" })
-        .set("font-weight", face.weight.attr())
-        .set("fill", face.color.as_str())
-        .set("data-authored-kind", "title");
-    Node::text(Role::Title, (x, top + title.metrics.ascent), attrs, title.text.as_str())
-}
-
-/// A chart's id for a chart placed once (`contract.rs::scoped_id`): every character outside a
-/// FuncIRI-safe set replaced, and a short digest when that was lossy (`safe_svg_id`).
-fn safe_scope(chart_id: &str) -> String {
-    use md5::{Digest, Md5};
-    if chart_id.is_empty() {
-        return "chart.anon".to_string();
-    }
-    let safe: String = chart_id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect();
-    if safe == chart_id {
-        return safe;
-    }
-    let digest = Md5::digest(chart_id.as_bytes());
-    format!("{safe}-{}", digest.iter().take(4).map(|b| format!("{b:02x}")).collect::<String>())
 }

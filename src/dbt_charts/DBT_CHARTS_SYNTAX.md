@@ -689,7 +689,7 @@ charts:
     x: month                  # column name
     y: total                  # column name OR [col, col, ...] for multi-series
     color: segment            # a bare column name; nothing else is accepted here
-                              # literal color -> style.color.static; scale -> style.color.gradient
+                              # literal color -> style.marks.<mark>.color; scale -> style.color.gradient
 
     # Sizing — height lives at chart root; aspect_ratio is a style field
     height: 400               # exact px; bypasses aspect_ratio and min/max clamps
@@ -801,7 +801,6 @@ All chart types accept the channels and style fields below — but each type rej
 | `warnings_ignore` | list[string] | Render-warning codes to suppress for this chart only (e.g. `[WARN-AXIS-TITLE-TRUNCATED]`; unknown codes are rejected — every code is listed at https://docs.dbtcharts.com/reference/warnings/) |
 | `layers` | list | Overlay layers on cartesian charts (`bar`/`line`/`area`/`scatter`) — see [Combo charts](#combo-charts-barlinearea-with-layers) |
 | `annotations` | list | Rules, bands, notes and trends drawn in data coordinates on `bar`/`line`/`area`/`scatter`; see [Annotations](#annotations) |
-| `conditional_formatting` | object | Discrete style rules by column — `table`/`kpi` only (see [Conditional formatting](#conditional-formatting)) |
 | `support_table` | list | Attached mini-table on bar/line/area charts, above the plot by default (including those with `layers:`) — see [Composition](#composition) |
 | `spanners` | list | Flat `table` only: `[{label, columns: [...]}]` — a label centered over a run of adjacent columns in an extra header row. Columns must be adjacent in query order and in at most one spanner; not combinable with `rows`/`columns`/`values` pivot channels |
 | `row_role` | string | `table` only: the query column whose value (`total`, `summary`, anything else is a plain row) marks each row's role. The column is never drawn; a name that is not a query column is an error. Styled by `style.row.roles` |
@@ -1329,35 +1328,86 @@ Common fields: `text` (one line; `{{ value | format }}` prints the anchor, `{{ s
 
 ### Conditional formatting
 
-Available on `type: table` and `type: kpi` only.
+A table column's rules are `style.columns.<column>.conditional`; a KPI's are `style.conditional`.
 
-Discrete, rule-driven style overrides applied per column. Each entry under `conditional_formatting:` is keyed by column name and contains a `when:` list of rules.
+Discrete, rule-driven style overrides on one column. `conditional:` sits on the column it paints, under `style.columns.<column>`, and holds a list of rules that test that column's own value. A rule is one predicate plus the cell style it applies: the keys a column takes beside it.
 
 ```yaml
 charts:
   accounts_table:
     type: table
     query: accounts
-    conditional_formatting:
-      status:
-        when:
-          - in: [blocked, escalated]      # predicate (exactly one per rule)
-            background: negative.bg        # style output (at least one required)
-            font:
-              color: negative.text
-              weight: "600"
-          - is_null: true
-            glyph: "!"
-            glyph_color: warning.solid
-          - default: true                  # must be LAST in the list when present
-            font: { color: dbt-grays.11 }
+    style:
+      columns:
+        status:
+          conditional:
+            - in: [blocked, escalated]      # predicate (exactly one per rule)
+              background: negative.bg        # style output (at least one required)
+              font:
+                color: negative.text
+                weight: "600"
+            - is_null: true
+              glyph: "!"
+              glyph_color: warning.solid
+            - default: true                  # must be LAST in the list when present
+              font:
+                color: dbt-grays.11
 ```
 
 Predicates (exactly one per rule): `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `between` (`[low, high]`), `in` (non-empty list), `is_null` (bool), `default` (`true` only — terminal fallback).
 
-Style outputs (at least one per rule): `background`, `font` (color/weight/style/decoration), `glyph` (with optional `glyph_color`).
+Style outputs (at least one per rule): `background`, `font` (`color`/`weight`/`style`/`decoration`), `glyph` with optional `glyph_color` or `tone`. A rule cannot set `align`, `font.size` or any other table setting, and `conditional` is refused under `style.charts.table` and in `column_defaults`: it belongs to one column of one chart. A column with `visible: false` cannot take rules.
 
-If `default: true` is set, it must be the last rule in the `when` list. Earlier rules win in order.
+Every matching rule applies its keys and a later match wins per key, so list the more specific rule last. `default: true` applies only when no other rule matched, and must be the last rule.
+
+A table row's rules are `style.row.conditional`, keyed by the column they test (any query column, hidden ones included). A rule is one predicate plus `background` and `font` for every visible cell of the row, or `columns.<column>` for named cells (which also take `glyph`, `glyph_color` and `tone`):
+
+```yaml
+charts:
+  accounts_table:
+    type: table
+    query: accounts
+    style:
+      row:
+        conditional:
+          status:
+            - eq: churned
+              background: dbt-grays.2
+              columns:
+                name:
+                  font:
+                    decoration: line-through
+          _at_risk:                       # a flag computed in SQL, hidden by its underscore
+            - eq: true
+              background: warning.bg
+```
+
+Same evaluation as a column's rules. A cell's own `conditional` beats a row rule and `scale` beats it; two tested columns cannot set the same property of one target. Chart-local only; not for pivot tables or `transpose`.
+
+A KPI's rule styles the card. The body path names the row it styles, and the column only supplies the value the predicate tests:
+
+```yaml
+charts:
+  revenue_kpi:
+    type: kpi
+    query: totals
+    value: growth
+    style:
+      background: dbt-grays.2          # or {column: growth, scale: {palette: [...]}}
+      conditional:
+        growth:
+          - lt: 0
+            background: negative.bg
+            value:
+              font:
+                color: negative.text
+                weight: "600"
+          - default: true
+            support:
+              tone: info
+```
+
+A KPI rule sets `background`, `value.font`, `label.font`, `support.font` (each `color` and `weight`) and `support.tone`. It cannot set a glyph: the glyph is content, and `good:` / `support.good:` pick it from the sign. A matched rule's `background` beats a `{column, scale}` background, and its `support.tone` wins over the tone `support.good` derives. `default: true` applies only when no other rule in its column matched.
 
 ### Common styling recipes
 
@@ -1402,9 +1452,10 @@ rows:
 
 Color recipes (see [Color](#color) for the token system):
 
-- **One series in a specific hue:** `style.color.static: dbt-seq-amber.4` — a
-  pinned stop from a sequential ramp (`static` takes one color, never a
-  palette name).
+- **One series in a specific hue:** `style.marks.bar.color: dbt-seq-amber.4` — a
+  pinned stop from a sequential ramp (a mark color takes one color, never a
+  palette name; line: `marks.line.stroke.color`, scatter: `marks.point.color`,
+  area: `marks.area.color`, pie: `marks.slice.color`, heatmap: `marks.rect.color`).
 - **Continuous color by a field** (heatmap cells, choropleth values, tables):
   `style.color.gradient: {palette: dbt-seq-amber}` — `palette:` takes a ramp
   name or an explicit stop list.
@@ -1542,7 +1593,7 @@ Colors are palette tokens, not hex — the theme resolves a token, so a board re
 
 | Want | Write |
 |---|---|
-| A series slot | `category[1]`, `category.blue`, `category[2].dark` (any categorical palette derives dark/light/pale/deep live, no companion file) |
+| A series slot | `category[1]`, `category.blue`, `category[2].dark` (any categorical palette derives dark/light/pale/deep live, no companion file). `category[N]` indexes the board's own `style.charts.color.categorical.palette` (a name or an inline list) when it sets one, else the theme's; `category.blue` stays the theme role's alias |
 | The theme's plain single-series fill (the color a lone-series bar/line gets with no `color:` channel) | `single_series[1]` |
 | Good / bad / attention | `positive.solid`, `negative.solid`, `warning.solid`, `info.solid` — also `.bg`, `.subtle`, `.border`, `.text` |
 | Chrome — text, grid, borders | `dbt-grays.11`, `dbt-grays.8`, `dbt-grays.4`, `dbt-grays.1` |
@@ -1551,13 +1602,14 @@ Colors are palette tokens, not hex — the theme resolves a token, so a board re
 
 Indices are 1-based, and one scope takes less than the table above implies:
 `palette:` wants a palette name or a list of stops, never a single scalar hex.
-Everywhere else — including `conditional_formatting` — a hex literal is
+Everywhere else — including a column's `conditional` rules — a hex literal is
 accepted too, the right choice only for a brand color that must not move.
 
 ```yaml
 style:
-  color:
-    static: category[2]       # a literal color lives here, not at chart root
+  marks:
+    bar:
+      color: category[2]      # a literal color lives on the mark, not at chart root
 ```
 
 ## Variables

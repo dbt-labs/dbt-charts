@@ -122,7 +122,9 @@ pub struct LayerBase {
 ///
 /// A written `y_start` is never `null` (the schema states it; [`BarLayer`]'s reader refuses it).
 #[derive(Debug, Clone, PartialEq, Model)]
-#[model(constraint(not_null(y_start)))]
+#[model(constraint(not_null(y_start,
+        message = "y_start names no column; remove it for bars that start at zero."
+    )))]
 pub struct BarLayer {
     #[flatten]
     pub base: LayerBase,

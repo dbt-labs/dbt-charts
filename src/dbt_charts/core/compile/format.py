@@ -26,6 +26,7 @@ from typing import Any, Literal
 
 from d3_format import parse as _d3_parse
 from d3_format.errors import D3FormatError
+from dbt_charts.core.compile.column_match import match_column
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
@@ -840,9 +841,11 @@ def declared_column_format(
 
 
 def missing_format_columns(
-    declared: Mapping[str, str] | None, returned: Collection[str]
+    query_name: str, declared: Mapping[str, str] | None, returned: Collection[str]
 ) -> list[str]:
-    """The ``formats:`` keys the query's result does not carry, in authored order."""
+    """The ``formats:`` keys naming no column of the query's result, in authored
+    order. A key names a column ignoring letter case (``match_column``)."""
     if not declared:
         return []
-    return [column for column in declared if column not in returned]
+    where = f"query {query_name!r} formats"
+    return [c for c in declared if match_column(c, returned, where) is None]

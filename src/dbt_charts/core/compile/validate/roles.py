@@ -32,6 +32,7 @@ def validate_board_roles(board: Board) -> None:
                 palettes=context.palettes,
                 roles=context.roles,
                 single_series_palette=context.single_series_palette,
+                categorical_palette=context.palette,
             )
         except UnknownColorError as exc:
             raise CompilationError.from_code(

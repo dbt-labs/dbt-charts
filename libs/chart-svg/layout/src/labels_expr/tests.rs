@@ -3,12 +3,15 @@
 //! thousands more against real Vega output).
 
 use super::funcs::{self, Support, TABLE};
-use super::{EvalError, Expr, Tick, Val};
+use super::{EvalEnv, EvalError, Expr, Tick, Val};
 
 fn lines(src: &str, value: Val, label: &str, index: f64) -> Result<Vec<String>, EvalError> {
     let _locale = ::bind::time_locale::active_time_locale().is_err().then(::bind::time_locale::en_us_scope);
-    Expr::parse(src)?.eval_lines(&Tick { value, label, index })
+    Expr::parse(src)?.eval_lines(&Tick { value, label, index }, &EvalEnv::new(NOW_MS))
 }
+
+/// An arbitrary render instant: the evaluator reads only what its `EvalEnv` says.
+pub(super) const NOW_MS: f64 = 1_710_050_400_000.0;
 
 fn text(src: &str, label: &str) -> String {
     lines(src, Val::Num(1.0), label, 0.0).unwrap().join("|")
@@ -125,6 +128,8 @@ fn every_name_in_vegas_function_table_is_accounted_for() {
             continue; // a conditional, resolved when the expression is parsed
         }
         let args = || (0..5).map(|_| Val::Undefined).collect::<Vec<_>>();
+        let env = EvalEnv::new(NOW_MS);
+        let _evaluation = super::val::Evaluation::begin(&env);
         let called = funcs::call(name, &args(), &Val::Undefined);
         match support {
             Support::Evaluated | Support::Impure => {
@@ -223,12 +228,12 @@ fn a_label_item_carries_its_axis_layout_and_what_its_last_evaluation_left() {
     register_axis("y", AxisSpec { orient: Orient::Right, offset: 6.0, shift: 0.0, align: None, baseline: None, angle: 0.0, flush: None, style });
     let expr = Expr::parse("item.x + ' ' + item.y + ' ' + item.align + ' ' + item.text + ' ' + item.fontSize").unwrap().on("y");
     let tick = Tick { value: Val::Num(25.0), label: "", index: 0.0 };
-    assert_eq!(expr.eval_lines(&tick).unwrap(), ["6 150 undefined undefined 11"], "a new item has its position, not yet its anchor or text");
-    assert_eq!(expr.eval_lines(&tick).unwrap(), ["6 150 undefined undefined 11"], "the same plot is the same evaluation");
+    assert_eq!(expr.eval_lines(&tick, &EvalEnv::new(NOW_MS)).unwrap(), ["6 150 undefined undefined 11"], "a new item has its position, not yet its anchor or text");
+    assert_eq!(expr.eval_lines(&tick, &EvalEnv::new(NOW_MS)).unwrap(), ["6 150 undefined undefined 11"], "the same plot is the same evaluation");
     set_plot(300.0, 100.0);
-    assert_eq!(expr.eval_lines(&tick).unwrap(), ["6 75 left 6 150 undefined undefined 11 11"], "the position is current; the anchor and text are the last evaluation's");
-    assert!(matches!(Expr::parse("item.bounds").unwrap().on("y").eval_lines(&tick), Err(EvalError::Unmodeled(_))));
-    assert!(matches!(Expr::parse("item.x").unwrap().on("x").eval_lines(&tick), Err(EvalError::Unmodeled(_))), "an axis nobody laid out");
+    assert_eq!(expr.eval_lines(&tick, &EvalEnv::new(NOW_MS)).unwrap(), ["6 75 left 6 150 undefined undefined 11 11"], "the position is current; the anchor and text are the last evaluation's");
+    assert!(matches!(Expr::parse("item.bounds").unwrap().on("y").eval_lines(&tick, &EvalEnv::new(NOW_MS)), Err(EvalError::Unmodeled(_))));
+    assert!(matches!(Expr::parse("item.x").unwrap().on("x").eval_lines(&tick, &EvalEnv::new(NOW_MS)), Err(EvalError::Unmodeled(_))), "an axis nobody laid out");
 }
 
 #[test]
@@ -555,8 +560,8 @@ fn random_expressions_never_panic_or_exhaust_memory_or_stack() {
                 let mut ran = 0;
                 for label in ["", "abc", "2020-01-05"] {
                     let tick = Tick { value: Val::Num(3.0), label, index: 0.5 };
-                    ran += usize::from(with_view(|| expr.eval_lines(&tick)).is_ok());
-                    ran += usize::from(expr.eval_lines(&tick).is_ok());
+                    ran += usize::from(with_view(|| expr.eval_lines(&tick, &EvalEnv::new(NOW_MS))).is_ok());
+                    ran += usize::from(expr.eval_lines(&tick, &EvalEnv::new(NOW_MS)).is_ok());
                 }
                 (1, ran)
             })
@@ -626,7 +631,7 @@ fn no_builtin_holds_more_than_three_budgets_at_its_peak() {
                     let Ok(expr) = Expr::parse(&case) else { return 0 };
                     let tick = Tick { value: Val::Num(3.0), label: "abc", index: 0.5 };
                     let base = reset_peak();
-                    let _ = with_view(|| expr.eval_lines(&tick));
+                    let _ = with_view(|| expr.eval_lines(&tick, &EvalEnv::new(NOW_MS)));
                     PEAK.with(std::cell::Cell::get) - base
                 })
                 .expect("a thread starts")
@@ -724,7 +729,8 @@ fn every_builtin_stays_within_three_budgets_for_every_argument_shape() {
                     let measure = || {
                         let base = reset_peak();
                         // What the evaluator does: the arguments are node values, charged before the call.
-                        let _evaluation = super::val::Evaluation::begin();
+                        let env = EvalEnv::new(NOW_MS);
+                        let _evaluation = super::val::Evaluation::begin(&env);
                         let charged = vals.iter().try_for_each(|v| super::val::charge(v.weight()));
                         if charged.is_ok() {
                             let _ = with_view(|| funcs::call(name, &vals, &Val::tuple(vec![("label".into(), Val::string("abc".into()).unwrap())])).and_then(|out| super::val::charge(out.weight())));
@@ -762,7 +768,8 @@ fn every_builtin_stays_within_three_budgets_for_every_argument_shape() {
 
 /// Calls a builtin the way the evaluator does: the arguments are node values, charged before the call.
 fn call_charged(name: &str, args: &[Val]) -> Result<Val, EvalError> {
-    let _evaluation = super::val::Evaluation::begin();
+    let env = EvalEnv::new(NOW_MS);
+    let _evaluation = super::val::Evaluation::begin(&env);
     args.iter().try_for_each(|v| super::val::charge(v.weight()))?;
     funcs::call(name, args, &Val::Null)
 }
@@ -805,3 +812,17 @@ fn a_time_scale_over_aware_instants_ticks_the_board_zones_midnights() {
 #[path = "../../../test_support/par_map.rs"]
 mod par_map;
 use par_map::par_map;
+
+#[test]
+fn now_and_random_come_from_the_renders_env_not_the_clock() {
+    let tick = Tick { value: Val::Num(1.0), label: "", index: 0.0 };
+    let run = |src: &str, env: &EvalEnv| Expr::parse(src).unwrap().eval_lines(&tick, env).unwrap().join("");
+    for src in ["now()", "toNumber(datetime())", "random()"] {
+        let first = run(src, &EvalEnv::new(NOW_MS));
+        assert_eq!(first, run(src, &EvalEnv::new(NOW_MS)), "{src}: the same env gives the same text");
+        assert_ne!(first, run(src, &EvalEnv::new(NOW_MS + 1.0)), "{src}: another instant gives another text");
+    }
+    assert_eq!(run("now()", &EvalEnv::new(NOW_MS)), NOW_MS.to_string());
+    let env = EvalEnv::new(NOW_MS);
+    assert_ne!(run("random()", &env), run("random()", &env), "one render draws one stream");
+}

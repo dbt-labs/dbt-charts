@@ -901,3 +901,90 @@ class TestCacheRefUpstreamScope:
         [chart_error] = rendered.chart_errors
         assert chart_error.code == upstream.value.code.code
         assert "table_that_does_not_exist" in chart_error.message
+
+
+def _dialect_board(composing_sql: str, dialect: str | None) -> Any:
+    from dbt_charts.core.compile.compiler import compile
+
+    lines = [
+        "source: db",
+        "variables:",
+        "  floor:",
+        "    input: number",
+        "    default: 0",
+        "queries:",
+        "  base:",
+        "    sql: SELECT 1 AS x, 0 AS y, DATE '2026-03-15' AS d",
+        "    source: db",
+        "  composed:",
+        "    sql: |",
+        f"      {composing_sql}",
+        "    source: db",
+    ]
+    if dialect is not None:
+        lines.append(f"    dialect: {dialect}")
+    lines += [
+        "charts:",
+        "  dummy:",
+        "    type: bar",
+        "    x: x",
+        "    y: x",
+        "    query: base",
+    ]
+    result = compile("\n".join(lines))
+    assert result.success, [str(e) for e in result.errors]
+    return result.board
+
+
+class TestComposingQueryDialect:
+    """A composing query's ``dialect:`` SQL is translated to DuckDB, the engine
+    the composition runs on."""
+
+    def test_bigquery_sql_composes_over_cached_rows(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        board = _dialect_board(
+            "SELECT SAFE_DIVIDE(x, y) AS ratio, DATE_TRUNC(d, MONTH) AS month "
+            "FROM {{ queries.base.cache }} WHERE x > {{ floor }}",
+            "bigquery",
+        )
+        executor = _executor_with_cache(board, TrivialDuckDBCache(), local_project)
+
+        rows = executor.execute_query("composed")
+
+        from datetime import date
+
+        assert rows == [{"ratio": None, "month": date(2026, 3, 1)}]
+        assert executor.execute_query("composed", {"floor": 5}) == []
+
+    def test_untranslatable_sql_is_refused_by_query_name(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.core.diagnostics.execution import QueryError
+
+        board = _dialect_board(
+            "SELECT NO_SUCH_FUNCTION(x) AS r FROM {{ queries.base.cache }}",
+            "bigquery",
+        )
+        executor = _executor_with_cache(board, TrivialDuckDBCache(), local_project)
+
+        with pytest.raises(QueryError) as raised:
+            executor.execute_query("composed")
+        assert raised.value.code is not None
+        assert raised.value.code.code == "ERR-SQL-DIALECT-UNSUPPORTED"
+        assert raised.value.query_name == "composed"
+
+    def test_the_dialect_is_part_of_the_composing_querys_key(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        sql = "SELECT x FROM {{ queries.base.cache }}"
+        keys = {
+            plan(
+                _executor_with_cache(
+                    _dialect_board(sql, dialect), TrivialDuckDBCache(), local_project
+                ).ctx,
+                ["composed"],
+            )[0].cache_key
+            for dialect in (None, "bigquery", "snowflake")
+        }
+        assert len(keys) == 3

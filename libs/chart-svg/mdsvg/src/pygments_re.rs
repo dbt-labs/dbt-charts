@@ -37,6 +37,7 @@
 //! - `{,n}` is `{0,n}`; a `[` or `&`/`~` inside a class is a literal.
 //! - Inline flags are hoisted: Python 3.11+ allows them only at the start.
 
+use d3rs::invariant::{broken, Invariant};
 use std::iter::Peekable;
 use std::str::Chars;
 
@@ -171,7 +172,7 @@ impl Pattern {
                 match letter {
                     'i' => flags.ignore_case = true,
                     's' => flags.dot_all = true,
-                    _ => panic!("inline flag `{letter}` in {py}"),
+                    _ => broken(&format!("inline flag `{letter}` in {py}")),
                 }
             }
             rest = &rest[inline.len()..];
@@ -217,7 +218,7 @@ impl Pattern {
                 );
                 (
                     &body[..body.len() - g.len()],
-                    Some(Regex::new(&deny).unwrap_or_else(|e| panic!("{py}: {e}"))),
+                    Some(Regex::new(&deny).unwrap_or_else(|e| broken(&format!("{py}: {e}")))),
                 )
             }
             _ => (body.as_str(), None),
@@ -225,7 +226,7 @@ impl Pattern {
 
         let (head, tail) = split_tail(body, flags);
         let re = format!("{}\\A(?:{}){tail}", flags.prefix(), translate(head, flags));
-        let re = Regex::new(&re).unwrap_or_else(|e| panic!("{py}: {e}"));
+        let re = Regex::new(&re).unwrap_or_else(|e| broken(&format!("{py}: {e}")));
         Pattern {
             matcher: Matcher::Re(re),
             at_start,
@@ -254,7 +255,7 @@ impl Pattern {
             },
             Matcher::Re(re) => {
                 let caps = re.captures(&text[pos..])?;
-                let whole = caps.get(0).expect("group 0 always participates");
+                let whole = caps.get(0).held("group 0 always participates");
                 let end = match caps.name("t").or_else(|| caps.name("u")) {
                     Some(tail) => tail.start(),
                     None => whole.end(),
@@ -314,7 +315,7 @@ fn trailing_group(py: &str) -> Option<&str> {
             ']' if in_class => in_class = false,
             '(' if !in_class => starts.push(i),
             ')' if !in_class => {
-                let s = starts.pop().expect("unbalanced pattern");
+                let s = starts.pop().held("unbalanced pattern");
                 if starts.is_empty() && i + 1 == py.len() {
                     last_top = Some(s);
                 }
@@ -353,7 +354,7 @@ fn split_tail(body: &str, flags: Flags) -> (&str, String) {
                 "`(?!X)(\\s*)` with X not one class: {body}"
             );
             let set = translate(set, flags);
-            let space = Regex::new(&set).expect("translated class");
+            let space = Regex::new(&set).held("translated class");
             assert!(
                 !space.is_match(" ") && !space.is_match("\n"),
                 "`(?!X)(\\s*)` with whitespace in X: {body}"
@@ -384,7 +385,7 @@ fn translate(py: &str, flags: Flags) -> String {
     while let Some(c) = chars.next() {
         match c {
             '\\' => {
-                let e = chars.next().expect("dangling escape");
+                let e = chars.next().held("dangling escape");
                 assert_ignore_case_escape(e, flags);
                 if e == 'b' {
                     let head =
@@ -400,17 +401,17 @@ fn translate(py: &str, flags: Flags) -> String {
                 chars.next();
                 match chars.next() {
                     Some(':') => out.push_str("(?:"),
-                    other => panic!("unsupported group `(?{other:?}` in {py}"),
+                    other => broken(&format!("unsupported group `(?{other:?}` in {py}")),
                 }
             }
             '{' if chars.peek() == Some(&',') => out.push_str("{0"),
-            '^' => panic!("`^` past the start of {py}"),
+            '^' => broken(&format!("`^` past the start of {py}")),
             '$' => {
                 assert!(flags.multiline, "`$` without MULTILINE in {py}");
                 out.push('$');
             }
             c if flags.ignore_case && !c.is_ascii() => {
-                panic!("non-ASCII literal `{c}` under IGNORECASE in {py}")
+                broken(&format!("non-ASCII literal `{c}` under IGNORECASE in {py}"))
             }
             c if flags.ignore_case && c.is_ascii_alphabetic() => {
                 out.push('[');
@@ -441,15 +442,18 @@ fn inner_boundary(head: &str, rest: &str) -> String {
 fn last_atom(head: &str) -> &str {
     let mut open: Vec<Option<usize>> = vec![None];
     let mut chars = head.char_indices();
+    // Every `)` pops a `(` it matched, so the root sequence stays on the stack.
+    fn top(open: &mut [Option<usize>]) -> &mut Option<usize> {
+        open.last_mut().held("the root sequence is never closed")
+    }
     while let Some((i, c)) = chars.next() {
-        let top = open.len() - 1;
         match c {
             '\\' => {
-                open[top] = Some(i);
+                *top(&mut open) = Some(i);
                 chars.next();
             }
             '[' => {
-                open[top] = Some(i);
+                *top(&mut open) = Some(i);
                 let mut first = true;
                 while let Some((_, q)) = chars.next() {
                     match q {
@@ -463,19 +467,19 @@ fn last_atom(head: &str) -> &str {
                 }
             }
             '(' => {
-                open[top] = Some(i);
+                *top(&mut open) = Some(i);
                 open.push(None);
             }
             ')' => {
                 open.pop();
             }
-            '|' => open[top] = None,
+            '|' => *top(&mut open) = None,
             '?' | '*' | '+' => {}
-            _ => open[top] = Some(i),
+            _ => *top(&mut open) = Some(i),
         }
     }
-    let at = open.last().copied().flatten().expect("an atom before \\b");
-    &head[at..]
+    let at = open.last().copied().flatten().held("an atom before \\b");
+    head.get(at..).held("an atom starts at a character boundary of head")
 }
 
 /// `\xHH`, `\uHHHH` and `\UHHHHHHHH` name a character the letter table of
@@ -503,7 +507,7 @@ fn escape(e: char, in_class: bool) -> String {
         'd' => set(digit, false),
         'D' => set(digit, true),
         '<' | '>' => e.to_string(),
-        'b' | 'B' | 'A' | 'Z' | '1'..='9' => panic!("unsupported escape \\{e}"),
+        'b' | 'B' | 'A' | 'Z' | '1'..='9' => broken(&format!("unsupported escape \\{e}")),
         _ => format!("\\{e}"),
     }
 }
@@ -514,7 +518,7 @@ fn same_letter(c: char) -> String {
     let (_, same) = ASCII_IGNORECASE
         .iter()
         .find(|(letter, _)| *letter == c)
-        .expect("every ASCII letter is in the table");
+        .held("every ASCII letter is in the table");
     same.chars()
         .map(|s| format!("\\x{{{:x}}}", s as u32))
         .collect()
@@ -539,11 +543,11 @@ fn class(chars: &mut Peekable<Chars<'_>>, flags: Flags) -> String {
     let (mut first, mut prev, mut open, mut category) = (true, None, false, false);
     let mut letters = Vec::new();
     loop {
-        let c = chars.next().expect("unterminated class");
+        let c = chars.next().held("unterminated class");
         match c {
             ']' if !first => break,
             '\\' => {
-                let e = chars.next().expect("dangling escape");
+                let e = chars.next().held("dangling escape");
                 assert_ignore_case_escape(e, flags);
                 out.push_str(&escape(e, true));
                 if "sSwWdD".contains(e) {
@@ -626,7 +630,7 @@ fn parse_alts(chars: &mut Peekable<Chars<'_>>) -> Vec<Vec<Item>> {
                     Atom::Unknown
                 }
             }
-            '\\' => match chars.next().expect("dangling escape") {
+            '\\' => match chars.next().held("dangling escape") {
                 'd' | 'w' => Atom::Word,
                 's' | 'W' => Atom::NonWord,
                 'b' | 'B' | 'A' | 'Z' => Atom::Zero,
@@ -655,7 +659,7 @@ fn parse_alts(chars: &mut Peekable<Chars<'_>>) -> Vec<Vec<Item>> {
         }
         chars.next_if_eq(&'?');
         alts.last_mut()
-            .expect("never empty")
+            .held("never empty")
             .push(Item { atom, optional });
     }
     alts
@@ -667,10 +671,10 @@ fn word_class(chars: &mut Peekable<Chars<'_>>) -> Atom {
     let negated = chars.next_if_eq(&'^').is_some();
     let (mut all_word, mut first, mut prev, mut range) = (!negated, true, None::<char>, false);
     loop {
-        let c = chars.next().expect("unterminated class");
+        let c = chars.next().held("unterminated class");
         let member = match c {
             ']' if !first => break,
-            '\\' => match chars.next().expect("dangling escape") {
+            '\\' => match chars.next().held("dangling escape") {
                 'd' | 'w' => None,
                 e if "sSWD".contains(e) => {
                     all_word = false;
@@ -859,5 +863,18 @@ mod tests {
         assert_eq!(end_of(r"(?s)a.b", m, "a\nb", 0), Some(3));
         assert_eq!(end_of(r"a.b", m, "a\nb", 0), None);
         assert_eq!(end_of(r"#.*$", m, "# c\nx", 0), Some(3));
+    }
+    #[test]
+    fn the_last_atom_is_the_innermost_sequence_s_last_item() {
+        for (head, atom) in [
+            ("ab", "b"),
+            ("a(b|c)", "(b|c)"),
+            ("a(b)+", "(b)+"),
+            ("x\\d", "\\d"),
+            ("a[b\\]]", "[b\\]]"),
+            ("a|\u{e9}", "\u{e9}"),
+        ] {
+            assert_eq!(last_atom(head), atom, "{head:?}");
+        }
     }
 }

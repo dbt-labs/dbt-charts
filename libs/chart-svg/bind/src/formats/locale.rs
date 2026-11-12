@@ -6,7 +6,9 @@
 //! `d3_format` under it speaks the board's `regional` locale. The renderer
 //! does the same: [`with_number_locale`] opens the scope for one render and
 //! [`d3_format`] is the single formatting entry every family goes through.
-//! Outside any scope the locale is en-US, production's `HOUSE_EN_US`.
+//! The engine opens the board's own `regional.locale.number`. Outside any scope the
+//! locale is en-US, production's `HOUSE_EN_US`: the host default of the chart-renderer
+//! entry points, which open no scope of their own, and of unit tests.
 //!
 //! The board's locale is `board_style.format_locale`; the active-scope `d3_format` is
 //! what the renderer's families still print through. See `docs/laws-shared.md`
@@ -110,7 +112,40 @@ impl From<NumberLocale> for Wire {
     }
 }
 
+/// d3-format's own locale JSON; the fields it leaves out are d3's defaults.
+#[derive(Deserialize)]
+struct D3Definition {
+    decimal: String,
+    thousands: Option<String>,
+    grouping: Option<Vec<usize>>,
+    currency: [String; 2],
+    numerals: Option<Vec<String>>,
+    percent: Option<String>,
+    minus: Option<String>,
+    nan: Option<String>,
+}
+
 impl NumberLocale {
+    /// The bundled locale `tag` names: d3's definition and the house magnitude words (`house_locale`).
+    pub fn named(tag: &str) -> Result<NumberLocale, String> {
+        let definition: D3Definition = serde_json::from_str(display_text::locale::number_locale(tag)?)
+            .map_err(|e| e.to_string())?;
+        let words = display_text::locale::magnitude_words(tag)?;
+        Wire {
+            decimal: definition.decimal,
+            thousands: definition.thousands,
+            grouping: definition.grouping,
+            currency: definition.currency,
+            numerals: definition.numerals,
+            percent: definition.percent.unwrap_or_else(|| "%".to_string()),
+            minus: definition.minus.unwrap_or_else(|| "\u{2212}".to_string()),
+            nan: definition.nan.unwrap_or_else(|| "NaN".to_string()),
+            analytic: words.analytic.clone(),
+            narrative: words.narrative.clone(),
+        }
+        .try_into()
+    }
+
     /// `HOUSE_EN_US`: what a format outside any board's scope speaks, read
     /// from the definition production resolved (`DEFAULT_REGIONAL`).
     pub fn en_us() -> NumberLocale {

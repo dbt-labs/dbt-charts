@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 import yaml
 
+from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import JsonValue
 from dbt_charts.core.utils import YAML_LOADER
 
 # Leaf value types the setter writes; None deletes the key. A list of strings
@@ -790,6 +791,57 @@ def _verify_written_values(result: str, updates: dict[str, ScalarLeaf | None]) -
             raise ValueError(
                 f"Setter bug: {path!r} should be {value!r}, found {node!r}."
             )
+
+
+_BLOCK_SENTINEL = "dct-block-placeholder"
+# A single-quoted scalar with nothing to escape, respelled in the double quotes
+# boards are written in.
+_SINGLE_QUOTED_VALUE = re.compile(
+    r"""^(\s*(?:- |[^\s:][^:]*: ))'([^'"\\\n]*)'$""", re.M
+)
+
+
+class _IndentedDumper(yaml.SafeDumper):
+    """A list item sits indented under its key, as boards are written."""
+
+    def increase_indent(self, flow: bool = False, indentless: bool = False) -> None:
+        return super().increase_indent(flow, False)
+
+
+def set_board_block(
+    yaml_text: str,
+    path: str,
+    value: dict[str, JsonValue] | list[JsonValue],
+) -> str:
+    """Write a nested mapping or list at `path`, as block YAML.
+
+    For a value `set_board_values` cannot lay out, such as a list of mappings.
+    The key is created the way a scalar leaf is (parents included), then its
+    line is replaced by the rendered block. Comments inside a block this
+    replaces are the caller's to strike first; every other line is untouched.
+
+    Raises:
+        ValueError: As `set_board_values` for `path`.
+    """
+    lines = set_board_values(yaml_text, {path: _BLOCK_SENTINEL}).split("\n")
+    at = next(i for i, line in enumerate(lines) if _BLOCK_SENTINEL in line)
+    indent = len(lines[at]) - len(lines[at].lstrip())
+    block = yaml.dump(
+        value,
+        Dumper=_IndentedDumper,
+        default_flow_style=False,
+        sort_keys=False,
+        allow_unicode=True,
+        width=10**9,
+    )
+    block = _SINGLE_QUOTED_VALUE.sub(r'\1"\2"', block)
+    pad = " " * (indent + _NEW_BLOCK_INDENT)
+    key = lines[at].strip().split(":", 1)[0]
+    lines[at : at + 1] = [
+        f"{' ' * indent}{key}:",
+        *(f"{pad}{line}" for line in block.rstrip("\n").split("\n")),
+    ]
+    return "\n".join(lines)
 
 
 def rename_key_at_path(yaml_text: str, path: str, new_key: str) -> str:

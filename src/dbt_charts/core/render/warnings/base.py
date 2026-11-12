@@ -96,6 +96,7 @@ from dbt_charts.core.render.chart.table_static_pagination import StaticPaginatio
 from dbt_charts.core.render.chart.text_truncation import TextTruncation
 from dbt_charts.core.render.chart.x_domain_paint_order import XDomainPaintOrder
 from dbt_charts.core.render.contrast_warning import ContrastRecord
+from dbt_charts.core.render.variables_buttons_overflow import ButtonsOverflow
 from dbt_charts.core.utils import Rows
 
 
@@ -190,6 +191,8 @@ class WarningContext(BaseModel):
     # Every low-contrast ink/background pair the render pass captured. Flat,
     # not chart-keyed — see the module docstring above.
     contrast_warnings: list[ContrastRecord] = []
+    # Flat, like contrast_warnings: a button row belongs to a board, not a chart.
+    variable_buttons_overflows: list[ButtonsOverflow] = []
 
 
 # Labels quoted in full before a message falls back to a count. Enough to

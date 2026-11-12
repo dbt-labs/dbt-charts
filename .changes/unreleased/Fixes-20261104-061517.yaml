@@ -1,0 +1,3 @@
+kind: Fixes
+body: A chart's constant color moves from `style.color.static` to its primary mark, such as `style.marks.bar.color`; existing boards migrate automatically.
+time: 2026-11-04T06:15:17.000000+00:00

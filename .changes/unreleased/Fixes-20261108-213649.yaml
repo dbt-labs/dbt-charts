@@ -1,0 +1,3 @@
+kind: Fixes
+body: A bare category[N] color token now indexes the board's own categorical palette when the board sets one, instead of always using the theme's.
+time: 2026-11-08T21:36:49.958403-08:00

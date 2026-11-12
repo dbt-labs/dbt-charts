@@ -4,6 +4,7 @@
 //! `rescale` happens in the constructor.
 //! References: https://github.com/d3/d3-scale/tree/main/src
 
+use crate::invariant::{self, at, at_mut};
 use crate::js_math::{exp as js_exp, js_round, js_sign, pow as js_pow};
 use crate::ticks::{d3_ticks, tick_increment};
 
@@ -94,15 +95,15 @@ fn piecewise<T: Copy>(domain: &[f64], range: &[T], x: f64, interpolate: impl Fn(
     let n = domain.len().min(range.len());
     if n > 2 {
         let j = n - 1;
-        let (mut d, mut r) = (domain[..n].to_vec(), range[..n].to_vec());
-        if d[j] < d[0] {
+        let (mut d, mut r) = (at(domain, ..n).to_vec(), at(range, ..n).to_vec());
+        if at(&d, j) < at(&d, 0) {
             d.reverse();
             r.reverse();
         }
-        let i = d[1..j].partition_point(|v| *v <= x);
-        return interpolate(r[i], r[i + 1], normalize(d[i], d[i + 1], x));
+        let i = at(&d, 1..j).partition_point(|v| *v <= x);
+        return interpolate(*at(&r, i), *at(&r, i + 1), normalize(*at(&d, i), *at(&d, i + 1), x));
     }
-    let (d0, d1, r0, r1) = (domain[0], domain[1], range[0], range[1]);
+    let (d0, d1, r0, r1) = (*at(domain, 0), *at(domain, 1), *at(range, 0), *at(range, 1));
     if d1 < d0 {
         interpolate(r1, r0, normalize(d1, d0, x))
     } else {
@@ -118,7 +119,8 @@ pub fn linear_range<T: Copy>(domain: &[f64], range: &[T], interpolate: impl Fn(T
         return None;
     }
     let n = domain.len().min(range.len());
-    let x = if clamp { x.min(domain[0].max(domain[n - 1])).max(domain[0].min(domain[n - 1])) } else { x };
+    let (first, last) = (*at(domain, 0), *at(domain, n - 1));
+    let x = if clamp { x.min(first.max(last)).max(first.min(last)) } else { x };
     Some(piecewise(domain, range, x, interpolate))
 }
 
@@ -204,7 +206,7 @@ impl Continuous {
             return x;
         }
         let n = self.domain.len().min(self.range.len());
-        let (mut a, mut b) = (self.domain[0], self.domain[n - 1]);
+        let (mut a, mut b) = (*at(&self.domain, 0), *at(&self.domain, n - 1));
         if a > b {
             std::mem::swap(&mut a, &mut b);
         }
@@ -227,7 +229,7 @@ impl Continuous {
     }
 
     fn ends(&self) -> (f64, f64) {
-        (self.domain[0], self.domain[self.domain.len() - 1])
+        (*at(&self.domain, 0), *at(&self.domain, self.domain.len() - 1))
     }
 
     /// `scale.ticks(count)`: `linearish` ticks over the domain's ends, or
@@ -297,7 +299,7 @@ impl Continuous {
     /// is d3's default 10 when absent.
     pub fn log_tick_visible(&self, count: usize) -> impl Fn(f64) -> bool + '_ {
         let Transform::Log { base } = self.transform else {
-            panic!("log_tick_visible on a scale that is not log");
+            invariant::broken("log_tick_visible on a scale that is not log");
         };
         let reflect = self.reflect();
         let k = (base * count as f64 / self.ticks(10).len() as f64).max(1.0);
@@ -318,7 +320,7 @@ impl Continuous {
     pub fn nice(&self, count: usize) -> Continuous {
         let mut domain = self.domain.clone();
         let (mut i0, mut i1) = (0, domain.len() - 1);
-        let (mut start, mut stop) = (domain[i0], domain[i1]);
+        let (mut start, mut stop) = (*at(&domain, i0), *at(&domain, i1));
         if stop < start {
             std::mem::swap(&mut start, &mut stop);
             std::mem::swap(&mut i0, &mut i1);
@@ -327,16 +329,16 @@ impl Continuous {
             let reflect = self.reflect();
             let logs = |x: f64| if reflect { -logp(base, -x) } else { logp(base, x) };
             let pows = |x: f64| if reflect { -powp(base, -x) } else { powp(base, x) };
-            domain[i0] = pows(logs(start).floor());
-            domain[i1] = pows(logs(stop).ceil());
+            *at_mut(&mut domain, i0) = pows(logs(start).floor());
+            *at_mut(&mut domain, i1) = pows(logs(stop).ceil());
             return Continuous { domain, ..self.clone() };
         }
         let mut prestep: Option<f64> = None;
         for _ in 0..10 {
             let step = tick_increment(start, stop, count as f64);
             if prestep == Some(step) {
-                domain[i0] = start;
-                domain[i1] = stop;
+                *at_mut(&mut domain, i0) = start;
+                *at_mut(&mut domain, i1) = stop;
                 return Continuous { domain, ..self.clone() };
             } else if step > 0.0 {
                 start = (start / step).floor() * step;

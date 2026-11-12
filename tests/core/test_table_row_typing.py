@@ -305,14 +305,15 @@ class TestAnchorsMode:
         assert svg.count(">EUR <") == count
         assert ">−2,500<" in svg
 
-    def test_anchors_keeps_a_magnitude_suffix_on_every_row(self, make_chart):
+    def test_rows_tiers_apart_share_one_unit(self, make_chart):
         from dbt_charts.core.compile.models.primitives import FormatConfig
 
-        # Mixed tiers resolve no shared scale, so each row names its own magnitude.
+        # Rows tiers below the unit print as its floor, never in their own unit.
         svg = self._anchors_svg(
             make_chart, FormatConfig(spec=".3~s"), [1_500_000, 2_500, 3_500_000_000]
         )
-        assert all(f">{unit}<" in svg for unit in ("M", "k", "G"))
+        assert svg.count(">&lt;0.01<") == 2
+        assert not any(f">{unit}<" in svg for unit in ("M", "k", "G"))
 
 
 class TestAllSymbolsMode:

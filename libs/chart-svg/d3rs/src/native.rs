@@ -1,6 +1,8 @@
 //! `PREDEFINED_NATIVE`'s formatters (`predefined_formats.py`), shared by the
 //! resolve stage's label templates and the renderer's format slots.
 
+use crate::invariant::at;
+
 /// The house dash a missing value prints.
 pub const NULL_DISPLAY: &str = "\u{2014}";
 
@@ -50,7 +52,7 @@ fn duration(value: f64) -> Result<(String, String), String> {
     let seconds = rounded as u128;
     let sign = if value < 0.0 && seconds > 0 { "\u{2212}" } else { "" };
     for pair in DURATION_UNITS.windows(2) {
-        let ((size, unit), (lower_size, lower_unit)) = (pair[0], pair[1]);
+        let ((size, unit), (lower_size, lower_unit)) = (*at(pair, 0), *at(pair, 1));
         if seconds >= size {
             let lower = seconds % size / lower_size;
             let tail = if lower > 0 { format!(" {lower}{}", word(lower_unit)?) } else { String::new() };

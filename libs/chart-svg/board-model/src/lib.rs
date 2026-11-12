@@ -40,14 +40,14 @@
 //! | `chart/authored/{__init__,_base,_type,_tooltip}.py`, `chart/authored/callout.py` | `chart`, `chart::tooltip`, `chart::callout` |
 //! | `chart/authored/_annotation.py`, `_annotations.py` | `chart::annotation` |
 //! | `chart/authored/_layer.py` | `chart::layer` |
-//! | `chart/authored/_conditional_formatting.py` | `chart::conditional_formatting` |
+//! | `models/conditional_predicate.py` (`ConditionalPredicate`) | `chart::conditional_formatting` |
 //! | `chart/authored/_support_table.py` | `chart::support_table` |
 //! | `chart/authored/_base.py` (the mixins past `_BaseChartFields` / `_SharedChartFields`; its column facets) | `chart` (mixins), `chart::columns` |
 //! | `vega_lite/contracts.py` (`Projection`, `ProjectionType`) | `chart::projection` |
 //! | `primitives.py` (`NumberLocale`, `TimeLocale`, `RegionalLocale`, `Regional`) | `regional` |
 //! | `style/theme/legend.py` | `style::legend` |
 //! | `primitives.py` (`FontStyle`, `SingleLineFontStyle`, `SymbolShape`, `NamedFont` only) | `style::font` |
-//! | `primitives.py` (`Curve`, `LineCap`, `StrokeStyle`, `FontColorStrokeStyle`, `BorderStyle`, `CornerStyle`, `DividerStyle`, `SpacingValues`, `TextBaseline`, `Dasharray`, `ToneLiteral` as `Tone`, `ScaleTargetConfig`, `StaticGradientColorStyle`, `ColorStyle`, `CategoricalColorStyle`, `GlyphText`, `FormatConfig`, `Link`, `BoxShadow`) | `primitives` |
+//! | `primitives.py` (`Curve`, `LineCap`, `StrokeStyle`, `FontColorStrokeStyle`, `BorderStyle`, `CornerStyle`, `DividerStyle`, `SpacingValues`, `TextBaseline`, `Dasharray`, `ToneLiteral` as `Tone`, `ScaleTargetConfig`, `GradientColorStyle`, `ColorStyle`, `CategoricalColorStyle`, `GlyphText`, `FormatConfig`, `Link`, `BoxShadow`) | `primitives` |
 //! | `style/theme/_chart_base.py` | `style::chart_base` |
 //! | `style/authored/_base.py` (`EndpointLabelsConfig` only) | `style::endpoint_labels` |
 //! | `style/theme/annotations.py` | `style::annotations` |
@@ -237,6 +237,7 @@ macro_rules! string_enum {
                     shorthand: None,
                     string_pattern: None,
                     complete: false,
+                    read_under: None,
                 };
                 &INFO
             }

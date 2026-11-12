@@ -1,6 +1,6 @@
 //! `chart/authored/table.py`: a flat table, or a pivot cross-tab.
 
-use super::{ConditionalFormattingField, SharedChartFields};
+use super::SharedChartFields;
 use crate::facet::Channel;
 use crate::style::table::TableChartStyle;
 use model_core::{Cx, FromNode, Leaf, Merge, Node, ReadScalar, TypeExpr};
@@ -30,14 +30,17 @@ pub struct TableSpanner {
         columns,
         values,
         when(set(spanners)),
-        nonempty(rows, columns, values)
+        nonempty(rows, columns, values),
+        message = "'spanners' cannot be combined with the pivot channels rows/columns/values: a pivot already draws its own spanners from its column dimensions."
     )),
-    constraint(unique(rows, columns, values)),
-    constraint(unique("spanners[*].columns"))
+    constraint(unique(rows, columns, values,
+        message = "Field {dup!r} appears on both '{first}' and '{second}' channels. A field may appear on at most one of rows/columns/values."
+    )),
+    constraint(unique("spanners[*].columns",
+        message = "Column {dup!r} is in both {first} and {second}; a column may sit in at most one spanner."
+    ))
 )]
 pub struct TableChart {
-    #[flatten]
-    pub formatting: ConditionalFormattingField,
     #[flatten]
     pub shared: SharedChartFields,
     /// Appearance overrides for this chart alone.

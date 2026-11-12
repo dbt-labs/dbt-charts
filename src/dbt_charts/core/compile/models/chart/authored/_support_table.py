@@ -13,7 +13,7 @@ from pydantic import (
     Tag,
 )
 
-from dbt_charts.core.compile.models.markers import DisplayText, Format
+from dbt_charts.core.compile.models.markers import ColumnRef, DisplayText, Format
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.schema_names import FormatAlias
 
@@ -44,7 +44,7 @@ class ChartSupportTableSource(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    source: str = Field(
+    source: ColumnRef = Field(
         description="Query column the row reads from (per-x raw value)."
     )
     format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
@@ -69,7 +69,7 @@ class ChartSupportTableAggregate(BaseModel):
             "Exact names only: no aliases (spec G4)."
         ),
     )
-    source: str = Field(
+    source: ColumnRef = Field(
         description=(
             "Query column being aggregated. Always required alongside "
             "`aggregate:` (spec G2)."
@@ -95,7 +95,7 @@ class ChartSupportTablePerSeries(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    per_series: str = Field(
+    per_series: ColumnRef = Field(
         description="Query column the row reads from (per-x, per-series value)."
     )
     by_measure: bool = Field(

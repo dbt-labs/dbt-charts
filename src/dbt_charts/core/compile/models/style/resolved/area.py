@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import ConfigDict, Field
 
+from dbt_charts.core.compile.models.style.theme.area import AreaConditionalRule
+
 from ._cartesian import _SeriesCartesianResolvedStyle
 from ._marks import ResolvedAreaLineStyle, ResolvedAreaMarkStyle, ResolvedPointMarkStyle
 
@@ -38,6 +40,13 @@ class ResolvedAreaStyle(_SeriesCartesianResolvedStyle):
         description=(
             "Point-overlay mark at each plotted value; size 0 (default) "
             "renders no points, matching the line-chart precedent."
+        ),
+    )
+    conditional: dict[str, list[AreaConditionalRule]] | None = Field(
+        default=None,
+        description=(
+            "The chart's per-point rules keyed by column, color tokens resolved. "
+            "The renderer evaluates them against each point's row."
         ),
     )
     dashes: list[list[int]] = Field(

@@ -3,6 +3,8 @@
 //! Transliterated from `libs/markdown-svg/src/mdsvg/types.py`. Same names,
 //! same shape; `Document` is `Vec<AnyBlock>` where Python uses `List[AnyBlock]`.
 
+use d3rs::invariant::broken;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpanType {
     Text,
@@ -43,7 +45,7 @@ impl Span {
         title: Option<String>,
     ) -> Self {
         if matches!(span_type, SpanType::Link | SpanType::Image) && url.is_none() {
-            panic!("Link/Image spans must have a URL");
+            broken("Link/Image spans must have a URL");
         }
         Span {
             text: text.into(),
@@ -78,7 +80,7 @@ impl Heading {
     /// Mirrors `Heading.__post_init__`.
     pub fn new(level: u8, spans: Vec<Span>) -> Self {
         if !(1..=6).contains(&level) {
-            panic!("Heading level must be 1-6, got {level}");
+            broken(&format!("Heading level must be 1-6, got {level}"));
         }
         Heading { level, spans }
     }
@@ -114,7 +116,16 @@ pub struct UnorderedList {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OrderedList {
     pub items: Vec<ListItem>,
-    pub start: i64,
+    pub start: Start,
+}
+
+/// The first number of an ordered list. Python counts in unbounded ints; the
+/// parser keeps what fits a `u128` and names what does not, and the renderer
+/// refuses a list it cannot number.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Start {
+    Number(u128),
+    TooLarge(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

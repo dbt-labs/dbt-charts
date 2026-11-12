@@ -9,6 +9,7 @@ Architecture:
         - dct://boards - List of dashboards in project
         - dct://board/{path} - Dashboard content and structure
         - dct://guide/chart - Board and chart grammar, build-render-fix loop
+        - dct://guide/board-layout - Arranging a board's elements
         - dct://guide/report-design - Report design principles
 
     Tools (actions):

@@ -8,8 +8,8 @@
 //! layer a scalar or a block reads to, with the `enabled` fact the desugaring sets.
 
 use model_core::{
-    build_leaf, Cx, FromNode, Keywords, Kind, Leaf, Merge, Node, ReadScalar, Scalar, Spell, Tri,
-    TypeExpr,
+    build_leaf, Build, Cx, DropNulls, Empty, Fold, FromNode, Keywords, Kind, Leaf, Lift, Merge,
+    Node, ReadScalar, Scalar, SetLeaves, Slot, Spell, ToAuthored, ToPatch, Tri, TypeExpr, Unset,
 };
 use model_derive::Model;
 use regex::Regex;
@@ -167,13 +167,37 @@ pub struct CachePatch {
 }
 
 /// One cache layer, as the cascade merges it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CacheLayer {
     /// Whether results at this scope may be cached: `Some(false)` is `cache: false`, `Some(true)`
     /// any other value; `None` (a block with only `prefetch`, or `{}`) leaves it to the scope above.
     pub enabled: Option<bool>,
     pub ttl: Option<CacheTtl>,
     pub prefetch: Option<bool>,
+    /// Set by [`CacheLayer::over`] when a merge put this layer's `prefetch: true` on a layer that
+    /// turned caching off (`reject_prefetch_without_cache`); a merge cannot fail, so the fold
+    /// carries the refusal for [`CacheLayer::check`] to raise.
+    pub refused: bool,
+}
+
+impl CacheLayer {
+    /// `merge_cache_layers` for two layers: every fact `upper` sets wins, the rest stays. A
+    /// `prefetch: true` that does not decide caching itself, put on a layer with caching off, is
+    /// refused: prefetch warms the cache, and there is none.
+    pub fn over(&mut self, upper: CacheLayer) {
+        self.refused |= upper.refused
+            || (self.enabled == Some(false)
+                && upper.prefetch == Some(true)
+                && upper.enabled.is_none());
+        self.enabled = upper.enabled.or(self.enabled);
+        self.ttl = upper.ttl.or(self.ttl.take());
+        self.prefetch = upper.prefetch.or(self.prefetch);
+    }
+
+    /// Whether a merge recorded the prefetch-without-cache refusal.
+    pub fn is_refused(&self) -> bool {
+        self.refused
+    }
 }
 
 impl ReadScalar for CacheLayer {
@@ -182,7 +206,7 @@ impl ReadScalar for CacheLayer {
             Some(Self {
                 enabled,
                 ttl,
-                prefetch: None,
+                ..Self::default()
             })
         };
         match &node.kind {
@@ -214,6 +238,7 @@ impl ReadScalar for CacheLayer {
                         Tri::Value(b) => Some(b),
                         _ => None,
                     },
+                    refused: false,
                 })
             }
             _ => {
@@ -249,21 +274,87 @@ impl Spell for CacheLayer {
 
 impl FromNode for CacheLayer {
     fn authored(node: &Node, cx: &mut Cx) -> Self::Authored {
-        Self::read(node, cx)
+        CacheSlot(Self::read(node, cx))
     }
     fn patch(node: &Node, cx: &mut Cx) -> Self::Patch {
-        Self::read(node, cx)
+        CacheSlot(Self::read(node, cx))
     }
     fn whole(node: &Node, cx: &mut Cx) -> Option<Self::Whole> {
         Self::read(node, cx)
     }
 }
 
+/// A layer's slot in a twin. Unlike a plain leaf's, two set slots merge field by field, as
+/// Python's `merge_cache_layers` does (`cache: true` on a board keeps the ttl a `meta.yml` set).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CacheSlot(pub Option<CacheLayer>);
+
+impl Slot for CacheSlot {
+    fn merge(&mut self, upper: Self) {
+        match (&mut self.0, upper.0) {
+            (Some(lower), Some(upper)) => lower.over(upper),
+            (lower, upper @ Some(_)) => *lower = upper,
+            (_, None) => {}
+        }
+    }
+}
+
+impl DropNulls for CacheSlot {
+    fn drop_nulls(&mut self) {}
+}
+
+impl Empty for CacheSlot {
+    fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+impl SetLeaves for CacheSlot {
+    fn set_leaves(&self, at: &str, f: &mut dyn FnMut(&str)) {
+        if self.0.is_some() {
+            f(at);
+        }
+    }
+}
+
+impl Lift for CacheSlot {
+    type Value = CacheLayer;
+    fn lift(self) -> Option<CacheLayer> {
+        self.0
+    }
+    fn put(v: CacheLayer) -> Self {
+        Self(Some(v))
+    }
+    fn leaves(_: &CacheLayer, at: &str, f: &mut dyn FnMut(&str)) {
+        f(at);
+    }
+}
+
+impl Fold for CacheSlot {
+    fn fold(lower: &mut CacheLayer, upper: CacheLayer) {
+        lower.over(upper);
+    }
+}
+
+impl ToPatch for CacheSlot {
+    type Out = CacheSlot;
+    fn to_patch(self) -> CacheSlot {
+        self
+    }
+}
+
+impl ToAuthored for CacheSlot {
+    type Out = CacheSlot;
+    fn to_authored(self) -> CacheSlot {
+        self
+    }
+}
+
 impl Leaf for CacheLayer {
     type Whole = CacheLayer;
-    type Authored = Option<CacheLayer>;
-    type Patch = Option<CacheLayer>;
-    const MERGE: Merge = Merge::Override;
+    type Authored = CacheSlot;
+    type Patch = CacheSlot;
+    const MERGE: Merge = Merge::Deep;
     /// `CacheInput`'s schema input: the block, `forever`, a boolean or a duration.
     const EXPR: TypeExpr = TypeExpr::Either(
         &TypeExpr::Ref("CachePatch", <CachePatch as model_core::Model>::info),
@@ -273,4 +364,58 @@ impl Leaf for CacheLayer {
         ),
     );
 }
-build_leaf!(CacheLayer);
+
+impl Build for CacheLayer {
+    fn build(slot: CacheSlot, at: &str) -> Result<Self, Unset> {
+        slot.0.ok_or_else(|| Unset {
+            paths: vec![at.to_string()],
+        })
+    }
+    fn build_authored(slot: CacheSlot, at: &str) -> Result<Self, Unset> {
+        Self::build(slot, at)
+    }
+}
+
+/// `CachePolicy`: the resolved policy one query's results are cached under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachePolicy {
+    pub enabled: bool,
+    /// The ttl as authored; `None` never auto-expires (`ttl: forever`, or none set).
+    pub ttl: Option<String>,
+    /// Whether the query loads in the background when it sits on a hidden tab.
+    pub prefetch: bool,
+}
+
+/// Why a cascade does not resolve to a policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheRefusal {
+    /// `reject_prefetch_without_cache`: the layer at this index of the cascade put `prefetch:
+    /// true` on caching turned off above it.
+    PrefetchNeedsCache { layer: usize },
+    /// No layer says whether to cache; the cascade root (the project config) must.
+    EnabledUnresolved,
+}
+
+/// `resolve_cache_policy`: the layers outermost first (project root, source, board, query),
+/// nearest explicitly-set fact wins. A layer that puts `prefetch: true` on caching turned off
+/// is refused, as is a cascade whose layers never say whether to cache.
+pub fn resolve(layers: &[&CacheLayer]) -> Result<CachePolicy, CacheRefusal> {
+    let mut merged = CacheLayer::default();
+    for (layer, upper) in layers.iter().enumerate() {
+        merged.over((*upper).clone());
+        if merged.refused {
+            return Err(CacheRefusal::PrefetchNeedsCache { layer });
+        }
+    }
+    let Some(enabled) = merged.enabled else {
+        return Err(CacheRefusal::EnabledUnresolved);
+    };
+    Ok(CachePolicy {
+        enabled,
+        ttl: match merged.ttl {
+            Some(CacheTtl::Duration(d)) => Some(d),
+            Some(CacheTtl::Forever) | None => None,
+        },
+        prefetch: enabled && merged.prefetch == Some(true),
+    })
+}

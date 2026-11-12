@@ -35,9 +35,9 @@ pub fn fold_panels(panel_maxes: impl IntoIterator<Item = Option<f64>>, independe
 
 /// The exact top of a zero stack, flush with its tallest total (annotations
 /// included). A non-positive total pins nothing.
-fn pinned_top(tallest: f64, annotations: &[f64], headroom: f64) -> Option<f64> {
+fn pinned_top(tallest: f64, annotations: &[f64], axis: &Axis, floor: f64) -> Option<f64> {
     let total = annotations.iter().copied().fold(tallest, f64::max);
-    (total > 0.0).then(|| headroom_top(total, headroom))
+    (total > 0.0).then(|| headroom_top(total, axis.headroom, axis.percent, (floor, total)))
 }
 
 /// The stacked domain: zero to the headroom top of the tallest total. `values` is every
@@ -61,7 +61,7 @@ pub fn linear(
     let authored_domain = authored(axis.domain)?;
     let max = panel_max
         .filter(|_| flush_top)
-        .and_then(|total| pinned_top(total, annotations, axis.headroom))
+        .and_then(|total| pinned_top(total, annotations, axis, floor))
         .map(|value| Pin { value, reason: PinReason::FlushTop });
     let bounds = nice_bounds(match authored_domain {
         Some(authored) => Bounds { extent: authored.extent, reason: BoundsReason::Authored },
@@ -89,7 +89,7 @@ pub fn linear(
     let (tick_min, tick_max) = match (axis.domain, axis.independent) {
         (Some(authored), _) => authored,
         (None, true) => return domain(Ladder::None),
-        (None, false) => (floor, headroom_top(tallest, axis.headroom)),
+        (None, false) => (floor, headroom_top(tallest, axis.headroom, axis.percent, (floor, tallest))),
     };
     let ticks = nice_tick_values(tick_min, tick_max, target, axis.min_step);
     if axis.domain.is_some() {
@@ -116,7 +116,7 @@ mod tests {
     }
 
     fn axis() -> Axis<'static> {
-        Axis { zero: Zero::Anchored, headroom: 0.0, count: Some(Count::N(5)), values: None, domain: None, min_step: None, independent: false, nice: None, mark: Mark::Bar }
+        Axis { zero: Zero::Anchored, headroom: 0.0, percent: false, count: Some(Count::N(5)), values: None, domain: None, min_step: None, independent: false, nice: None, mark: Mark::Bar }
     }
 
     fn rungs(domain: &ValueDomain) -> Vec<f64> {
@@ -161,6 +161,16 @@ mod tests {
     }
 
     #[test]
+    fn a_percent_stack_totalling_100_stops_headroom_at_100() {
+        let axis = Axis { headroom: 0.1, percent: true, ..axis() };
+        let domain = linear(&axis, &[0.6, 0.4], &[], Some(1.0), true, &digits).unwrap().unwrap();
+        assert_eq!(domain.max.map(|p| p.value), Some(1.0));
+        assert_eq!(*rungs(&domain).last().unwrap(), 1.0);
+        let over = linear(&axis, &[0.6, 0.6], &[], Some(1.2), true, &digits).unwrap().unwrap();
+        assert_eq!(over.max.map(|p| p.value), Some(1.2 * 1.1));
+    }
+
+    #[test]
     fn a_stack_is_not_niced() {
         let domain = linear(&axis(), &[3.0, 4.0, 2.0], &[], Some(95.0), false, &digits).unwrap().unwrap();
         assert_eq!((domain.bounds.extent.lo(), domain.bounds.extent.hi()), (0.0, 95.0));
@@ -199,7 +209,7 @@ mod tests {
         };
         assert_eq!(top(Some(95.0), &[], 0.0), Some(Pin { value: 95.0, reason: PinReason::FlushTop }));
         assert_eq!(top(None, &[], 0.0), None);
-        assert_eq!(pinned_top(10.0, &[50.0], 0.1), Some(55.00000000000001));
-        assert_eq!(pinned_top(0.0, &[], 0.1), None);
+        assert_eq!(pinned_top(10.0, &[50.0], &Axis { headroom: 0.1, ..axis() }, 0.0), Some(55.00000000000001));
+        assert_eq!(pinned_top(0.0, &[], &Axis { headroom: 0.1, ..axis() }, 0.0), None);
     }
 }

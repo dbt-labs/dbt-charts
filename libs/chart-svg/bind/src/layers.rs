@@ -43,14 +43,14 @@ pub fn layer_color_promoted(rows: &[serde_json::Map<String, Value>], field: &str
     layer_color_values(rows, field).len() > 1
 }
 
+/// One series of a color-grouped layer: its color value (`None` for a row with none) and its rows.
+pub type ColorGroup = (Option<String>, Vec<serde_json::Map<String, Value>>);
+
 /// The series of a color-grouped line or area layer as Vega's facet meets them:
 /// in order of first appearance in `rows`, each with its own rows, a row with no
 /// color value being a series of its own (`None`).
-pub fn layer_color_groups(
-    rows: &[serde_json::Map<String, Value>],
-    field: &str,
-) -> Vec<(Option<String>, Vec<serde_json::Map<String, Value>>)> {
-    let mut series: Vec<(Option<String>, Vec<serde_json::Map<String, Value>>)> = Vec::new();
+pub fn layer_color_groups(rows: &[serde_json::Map<String, Value>], field: &str) -> Vec<ColorGroup> {
+    let mut series: Vec<ColorGroup> = Vec::new();
     for row in rows {
         let value = layer_color_of(row, field);
         match series.iter_mut().find(|(seen, _)| *seen == value) {

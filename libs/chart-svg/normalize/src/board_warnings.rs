@@ -382,6 +382,8 @@ pub struct Facts<'a> {
     /// The id a user sees for each chart ([`crate::index::BoardIndex::public_ids`]).
     pub public_ids: &'a BTreeMap<ChartId, String>,
     pub own_format_names: BTreeSet<String>,
+    /// The queries an imported chart's display text reads ([`crate::index::BoardIndex::text_queries`]).
+    pub text_queries: &'a BTreeMap<String, BTreeMap<String, board_model::ids::QueryId>>,
 }
 
 /// The names the board file's own patch defines under `style.formats`.

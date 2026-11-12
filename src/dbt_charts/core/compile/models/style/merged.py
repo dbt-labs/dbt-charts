@@ -41,7 +41,6 @@ from dbt_charts.core.compile.models.style.theme import (
 class _MergedChartStyle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    color: str | None = Field(description="Single color for the chart's marks.")
     palette: list[str] = Field(description="Colors assigned to categories in order.")
     single_series_palette: list[str] = Field(
         description="Colors a single-series chart picks from."

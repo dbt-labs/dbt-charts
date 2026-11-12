@@ -88,8 +88,8 @@ Data faithful, visually default.
 
 **Copy from the source (the data and what it means):**
 
-- Pages, sections, tile order, and every tile's chart type, orientation and
-  stacking (stacked, grouped, 100%) exactly as the raw definition states:
+- Pages, sections, tile order, and every tile's chart type and stacking
+  (stacked, grouped, 100%) exactly as the raw definition states:
   a stacked bar stays stacked. dbt Charts groups a colored bar by default, so a
   stacked source needs `style:` `stack: zero` (100%: `stack: normalize`)
 - Metric and dimension names: the words that carry meaning in titles, series,
@@ -101,8 +101,10 @@ Data faithful, visually default.
 
 **Keep dbt Charts' defaults (do not match the source's look):** colors, fonts,
 spacing, gridlines, title casing, tick formats and rotation, legend position,
-data labels, column widths, axis titles, and number formats (compact by
-default). Override a default only for a reason the reader would miss without
+data labels, column widths, axis titles, number formats (compact by default),
+and bar orientation: leave `style.orientation` unset, so category bars run
+horizontal with readable labels and time bars stay vertical, whatever the
+source drew. Override a default only for a reason the reader would miss without
 it, and say why in the chart's `notes:`. "The source does it" is not a reason.
 - Color: only for a fixed meaning that is in the board (a target, a threshold,
   good/bad), with theme tokens, never hex.
@@ -173,7 +175,7 @@ queries:
 ```
 
 **Options to copy deliberately**, each checked against the raw definition, not
-only the PNG: orientation; stacking; which column splits series; sort; date
+only the PNG: stacking; which column splits series; sort; date
 grain and window; KPI comparison, target and tone; table columns and page size;
 totals; the hover card (a source tile's tooltip columns become the chart's
 `tooltip:` list on bar, line, area, scatter and pie, in the source's order, with

@@ -113,6 +113,7 @@ fn referenced_queries(
     placed: &BTreeSet<&str>,
     below: &[Nested<'_>],
     queries: &BTreeMap<QueryId, QueryFacts>,
+    imported_text: &BTreeMap<String, BTreeMap<String, QueryId>>,
 ) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     let root = [
@@ -129,8 +130,13 @@ fn referenced_queries(
     for (name, chart) in &patch.body.charts {
         let Some(chart) = chart else { continue };
         names.extend(chart.hoisted_queries().iter().map(|id| key(id, file)));
-        for text in chart.display_texts() {
-            names.extend(text_queries(text, Kind::Label));
+        match imported_text.get(name) {
+            Some(read) => names.extend(read.values().map(|id| key(id, file))),
+            None => {
+                for text in chart.display_texts() {
+                    names.extend(text_queries(text, Kind::Label));
+                }
+            }
         }
         // A chart's `visible:` is its placement's, so an unplaced chart has none.
         if placed.contains(name.as_str()) {
@@ -188,7 +194,7 @@ fn single_chart_redundant_title(
     )
 }
 
-/// Every warning, in Python's order. `focused` is whether `chart_focus` narrowed the board, which
+/// Every warning. `focused` is whether `chart_focus` narrowed the board, which
 /// leaves it no title; `placed` is where the charts sat as written.
 pub fn lint(
     patch: &Patch,
@@ -219,7 +225,7 @@ pub fn lint(
         .collect();
     orphans.sort_unstable();
     out.extend(orphans.into_iter().map(diag::warn_unreferenced_chart));
-    let referenced = referenced_queries(patch, file, &placed, &below, queries);
+    let referenced = referenced_queries(patch, file, &placed, &below, queries, facts.text_queries);
     let mut unread: Vec<&str> = patch
         .body
         .queries

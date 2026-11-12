@@ -15,7 +15,7 @@ Entry Points:
     - run(misses, execute, settle, max_workers) -> dict[str, Outcome]
     - run_route(env, route, query, ...) -> QueryResult
     - run_query(env, query, ...) -> QueryResult
-    - execute_resolved(env, resolved, query, source_config) -> QueryResult
+    - run_planned(env, plan, name, ...) -> QueryResult
     - settle(ctx, ledger, miss, outcome) -> None
     - execute_miss(ctx, ledger, miss) -> Outcome
     - run_misses(ctx, ledger, found, max_workers) -> dict[str, Outcome]
@@ -25,9 +25,10 @@ import contextvars
 import logging
 import re
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from graphlib import TopologicalSorter
 from typing import TYPE_CHECKING, Any, Literal
@@ -49,6 +50,7 @@ from dbt_charts.core.compile.models.query.normalized import (
 from dbt_charts.core.compile.models.source import (
     AttributedSourceConfig,
     CsvSourceConfig,
+    DbtTargetSourceConfig,
     JsonSourceConfig,
     ParquetSourceConfig,
     ResolvedSourceConfig,
@@ -66,7 +68,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_QUERY_FORMAT_COLUMN_MISSING,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
-from dbt_charts.core.dialects import get_dialect
+from dbt_charts.core.dialects import SQLDialect, get_dialect
 from dbt_charts.core.execute.backends.dbt_adapter_factory import ConnectionSetupFailed
 from dbt_charts.core.execute.cache_backend import (
     CacheRows,
@@ -75,7 +77,8 @@ from dbt_charts.core.execute.cache_backend import (
 )
 from dbt_charts.core.execute.compose import (
     ResolvedQuery,
-    compose,
+    compose_file_source,
+    compose_pydantic,
     compose_sql,
     file_source_dialect_refusal,
 )
@@ -101,15 +104,18 @@ from dbt_charts.core.execute.plan import (
     require_cache_refs,
     resolve_query_references,
 )
+from dbt_charts.core.execute.plan_reader import compose_fields
 from dbt_charts.core.execute.plan_sources import (
     resolve_query_source,
     source_not_named_error,
 )
+from dbt_charts.core.execute.query_plan import QueryPlan
 from dbt_charts.core.execute.query_result import (
     QueryDurationExceeded,
     QueryParams,
     QueryResult,
     ResolvedRelation,
+    RowFetchLimit,
     adapter_unavailable,
     apply_row_limit_truncation,
     classify_warehouse_error,
@@ -121,7 +127,14 @@ from dbt_charts.core.execute.query_result import (
 from dbt_charts.core.execute.result import rows_to_query_result
 from dbt_charts.core.execute.schema_adapter import schema_rows
 from dbt_charts.core.execute.source_resolver import AD_HOC_QUERY_NAME, DbtContext
-from dbt_charts.core.execute.sql_translate import dialect_differs, dialect_unsupported
+from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
+from dbt_charts.core.execute.sql_translate import (
+    bind_inline_params,
+    dialect_differs,
+    dialect_unsupported,
+    translate_sql,
+)
+from dbt_charts.core.text.time_zones import UTC as UTC_ZONE
 
 if TYPE_CHECKING:
     from dbt_charts.core.execute.env import ExecEnv
@@ -288,7 +301,7 @@ def check_formats(ctx: ExecContext, name: str, result: ResultRows) -> None:
     """Raise when the query's ``formats:`` names a column the rows lack."""
     if result.rows:
         for column in missing_format_columns(
-            get_query(ctx, name).formats, result.rows[0]
+            name, get_query(ctx, name).formats, result.rows[0]
         ):
             raise QueryError.from_code(
                 ERR_QUERY_FORMAT_COLUMN_MISSING,
@@ -581,10 +594,24 @@ def _execute_cache_ref_query(
     )
     from dbt_charts.core.execute.cache_composition import compose_over_named_rows
 
+    # An unset `dialect:` is SQL written for the engine that runs it.
+    read = "duckdb" if query.dialect is None else query.dialect
     rendered = render_parameterized_with_queries(
-        sql, variables, queries=all_queries, profile_type="duckdb"
+        sql,
+        variables,
+        queries=all_queries,
+        dialect=INLINE_PLACEHOLDERS,
+        warehouse=get_dialect(read),
     )
-    composed_sql = _CACHE_REF_RE.sub(lambda m: m.group(1), rendered.sql)
+    try:
+        translated = translate_sql(rendered.sql, read, "duckdb")
+    except ExecutionError as exc:
+        raise QueryError(str(exc), query_name, code=exc.code) from exc
+    composed_sql, params = bind_inline_params(
+        _CACHE_REF_RE.sub(lambda m: m.group(1), translated),
+        rendered.params,
+        get_dialect("duckdb"),
+    )
 
     # Bounds the composition engine's own fetch (fetchmany()) — composed_sql
     # runs unmodified, so an author's own inline LIMIT in the composing SQL
@@ -593,7 +620,7 @@ def _execute_cache_ref_query(
     rows, schema = compose_over_named_rows(
         composed_sql,
         named_rows,
-        rendered.params,
+        params,
         limit=row_fetch_limit.fetch_limit,
         schemas=schemas,
         time_zone=ctx.board.regional.time_zone,
@@ -718,6 +745,32 @@ def route_for(query: AnyQuery, source_config: ResolvedSourceConfig | None) -> Ro
     return Warehouse()
 
 
+@contextmanager
+def attributed(
+    source_config: ResolvedSourceConfig | None,
+    query_name: str,
+    board_id: str | None,
+) -> Generator[None]:
+    """The attribution scope of the board and query that caused a warehouse call.
+
+    Established here rather than authored, so it cannot drift when a board or
+    query is renamed. The surface is set further out, by whichever root opened
+    the session. The source's own attribution rides this per-call scope, not
+    the pooled adapter: pools are shared by connection identity, so two sources
+    on one warehouse would otherwise both get whichever one built the pool.
+    """
+    scope = {"query": query_name}
+    if board_id is not None:
+        scope["board"] = board_id
+    authored = (
+        source_config.attribution
+        if isinstance(source_config, AttributedSourceConfig)
+        else {}
+    )
+    with attribute(scope, authored):
+        yield
+
+
 def run_route(
     env: "ExecEnv",
     route: Route,
@@ -730,22 +783,7 @@ def run_route(
 ) -> QueryResult:
     """Run a query down its route, in the attribution scope of its board, query
     and source."""
-    # The board and query that caused this warehouse call. Established here
-    # rather than authored, so it cannot drift when a board or query is
-    # renamed. The surface is set further out, by whichever root opened the
-    # session.
-    scope = {"query": query_name}
-    if board is not None:
-        scope["board"] = board.id
-    # The source's own attribution rides this per-call scope, not the pooled
-    # adapter: pools are shared by connection identity, so two sources on one
-    # warehouse would otherwise both get whichever one built the pool.
-    authored = (
-        source_config.attribution
-        if isinstance(source_config, AttributedSourceConfig)
-        else {}
-    )
-    with attribute(scope, authored):
+    with attributed(source_config, query_name, board.id if board is not None else None):
         match route:
             case Values():
                 assert isinstance(query, ValuesQuery)
@@ -768,12 +806,47 @@ def run_route(
                     return handle_adapter_error(
                         "Source resolution", source_not_named_error(env.sources)
                     )
+                limit = resolve_effective_row_limit(query.limit)
                 if isinstance(route, FileSource):
-                    return _run_file_source(
-                        env, query, variables, params, board, source_config
+                    return run_file_source(
+                        env,
+                        source_config,
+                        query.source,
+                        query.dialect,
+                        not query.lenient_variables,
+                        limit,
+                        variables,
+                        lambda: compose_file_source(
+                            query.sql,
+                            setup_sql=query.setup_sql,
+                            dialect=query.dialect,
+                            strict=not query.lenient_variables,
+                            limit=limit,
+                            queries=board.queries if board is not None else None,
+                            time_zone=board.regional.time_zone
+                            if board is not None
+                            else UTC_ZONE,
+                            variables=variables,
+                            params=params,
+                            source_config=source_config,
+                            render_dialect=get_dialect("duckdb"),
+                            refs=env.dbt_refs,
+                        ),
                     )
                 return execute_on_backend(
-                    env, query, source_config, variables, params, board, None
+                    env,
+                    source_config,
+                    query.source,
+                    lambda style: compose_pydantic(
+                        query,
+                        variables,
+                        params,
+                        board,
+                        source_config,
+                        style,
+                        refs=env.dbt_refs,
+                        project=env.project,
+                    ),
                 )
 
 
@@ -802,43 +875,55 @@ def run_values(query: ValuesQuery) -> QueryResult:
     )
 
 
+def _source_origin(env: "ExecEnv", source_config: ResolvedSourceConfig) -> str:
+    """What a source is, for the agent repairing its connection: the warehouse
+    type, plus the dbt project when it expanded from a dbt profile.
+
+    The dbt target is not named: the resolver picks it from the source, then the
+    run's ``--target``, then the profile's default, and the expanded config does
+    not record which one won, so any name given here could be the wrong one.
+    """
+    if not isinstance(source_config, DbtTargetSourceConfig):
+        return source_config.type
+    dbt = env.dbt_context
+    if dbt is not None and dbt.dbt_project_path is not None:
+        return (
+            f"{source_config.type}, from a dbt profile: project {dbt.dbt_project_path}"
+        )
+    return f"{source_config.type}, from a dbt profile"
+
+
 def execute_on_backend(
     env: "ExecEnv",
-    query: SqlQuery,
     source_config: ResolvedSourceConfig,
-    variables: VariableValues | None,
-    params: QueryParams,
-    board: Board | None,
-    resolved: ResolvedQuery | None,
+    source_name: str | None,
+    prepare: Callable[[SQLDialect], ResolvedQuery | QueryResult],
+    rewrite: Callable[[str], str] | None = None,
 ) -> QueryResult:
     """Run a SQL query on its source's backend, observed from lookup to rows.
 
-    Composes the query unless the caller already did (*resolved*). Every
-    failure becomes the query's error result, a backend's classified by
-    :func:`classify_warehouse_error`.
+    *prepare* composes the query in the placeholder style the backend binds; it
+    is called inside the observed call so a composition failure is the query's
+    error result. *rewrite*, when given, is applied to the composed SQL right
+    before it is sent. Every failure becomes the query's error result, a
+    backend's classified by :func:`classify_warehouse_error`.
     """
     dialect_name = source_config.type
+    source_name = source_name or dialect_name
 
     def call() -> QueryResult:
-        nonlocal resolved
         try:
             backend = env.backends.for_source(source_config)
         except DbtChartsError as exc:
             return handle_adapter_error(f"{dialect_name} query setup", exc)
-        if resolved is None:
-            composed = compose_sql(
-                query,
-                variables,
-                params,
-                board,
-                source_config,
-                backend.param_style,
-                refs=env.dbt_refs,
-                project=env.project,
-            )
-            if isinstance(composed, QueryResult):
-                return composed
-            resolved = composed
+        composed = prepare(backend.param_style)
+        if isinstance(composed, QueryResult):
+            return composed
+        resolved = (
+            composed
+            if rewrite is None
+            else replace(composed, sql=rewrite(composed.sql))
+        )
         try:
             table = backend.execute(source_config, resolved)
         except QueryDurationExceeded as exc:
@@ -846,7 +931,7 @@ def execute_on_backend(
                 data=[],
                 error=QueryError(
                     ERR_QUERY_DURATION_EXCEEDED.message_template.format(
-                        seconds=exc.seconds, source=query.source or dialect_name
+                        seconds=exc.seconds, source=source_name
                     ),
                     code=ERR_QUERY_DURATION_EXCEEDED,
                 ),
@@ -856,10 +941,18 @@ def execute_on_backend(
         except DbtChartsError as exc:
             return handle_adapter_error(f"{dialect_name} query setup", exc)
         except ConnectionSetupFailed as exc:
-            return connection_failure(dialect_name, exc.cause)
+            return connection_failure(
+                dialect_name,
+                exc.cause,
+                source=source_name,
+                origin=_source_origin(env, source_config),
+            )
         except Exception as exc:  # noqa: BLE001 — the warehouse's verdict on the statement
             return classify_warehouse_error(
-                f"{dialect_name} SQL execution", exc, dialect_name
+                f"{dialect_name} SQL execution",
+                exc,
+                dialect_name,
+                source=source_name,
             )
         return rows_to_query_result(
             table, resolved.limit, list(resolved.resolved_relations) or None
@@ -868,75 +961,48 @@ def execute_on_backend(
     return _observed(env.observers, dialect_name, call)
 
 
-def execute_resolved(
+def run_file_source(
     env: "ExecEnv",
-    resolved: ResolvedQuery,
-    query: AnyQuery,
-    *,
     source_config: ResolvedSourceConfig,
-) -> QueryResult:
-    """Send a query from ``compose_query`` — possibly rewritten — to the warehouse.
-
-    ``query`` only labels a duration error. Nothing is rendered or guarded again, so the
-    caller owns what it substituted into ``resolved.sql``.
-    """
-    if not is_sql_query(query):
-        return plain_error(f"Expected SQL query, got {query.query_type}")
-    return execute_on_backend(env, query, source_config, None, None, None, resolved)
-
-
-def _run_file_source(
-    env: "ExecEnv",
-    query: SqlQuery,
+    source_name: str | None,
+    dialect: str | None,
+    strict: bool,
+    row_fetch_limit: RowFetchLimit,
     variables: VariableValues | None,
-    params: QueryParams,
-    board: Board | None,
-    source_config: ResolvedSourceConfig,
+    prepare: Callable[[], ResolvedQuery | QueryResult],
+    rewrite: Callable[[str], str] | None = None,
 ) -> QueryResult:
     """Run a SQL query on a csv/json/parquet source through the materializer.
 
-    Applies the same ``query.limit`` / ``execution.max_rows`` contract
+    Applies the same row limit / ``execution.max_rows`` contract
     the backends honor, but not the same mechanism: they bound the driver cursor
     itself, so an over-the-ceiling result is never fully fetched.
     ``materialize_and_run`` has no cursor to bound — it returns every row the
     materialized cache holds, and this slices to ``row_fetch_limit`` afterward.
     ``truncated_reason`` is set only when the ceiling (not the author's own
     limit) was the binding value.
+
+    *prepare* composes the query exactly as every backend gets it:
+    ``{{ queries.X }}`` refs expand and variables render before the
+    materializer ever sees the SQL.
     """
     assert isinstance(
         source_config, CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig
     )
-    source_name = query.source
     assert source_name is not None  # a file source is reached through its name
-    if query.dialect is not None and dialect_differs(query.dialect, source_config):
-        return file_source_dialect_refusal(query.dialect)
+    if dialect is not None and dialect_differs(dialect, source_config):
+        return file_source_dialect_refusal(dialect)
     materializer = env.materializer.get()
     if materializer is None:
         return adapter_unavailable(
-            f"Source {query.source!r} is a {source_config.type} "
+            f"Source {source_name!r} is a {source_config.type} "
             "file source, and this session has no file-source "
             "materializer."
         )
-    # Same composition every backend gets: {{ queries.X }} refs expand and
-    # variables render before the materializer ever sees the SQL. "duckdb" is
-    # the placeholder style materialize_and_run's own render would have used.
-    try:
-        composed = compose(
-            query,
-            variables=variables,
-            params=params,
-            board=board,
-            source_config=source_config,
-            dialect_name="duckdb",
-            render_dialect=get_dialect("duckdb"),
-            refs=env.dbt_refs,
-            semantic=None,
-        )
-    except DbtChartsError as exc:
-        return handle_adapter_error("File-source execution", exc)
+    composed = prepare()
     if isinstance(composed, QueryResult):
         return composed
-    row_fetch_limit = resolve_effective_row_limit(query.limit)
+    sql = composed.sql if rewrite is None else rewrite(composed.sql)
     # No bindings is a valid state, not a caller bug.
     bound_variables = variables or {}  # type-state: silent_fallback — see above
 
@@ -944,12 +1010,12 @@ def _run_file_source(
         try:
             rows, schema = materializer.materialize_and_run(
                 source_config,
-                composed.sql,
+                sql,
                 bound_variables,
                 source_name,
                 composed.time_zone,
                 params=list(composed.params),
-                strict=not query.lenient_variables,
+                strict=strict,
             )
         except (DbtChartsError, RuntimeError, OSError, ValueError) as exc:
             return handle_adapter_error("File-source execution", exc)
@@ -962,3 +1028,84 @@ def _run_file_source(
         )
 
     return _observed(env.observers, source_config.type, call)
+
+
+def run_planned(
+    env: "ExecEnv",
+    plan: QueryPlan,
+    name: str,
+    *,
+    source_config: ResolvedSourceConfig | None,
+    rewrite: Callable[[str], str] | None = None,
+    lenient_variables: bool = False,
+    row_limit: RowFetchLimit | None = None,
+) -> QueryResult:
+    """Run the query *name* of *plan*, observed, down the route its source decides.
+
+    A csv, json or parquet source runs through the file-source materializer,
+    any other SQL source on its backend, a ``values`` query in process and a
+    ``schema`` query from the source's metadata. *rewrite* is applied to the
+    composed SQL right before it is sent, on either SQL route (a ``DESCRIBE``
+    or ``EXPLAIN`` wrap); the params stay aligned. *source_config* is the
+    resolved source (``resolve_planned_source``). Runs under the caller's board
+    clock.
+
+    Raises:
+        KeyError: The plan holds no query *name*.
+    """
+    entry = plan["queries"][name]
+    with attributed(source_config, name, plan["board_id"]):
+        if entry["type"] == "values":
+            values = ValuesQuery.model_validate(entry["spec"])
+            return _observed(env.observers, None, lambda: run_values(values))
+        if entry["type"] == "schema":
+            schema = SchemaQuery.model_validate(entry["spec"])
+            if source_config is not None and is_file_source(source_config):
+                return plain_error(
+                    f"Source {schema.source!r} is a {source_config.type} file "
+                    "source. Schema introspection (the /data explorer, or "
+                    "an authored `type: schema` query) is not yet "
+                    "supported for file sources."
+                )
+            return _observed(env.observers, None, lambda: schema_rows(env, schema))
+        assert entry["type"] == "sql"
+        if source_config is None:
+            return handle_adapter_error(
+                "Source resolution", source_not_named_error(env.sources)
+            )
+        limit = resolve_effective_row_limit(None) if row_limit is None else row_limit
+        fields = compose_fields(
+            plan, name, entry, strict=not lenient_variables, limit=limit
+        )
+        if is_file_source(source_config):
+            return run_file_source(
+                env,
+                source_config,
+                entry["source"],
+                entry["dialect"],
+                not lenient_variables,
+                limit,
+                fields["variables"],
+                lambda: compose_file_source(
+                    params=None,
+                    source_config=source_config,
+                    render_dialect=get_dialect("duckdb"),
+                    refs=env.dbt_refs,
+                    **fields,
+                ),
+                rewrite,
+            )
+        return execute_on_backend(
+            env,
+            source_config,
+            entry["source"],
+            lambda style: compose_sql(
+                params=None,
+                source_config=source_config,
+                render_dialect=style,
+                refs=env.dbt_refs,
+                project=env.project,
+                **fields,
+            ),
+            rewrite,
+        )

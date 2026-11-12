@@ -25,10 +25,12 @@ See also:
 """
 
 import datetime
+import math
 import re
 from typing import Any
 from urllib.parse import quote, urlsplit
 
+from d3_format import parse as _d3_parse
 from dbt_charts.core.compile.format import (
     column_format,
     resolve_format,
@@ -306,6 +308,18 @@ def format_kpi_parts(
         if shared_scale is not None:
             scaled_value = value / (10.0**shared_scale.exponent)
             number_str = d3_format(shared_scale.digit_spec)(float(scaled_value))
+            if value != 0 and not any(c in "123456789" for c in number_str):
+                # Too small for the column's decimals: print the grid's
+                # smallest step as a bound, never a bare zero.
+                decimals = _d3_parse(shared_scale.digit_spec).precision
+                if decimals is None:
+                    raise ValueError(
+                        f"baked digit spec {shared_scale.digit_spec!r} has no precision"
+                    )
+                step = 10.0**-decimals
+                number_str = ("<" if value > 0 else ">") + d3_format(
+                    shared_scale.digit_spec
+                )(math.copysign(step, value))
             if value != 0:
                 # An explicitly *authored* notation: wins over the
                 # mode-derived register -- a shared magnitude fixes the scale,

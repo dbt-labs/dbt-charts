@@ -31,7 +31,7 @@ use board_model::style::marks::LabelVisible;
 use model_core::Engine;
 use diagnostic::{diag, refuse, Diagnostic};
 
-use crate::channel_type::{classify, ChannelType};
+use crate::column_kind::{field_channel, ChannelType, Role};
 use crate::decode::decode;
 use crate::derived::Placed;
 use crate::category_colors::CategoryColorScale;
@@ -43,7 +43,7 @@ use crate::formats::ResolvedFormat;
 use crate::bound::{self,
     AuthoredLegend, Baselines,  Bounds, BoundsReason, Extent, Datum, Mark, MarkLayer, MarkStyle, Naming, Orient,
     FixedLadder, Ladder, PlaneParts, Sharing, Pos, RowRef, Rung, Scale, ScaleKind, Shape,
-    PointStyle, Toggle, Tooltip, TooltipEntry, ValueAxis, ValueDomain, Zero,
+    PointStyle, Toggle, Tooltip, TooltipEntry, TooltipHeader, ValueAxis, ValueDomain, Zero,
 };
 use crate::plot::domain::{self, Count};
 use crate::plot::facets::{self, FacetAxis, Facets};
@@ -68,6 +68,7 @@ fn refuse_unported(chart: &ScatterChart) -> Result<(), Diagnostic> {
         ("`x_label:` or `y_label:`", fields.x_label.is_some() || fields.y_label.is_some()),
         ("`sort:`", fields.sort.is_some()),
         ("`link:`", fields.shared.base.link.is_some()),
+        ("`style.conditional`", !chart.style.conditional.is_empty()),
     ];
     match unported.into_iter().find_map(|(field, set)| set.then_some(field)) {
         Some(field) => Err(unsupported(refuse!("a scatter with {field} is not supported"))),
@@ -142,6 +143,7 @@ fn value_axis(
     let axis = domain::Axis {
         zero,
         headroom,
+        percent: format.spec.contains('%'),
         count: axis_count,
         values: None,
         domain: ladder.domain(),
@@ -253,8 +255,8 @@ pub fn bind(
         return Err(unsupported(refuse!("a scatter `color:` with a row that draws no point is not supported")));
     }
     // A year-shaped x reads as a time axis, as production's x-type law rules.
-    for (field, dimension) in [(x_field, true), (y_field, false)] {
-        if classify(&dataset.schema, &dataset.rows, Some(field), dimension)? != ChannelType::Quantitative {
+    for (field, role) in [(x_field, Role::Dimension), (y_field, Role::Free)] {
+        if field_channel(&dataset.schema, &dataset.rows, field, role)? != ChannelType::Quantitative {
             return Err(unsupported(refuse!("a scatter on a year-shaped x is not supported")));
         }
     }
@@ -314,11 +316,10 @@ pub fn bind(
             return Err(unsupported(refuse!("a scatter legend with more entries than its `symbol_limit:` is not supported")));
         }
     }
-    let mut panels = panels;
     if let Some(colors) = &colors {
         for datum in panels.iter_mut().flatten() {
             datum.series = colors.of_row[datum.row.0];
-            datum.tooltip.header = Some(colors.series[datum.series].display.clone());
+            datum.tooltip.header = Some(TooltipHeader::swatched(colors.series[datum.series].display.clone()));
         }
     }
     let (series, legends) = match colors {
@@ -364,7 +365,7 @@ pub fn bind(
         baselines,
         axis_styles,
         diagnostics: crate::restated::axes(&p.tiers, [&p.x_ladder, &p.y_ladder], placed.public_id),
-        mark_style: MarkStyle { points: Some(point_style(chart)?), bins: None },
+        mark_style: MarkStyle { points: Some(point_style(chart)?), lines: None, bars: None, bins: None },
     })
     .map_err(internal("plot"))?;
     Ok(bound::Chart { title, subtitle, frame, family: Ok(bound::Family::Cartesian(bound::Cartesian::Plane(Box::new(plot)))) })

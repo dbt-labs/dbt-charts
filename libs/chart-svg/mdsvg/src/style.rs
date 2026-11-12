@@ -10,6 +10,7 @@
 //! constants no production call path reaches — `get_compact_style` always
 //! builds every field from the resolved board theme).
 
+use d3rs::invariant::{broken, Invariant};
 use crate::css::{is_css_breaking, python_repr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -298,9 +299,9 @@ impl Style {
     /// `Style` is validated without a second list to keep in step.
     pub fn validate_css(&self) -> Result<(), String> {
         let serde_json::Value::Object(fields) =
-            serde_json::to_value(self).expect("Style serializes to a JSON object")
+            serde_json::to_value(self).held("Style serializes to a JSON object")
         else {
-            unreachable!("Style is a struct")
+            broken("Style is a struct")
         };
         for (name, value) in &fields {
             let Some(text) = value.as_str() else { continue };

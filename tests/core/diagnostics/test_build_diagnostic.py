@@ -192,7 +192,9 @@ class TestConnectionFailureDetailBoundary:
         from dbt_charts.core.execute.query_result import connection_failure
 
         raw_driver_text = "FATAL: password authentication failed for user 'brian'"
-        result = connection_failure("postgres", RuntimeError(raw_driver_text))
+        result = connection_failure(
+            "postgres", RuntimeError(raw_driver_text), source="wh", origin="bigquery"
+        )
 
         assert result.error is not None
         d = result.error.to_diagnostic()

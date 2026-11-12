@@ -38,17 +38,18 @@
 //! `@charts.<name>.query` for a declared one (names are unique, so the nested board a chart was
 //! declared in does not matter).
 
-use crate::compose::{refuse_cycles, registry_key};
+use crate::compose::refuse_cycles;
 use crate::extends::FoldError;
 use crate::external::{source_required, External, Imports};
 use crate::files::ProjectFiles;
-use crate::index::{is_board_file, BoardIndex};
+use crate::index::BoardIndex;
 use crate::public_id::inline_id;
 use crate::sources::{check_sources, SourceRegistry, SourceUse};
 use board_model::board::layout::{LayoutAuthored, LayoutItemAuthored};
 use board_model::board::Board;
+use board_model::cache::CacheLayer;
 use board_model::chart::{Chart, ChartAuthored, ChartQuery, LayerQuery};
-use board_model::ids::{ChartId, ChartRef, Step};
+use board_model::ids::{ChartId, ChartRef, ItemId, Step};
 use board_model::ids::{QueryId, QueryName};
 use board_model::query::{
     literal_text, Incremental, Query, QueryAuthored, QueryBaseAuthored, SourceName,
@@ -75,8 +76,6 @@ pub enum HoistError {
     BadChartName(String),
     /// A hoisted query's id that an authored `queries:` key already holds.
     DuplicateQuery(String),
-    /// Two other-file queries one registry key names (`ERR-DUPLICATE-QUERY-NAME`).
-    DuplicateImport(Box<Diagnostic>),
     /// A chart names a query no board declares and that is not SQL (`ERR-UNKNOWN-QUERY`).
     UnknownQuery(Box<Diagnostic>),
     /// A layer names a query nothing declares (`ERR-UNRESOLVED-REFERENCE` in Python, which names
@@ -117,6 +116,12 @@ pub enum HoistError {
     QueryId(String),
 }
 
+impl From<crate::files::ReadError> for HoistError {
+    fn from(e: crate::files::ReadError) -> Self {
+        Self::refused(e.diagnostic())
+    }
+}
+
 impl HoistError {
     pub(crate) fn refused(d: Diagnostic) -> Self {
         Self::Refused(Box::new(d))
@@ -126,7 +131,6 @@ impl HoistError {
     pub(crate) fn diagnostics(&self) -> Vec<Diagnostic> {
         match self {
             Self::DuplicateChart(d)
-            | Self::DuplicateImport(d)
             | Self::UnknownQuery(d)
             | Self::UnresolvedReference(d)
             | Self::FieldInvalid(d)
@@ -153,7 +157,6 @@ impl fmt::Display for HoistError {
             Self::BadChartName(n) => write!(f, "'{n}' cannot name a chart"),
             Self::DuplicateQuery(n) => write!(f, "query name '{n}' is already declared"),
             Self::DuplicateChart(d)
-            | Self::DuplicateImport(d)
             | Self::UnknownQuery(d)
             | Self::UnresolvedReference(d)
             | Self::SourceRequired(d)
@@ -214,7 +217,22 @@ pub fn hoist_charts(
         public: BTreeMap::new(),
         synthetic: BTreeSet::new(),
         below: BTreeSet::new(),
+        variable_boards: BTreeMap::new(),
+        board: ItemId::root(),
+        scope_of_board: BoardScope::default().under(&patch.body.cache, &patch.body.incremental, &[])?,
+        boards: BTreeMap::new(),
+        query_owners: BTreeMap::new(),
     };
+    found
+        .boards
+        .insert(ItemId::root(), found.scope_of_board.clone());
+    found.query_owners.extend(
+        patch
+            .body
+            .queries
+            .keys()
+            .map(|key| (key.clone(), ItemId::root())),
+    );
     authored_names(patch.body.charts.keys())?;
     if patch.body.layout.is_none() {
         patch.body.layout = Some(default_rows(patch.body.charts.keys())?);
@@ -274,6 +292,7 @@ pub fn hoist_charts(
             if let Some((key, query)) = hoist_query(chart, &steps, file)? {
                 found.pending.push(Pending {
                     chart: name.clone(),
+                    board: ItemId::root(),
                     key,
                     query,
                 });
@@ -287,6 +306,9 @@ pub fn hoist_charts(
             stamp(&mut query, found.scopes.query(&pending.chart)?.as_ref());
             defaulted.push(pending.key.clone());
         }
+        found
+            .query_owners
+            .insert(pending.key.clone(), pending.board);
         found.queries.push((pending.key, query));
     }
     for (name, query) in found.queries {
@@ -302,8 +324,10 @@ pub fn hoist_charts(
         &found.scopes,
     )?;
     elsewhere.gathered.extend(imports.queries.iter().cloned());
-    let slot = imports.boards || patch.body.layout.as_ref().is_some_and(places_board_file);
-    refuse_cycles(&patch.body.queries, &elsewhere.scoped, slot)?;
+    for (key, board) in std::mem::take(&mut elsewhere.owners) {
+        found.query_owners.entry(key).or_insert(board);
+    }
+    refuse_cycles(file, &patch.body.queries, &elsewhere.scoped)?;
     patch
         .body
         .queries
@@ -320,14 +344,17 @@ pub fn hoist_charts(
         return Err(source_required(name));
     }
     let mut uses = elsewhere.uses;
-    let root_dir = file.as_str().rsplit_once('/').map_or("", |(d, _)| d);
+    // A board with no project location anchors nothing: an inline file source is then refused.
+    let root_dir = files
+        .located()
+        .then(|| file.as_str().rsplit_once('/').map_or("", |(d, _)| d));
     for (name, query) in &patch.body.queries {
         // A variable's option query is built without the source check; a query another file
         // declares was checked against that file.
         if found.synthetic.contains(name) || elsewhere.read.contains(name) {
             continue;
         }
-        let anchor = (!elsewhere.layers.contains(name)).then_some(root_dir);
+        let anchor = root_dir.filter(|_| !elsewhere.layers.contains(name));
         uses.extend(SourceUse::of(name, query, anchor));
     }
     // Python normalizes every declared chart once per board of the tree, each time with that
@@ -336,7 +363,7 @@ pub fn hoist_charts(
     let per_board = defaulted
         .iter()
         .chain(&elsewhere.declared_sql)
-        .map(|key| (key, Some(root_dir)))
+        .map(|key| (key, root_dir))
         .chain(elsewhere.imported_layers.iter().map(|key| (key, None)));
     for (key, anchor) in per_board {
         for source in found.scopes.root.iter().chain(&found.scopes.boards) {
@@ -367,7 +394,12 @@ pub fn hoist_charts(
         BoardIndex {
             public_ids,
             declared_below,
+            chart_boards: std::mem::take(&mut found.scopes.board_of),
+            variable_boards: std::mem::take(&mut found.variable_boards),
+            boards: found.boards,
+            query_owners: found.query_owners,
             query_boards,
+            text_queries: elsewhere.text_queries,
             ..BoardIndex::default()
         },
         inline,
@@ -515,33 +547,6 @@ fn check_query(name: &str, query: &QueryAuthored, external: bool) -> Result<(), 
     }
 }
 
-/// Whether a layout places another board's file, at any depth: Python then compiles that board
-/// into the root's registry and checks every query of it again, the hoisted ones included.
-fn places_board_file(l: &LayoutAuthored) -> bool {
-    let placed = |it: &LayoutItemAuthored| match it {
-        LayoutItemAuthored::Chart(name) => is_board_file(name.as_str()),
-        LayoutItemAuthored::Board(nested) => {
-            nested.body.layout.as_ref().is_some_and(places_board_file)
-        }
-        LayoutItemAuthored::InlineChart(_) => false,
-    };
-    match l {
-        LayoutAuthored::Rows(items) | LayoutAuthored::Cols(items) => items.iter().any(placed),
-        LayoutAuthored::Grid(g) => g
-            .items
-            .iter()
-            .flatten()
-            .filter_map(|c| c.item.as_ref())
-            .any(placed),
-        LayoutAuthored::Tabs(t) => t
-            .items
-            .iter()
-            .flatten()
-            .filter_map(|tab| tab.layout.as_ref())
-            .any(places_board_file),
-    }
-}
-
 /// The source a board's queries take: its own `source:` (an empty one reads as unset), else the
 /// enclosing board's.
 fn scope(
@@ -590,6 +595,18 @@ fn looks_like_sql(text: &str) -> bool {
     })
 }
 
+/// Every query gathered from another file belongs to the board of the chart that reached it,
+/// the composed ones included: a query only composed by a chart has no chart of its own.
+fn own_gathered(
+    owners: &mut BTreeMap<String, ItemId>,
+    gathered: &[(String, <Query as Leaf>::Patch)],
+    owner: &ItemId,
+) {
+    for (key, _) in gathered {
+        owners.entry(key.clone()).or_insert_with(|| owner.clone());
+    }
+}
+
 /// A chart's `query: name` (after an optional `queries.` prefix) becomes the id of the query of
 /// that name; SQL text becomes an inline query; anything else is an unknown query. The names of a
 /// chart a ref brought in are its own file's (`imports`), not this board's.
@@ -608,9 +625,23 @@ fn resolve_names(
     let mut sql = Vec::new();
     let mut ext = Vec::new();
     let mut imported = Vec::new();
+    let mut owners = BTreeMap::new();
+    let mut text_queries = BTreeMap::new();
     for (chart_name, chart) in patch.body.charts.iter_mut() {
         let Some(chart) = chart else { continue };
+        let owner = scopes
+            .board_of
+            .get(chart_name)
+            .cloned()
+            .unwrap_or_else(ItemId::root);
         let origin = imports.charts.get(chart_name);
+        if let Some(origin) = origin {
+            let read = external.imported_text_queries(origin, &mut imported, &mut uses)?;
+            own_gathered(&mut owners, &imported, &owner);
+            if !read.is_empty() {
+                text_queries.insert(chart_name.clone(), read);
+            }
+        }
         if let Some(slot) = chart.query_mut() {
             // Python resolves no chart-level `{ref: ..}`: it looks the ref up as a query name.
             if let Tri::Value(ChartQuery::Ref(r)) = &*slot {
@@ -630,13 +661,18 @@ fn resolve_names(
                 ];
                 let id = match origin.filter(|_| is_lexical(text)) {
                     Some(origin) => {
-                        external.imported_query(text, origin, &mut imported, &mut uses)?
+                        let id = external.imported_query(text, origin, &mut imported, &mut uses)?;
+                        own_gathered(&mut owners, &imported, &owner);
+                        id
                     }
                     None => {
                         // A chart's name may carry the `queries.` prefix; a layer's may not.
                         let name = text.strip_prefix("queries.").unwrap_or(text).to_string();
                         if name.contains('#') {
-                            external.query(&name, chart_name, file, &known, &mut ext, &mut uses)?
+                            let id = external
+                                .query(&name, chart_name, file, &known, &mut ext, &mut uses)?;
+                            own_gathered(&mut owners, &ext, &owner);
+                            id
                         } else {
                             let unknown = || {
                                 HoistError::UnknownQuery(Box::new(diag::err_unknown_query(
@@ -648,8 +684,13 @@ fn resolve_names(
                             let source = scopes.query_if_sql(chart_name, &name)?;
                             let id =
                                 resolve(&name, &steps, &known, file, &mut sql, source, unknown)?;
-                            if id.name().is_inline() && !scopes.inline.contains_key(chart_name) {
-                                declared_sql.push(id.name().as_str().to_string());
+                            if id.name().is_inline() {
+                                owners
+                                    .entry(id.name().as_str().to_string())
+                                    .or_insert_with(|| owner.clone());
+                                if !scopes.inline.contains_key(chart_name) {
+                                    declared_sql.push(id.name().as_str().to_string());
+                                }
                             }
                             id
                         }
@@ -663,7 +704,11 @@ fn resolve_names(
                 continue;
             };
             let id = match origin.filter(|_| is_lexical(name)) {
-                Some(origin) => external.imported_query(name, origin, &mut imported, &mut uses)?,
+                Some(origin) => {
+                    let id = external.imported_query(name, origin, &mut imported, &mut uses)?;
+                    own_gathered(&mut owners, &imported, &owner);
+                    id
+                }
                 None => {
                     let steps = [
                         Step::Key("charts"),
@@ -682,6 +727,9 @@ fn resolve_names(
                     let id = resolve(name, &steps, &known, file, &mut sql, source, unknown)?;
                     // Python normalizes a layer's SQL text with no project location.
                     if id.name().is_inline() {
+                        owners
+                            .entry(id.name().as_str().to_string())
+                            .or_insert_with(|| owner.clone());
                         layers.insert(id.name().as_str().to_string());
                         if origin.is_some() {
                             imported_layers.push(id.name().as_str().to_string());
@@ -706,32 +754,8 @@ fn resolve_names(
         .map(|(k, _)| k.clone())
         .collect();
     let mut gathered = std::collections::BTreeSet::new();
-    let mut keys = std::collections::BTreeMap::new();
     let scoped = imported.iter().map(|(name, _)| name.clone()).collect();
     for (name, query) in ext.into_iter().chain(imported) {
-        // Python registers another file's query under a generated key; a root query of that
-        // name clashes with it, and Python names the import and the root query's path.
-        if name.contains('#') && patch.body.queries.contains_key(&registry_key(&name)) {
-            let key = registry_key(&name);
-            let declared = format!("queries.{key}");
-            return Err(HoistError::DuplicateImport(Box::new(
-                diag::err_duplicate_query_name(key, name.as_str(), declared.as_str()),
-            )));
-        }
-        if name.contains('#') {
-            let held = keys
-                .entry(registry_key(&name))
-                .or_insert_with(|| name.clone());
-            if *held != name {
-                return Err(HoistError::DuplicateImport(Box::new(
-                    diag::err_duplicate_query_name(
-                        registry_key(&name),
-                        held.as_str(),
-                        name.as_str(),
-                    ),
-                )));
-            }
-        }
         match patch.body.queries.get(&name) {
             Some(held) if *held == query => {}
             Some(_) => return Err(HoistError::DuplicateQuery(name)),
@@ -742,6 +766,7 @@ fn resolve_names(
         }
     }
     Ok(Elsewhere {
+        owners,
         uses,
         read,
         layers,
@@ -749,6 +774,7 @@ fn resolve_names(
         imported_layers,
         scoped,
         gathered,
+        text_queries,
     })
 }
 
@@ -756,6 +782,8 @@ fn resolve_names(
 /// other files (checked where their directory is known), which of the board's own queries those
 /// are, and which are a layer's SQL text.
 struct Elsewhere {
+    /// The board of each query this pass made from a chart's text or another file.
+    owners: BTreeMap<String, ItemId>,
     uses: Vec<SourceUse>,
     read: BTreeSet<String>,
     layers: BTreeSet<String>,
@@ -768,6 +796,9 @@ struct Elsewhere {
     scoped: BTreeSet<String>,
     /// The other files' queries this board newly took in, plus its imports' own.
     gathered: BTreeSet<String>,
+    /// The query each `queries.<name>` an imported chart's display text reads stands for, by the
+    /// chart's key.
+    text_queries: BTreeMap<String, BTreeMap<String, QueryId>>,
 }
 
 /// Python's `_is_lexically_scoped_query_name`: an imported chart's `query:` that is read in the
@@ -852,6 +883,8 @@ struct Found<'f> {
     public: BTreeMap<ChartId, String>,
     /// The charts a nested board declares.
     below: BTreeSet<String>,
+    /// The nested board that declares each variable of one.
+    variable_boards: BTreeMap<String, ItemId>,
     file: &'f ProjectPath,
     /// The source of the board the walk is in.
     scope: Option<SourceName>,
@@ -867,11 +900,59 @@ struct Found<'f> {
     queries: Vec<(String, <Query as Leaf>::Patch)>,
     /// The names of the queries hoisted from a variable's `options.query` text.
     synthetic: BTreeSet<String>,
+    /// The board the walk is in, and its cache and incremental scopes folded down from the root.
+    board: ItemId,
+    scope_of_board: BoardScope,
+    boards: BTreeMap<ItemId, BoardScope>,
+    /// The board each query of the root's map belongs to.
+    query_owners: BTreeMap<String, ItemId>,
+}
+
+impl Found<'_> {
+    fn own_query(&mut self, key: &str) {
+        self.query_owners
+            .insert(key.to_string(), self.board.clone());
+    }
+}
+
+/// A board's cache and incremental settings as its queries inherit them: its own over every
+/// enclosing board's (Python's `_build_env` folds `merge_cache_layers(board_cache, board.cache)`
+/// down the nesting, and a nested board's `incremental:` replaces its parent's, `false` included).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BoardScope {
+    pub cache: CacheLayer,
+    pub incremental: Option<Incremental>,
+}
+
+impl BoardScope {
+    /// This scope under a board that authors `cache` and `incremental`.
+    fn under(
+        &self,
+        cache: &Tri<CacheLayer>,
+        incremental: &Tri<Incremental>,
+        at: &[String],
+    ) -> Result<Self, HoistError> {
+        let mut folded = self.clone();
+        if let Tri::Value(layer) = cache {
+            folded.cache.over(layer.clone());
+        }
+        if folded.cache.is_refused() {
+            let path = [at, &["cache".to_string(), "prefetch".to_string()]].concat();
+            return Err(HoistError::refused(
+                diag::err_cache_prefetch_needs_cache("board").at_path(diagnostic::ModelPath(path)),
+            ));
+        }
+        if let Tri::Value(i) = incremental {
+            folded.incremental = Some(i.clone());
+        }
+        Ok(folded)
+    }
 }
 
 /// A declared chart's inline query, hoisted but not yet stamped.
 struct Pending {
     chart: String,
+    board: ItemId,
     key: String,
     query: <Query as Leaf>::Patch,
 }
@@ -889,6 +970,9 @@ struct Scopes {
     declared_in: std::collections::BTreeMap<String, Option<SourceName>>,
     /// Each layout chart's own board source.
     inline: std::collections::BTreeMap<String, Option<SourceName>>,
+    /// The board each layout chart, and each chart a nested board declares, belongs to; a chart
+    /// the root declares is not listed.
+    board_of: BTreeMap<String, ItemId>,
 }
 
 impl Scopes {
@@ -1116,6 +1200,7 @@ fn item<'a>(
                 at.push(Step::Key("query"));
                 if let Some((key, mut query)) = hoist_query(&mut chart, at, found.file)? {
                     stamp(&mut query, found.scope.as_ref());
+                    found.own_query(&key);
                     found.queries.push((key, query));
                 }
                 at.pop();
@@ -1123,6 +1208,10 @@ fn item<'a>(
                     .scopes
                     .inline
                     .insert(id.as_str().to_string(), found.scope.clone());
+                found
+                    .scopes
+                    .board_of
+                    .insert(id.as_str().to_string(), found.board.clone());
                 found
                     .charts
                     .push((id.as_str().to_string(), String::new(), chart.into()));
@@ -1144,6 +1233,17 @@ fn item<'a>(
             let inner = scope(&nested.body.source, found.scope.as_ref())?;
             found.scopes.boards.extend(inner.clone());
             let outer = std::mem::replace(&mut found.scope, inner);
+            let board = ItemId::at(at);
+            let folded = found
+                .scope_of_board
+                .under(
+                    &nested.body.cache,
+                    &nested.body.incremental,
+                    &at.iter().map(step_loc).collect::<Vec<_>>(),
+                )?;
+            found.boards.insert(board.clone(), folded.clone());
+            let outer_board = std::mem::replace(&mut found.board, board);
+            let outer_board_scope = std::mem::replace(&mut found.scope_of_board, folded);
             let outer_used = std::mem::replace(&mut found.used, found.names.clone());
             for (name, chart) in nested.body.charts.iter_mut() {
                 if let Some(chart) = chart {
@@ -1151,6 +1251,7 @@ fn item<'a>(
                     if let Some((key, query)) = hoist_query(chart, &steps, found.file)? {
                         found.pending.push(Pending {
                             chart: name.clone(),
+                            board: found.board.clone(),
                             key,
                             query,
                         });
@@ -1159,6 +1260,10 @@ fn item<'a>(
             }
             found.below.extend(nested.body.charts.keys().cloned());
             for name in nested.body.charts.keys() {
+                found
+                    .scopes
+                    .board_of
+                    .insert(name.clone(), found.board.clone());
                 found
                     .scopes
                     .declared_in
@@ -1175,12 +1280,20 @@ fn item<'a>(
                 ));
             for (name, mut query) in std::mem::take(&mut nested.body.queries) {
                 stamp(&mut query, found.scope.as_ref());
+                found.own_query(&name);
                 found.declared_in.insert(
                     name.clone(),
                     board_model::ids::ItemId::at(at).as_str().to_string(),
                 );
                 found.declared.push((name, query));
             }
+            found.variable_boards.extend(
+                nested
+                    .body
+                    .variables
+                    .keys()
+                    .map(|name| (name.clone(), found.board.clone())),
+            );
             let mut vars = nested.body.variables.iter_mut().map(|(n, v)| {
                 let options = match &v.options {
                     Tri::Value(o) => Some((&o.column, &o.query)),
@@ -1195,6 +1308,8 @@ fn item<'a>(
                 layout(l, at, found)?;
             }
             found.scope = outer;
+            found.board = outer_board;
+            found.scope_of_board = outer_board_scope;
             found.used = outer_used;
         }
         LayoutItemAuthored::Chart(id) => found.scopes.placed.push((
@@ -1261,6 +1376,7 @@ fn hoist_variable_queries<'a, 'f>(
                 let mut query = sql_query(sql)?;
                 stamp(&mut query, found.scope.as_ref());
                 found.synthetic.insert(name.as_str().to_string());
+                found.own_query(name.as_str());
                 found.queries.push((name.as_str().to_string(), query));
                 *slot = Tri::Value(OptionsQuery::Name(name));
             }
@@ -1269,6 +1385,7 @@ fn hoist_variable_queries<'a, 'f>(
             let name = place(&["query"]);
             let mut query: <Query as Leaf>::Patch = (**inline).clone().into();
             stamp(&mut query, found.scope.as_ref());
+            found.own_query(name.as_str());
             found.queries.push((name.as_str().to_string(), query));
             *query_slot = Tri::Value(VariableQuery::Name(name));
         }

@@ -297,17 +297,17 @@ def own_title_fonts(
 def concrete_title_style(chart_style_context: ChartStyleContext) -> TitleStyle:
     """The chart's title style as a plain ``TitleStyle``, each ``auto`` font
     leaf replaced by the board title's value, for consumers that read a single
-    concrete font."""
+    concrete font. ``size`` has no board value (the painted size is
+    ``resolve_title_font``'s), so it is left out."""
     title = chart_style_context.title
     board_font = chart_style_context.cascaded.title.font
     leaves = {
         name: getattr(board_font, name)
-        for name in ("size", "weight", "family")
+        for name in ("weight", "family")
         if getattr(title.font, name) == AUTO
     }
-    return TitleStyle.model_validate(
-        {**title.model_dump(), "font": {**title.font.model_dump(), **leaves}}
-    )
+    font = title.font.model_dump(exclude={"size"})
+    return TitleStyle.model_validate({**title.model_dump(), "font": {**font, **leaves}})
 
 
 def resolve_title_font(

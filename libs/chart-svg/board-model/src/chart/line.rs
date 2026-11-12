@@ -8,7 +8,9 @@ use model_derive::Model;
 
 /// Line chart.
 #[derive(Debug, Clone, PartialEq, Model)]
-#[model(constraint(forbids(tooltip, when(set(layers)))))]
+#[model(constraint(forbids(tooltip, when(set(layers)),
+        message = "tooltip is not supported with layers: an overlay mark's card describes the layer, not a column of the base query."
+    )))]
 pub struct LineChart {
     #[flatten]
     pub tooltip: TooltipFields,

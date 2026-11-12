@@ -2,7 +2,7 @@
 //! The nice ladder and the exact bounds come from `d3rs::measure_axis::bake_ticks`,
 //! the one law bind and the renderer share.
 
-use d3rs::measure_axis::{apply_headroom, bake_ticks, MeasureAxis};
+use d3rs::measure_axis::{bake_ticks, MeasureAxis};
 use diagnostic::{diag, Diagnostic};
 
 use crate::bound::{Authored, Bounds, BoundsReason, Extent, Invalid, Ladder, Pin, PinReason, Rung, ValueDomain, Zero};
@@ -31,6 +31,8 @@ pub struct Axis<'a> {
     pub zero: Zero,
     /// `scale.headroom`, 0 when unset.
     pub headroom: f64,
+    /// The axis's format is a percent: headroom on values within [0, 1] stops at those bounds.
+    pub percent: bool,
     pub count: Option<Count>,
     /// `scale.values`.
     pub values: Option<&'a [f64]>,
@@ -79,6 +81,7 @@ pub fn linear(axis: &Axis, values: &[f64], text: RungText) -> Result<Option<Valu
         let baked = bake_ticks(
             &MeasureAxis {
                 headroom: Some(axis.headroom),
+                percent: axis.percent,
                 authored_domain: axis.domain,
                 authored_ladder: axis.values.map(<[f64]>::to_vec),
                 target_count: axis.count.map(Count::target),
@@ -141,7 +144,7 @@ fn linear_bounds(
             reason: BoundsReason::Pinned,
         },
         None if flat => Bounds {
-            extent: Extent::new(near, headroom_top(far, axis.headroom).max(near))?,
+            extent: Extent::new(near, headroom_top(far, axis.headroom, axis.percent, (near, far)).max(near))?,
             reason: BoundsReason::Fitted,
         },
         None => Bounds { extent: Extent::new(near, far)?, reason: BoundsReason::Fitted },
@@ -289,8 +292,8 @@ pub(crate) fn clip_to_domain(ticks: &[f64], authored: (f64, f64)) -> Vec<f64> {
 }
 
 /// The topmost value `headroom` buys above a positive total.
-pub fn headroom_top(total: f64, headroom: f64) -> f64 {
-    apply_headroom(total, Some(headroom))
+pub fn headroom_top(total: f64, headroom: f64, percent: bool, data: (f64, f64)) -> f64 {
+    d3rs::measure_axis::headroom_top(total, Some(headroom), percent, data)
 }
 
 /// Which axis of a log chart the data refuses.
@@ -349,7 +352,7 @@ mod tests {
     }
 
     fn axis(zero: Zero) -> Axis<'static> {
-        Axis { zero, headroom: 0.0, count: None, values: None, domain: None, min_step: None, independent: false, nice: None, mark: Mark::Bar }
+        Axis { zero, headroom: 0.0, percent: false, count: None, values: None, domain: None, min_step: None, independent: false, nice: None, mark: Mark::Bar }
     }
 
     fn rung_values(domain: &ValueDomain) -> Vec<f64> {
@@ -374,6 +377,36 @@ mod tests {
         let domain = linear(&axis, &[100.0, 200.0], &digits).unwrap().unwrap();
         assert_eq!((domain.min.map(|p| p.value), domain.max.map(|p| p.value)), (Some(90.0), Some(210.0)));
         assert_eq!(rung_values(&domain), [50.0, 100.0, 150.0, 200.0, 250.0]);
+    }
+
+    #[test]
+    fn a_percent_zoomed_axis_stops_headroom_at_the_unit_bounds() {
+        let axis = Axis { count: Some(Count::Auto), headroom: 0.08, percent: true, mark: Mark::Plotted, ..axis(Zero::Free) };
+        let domain = linear(&axis, &[0.38, 0.7, 1.0], &digits).unwrap().unwrap();
+        assert_eq!(domain.max.map(|p| p.value), Some(1.0));
+        assert_eq!(domain.min.map(|p| p.value), Some(0.38 - 0.08 * 0.62));
+        let low = linear(&axis, &[0.02, 0.5], &digits).unwrap().unwrap();
+        assert_eq!(low.min.map(|p| p.value), Some(0.0));
+        assert_eq!(low.max.map(|p| p.value), Some(0.5 + 0.08 * 0.48));
+    }
+
+    #[test]
+    fn a_percent_axis_past_the_unit_bounds_or_not_a_percent_keeps_headroom() {
+        let axis = Axis { count: Some(Count::Auto), headroom: 0.1, percent: true, ..axis(Zero::Free) };
+        let over = linear(&axis, &[0.4, 1.2], &digits).unwrap().unwrap();
+        assert_eq!(over.max.map(|p| p.value), Some(1.2 + 0.1 * 0.8));
+        let plain = Axis { percent: false, ..axis };
+        let domain = linear(&plain, &[0.4, 1.0], &digits).unwrap().unwrap();
+        assert_eq!(domain.max.map(|p| p.value), Some(1.0 + 0.1 * 0.6));
+    }
+
+    #[test]
+    fn a_percent_anchored_top_stops_at_100() {
+        let axis = Axis { count: Some(Count::Auto), headroom: 0.08, percent: true, ..axis(Zero::Anchored) };
+        let domain = linear(&axis, &[0.4, 1.0], &digits).unwrap().unwrap();
+        assert_eq!(domain.max.map(|p| p.value), Some(1.0));
+        let below = linear(&axis, &[0.4, 0.5], &digits).unwrap().unwrap();
+        assert_eq!(below.max.map(|p| p.value), Some(0.5 * 1.08));
     }
 
     #[test]

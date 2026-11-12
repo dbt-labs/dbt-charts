@@ -63,11 +63,12 @@ AUTHORING_PROMPT_TYPES = frozenset(
 )
 
 # The `chart` skill is the grammar page every authoring prompt composes;
+# `board-layout` adds how to arrange a board's elements, and
 # `report-design` adds report-specific guidance. Pure schema exploration
 # (`database_exploration`) doesn't build an artifact, so it composes no skill.
 _PROMPT_SKILLS: dict[str, tuple[str, ...]] = {
     "yaml_generation": ("chart",),
-    "dashboard_design": ("chart",),
+    "dashboard_design": ("chart", "board-layout"),
     "report_generation": ("chart", "report-design"),
     "database_exploration": (),
 }

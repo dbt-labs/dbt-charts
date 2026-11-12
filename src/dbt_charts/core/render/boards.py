@@ -123,7 +123,7 @@ def _footer_attribution_svg(
         return (
             f'<text x="{format_svg_numeric(px(end_x))}" y="{format_svg_numeric(y)}" '
             f'text-anchor="end" font-size="{format_svg_numeric(size)}" '
-            f'fill="{escape_attr(footer.font.color)}" font-family="{escape_attr(font_family)}"{weight}>'
+            f'fill="{escape_attr(footer.font.color)}" font-family="{escape_attr(font_family)}" data-dct-role="footer-text"{weight}>'
             f"{html.escape(content)}</text>"
         )
 
@@ -656,6 +656,7 @@ def _build_board_content_items(
     x_offset: float,
     y_offset: float,
     gap: float,
+    variables_gap: float,
     title_svg: str,
     title_height: float,
     text_svg: str,
@@ -712,6 +713,7 @@ def _build_board_content_items(
         variables_height=variables_height,
         inline_band_height=inline_header_height,
         gap=gap,
+        variables_gap=variables_gap,
         has_layout_items=bool(layout_content),
         opens_with_text=opens_with_text,
         card_padding=card_padding,
@@ -822,7 +824,7 @@ def _build_board_content_items(
         y += text_height
         header_end = y
         if variables_svg and not inline_header_svg:
-            y += gap  # text → variables: normal gap
+            y += variables_gap
 
     if header_authored_attrs and header:
         # A combined header opening with a title inherits that title's dead top
@@ -856,7 +858,7 @@ def _build_board_content_items(
 
     if variables_svg and not inline_header_svg:
         if not text_svg and title_svg:
-            y += gap  # title/band → variables (no text between): normal gap
+            y += variables_gap
         items.append(translate_group(px(content_x), px(y), variables_svg))
         y += variables_height
 
@@ -1311,6 +1313,7 @@ def _render_board_svg(
         variables_height=variables_height,
         inline_band_height=inline_header_height,
         gap=effective_gap,
+        variables_gap=effective_gap,
         has_layout_items=bool(board.layout.items),
         opens_with_text=opens_with_text(board, variables),
         card_padding=card_pad,
@@ -1357,6 +1360,7 @@ def _render_board_svg(
         x_offset=page_padding,
         y_offset=page_padding,
         gap=effective_gap,
+        variables_gap=effective_gap,
         title_svg=title_svg,
         title_height=title_height,
         text_svg=text_svg,
@@ -1732,6 +1736,7 @@ def render_nested_board(
         x_offset=ep.left,
         y_offset=ep.top,
         gap=gap,
+        variables_gap=float(resolved_style.variables.gap),
         title_svg=title_svg,
         title_height=title_height,
         title_line_box=nested_title_line_box,

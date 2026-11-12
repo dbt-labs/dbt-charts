@@ -71,8 +71,11 @@ pub enum Hint {
         valid: Vec<String>,
         nearest: Option<String>,
     },
-    /// A key a past grammar retired.
-    Retired(Retirement),
+    /// A key a past grammar retired, and the keys allowed where it sat.
+    Retired {
+        retirement: Retirement,
+        allowed: Vec<String>,
+    },
 }
 
 /// What the migration registry knows about a retired key.
@@ -115,18 +118,23 @@ const MAX_MISPLACED_HOMES: usize = 3;
 impl ParseError {
     /// The diagnostic with what the author is told beyond its code: for an unknown key, the
     /// generic form of Python's hint (the keys allowed there, the nearest, the blocks that do take the key) and fields
-    /// (`unknown_field`, `parent_path`, `allowed_keys`, `docs_topic`, `suggestion`).
+    /// (`unknown_field`, `parent_path`, `allowed_keys`, `docs_topic`, `suggestion`); for a retired
+    /// key, its action and the docs link, and the same fields but `suggestion`.
     pub fn into_diagnostic(self) -> Diagnostic {
-        let (
+        let (hint, Some(path)) = (self.hint, self.diagnostic.path.clone()) else {
+            return self.diagnostic;
+        };
+        let (mut allowed, nearest, valid_at, retired) = match hint {
             Some(Hint::Keys {
-                mut allowed,
+                allowed,
                 nearest,
                 valid_at,
-            }),
-            Some(path),
-        ) = (self.hint, self.diagnostic.path.clone())
-        else {
-            return self.diagnostic;
+            }) => (allowed, nearest, valid_at, None),
+            Some(Hint::Retired {
+                retirement,
+                allowed,
+            }) => (allowed, None, Vec::new(), Some(retirement)),
+            _ => return self.diagnostic,
         };
         let (field, parent) = match path.0.split_last() {
             Some((field, parent)) => (field.clone(), parent.to_vec()),
@@ -149,7 +157,9 @@ impl ParseError {
             "Unknown field {} at {shown}.",
             diagnostic::py_str_repr(&field)
         );
-        let hint = if allowed.is_empty() {
+        let hint = if let Some(r) = &retired {
+            format!("{} See: {YAML_REFERENCE_URL}", r.action)
+        } else if allowed.is_empty() {
             format!("{at} See: {YAML_REFERENCE_URL}")
         } else {
             let more = if allowed.len() > MAX_ALLOWED_KEYS {
@@ -170,7 +180,7 @@ impl ParseError {
                 let homes: Vec<String> = valid_at
                     .iter()
                     .take(MAX_MISPLACED_HOMES)
-                    .map(|h| format!("`{h}`"))
+                    .map(|h| format!("`{}`", display_parent(h)))
                     .collect();
                 parts.push(format!(
                     "`{field}` belongs at {}, not at `{shown}`.",
@@ -202,43 +212,6 @@ impl ParseError {
     }
 }
 
-/// `root` for the document, else the dotted path.
-fn display_parent(parent: &str) -> &str {
-    if parent.is_empty() {
-        "root"
-    } else {
-        parent
-    }
-}
-
-/// What to try for an unknown key: where it is, what is allowed there, the near miss, and the
-/// other blocks that take the key.
-fn unknown_key_hint(
-    key: &str,
-    parent: &str,
-    allowed: &[String],
-    nearest: Option<&str>,
-    valid_at: &[String],
-) -> String {
-    let mut hint = format!("Unknown field '{key}' at {}.", display_parent(parent));
-    if !allowed.is_empty() {
-        let shown: Vec<&str> = allowed.iter().take(40).map(String::as_str).collect();
-        let more = if allowed.len() > 40 { ", ..." } else { "" };
-        hint.push_str(&format!(" Allowed keys: {}{more}.", shown.join(", ")));
-    }
-    if let Some(near) = nearest {
-        hint.push_str(&format!(" Did you mean '{near}'?"));
-    }
-    if !valid_at.is_empty() {
-        let places: Vec<&str> = valid_at
-            .iter()
-            .map(|p| if p.is_empty() { "root" } else { p.as_str() })
-            .collect();
-        hint.push_str(&format!(" The key is also valid at {}.", places.join(", ")));
-    }
-    hint
-}
-
 fn range(span: Span) -> SourceRange {
     SourceRange::new(span.start, span.end)
 }
@@ -258,6 +231,10 @@ pub struct Walk<'a> {
     path: Vec<Seg>,
     open: Vec<&'static str>,
     found: Vec<String>,
+    /// The tag of the tagged-union variant the next model entered is, if one is being entered.
+    variant: Option<String>,
+    /// Each tagged-union variant's model: where it sits, its tag, and the keys it takes.
+    variants: Vec<(String, String, Vec<String>)>,
 }
 
 impl Walk<'_> {
@@ -270,9 +247,20 @@ impl Walk<'_> {
         if keys.iter().any(|k| k == self.key) {
             self.found.push(render_path(&self.path));
         }
+        if let Some(tag) = self.variant.take() {
+            self.variants
+                .push((render_path(&self.path), tag, keys.to_vec()));
+        }
         self.open.push(name);
         fields(self);
         self.open.pop();
+    }
+
+    /// Walk the model of the tagged-union variant `tag`, noting the keys it takes.
+    pub fn variant(&mut self, tag: &str, walk: impl FnOnce(&mut Self)) {
+        self.variant = Some(tag.to_string());
+        walk(self);
+        self.variant = None;
     }
 
     pub fn field(&mut self, name: &str, walk: impl FnOnce(&mut Self)) {
@@ -494,26 +482,23 @@ impl<'a> Cx<'a> {
                         r.history.as_str(),
                     )
                     .with_sink_param("field_path", field_path.into())
-                    .with_sink_param("unknown_field", key.into())
-                    .with_sink_param("parent_path", display_parent(&parent).into())
-                    .with_sink_param("retired_in", r.retired_in.as_str().into())
-                    .with_hint(r.action.as_str());
+                    .with_sink_param("retired_in", r.retired_in.as_str().into());
                     let d = match &r.successor {
                         Some(s) => d.with_sink_param("successor", s.as_str().into()),
                         None => d,
                     };
-                    (d, Hint::Retired(r))
+                    (
+                        d,
+                        Hint::Retired {
+                            retirement: r,
+                            allowed: allowed.to_vec(),
+                        },
+                    )
                 }
                 None => {
                     let nearest = nearest(key, allowed);
                     let valid_at = self.valid_elsewhere(key, &parent);
-                    let d = diag::err_extra_field(field_path).with_hint(unknown_key_hint(
-                        key,
-                        &parent,
-                        allowed,
-                        nearest.as_deref(),
-                        &valid_at,
-                    ));
+                    let d = diag::err_extra_field(field_path);
                     let hint = Hint::Keys {
                         allowed: allowed.to_vec(),
                         nearest,
@@ -544,17 +529,11 @@ impl<'a> Cx<'a> {
             path: Vec::new(),
             open: Vec::new(),
             found: Vec::new(),
+            variant: None,
+            variants: Vec::new(),
         };
         (self.root_walk)(&mut w);
-        let mut found: Vec<String> = Vec::new();
-        for p in w.found {
-            if !is_here(&p, here) && !found.contains(&p) {
-                found.push(p);
-            }
-        }
-        found.sort_by_key(|p| p.len());
-        found.truncate(3);
-        found
+        nearest_homes(&w.found, here)
     }
 
     /// A required key (a union's tag) is absent.
@@ -607,16 +586,83 @@ impl<'a> Cx<'a> {
     }
 }
 
-/// Whether `pattern` (a walk path, where `*` is any map key) is the path `here`.
-fn is_here(pattern: &str, here: &str) -> bool {
-    let (mut a, mut b) = (pattern.split('.'), here.split('.'));
-    loop {
-        match (a.next(), b.next()) {
-            (None, None) => return true,
-            (Some(x), Some(y)) if x == "*" || x == y => {}
-            _ => return false,
+/// The keys each tagged-union variant takes where the schema path is `at` (`*` for any map key or
+/// list index), by tag, in the order the union declares them.
+pub fn variant_keys<T: FromNode>(at: &str) -> Vec<(String, Vec<String>)> {
+    let mut w = Walk {
+        key: "",
+        path: Vec::new(),
+        open: Vec::new(),
+        found: Vec::new(),
+        variant: None,
+        variants: Vec::new(),
+    };
+    T::walk(&mut w);
+    w.variants
+        .into_iter()
+        .filter(|(path, ..)| path == at)
+        .map(|(_, tag, keys)| (tag, keys))
+        .collect()
+}
+
+/// `root` for the document, else the dotted path.
+fn display_parent(parent: &str) -> &str {
+    if parent.is_empty() {
+        "root"
+    } else {
+        parent
+    }
+}
+
+/// Where the key is valid, nearest the block it was written in first (Python's
+/// `_misplaced_key_hint`): for each ancestor of `here`, innermost out to the document, the ancestor
+/// itself and then the blocks directly under it, alphabetically. `found` holds every schema path
+/// the key is valid at, a `*` standing for any map key or list index; a home is spelled with the
+/// keys `here` actually has, and `""` is the document.
+fn nearest_homes(found: &[String], here: &str) -> Vec<String> {
+    let at: Vec<&str> = if here.is_empty() {
+        Vec::new()
+    } else {
+        here.split('.').collect()
+    };
+    let schema: Vec<Vec<&str>> = found.iter().map(|p| p.split('.').collect()).collect();
+    let under = |pattern: &[&str], ancestor: &[&str]| {
+        pattern.iter().zip(ancestor).all(|(p, a)| *p == "*" || p == a)
+    };
+    let mut homes: Vec<String> = Vec::new();
+    for depth in (0..=at.len()).rev() {
+        let ancestor = at.get(..depth).unwrap_or_default();
+        let mut candidates: Vec<String> = Vec::new();
+        // the document is the empty pattern, which `split` renders as one empty segment
+        let is_ancestor = |p: &&Vec<&str>| match (depth, p.as_slice()) {
+            (0, [""]) => true,
+            (d, p) => p.len() == d && d > 0 && under(p, ancestor),
+        };
+        if depth < at.len() && schema.iter().any(|p| is_ancestor(&p)) {
+            candidates.push(ancestor.join("."));
+        }
+        let mut children: Vec<&str> = schema
+            .iter()
+            .filter(|p| p.len() == depth + 1 && under(p, ancestor) && p.last() != Some(&"*"))
+            .filter_map(|p| p.last().copied())
+            .filter(|child| !(depth == 0 && child.is_empty()))
+            .collect();
+        children.sort_unstable();
+        candidates.extend(children.into_iter().map(|child| {
+            ancestor
+                .iter()
+                .copied()
+                .chain([child])
+                .collect::<Vec<_>>()
+                .join(".")
+        }));
+        for home in candidates {
+            if home != here && !homes.contains(&home) {
+                homes.push(home);
+            }
         }
     }
+    homes
 }
 
 /// The comparison form of a name: case, spaces and hyphens ignored.

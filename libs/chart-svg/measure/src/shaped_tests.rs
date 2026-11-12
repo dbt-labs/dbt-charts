@@ -303,10 +303,54 @@ fn a_weighted_verdict_on_a_face_without_a_weight_axis_fails_as_production_does()
 }
 
 #[test]
-fn a_shipped_face_beyond_the_painted_ones_is_read_once() {
+fn a_shipped_face_beyond_the_painted_ones_resolves_to_the_same_bytes_each_time() {
     let book = book();
     let medium = font("'Source Serif 4 Medium'", 10.0, 400.0);
-    let first = book.production_face(medium.family).unwrap();
-    let second = book.production_face(medium.family).unwrap();
+    let first = book.production_face(medium.family);
+    let second = book.production_face(medium.family);
     assert!(std::ptr::eq(first, second));
+}
+
+fn fonts_dir() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../dbt-charts/src/dbt_charts/core/render/fonts")
+}
+
+fn font_files() -> Vec<(String, Vec<u8>)> {
+    std::fs::read_dir(fonts_dir())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|e| e == "ttf"))
+        .map(|path| (path.file_name().unwrap().to_str().unwrap().to_string(), std::fs::read(&path).unwrap()))
+        .collect()
+}
+
+/// A book handed its files' bytes does no I/O and measures as the book read from the directory does.
+#[test]
+fn a_book_built_from_bytes_measures_as_the_directory_book_does() {
+    let from_bytes = FontBook::from_files(font_files()).unwrap();
+    let text = "Revenue by region, 2024";
+    for family in [INTER, MONO] {
+        let want = book().run(text, &font(family, 11.0, 400.0)).unwrap();
+        let got = from_bytes.run(text, &font(family, 11.0, 400.0)).unwrap();
+        assert_eq!(got, want, "{family}");
+    }
+}
+
+/// A painted face the host did not hand over is an error naming it, never a book that falls back.
+#[test]
+fn a_book_missing_a_painted_face_is_an_error_naming_it() {
+    let files: Vec<_> = font_files().into_iter().filter(|(name, _)| name != "DBTSansTabular-Regular.ttf").collect();
+    let err = FontBook::from_files(files).err().unwrap();
+    assert!(err.contains("DBTSansTabular-Regular.ttf"), "{err}");
+}
+
+/// A painted face that is not a font is an error too.
+#[test]
+fn a_book_with_a_painted_face_that_does_not_parse_is_an_error() {
+    let files: Vec<_> = font_files()
+        .into_iter()
+        .map(|(name, bytes)| if name == "NotoEmoji-Regular.ttf" { (name, vec![0u8; 8]) } else { (name, bytes) })
+        .collect();
+    let err = FontBook::from_files(files).err().unwrap();
+    assert!(err.contains("NotoEmoji-Regular.ttf"), "{err}");
 }

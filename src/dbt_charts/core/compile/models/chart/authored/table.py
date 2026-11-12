@@ -7,10 +7,10 @@ from typing import Annotated, ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dbt_charts.core.compile.models.constraints import Constraint, Forbids, IsSet
-from dbt_charts.core.compile.models.markers import Channel
+from dbt_charts.core.compile.models.markers import Channel, ColumnRef
 from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
 
-from ._base import _ConditionalFormattingField, _SharedChartFields
+from ._base import _SharedChartFields
 
 
 class TableSpanner(BaseModel):
@@ -20,7 +20,7 @@ class TableSpanner(BaseModel):
 
     label: Annotated[str, Field(description="Group label for the listed columns.")]
     columns: Annotated[
-        list[str],
+        list[ColumnRef],
         Field(
             min_length=1,
             description=(
@@ -32,7 +32,7 @@ class TableSpanner(BaseModel):
     ]
 
 
-class TableChart(_SharedChartFields, _ConditionalFormattingField):
+class TableChart(_SharedChartFields):
     """Authored patch for table charts."""
 
     model_config = ConfigDict(extra="forbid")

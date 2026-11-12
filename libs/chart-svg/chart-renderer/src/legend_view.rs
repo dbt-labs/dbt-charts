@@ -573,6 +573,7 @@ pub(crate) fn refit(axis: &mut crate::common::AxisStyle, shown: &[f64], column_f
     }
     let law = d3rs::measure_axis::MeasureAxis {
         headroom: axis.scale.get("headroom").and_then(Value::as_f64),
+        percent: axis.labels.format.as_ref().is_some_and(|slot| slot.spec.contains('%')),
         authored_domain: axis.authored_continuous_domain(),
         authored_ladder: axis.authored_scale_values(),
         target_count: axis.ticks.count.map(|count| count as usize),

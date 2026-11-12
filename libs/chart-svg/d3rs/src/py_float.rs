@@ -1,3 +1,7 @@
+
+
+use crate::invariant::{Invariant, at, at_mut};
+
 /// One addend of CPython's `sum()`.
 #[derive(Debug, Clone, Copy)]
 pub enum PyNum {
@@ -52,14 +56,14 @@ pub fn py_fsum(values: &[f64]) -> f64 {
         let mut x = value;
         let mut kept = 0;
         for j in 0..partials.len() {
-            let mut y = partials[j];
+            let mut y = *at(&partials, j);
             if x.abs() < y.abs() {
                 std::mem::swap(&mut x, &mut y);
             }
             let hi = x + y;
             let lo = y - (hi - x);
             if lo != 0.0 {
-                partials[kept] = lo;
+                *at_mut(&mut partials, kept) = lo;
                 kept += 1;
             }
             x = hi;
@@ -70,12 +74,12 @@ pub fn py_fsum(values: &[f64]) -> f64 {
     let Some(mut idx) = partials.len().checked_sub(1) else {
         return 0.0;
     };
-    let mut hi = partials[idx];
+    let mut hi = *at(&partials, idx);
     let mut lo = 0.0;
     while idx > 0 {
         let x = hi;
         idx -= 1;
-        let y = partials[idx];
+        let y = *at(&partials, idx);
         hi = x + y;
         lo = y - (hi - x);
         if lo != 0.0 {
@@ -83,7 +87,7 @@ pub fn py_fsum(values: &[f64]) -> f64 {
         }
     }
     // Round half to even across the discarded partials.
-    if idx > 0 && ((lo < 0.0 && partials[idx - 1] < 0.0) || (lo > 0.0 && partials[idx - 1] > 0.0)) {
+    if idx > 0 && ((lo < 0.0 && *at(&partials, idx - 1) < 0.0) || (lo > 0.0 && *at(&partials, idx - 1) > 0.0)) {
         let y = lo * 2.0;
         let x = hi + y;
         if y == x - hi {
@@ -114,7 +118,7 @@ pub fn float_repr(x: f64) -> String {
     // rounded one does not round-trip (a power-of-two boundary).
     let shortest = format!("{:e}", x.abs());
     let digit_count =
-        shortest.split('e').next().expect("mantissa").len() - usize::from(shortest.contains('.'));
+        shortest.split('e').next().held("mantissa").len() - usize::from(shortest.contains('.'));
     let rounded = format!("{:.*e}", digit_count - 1, x.abs());
     let sci = if rounded.parse::<f64>() == Ok(x.abs()) {
         rounded
@@ -123,8 +127,8 @@ pub fn float_repr(x: f64) -> String {
     };
     let (mantissa, exp) = sci
         .split_once('e')
-        .expect("LowerExp always has an exponent");
-    let exp: i32 = exp.parse().expect("LowerExp exponent is an integer");
+        .held("LowerExp always has an exponent");
+    let exp: i32 = exp.parse().held("LowerExp exponent is an integer");
     let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
     let decpt = exp + 1;
     let ndigits = digits.len() as i32;
@@ -170,8 +174,8 @@ pub fn format_g(x: f64) -> String {
     let sci = format!("{:.5e}", x.abs());
     let (mantissa, exp) = sci
         .split_once('e')
-        .expect("LowerExp always has an exponent");
-    let exp: i32 = exp.parse().expect("LowerExp exponent is an integer");
+        .held("LowerExp always has an exponent");
+    let exp: i32 = exp.parse().held("LowerExp exponent is an integer");
     let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
     let digits = digits.trim_end_matches('0');
     let body = if (-4..6).contains(&exp) {

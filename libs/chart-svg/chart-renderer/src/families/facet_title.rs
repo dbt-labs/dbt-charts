@@ -61,7 +61,7 @@ pub(crate) fn layout_title(
 ) -> Result<TitleLayout, String> {
     let eff_title_style = src.effective_style();
     let eff_title_ref = eff_title_style.as_ref().or(src.title_style);
-    let font_size = eff_title_ref.and_then(|ts| ts.font.size).unwrap_or(18.0);
+    let font_size = crate::common::painted_title_size(src.title.is_some() || src.subtitle.is_some(), eff_title_ref)?;
     let Some(raw_title) = src.title else { return Ok(TitleLayout::Untitled) };
     let case = eff_title_ref.and_then(|ts| ts.font.case.as_deref()).unwrap_or("none");
     let text = display_text::case::apply_case(raw_title, case)?;
@@ -85,7 +85,6 @@ pub(crate) fn layout_title(
             subtitle,
             eff_title_ref,
             font_size,
-            crate::common::title_measure_font_size(src.title_style),
             avail_w,
             fonts,
         )?;

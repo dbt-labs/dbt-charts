@@ -33,6 +33,9 @@ from dbt_charts.core.compile.resolve.chart._channels import (
     _column_numeric_values,
 )
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset, ChartRows
+from dbt_charts.core.compile.resolve.chart._conditional import (
+    validate_mark_conditional,
+)
 from dbt_charts.core.compile.resolve.chart._domain import _CartesianTickResolution
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
@@ -46,6 +49,8 @@ from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
     _effective_requested_alias_palette,
     _effective_single_series_fill,
+    _primary_mark_paint,
+    _unchanneled_fill,
 )
 from dbt_charts.core.compile.resolve.chart._pattern import resolve_pattern
 from dbt_charts.core.compile.resolve.chart._plan import (
@@ -119,6 +124,7 @@ def _resolve_heatmap(
     )
     primary = plan.primary
     heatmap = merge_unset(board_family_style(chart_style_context, normalized), primary)
+    validate_mark_conditional(heatmap.conditional, data, unsupported=("marks.text",))
     channels = plan.channels
     ay_merged = plan.axes.y.style
     # Heatmap's color channel is always a gradient (a continuous scale over
@@ -200,7 +206,10 @@ def _resolve_heatmap(
         chart_style_context,
         heatmap.pattern,
         _effective_single_series_fill(
-            chart_style_context, primary, rhythm_slot=normalized.rhythm_slot
+            chart_style_context,
+            primary,
+            ("marks", "rect", "color"),
+            rhythm_slot=normalized.rhythm_slot,
         ),
         primary,
     )
@@ -245,6 +254,16 @@ def _resolve_heatmap(
         ),
         chart_type="heatmap",
         style=ResolvedHeatmapStyle(
+            # An empty palette is a legal heatmap with a color channel; only a
+            # colorless heatmap reads the fill.
+            single_series_fill=(
+                _unchanneled_fill(
+                    chart_style_context, primary, ("marks", "rect", "color")
+                )
+                if _effective_palette(chart_style_context, primary)
+                or _primary_mark_paint(primary, ("marks", "rect", "color"))
+                else None
+            ),
             color_gradient=(
                 bake_scale_target_stops(
                     ScaleTargetConfig.model_validate(
@@ -255,6 +274,7 @@ def _resolve_heatmap(
                 else None
             ),
             rect_mark=heatmap.marks.rect,
+            conditional=heatmap.conditional,
             label_usable_ratio=chart_style_context.label_usable_ratio,
             title_font=_tf,
             **style_tail,

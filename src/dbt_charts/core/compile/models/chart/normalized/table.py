@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import Field
 
 from dbt_charts.core.compile.models.chart.authored import TableSpanner
+from dbt_charts.core.compile.models.markers import ColumnRef
 from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
 
 from ._base import _SharedChartFields
@@ -15,19 +16,21 @@ from ._base import _SharedChartFields
 class TableChart(_SharedChartFields):
     """Normalized table chart.
 
-    filters, conditional_formatting, link, and notes are inherited
+    filters, link, and notes are inherited
     from _BaseChartFields and not re-declared here.
     """
 
     type: Literal["table"]
-    rows: list[str] | None = Field(
+    rows: list[ColumnRef] | None = Field(
         default=None, description="Pivot row dimension fields."
     )
-    columns: list[str] | None = Field(
+    columns: list[ColumnRef] | None = Field(
         default=None, description="Pivot column dimension fields."
     )
-    values: list[str] | None = Field(default=None, description="Pivot measure fields.")
-    row_role: str | None = Field(
+    values: list[ColumnRef] | None = Field(
+        default=None, description="Pivot measure fields."
+    )
+    row_role: ColumnRef | None = Field(
         default=None, description="Query column carrying each row's role."
     )
     spanners: list[TableSpanner] | None = Field(

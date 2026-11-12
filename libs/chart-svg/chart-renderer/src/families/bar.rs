@@ -346,6 +346,102 @@ struct BarStyle {
     stack_order: Option<String>,
     #[serde(default)]
     overlap: Option<Overlap>,
+    /// `style.conditional`: per-column rules restyling a base-layer bar by its own row.
+    #[serde(default)]
+    conditional: Option<std::collections::BTreeMap<String, Vec<BarRule>>>,
+}
+
+/// One `style.conditional` rule (`BarChartStyleConditional`): a predicate beside the
+/// per-bar style it applies.
+#[derive(Deserialize)]
+struct BarRule {
+    #[serde(flatten)]
+    predicate: crate::conditional::Predicate,
+    #[serde(default)]
+    marks: Option<BarRuleMarks>,
+}
+
+#[derive(Deserialize)]
+struct BarRuleMarks {
+    #[serde(default)]
+    bar: Option<BarRuleBar>,
+    #[serde(default)]
+    text: Option<BarRuleText>,
+}
+
+#[derive(Deserialize)]
+struct BarRuleBar {
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    opacity: Option<f64>,
+    #[serde(default)]
+    border: Option<BarRuleBorder>,
+}
+
+#[derive(Deserialize)]
+struct BarRuleBorder {
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    width: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct BarRuleText {
+    #[serde(default)]
+    font: Option<BarRuleFont>,
+}
+
+#[derive(Deserialize)]
+struct BarRuleFont {
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    weight: Option<Value>,
+}
+
+/// What the matched rules set on one bar, key by key; unset keys keep the static style.
+#[derive(Default)]
+pub(crate) struct BarPatch {
+    fill: Option<String>,
+    opacity: Option<f64>,
+    stroke: Option<String>,
+    stroke_w: Option<f64>,
+    pub(crate) label_color: Option<String>,
+    pub(crate) label_weight: Option<String>,
+}
+
+impl BarPatch {
+    pub(crate) fn fill<'a>(&'a self, static_fill: &'a str) -> &'a str {
+        self.fill.as_deref().unwrap_or(static_fill)
+    }
+
+    /// A pattern fill's label ink no longer names the paint once a rule replaces the fill.
+    pub(crate) fn ink<'a>(&self, static_ink: Option<&'a str>) -> Option<&'a str> {
+        static_ink.filter(|_| self.fill.is_none())
+    }
+
+    pub(crate) fn opacity(&self, static_opacity: Option<f64>) -> Option<f64> {
+        self.opacity.or(static_opacity)
+    }
+
+    pub(crate) fn stroke<'a>(&'a self, static_stroke: &'a str) -> &'a str {
+        self.stroke.as_deref().unwrap_or(static_stroke)
+    }
+
+    pub(crate) fn stroke_w(&self, static_width: f64) -> f64 {
+        self.stroke_w.unwrap_or(static_width)
+    }
+
+    /// The patched fill where `static_fill` is the series color a label inherits.
+    pub(crate) fn label_fill(&self, static_fill: Option<String>) -> Option<String> {
+        static_fill.map(|fill| self.fill.clone().unwrap_or(fill))
+    }
+
+    pub(crate) fn paints_label(&self) -> bool {
+        self.label_color.is_some() || self.label_weight.is_some()
+    }
 }
 
 #[derive(Deserialize)]
@@ -619,6 +715,49 @@ fn overlap_errors(r: &BarResolved, payload: &Payload) -> Result<(), Diagnostic> 
 }
 
 impl BarResolved {
+    /// The patch `style.conditional` makes to the base-layer bar drawn under `key`, tested
+    /// against that bar's own row (a stacked segment is its own row). Rules on different
+    /// columns never set the same key (resolve refuses it), so column order is immaterial.
+    pub(crate) fn patch_of(
+        &self,
+        rows: &[serde_json::Map<String, Value>],
+        datum_of: &std::collections::HashMap<(String, String), usize>,
+        key: &(String, String),
+    ) -> Result<BarPatch, String> {
+        let mut patch = BarPatch::default();
+        let Some(conditional) = self.style.conditional.as_ref().filter(|c| !c.is_empty()) else {
+            return Ok(patch);
+        };
+        let row = datum_of.get(key).map(|&index| &rows[index]).ok_or_else(|| format!("bar: no row drew the bar at {key:?}"))?;
+        for (column, rules) in conditional {
+            if crate::conditional::other_series(row, column, &self.wide_measures) {
+                continue;
+            }
+            for rule in crate::conditional::matching(rules, |r| &r.predicate, row.get(column))? {
+                let Some(marks) = &rule.marks else { continue };
+                if let Some(bar) = &marks.bar {
+                    patch.fill = bar.color.clone().or(patch.fill);
+                    patch.opacity = bar.opacity.or(patch.opacity);
+                    if let Some(border) = &bar.border {
+                        patch.stroke = border.color.clone().or(patch.stroke);
+                        patch.stroke_w = border.width.or(patch.stroke_w);
+                    }
+                }
+                if let Some(font) = marks.text.as_ref().and_then(|t| t.font.as_ref()) {
+                    patch.label_color = font.color.clone().or(patch.label_color);
+                    if let Some(weight) = &font.weight {
+                        let css = super::table::bind::font_weight_as_css(weight);
+                        if !super::table::VALID_FONT_WEIGHTS.contains(&css.as_str()) {
+                            return Err(format!("bar: conditional font weight {css:?} is not a CSS weight"));
+                        }
+                        patch.label_weight = Some(css);
+                    }
+                }
+            }
+        }
+        Ok(patch)
+    }
+
     /// The paint of the bar at `cat` on a chart with no color series: the single series' fill,
     /// the motif of its slot in `cat_domain` when the chart patterns a category, or its step on
     /// the pattern ramp when it patterns a quantitative field.
@@ -1125,6 +1264,13 @@ mod tests {
 
     fn make_payload(payload_json: serde_json::Value) -> Payload {
         crate::test_payload(payload_json)
+    }
+
+    #[test]
+    fn null_style_conditional_renders_like_none() {
+        let mut json = make_conditional_horizontal_payload(false);
+        json["style"]["conditional"] = serde_json::Value::Null;
+        render(&make_payload(json), &test_fonts()).expect("a null style.conditional renders");
     }
 
     /// One drawn `<rect>` or `<path>` of a printed SVG, in paint order: its tag text and its box. A
@@ -6055,10 +6201,10 @@ mod tests {
             .map(|s| fonts.measure(s, TEST_FONT, 11.0).expect("test font measures"))
             .fold(0.0_f64, f64::max);
         let val_gutter = 6.0 + max_val_w;
-        // The stub's own reach: labels.padding(6) + "Revenue"'s width.
+        // The stub's own reach: labels.padding(6) + "Revenue, $"'s width.
         // The stub's own width is shaped (`build_rows_composed`'s
         // `measure_shaped`, GPOS kerning), unlike the axis tick labels above.
-        let stub_w = fonts.measure_shaped("Revenue", TEST_FONT, 11.0).expect("test font measures");
+        let stub_w = fonts.measure_shaped("Revenue, $", TEST_FONT, 11.0).expect("test font measures");
         let stub_reach = 6.0 + stub_w;
         // Vega's own `autosize: pad` negotiation snaps the view's origin to
         // a whole pixel (`docs/laws-support-table.md`'s plot-origin note) —
@@ -6105,7 +6251,7 @@ mod tests {
                     }
                     let svg = render(&make_payload(payload_json), &fonts)
                         .unwrap_or_else(|e| panic!("{edge} legend, {strip} strip, layered {layered}: {e:?}"));
-                    assert!(svg.contains(">Revenue<"), "{svg}");
+                    assert!(svg.contains(">Revenue, $<"), "{svg}");
                     support_table_strip::assert_legend_clears_strip(&svg, &fonts);
                 }
             }
@@ -6159,15 +6305,14 @@ mod tests {
 
         // This fixture takes the composed autosize-pad arm: cells are
         // right-aligned at `band_center + dx` (one shared lane, dx = half the
-        // strip's cell width, which counts the anchor's `$`), and the trimmed
-        // currency row declares its `$` once on the anchor cell — the second
-        // cell paints bare digits.
+        // strip's cell width), and the row label declares the `$`: both cells
+        // paint bare digits.
         let x_of_text = |needle: &str| -> f64 {
             let pos = svg.find(needle).unwrap_or_else(|| panic!("{needle} missing: {svg}"));
             let tag_start = svg[..pos].rfind("<text").unwrap();
             svg[tag_start..pos].split("x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
         };
-        let cell_xs: Vec<f64> = vec![x_of_text(">$100<"), x_of_text(">200<")];
+        let cell_xs: Vec<f64> = vec![x_of_text(">100<"), x_of_text(">200<")];
 
         let lane_offsets: Vec<f64> = cell_xs
             .iter()
@@ -6179,11 +6324,11 @@ mod tests {
             "both cells share one band-centered lane (equal dx): {lane_offsets:?}\n{svg}"
         );
         let cell_w = fonts
-            .measure("$200", "'Inter'", 11.0)
+            .measure("200", "'Inter'", 11.0)
             .expect("test font measures");
         assert!(
             (lane_offsets[0] - cell_w / 2.0).abs() < 0.5,
-            "dx is half the widest text, the anchor's `$` included ({}): got {lane_offsets:?}\n{svg}",
+            "dx is half the widest text ({}): got {lane_offsets:?}\n{svg}",
             cell_w / 2.0
         );
     }
@@ -6196,7 +6341,7 @@ mod tests {
     ///   canvas_h = 500+⌈88+0+6+11+16⌉ = 621; title baseline = 16+14;
     ///   row baselines = plot_top − (4+9) + 3 and − (4+18+9) + 3.
     #[test]
-    fn a_strip_entry_declares_its_unit_once_from_the_wire_raw_name() {
+    fn a_strip_entry_prints_the_same_bare_cells_whatever_names_its_format() {
         let render_entry = |format: serde_json::Value| {
             let mut payload_json =
                 make_vertical_payload(&[("Alpha", 100.0), ("Beta", 200.0)], false);
@@ -6208,11 +6353,12 @@ mod tests {
             render(&make_payload(payload_json), &test_fonts()).expect("composed strip renders")
         };
         let by_name = render_entry(serde_json::json!({"spec": "$,.0f", "raw": "currency_whole"}));
-        // The same spec authored as a d3 literal, or through a user alias,
-        // repeats the `$` on every cell.
+        // The same spec authored as a d3 literal, or through a user alias, paints the same
+        // bare cells: the row label names the `$`.
         let literal = render_entry(serde_json::json!({"spec": "$,.0f", "raw": "$,.0f"}));
-        assert_ne!(literal, by_name);
+        assert_eq!(literal, by_name);
         assert_eq!(render_entry(serde_json::json!({"spec": "$,.0f", "raw": "my_money"})), literal);
+        assert!(by_name.contains(">Revenue, $<") && !by_name.contains(">$100<"), "{by_name}");
     }
 
     #[test]
@@ -6243,12 +6389,11 @@ mod tests {
             title_tag.contains("x=\"16\" y=\"30\""),
             "title baseline at (16, 30): {title_tag}"
         );
-        // Declare-once currency: the anchor keeps the `$`, its sibling is bare.
-        assert!(svg.contains(">$1,000<"), "anchor cell declares the $: {svg}");
-        assert!(svg.contains(">2,000<"), "non-anchor cell is bare: {svg}");
-        assert!(!svg.contains(">$2,000<"), "the $ never repeats: {svg}");
+        // The row label declares the currency: every cell is bare.
+        assert!(svg.contains(">1,000<") && svg.contains(">2,000<"), "cells are bare: {svg}");
+        assert!(!svg.contains(">$1,000<"), "no cell prints the $: {svg}");
         // Row baselines: row 0 (closest to the plot) at 88−13+3, row 1 at 88−31+3.
-        for (needle, y) in [(">Revenue<", "78"), (">Units<", "60")] {
+        for (needle, y) in [(">Revenue, $<", "78"), (">Units<", "60")] {
             let pos = svg.find(needle).unwrap_or_else(|| panic!("{needle} missing: {svg}"));
             let tag = &svg[svg[..pos].rfind("<text").unwrap()..pos];
             assert!(
@@ -6378,7 +6523,7 @@ mod tests {
             "untitled plot top = pad_t + strip_h + ink extent: {svg}"
         );
         // Row 0's baseline follows the plot: 65 − 13 + 3.
-        let pos = svg.find(">Revenue<").expect("stub present");
+        let pos = svg.find(">Revenue, $<").expect("stub present");
         let tag = &svg[svg[..pos].rfind("<text").unwrap()..pos];
         assert!(tag.contains("y=\"55\""), "stub baseline follows the plot: {tag}");
     }
@@ -6436,12 +6581,12 @@ mod tests {
         ]);
         p["resolved"]["style"]["axis_x"]["type"] = json!("temporal");
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
-        assert!(svg.contains(">$1.3trn<") && svg.contains("Cat: Feb 2024"), "both buckets: {svg}");
+        assert!(svg.contains(">1.3<") && svg.contains("Cat: Feb 2024"), "both buckets: {svg}");
     }
 
     /// A date axis never refuses a strip for its cell count (the 40-tick cap
     /// is for categorical axes): 45 buckets in a narrow pane skip, and the first
-    /// bucket keeps the declared unit.
+    /// bucket reads bare.
     #[test]
     fn a_forty_five_date_rail_strip_skips_buckets_instead_of_refusing() {
         use serde_json::json;
@@ -6459,7 +6604,7 @@ mod tests {
         p["rows"] = json!(rows);
         p["resolved"]["style"]["axis_x"]["type"] = json!("temporal");
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
-        assert!(svg.contains(">$1trn<"), "the first bucket declares the unit: {svg}");
+        assert!(svg.contains(">1<") && svg.contains(">Total $, T<"), "the first bucket is bare and the row label declares the unit: {svg}");
         let cells = svg.matches("aria-label=\"Cat: ").count();
         assert!((2..2 * 45).contains(&cells), "skipped, not refused or drawn in full: {cells}");
     }
@@ -6483,7 +6628,7 @@ mod tests {
         p["rows"] = json!(rows);
         p["resolved"]["style"]["axis_x"]["type"] = json!("temporal");
         let svg = render(&make_payload(p), &fonts).expect("renders");
-        assert!(svg.contains("trn<"), "the unit survives the skip: {svg}");
+        assert!(svg.contains(">1.01<") && svg.contains(">Total $, T<"), "the row survives the skip, its unit in the label: {svg}");
         let edges = support_table_strip::strip_edges(&svg, &fonts, TEST_FONT);
         for (cells, stub) in edges.cells.iter().zip(&edges.stubs) {
             let (left, right) = cells.iter().fold((f64::MAX, f64::MIN), |(l, r), (cl, cr)| (l.min(*cl), r.max(*cr)));
@@ -6702,7 +6847,7 @@ mod tests {
     /// even one spelling the exact spec a predefined name resolves to —
     /// never anchors; every cell keeps its own affix.
     #[test]
-    fn composed_strip_raw_literal_format_keeps_per_cell_affixes() {
+    fn composed_strip_raw_literal_format_prints_bare_cells_too() {
         let mut payload_json =
             make_vertical_payload(&[("Alpha", 100.0), ("Beta", 200.0)], false);
         payload_json["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("right");
@@ -6713,8 +6858,8 @@ mod tests {
         let payload = make_payload(payload_json);
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("raw-literal strip renders");
-        assert!(svg.contains(">$100<"), "first cell keeps its $: {svg}");
-        assert!(svg.contains(">$200<"), "second cell keeps its $ too: {svg}");
+        assert!(svg.contains(">100<") && svg.contains(">200<"), "cells are bare: {svg}");
+        assert!(svg.contains(">Raw, $<") && !svg.contains(">$100<"), "the row label names the $: {svg}");
     }
 
     fn support_table_style_json_bottom() -> serde_json::Value {
@@ -6752,7 +6897,7 @@ mod tests {
             }
             p["resolved"]["style"]["axis_x"]["labels"]["angle"] = serde_json::json!(angle);
             let svg = render(&make_payload(p), &test_fonts()).expect("renders");
-            let i = svg.find(">$1,000<").unwrap();
+            let i = svg.rfind(">1,000<").unwrap();
             let tag = &svg[svg[..i].rfind("<text").unwrap()..i];
             tag.split(" y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
         };
@@ -6782,7 +6927,7 @@ mod tests {
         p["resolved"]["style"]["axis_x"]["labels"]["visible"] = serde_json::json!(false);
         let hidden = render(&make_payload(p), &test_fonts()).expect("renders");
         assert!(!hidden.contains(">Alpha<") && !hidden.contains(">Beta<"), "{hidden}");
-        assert!(hidden.contains(">$1,000<"), "the strip still paints: {hidden}");
+        assert!(hidden.contains(">1,000<"), "the strip still paints: {hidden}");
     }
 
     /// `labels: false` draws no label marks at all, so a date x paints neither
@@ -6807,7 +6952,7 @@ mod tests {
         p["rows"][0]["product"] = serde_json::json!("2024-01-01");
         p["rows"][1]["product"] = serde_json::json!("2024-02-01");
         let svg = render(&make_payload(p), &test_fonts()).expect("a date axis takes a bottom strip");
-        assert!(svg.contains(">Revenue<"), "{svg}");
+        assert!(svg.contains(">Revenue, $<"), "{svg}");
     }
 
     /// Production keeps a bottom strip's plot at its declared height and grows
@@ -6820,7 +6965,7 @@ mod tests {
         let svg = render(&make_payload(payload_json), &test_fonts()).expect("a bottom strip renders");
         let canvas_h: f64 = svg.split("height=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
         assert!(canvas_h >= h + 17.0 + 30.0, "axis gap and strip are added under the declared height: {canvas_h} vs {h}");
-        assert!(svg.contains(">$1,000<") && svg.contains(">Revenue<"), "{svg}");
+        assert!(svg.contains(">1,000<") && svg.contains(">Revenue, $<"), "{svg}");
     }
 
     /// The row's `y` moves one-for-one with the baked axis gap, and a stub label
@@ -6828,7 +6973,7 @@ mod tests {
     #[test]
     fn a_bottom_strip_row_follows_the_axis_gap_and_clears_its_stub_ink() {
         let cell_y = |svg: &str| -> f64 {
-            let i = svg.find(">$1,000<").unwrap();
+            let i = svg.rfind(">1,000<").unwrap();
             let tag = &svg[svg[..i].rfind("<text").unwrap()..i];
             tag.split(" y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
         };
@@ -6863,7 +7008,7 @@ mod tests {
             "A very long chart title that cannot fit on one line of this narrow chart and so must wrap"
         );
         let svg = render(&make_payload(p), &test_fonts()).expect("a wrapped title sits above a top strip");
-        assert!(svg.contains(">Revenue<"), "{svg}");
+        assert!(svg.contains(">Revenue, $<"), "{svg}");
     }
 
     /// A titled chart keeps its title where an unstripped pad chart puts it;
@@ -7201,6 +7346,7 @@ mod tests {
             "layers": [],
             "legend": {"visible": false, "position": {"edge": "top", "align": "start", "overlay": false}, "direction": "horizontal", "title": {"font": {"case": "title", "family": TEST_FONT}}, "label": {"padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}},
             "style": {
+                "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"},
                 "axis_x": {
                     "grid": {"visible": false, "threshold": null, "width": 1.0, "color": "#D0D3D9", "opacity": 1.0},
                     "ticks": {"color": "#EDEFF2", "visible": false, "count": 6.0},
@@ -7896,6 +8042,7 @@ mod tests {
             "layers": [],
             "legend": {"visible": false, "position": {"edge": "top", "align": "start", "overlay": false}, "direction": "horizontal", "title": {"font": {"case": "title", "family": TEST_FONT}}, "label": {"padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}},
             "style": {
+                "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"},
                 "axis_x": {
                     "grid": {"visible": false, "threshold": null, "width": 1.0, "color": "#D0D3D9", "opacity": 1.0},
                     "ticks": {"color": "#EDEFF2", "visible": false, "count": 6.0},
@@ -8543,10 +8690,8 @@ mod tests {
             s[i..].split(',').nth(1).unwrap().split(')').next().unwrap().trim().parse().unwrap()
         };
         let delta = plot_top(&with_sub) - plot_top(&without);
-        // The `subtitle.font.size` override above (18.0) matches the
-        // title's own un-tiered size (`title_measure_font_size`'s
-        // fallback) — the same 18px this fixture's title uses — so the
-        // override doesn't change the expected reservation math below.
+        // The `subtitle.font.size` override above (18.0) matches the title's
+        // paint size, so the override doesn't change the reservation math below.
         let want = 18.0 + crate::constants::layout::VEGA_SUBTITLE_PADDING;
         assert_eq!(
             delta, want,
@@ -8740,6 +8885,20 @@ mod tests {
         let starts = labels("scale('x', datum.value) + ''");
         assert_eq!(starts[0], "0");
         assert_eq!(starts[1].parse::<f64>().unwrap(), width / 2.0, "{starts:?} over a plot {width} wide");
+    }
+
+    /// An expression that reads only the clock paints the instant of its own render, not the one of the first render on the thread.
+    #[test]
+    fn a_clock_reading_expr_paints_each_render_s_own_instant() {
+        let labels = || -> Vec<String> {
+            let mut p = make_vertical_payload(&[("a", 10.0), ("b", 20.0)], false);
+            p["resolved"]["style"]["axis_x"]["labels"]["expr"] = serde_json::json!("now() + ''");
+            let (svg, _) = crate::render_sized(&make_payload(p), &test_fonts()).expect("renders");
+            svg.split("<text ").skip(1).map(|t| t.split('>').nth(1).unwrap().split('<').next().unwrap().to_string()).collect()
+        };
+        let first = labels();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert_ne!(first, labels());
     }
 
     /// An array an expression returns paints a line per element, as Vega's `tspan`s.
@@ -9085,7 +9244,7 @@ mod tests {
             let plot_right = plot_left + gridline_positions(&svg, "x2").into_iter().fold(0.0_f64, f64::max);
             let tag = svg
                 .split("<text ")
-                .find(|t| t.split_once('>').is_some_and(|(_, rest)| rest.starts_with("Total across …<")))
+                .find(|t| t.split_once('>').is_some_and(|(_, rest)| rest.starts_with("Total across …, $<")))
                 .unwrap_or_else(|| panic!("{position}: the row label is not painted: {svg}"));
             let attr = |name: &str| tag.split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap();
             let x: f64 = attr("x").parse().unwrap();
@@ -11294,7 +11453,7 @@ mod tests {
         wide_cells["resolved"]["support_table"]["entries"][1]["format"] = json!({"spec": ",d", "suffix": " u"});
         let svg = render(&make_payload(wide_cells.clone()), &test_fonts()).expect("renders");
         let (_, strip_wins_edge) = bar_group_x_and_rightmost_edge(&svg);
-        assert!(svg.contains(">Units<") && svg.contains("1,600,000,000,000 u"), "the strip must be drawn for its edge to mean anything: {svg}");
+        assert!(svg.contains(">Units, u<") && svg.contains(">1,600,000,000,000<"), "the strip must be drawn for its edge to mean anything: {svg}");
 
         let mut thick = wide_cells;
         thick["resolved"]["style"]["axis_y"]["grid"]["visible"] = json!(true);
@@ -11302,11 +11461,11 @@ mod tests {
         let svg2 = render(&make_payload(thick), &test_fonts()).expect("renders");
         let (_, rule_wins_edge) = bar_group_x_and_rightmost_edge(&svg2);
         assert!(
-            (strip_wins_edge - 179.40).abs() < 0.01,
+            (strip_wins_edge - 185.25).abs() < 0.01,
             "the strip's own cell wins: strip_wins_edge={strip_wins_edge}\n{svg}"
         );
         assert!(
-            (rule_wins_edge - 91.65).abs() < 0.01,
+            (rule_wins_edge - 94.57).abs() < 0.01,
             "a thick zero rule's own ink wins instead: rule_wins_edge={rule_wins_edge}\n{svg2}"
         );
 
@@ -11317,18 +11476,17 @@ mod tests {
         );
     }
 
-    /// A trimmed (`$,.0f`) symbol row anchors on a left-oriented value axis
-    /// too: every cell ends at the lane's right edge, so the `$` is declared
-    /// once on the anchor and the rest are bare.
+    /// A `$,.0f` row on a rail-concat strip prints bare cells and names the `$` in its row
+    /// label.
     #[test]
-    fn bar_support_table_on_the_rail_concat_declares_a_trimmed_symbol_row_once() {
+    fn bar_support_table_on_the_rail_concat_names_a_symbol_row_in_its_label() {
         let mut p = make_rail_strip_payload();
         p["resolved"]["support_table"]["entries"][0]["format"] = serde_json::json!({"spec": "$,.0f", "raw": "currency_whole"});
         let payload = make_payload(p);
         let svg = render(&payload, &test_fonts()).expect("support_table rail concat renders");
         // aggregate: sum over both series — cat A: 10+30=40, cat B: 5+15=20.
-        assert!(svg.contains(">$40<"), "the anchor cell declares the $: {svg}");
-        assert!(svg.contains(">20<") && !svg.contains(">$20<"), "every OTHER cell is bare: {svg}");
+        assert!(svg.contains(">40<") && svg.contains(">20<"), "cells are bare: {svg}");
+        assert!(!svg.contains(">$40<") && svg.contains(">Total $<"), "the row label declares the $: {svg}");
     }
 
     /// A bottom strip under the rail-concat arm grows the canvas below the axis.

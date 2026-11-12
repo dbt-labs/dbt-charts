@@ -65,6 +65,7 @@ from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_EXTENDS_CYCLE,
+    ERR_EXTENDS_INVALID,
     ERR_EXTENDS_UNRESOLVED,
     ERR_META_OUTSIDE_BOARDS_ROOT,
     WARN_INHERITED_LAYOUT_REPLACED,
@@ -555,8 +556,10 @@ def _fragment_from_yaml(
     # An empty fragment file is a documented empty patch, not a fault.
     data = {} if loaded is None else loaded
     if not isinstance(data, dict):
-        raise CompilationError(
-            f"extends: {relpath} must be a YAML mapping, got {type(data).__name__}"
+        raise CompilationError.from_code(
+            ERR_EXTENDS_INVALID,
+            file=relpath,
+            reason=f"must be a YAML mapping, got {type(data).__name__}",
         )
     if written_in is not None:
         from dbt_charts.core.compile.migrations import prepare_board_mapping

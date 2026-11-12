@@ -410,6 +410,10 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
         (None, None) => quote!(None),
     };
     let complete = container.complete;
+    let read_under = match &container.read_under {
+        Some(k) => quote!(Some(#k)),
+        None => quote!(None),
+    };
     let info = |fields: &[Slot]| {
         let f = fields.iter().map(|s| &s.field);
         let asserts = fields.iter().flat_map(|s| &s.asserts);
@@ -417,7 +421,7 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
             fn info() -> &'static ::model_core::ModelInfo {
                 #(#asserts)*
                 const INFO: ::model_core::ModelInfo = ::model_core::ModelInfo {
-                    name: #name_s, doc: #doc, kind: #kind, fields: &[#(#f),*], constraints: &[#(#cons),*], shorthand: #shorthand, string_pattern: #string_pattern, complete: #complete,
+                    name: #name_s, doc: #doc, kind: #kind, fields: &[#(#f),*], constraints: &[#(#cons),*], shorthand: #shorthand, string_pattern: #string_pattern, complete: #complete, read_under: #read_under,
                 };
                 &INFO
             }
@@ -1120,7 +1124,7 @@ fn enum_from_node(
     let walks = arms.iter().filter(|a| !a.unit).map(|a| {
         let (k, t) = (&a.key, &a.ty);
         if tagged {
-            quote!(<#t as ::model_core::FromNode>::walk(w);)
+            quote!(w.variant(#k, <#t as ::model_core::FromNode>::walk);)
         } else {
             quote!(w.field(#k, <#t as ::model_core::FromNode>::walk);)
         }

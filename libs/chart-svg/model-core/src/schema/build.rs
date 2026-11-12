@@ -182,6 +182,9 @@ impl Schema {
     /// Whether a (dotted) authored key resolves from `model`, by the same
     /// steps `at` takes.
     fn key_exists(&self, model: &SchemaModel, key: &str) -> bool {
+        if matches!(&model.body, Body::Struct { read_under: Some(tag), .. } if *tag == key) {
+            return true;
+        }
         let start = Ty::Ref(model.name.to_string());
         let mut cur = &start;
         for seg in key.split('.') {
@@ -243,6 +246,7 @@ fn lower_model(
             shorthand: info.shorthand,
             string_pattern: info.string_pattern,
             complete: info.complete,
+            read_under: info.read_under,
         },
         ModelKind::Tagged(tag) => {
             let mut variants = Vec::new();

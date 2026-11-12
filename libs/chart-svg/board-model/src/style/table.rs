@@ -20,13 +20,15 @@
 //! - `PixelWidth` is a pixel count or a CSS width.
 
 use crate::facet::{Color, ColorOrColumn, DisplayText, FontFamily, FontWeightValue};
+use crate::chart::conditional_formatting::Predicate;
 use crate::primitives::{
-    BorderStyle, ColumnPalette, CornerStyle, DividerStyle, FormatSpec, GlyphText, LinkSpec,
-    ScaleTargetRest, SpacingValues, StaticGradientColorStyle, StrokeStyle,
+    Tone, BorderStyle, ColumnPalette, CornerStyle, DividerStyle, FormatSpec, GlyphText, LinkSpec,
+    ScaleTargetRest, SpacingValues, GradientColorStyle, StrokeStyle,
 };
 use crate::rule::Auto;
 use crate::string_enum;
 use crate::style::board::PaddingStyle;
+use crate::style::bar::misplaced_defaults;
 use crate::style::chart_base::TitledChartStyleBase;
 use crate::style::font::{FontSlant, FontStyle, LetterCase, TextDecoration};
 use crate::unit::{Fraction, Px};
@@ -34,6 +36,8 @@ use indexmap::IndexMap;
 use model_core::{
     Cx, Engine, FromNode, Leaf, Merge, Node, Patch, ReadScalar, Scalar, Spell, TypeExpr,
 };
+use diagnostic::{diag, Diagnostic};
+use model_core::{Authored, Tri};
 use model_derive::Model;
 use serde_json::Value;
 
@@ -325,6 +329,78 @@ pub struct TableRowStyle {
     pub divider: TableDividerStyle,
     /// Per-role style overrides for summary and total rows.
     pub roles: TableRowRolesStyle,
+    /// Rules that restyle a row by any column's value, hidden ones included. Keyed by column name. Each rule is one condition (eq, ne, lt, lte, gt, gte, between, in, is_null, or default) plus the background and font it gives every visible cell, or `columns` to style named cells (also glyph, glyph_color and tone). Every matching rule applies; where two set the same key the later one wins, so list the more specific rule last. A `default: true` rule applies only when no other rule matched. A cell's own `conditional` rules beat these; `scale` paints over these on its own cells. Two columns cannot patch the same property.
+    #[model(fill = fill_empty, local)]
+    pub conditional: IndexMap<String, Vec<TableRowStyleConditional>>,
+}
+
+impl TableRowStyle {
+    /// A `default: true` rule is allowed only last in a column's rule list.
+    pub fn default_position(style: &Authored<TableRowStyle>) -> Vec<Diagnostic> {
+        style
+            .conditional
+            .iter()
+            .flat_map(|(column, rules)| {
+                let rules = rules.as_deref().unwrap_or_default();
+                let defaults: Vec<bool> = rules.iter().map(|r| matches!(r.predicate.default, Tri::Value(_))).collect();
+                misplaced_defaults(column, &defaults)
+            })
+            .collect()
+    }
+}
+
+/// The style a row rule applies to one named cell: the part of [`TableColumnConfig`] a
+/// conditional rule may set, with no condition of its own.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct TableCellPatch {
+    /// Semantic tone (positive|negative|warning|info) that colors the glyph via the theme's tone palette; the theme-adaptive alternative to a raw glyph_color. Requires a glyph. An explicit glyph_color wins.
+    #[model(absent = "no tone")]
+    pub tone: Option<Tone>,
+    /// Cell background color (hex string, or 'transparent'/'none'), or a column
+    /// ID: a value matching a query column name uses that row's value in the named
+    /// column instead of the literal string.
+    #[model(absent = "the column's own background")]
+    pub background: Option<ColorOrColumn>,
+    /// Cell font style overrides. `color` and `weight` resolve column-ID-first, the
+    /// same as `background`: a value matching a query column name uses that row's
+    /// value in the named column.
+    #[model(absent = "the column's own font")]
+    pub font: Option<ColumnFontStyleConditional>,
+    /// Text shown before every cell value; fills the same slot as format.prefix and wins over it.
+    #[model(absent = "the column's own glyph")]
+    pub glyph: Option<GlyphText>,
+    /// Color for the glyph. Requires glyph to be set.
+    #[model(absent = "the column's own glyph color")]
+    pub glyph_color: Option<Color>,
+}
+
+/// The part of [`TableRowStyle`] a conditional rule may set: one predicate plus the paint of
+/// every visible cell in the row, or of named cells.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[allow(clippy::duplicated_attributes)]
+#[model(
+    constraint(at_least_one_of(eq, ne, lt, lte, gt, gte, between, "in", is_null, default,
+        message = "A conditional rule requires exactly one condition operator"
+    )),
+    constraint(at_most_one_of(eq, ne, lt, lte, gt, gte, between, "in", is_null, default,
+        message = "A conditional rule requires exactly one condition operator, got: {set}"
+    )),
+    constraint(at_least_one_of(background, font, columns,
+        message = "A conditional rule requires at least one style to apply"
+    ))
+)]
+pub struct TableRowStyleConditional {
+    #[flatten]
+    pub predicate: Predicate,
+    /// Background of every visible cell in the row (hex string, or 'transparent'/'none'), or a column ID: a value matching a query column name uses that row's value in the named column.
+    #[model(absent = "the cells' own background")]
+    pub background: Option<ColorOrColumn>,
+    /// Font of every visible cell in the row. `color` and `weight` resolve column-ID-first, the same as `background`.
+    #[model(absent = "the cells' own font")]
+    pub font: Option<ColumnFontStyleConditional>,
+    /// Style for named cells of the row, keyed by a visible query column. Beats the row-level style on that cell.
+    #[model(fill = fill_empty)]
+    pub columns: IndexMap<String, TableCellPatch>,
 }
 
 /// The title block above the header row.
@@ -350,9 +426,15 @@ pub struct TableEdgeStyle {
 /// The placeholder for an empty sparkline.
 #[derive(Debug, Clone, PartialEq, Model)]
 #[model(
-    constraint(requires("stroke.color")),
-    constraint(requires("stroke.width")),
-    constraint(requires("stroke.dasharray"))
+    constraint(requires("stroke.color",
+        message = "spark.empty.stroke.color is required (renderer reads color/width/dasharray)"
+    )),
+    constraint(requires("stroke.width",
+        message = "spark.empty.stroke.width is required (renderer reads color/width/dasharray)"
+    )),
+    constraint(requires("stroke.dasharray",
+        message = "spark.empty.stroke.dasharray is required (renderer reads color/width/dasharray)"
+    ))
 )]
 pub struct SparkEmptyStyle {
     /// Horizontal inset for the empty sparkline placeholder in pixels.
@@ -568,6 +650,67 @@ pub struct ColumnFontStyle {
     pub line_height: Option<f64>,
 }
 
+/// The part of [`ColumnFontStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[model(shorthand = "extends")]
+pub struct ColumnFontStyleConditional {
+    /// Name of a `style.fonts` entry this slot starts from; the fields set beside it override that entry.
+    #[model(absent = "no named font")]
+    pub extends: Option<String>,
+    /// Text color (CSS color string), or a column ID: a value matching a query
+    /// column name uses that row's value in the named column.
+    #[model(absent = "the table font's color")]
+    pub color: Option<ColorOrColumn>,
+    /// How heavy the type is drawn (e.g., 'bold', 400, 700).
+    #[model(absent = "the table font's weight")]
+    pub weight: Option<FontWeightValue>,
+    /// Upright or slanted type (normal or italic).
+    #[model(absent = "the table font's style")]
+    pub style: Option<FontSlant>,
+    /// Line drawn on the text (underline, line-through, or none).
+    #[model(absent = "the table font's decoration")]
+    pub decoration: Option<TextDecoration>,
+}
+
+/// The part of [`TableColumnConfig`] a conditional rule may set: one predicate plus the cell
+/// style that varies per row.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[allow(clippy::duplicated_attributes)]
+#[model(
+    constraint(at_least_one_of(eq, ne, lt, lte, gt, gte, between, "in", is_null, default,
+        message = "A conditional rule requires exactly one condition operator"
+    )),
+    constraint(at_most_one_of(eq, ne, lt, lte, gt, gte, between, "in", is_null, default,
+        message = "A conditional rule requires exactly one condition operator, got: {set}"
+    )),
+    constraint(at_least_one_of(tone, background, font, glyph, glyph_color,
+        message = "A conditional rule requires at least one style to apply"
+    ))
+)]
+pub struct TableColumnConfigConditional {
+    #[flatten]
+    pub predicate: Predicate,
+    /// Semantic tone (positive|negative|warning|info) that colors the glyph via the theme's tone palette; the theme-adaptive alternative to a raw glyph_color. Requires a glyph. An explicit glyph_color wins.
+    #[model(absent = "no tone")]
+    pub tone: Option<Tone>,
+    /// Cell background color (hex string, or 'transparent'/'none'), or a column
+    /// ID: a value matching a query column name uses that row's value in the named
+    /// column instead of the literal string.
+    #[model(absent = "the column's own background")]
+    pub background: Option<ColorOrColumn>,
+    /// Cell font style overrides. `color` and `weight` resolve column-ID-first, the
+    /// same as `background`: a value matching a query column name uses that row's
+    /// value in the named column.
+    #[model(absent = "the column's own font")]
+    pub font: Option<ColumnFontStyleConditional>,
+    /// Text shown before every cell value; fills the same slot as format.prefix and wins over it.
+    #[model(absent = "the column's own glyph")]
+    pub glyph: Option<GlyphText>,
+    /// Color for the glyph. Requires glyph to be set.
+    #[model(absent = "the column's own glyph color")]
+    pub glyph_color: Option<Color>,
+}
+
 /// Table-level defaults applied to every column unless overridden per column.
 ///
 /// Only fields that make sense as uniform defaults: data-dependent ones (link,
@@ -663,8 +806,15 @@ pub struct ColumnScaleConfig {
 /// Configuration for a single table column.
 #[derive(Debug, Clone, PartialEq, Model)]
 #[model(
-    constraint(requires(glyph, when(set(glyph_color)))),
-    constraint(at_most_one_of(width, max_width))
+    constraint(requires(glyph, when(set(glyph_color)),
+        message = "TableColumnConfig glyph_color requires glyph to be set"
+    )),
+    constraint(at_most_one_of(width, max_width,
+        message = "TableColumnConfig: 'width' and 'max_width' are mutually exclusive. Use 'width' for a hard pin, or 'max_width' to cap auto-sizing."
+    )),
+    constraint(forbids(conditional, when(is_in(visible, false)),
+        message = "TableColumnConfig: 'conditional' rules on a column with 'visible: false' paint nothing. Remove the rules, show the column, or key a rule on it in style.row.conditional."
+    ))
 )]
 pub struct TableColumnConfig {
     /// Whether this column renders. Defaults to true: style.columns is styling
@@ -730,6 +880,31 @@ pub struct TableColumnConfig {
     /// Color for the glyph. Requires glyph to be set.
     #[model(absent = "the cell's ink")]
     pub glyph_color: Option<Color>,
+    /// Rules that restyle this column's cells by the cell's own value. Each rule is one condition (eq, ne, lt, lte, gt, gte, between, in, is_null, or default) plus the cell style it applies: background, font color/weight/style/decoration, glyph, glyph_color and tone. Every matching rule applies; where two set the same key the later one wins, so list the more specific rule last. A `default: true` rule applies only when no other rule matched.
+    #[model(fill = fill_empty, nullable, min_items = 1)]
+    pub conditional: Vec<TableColumnConfigConditional>,
+}
+
+impl TableColumnConfig {
+    /// A `default: true` rule is allowed only last in a column's `conditional` list: a positional
+    /// rule over an element field, which no `constraint` kind tests.
+    pub fn default_position(column: &Authored<TableColumnConfig>) -> Vec<Diagnostic> {
+        let rules = column.conditional.as_deref().unwrap_or_default();
+        rules
+            .iter()
+            .enumerate()
+            .filter(|(i, r)| matches!(r.predicate.default, Tri::Value(_)) && i + 1 != rules.len())
+            .map(|(i, _)| {
+                diag::err_validation_field(
+                    "conditional",
+                    format!(
+                        "Value error, A rule with default: true must be the last entry in a column's rules (found at position {i} of {})",
+                        rules.len()
+                    ),
+                )
+            })
+            .collect()
+    }
 }
 
 /// Table chart style overrides layered on top of shared chart defaults.
@@ -759,9 +934,9 @@ pub struct TableChartStyle {
     /// Chart card border style.
     #[model(inherit_slot = "Style.charts.border")]
     pub border: BorderStyle,
-    /// Table color: static text paint or gradient scale only (no categorical arm).
+    /// Table color: gradient scale only (no categorical arm). Cell text color is `column_defaults.font.color`.
     #[model(default_empty)]
-    pub color: StaticGradientColorStyle,
+    pub color: GradientColorStyle,
     /// Outer table padding in pixels.
     pub outer_padding: f64,
     /// Extra bottom padding below the last row in pixels.

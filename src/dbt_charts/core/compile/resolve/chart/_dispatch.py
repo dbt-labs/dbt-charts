@@ -131,7 +131,13 @@ def resolve(
     )
     # Board renders bind every chart ahead of their board-wide passes
     # (with_bound_channels); this is the guarantee for every other caller.
-    normalized = bind_channels(normalized, columns_of(data))
+    normalized = bind_channels(
+        normalized,
+        columns_of(data),
+        {}
+        if datasets is ...
+        else {name: columns_of(rows) for name, rows in datasets.items()},
+    )
     normalized = resolve_layer_labels(
         normalized, display_text, chart_style_context.formats
     )

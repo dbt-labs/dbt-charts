@@ -178,3 +178,24 @@ def test_a_thinned_scatter_warns_on_its_point_labels() -> None:
         "        point:\n          labels:\n            visible: true"
     )
     assert "WARN-VALUE-LABELS-THINNED" in _warning_codes(chart, rows)
+
+
+def test_an_overlay_legend_over_a_line_warns_and_the_chart_still_renders() -> None:
+    levels = {
+        "Enterprise": [120, 100, 90, 80],
+        "Mid": [54, 62, 71, 79],
+        "SMB": [31, 38, 44, 40],
+    }
+    rows = [
+        f"{{month: m{month}, segment: {segment}, sessions: {values[month]}}}"
+        for segment, values in levels.items()
+        for month in range(4)
+    ]
+    chart = (
+        "    type: line\n    x: month\n    y: sessions\n    color: segment\n"
+        "    style:\n      endpoint_labels:\n        visible: false\n"
+        "      legend:\n        position:\n          edge: top\n"
+        "          align: start\n          overlay: true\n"
+        "        title:\n          visible: true"
+    )
+    assert "WARN-LEGEND-OVERLAY-COVERS-MARKS" in _warning_codes(chart, rows)

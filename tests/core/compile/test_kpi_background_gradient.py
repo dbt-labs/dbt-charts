@@ -1,7 +1,7 @@
-"""Tests for KPI background gradient channel (continuous scale).
+"""Tests for the KPI style.background gradient (continuous scale).
 
 Verifies:
-- KpiChart accepts background: {column, scale} without raising extra=forbid.
+- KpiChart accepts style.background: {column, scale}.
 - resolve() resolves the background channel to gradient mode.
 - render_kpi_svg produces a background color derived from the scale interpolation.
 """
@@ -33,31 +33,44 @@ _NS = {"svg": "http://www.w3.org/2000/svg"}
 
 class TestKpiBackgroundGradientSchema:
     def test_background_column_scale_accepted_by_schema(self) -> None:
-        """KpiChart must accept background: {column, scale} without ValidationError."""
+        """KpiChart must accept style.background: {column, scale}."""
         p = AuthoredKpiChart.model_validate(
             {
                 "type": "kpi",
                 "value": "revenue",
-                "background": {
-                    "column": "revenue",
-                    "scale": {"palette": ["#ffffff", "#3366cc"]},
+                "style": {
+                    "background": {
+                        "column": "revenue",
+                        "scale": {"palette": ["#ffffff", "#3366cc"]},
+                    }
                 },
             }
         )
-        assert p.background is not None
+        assert p.style is not None and p.style.background is not None
 
-    def test_background_bad_channel_raises_at_resolve(self) -> None:
-        """background with an unknown channel key raises ValueError at resolve time
-        (parse_style_channel validates the dict shape, not the Pydantic model)."""
+    def test_background_unknown_key_is_refused(self) -> None:
+        with pytest.raises(ValidationError):
+            KpiChart(
+                id="t",
+                query=_DUMMY_QUERY,
+                query_name="q",
+                type="kpi",
+                value="revenue",
+                style={"background": {"unknown_key": "bad"}},
+            )
+
+    def test_background_column_must_be_in_the_query_result(self) -> None:
         chart = KpiChart(
             id="t",
             query=_DUMMY_QUERY,
             query_name="q",
             type="kpi",
             value="revenue",
-            background={"unknown_key": "bad"},
+            style={
+                "background": {"column": "nope", "scale": {"palette": ["#fff", "#000"]}}
+            },
         )
-        with pytest.raises(ValueError, match="unknown keys"):
+        with pytest.raises(ValueError, match="'nope' not found"):
             resolve(chart, [{"revenue": 1}], chart_style_context=_BOARD_STYLE)
 
     def test_unknown_root_field_still_rejected(self) -> None:
@@ -77,9 +90,11 @@ class TestKpiBackgroundGradientResolve:
             query_name="q",
             type="kpi",
             value="revenue",
-            background={
-                "column": "revenue",
-                "scale": {"palette": ["#ffffff", "#3366cc"]},
+            style={
+                "background": {
+                    "column": "revenue",
+                    "scale": {"palette": ["#ffffff", "#3366cc"]},
+                }
             },
         )
         data = [{"revenue": 500_000}]
@@ -98,9 +113,11 @@ class TestKpiBackgroundGradientResolve:
             query_name="q",
             type="kpi",
             value="revenue",
-            background={
-                "column": "revenue",
-                "scale": {"palette": ["#ffffff", "#3366cc"]},
+            style={
+                "background": {
+                    "column": "revenue",
+                    "scale": {"palette": ["#ffffff", "#3366cc"]},
+                }
             },
         )
         # Mid-range value → should interpolate to something between #ffffff and #3366cc
@@ -136,7 +153,7 @@ class TestKpiBackgroundGradientResolve:
                 query_name="q",
                 type="kpi",
                 value="revenue",
-                background=scale_spec,
+                style={"background": scale_spec},
             )
             data = [{"revenue": value}]
             resolved = resolve(chart, data, chart_style_context=ctx)

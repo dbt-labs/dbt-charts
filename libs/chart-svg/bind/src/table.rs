@@ -19,7 +19,7 @@ use crate::table_dates::parse_temporal;
 
 /// Binds `chart` to its query's rows, with the `style` of the placement it is bound at.
 pub fn bind_table(id: &ChartId, chart: &TableChart, style: &TableChartStyle, own: &TableChartStylePatch, board: &Board, run: &RunResult) -> Result<Result<Family, Failure>, Diagnostic> {
-    refuse_unmodeled(chart, style, board, run)?;
+    refuse_unmodeled(chart, style, board)?;
     let Some(ChartQuery::Hoisted(query)) = &chart.shared.base.query else {
         return Err(diag::err_internal(format!("chart {id} has no hoisted query")));
     };
@@ -69,7 +69,7 @@ pub fn bind_table(id: &ChartId, chart: &TableChart, style: &TableChartStyle, own
 }
 
 /// Every chart field, style and board fact that changes what the table says and is not modeled.
-fn refuse_unmodeled(chart: &TableChart, style: &TableChartStyle, board: &Board, run: &RunResult) -> Result<(), Diagnostic> {
+fn refuse_unmodeled(chart: &TableChart, style: &TableChartStyle, board: &Board) -> Result<(), Diagnostic> {
     let (base, defaults) = (&chart.shared.base, &style.column_defaults);
     let unmodeled = [
         (chart.shared.subtitle.is_some(), "a `subtitle`"),
@@ -78,10 +78,10 @@ fn refuse_unmodeled(chart: &TableChart, style: &TableChartStyle, board: &Board, 
         (chart.rows.is_some() || chart.columns.is_some() || chart.values.is_some(), "a pivot (`rows`, `columns` or `values`)"),
         (chart.row_role.is_some(), "a `row_role`"),
         (chart.spanners.is_some(), "`spanners`"),
-        (!chart.formatting.conditional_formatting.is_empty(), "`conditional_formatting`"),
         (defaults.width.is_some() || defaults.align.is_some() || defaults.format.is_some() || defaults.background.is_some() || defaults.font.is_some(), "`style.column_defaults`"),
         (style.transpose, "`style.transpose`"),
-        (board.regional.is_some() || run.env.locale != "en-US", "a locale other than en-US"),
+        (!style.row.conditional.is_empty(), "`style.row.conditional`"),
+        (board.regional.is_some(), "a locale other than en-US"),
     ];
     match unmodeled.iter().find(|(set, _)| *set) {
         Some((_, what)) => Err(Diagnostic::refused(refuse!("a table with {what} is not supported"))),
@@ -129,6 +129,7 @@ fn refuse_unmodeled_column(config: &TableColumnConfig) -> Result<(), Diagnostic>
         (config.scale.is_some(), "`scale`"),
         (config.glyph.is_some(), "`glyph`"),
         (config.glyph_color.is_some(), "`glyph_color`"),
+        (!config.conditional.is_empty(), "`conditional`"),
     ];
     match unmodeled.iter().find(|(set, _)| *set) {
         Some((_, what)) => Err(Diagnostic::refused(refuse!("a table column with {what} is not supported"))),

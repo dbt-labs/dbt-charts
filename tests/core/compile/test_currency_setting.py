@@ -355,12 +355,12 @@ def test_a_table_column_that_repeats_follows_the_locale() -> None:
     assert cells == [f"441M{_NBSP}€", f"449M{_NBSP}€", f"456M{_NBSP}€"]
 
 
-def test_an_anchored_support_table_strip_leads_with_the_currency() -> None:
+def test_a_support_row_names_the_currency_in_its_label_and_prints_bare_cells() -> None:
     cells = _placement_cells(
         "    query: q\n    type: bar\n    x: m\n    y: v\n    support_table:\n"
         "      - source: v\n        format: currency\n        label: V\n"
     )
-    assert cells == [f"€441{_NBSP}Mio."]
+    assert cells == [f"V, €{_NBSP}M"]
 
 
 def test_a_kpi_follows_the_locale() -> None:
@@ -417,7 +417,7 @@ def test_a_ruler_axis_that_repeats_its_unit_trails_the_magnitude() -> None:
 
 
 @pytest.mark.parametrize(("locale", "symbol"), [("en-US", "$"), ("de-DE", "€")])
-def test_a_left_axis_support_table_declares_the_currency_once(
+def test_a_left_axis_support_table_prints_bare_cells_and_names_the_currency(
     locale: str, symbol: str
 ) -> None:
     chart = (
@@ -432,7 +432,8 @@ def test_a_left_axis_support_table_declares_the_currency_once(
         re.sub(r"<[^>]+>", "", c) for c in re.findall(r"<text[^>]*>(.*?)</text>", strip)
     ]
     assert len(cells) == 3, cells
-    assert [symbol in c for c in cells] == [True, False, False], cells
+    assert not any(symbol in c for c in cells), cells
+    assert re.search(rf">V, {re.escape(symbol)}[^<]*<", svg), svg
 
 
 def _nested(inner_regional: str) -> str:
@@ -504,15 +505,14 @@ def test_a_comma_decimal_locale_pads_trimmed_digits_on_their_decimal_mark() -> N
 
 
 @pytest.mark.parametrize("name", ["currency_whole", "currency"])
-def test_a_support_strip_that_repeats_follows_the_locale(name: str) -> None:
-    """A strip compacts `currency_whole` like `currency`, keeping its `repeat`."""
+def test_a_support_strip_names_its_unit_whatever_its_repeat(name: str) -> None:
+    """A strip compacts `currency_whole` like `currency`; `repeat` does not touch its bare cells."""
     cells = _placement_cells(
         "    query: q\n    type: bar\n    x: m\n    y: v\n    support_table:\n"
         f"      - source: v\n        format:\n          spec: {name}\n"
         "          repeat: every\n        label: V\n"
     )
-    expected = rf"[\d,]+{_NBSP}Mio\.{_NBSP}€"
-    assert len(cells) == 3 and all(re.fullmatch(expected, c) for c in cells), cells
+    assert cells == [f"V, €{_NBSP}M"], cells
 
 
 @pytest.mark.parametrize("locale", ["en-US", "de-DE"])

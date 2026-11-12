@@ -12,7 +12,7 @@
 //! - [`TooltipFields`]: the `tooltip:` of the families whose marks carry a hover card.
 //! - [`CartesianChartFields`], [`GeoChartFields`], [`RadialChartFields`]: the channels of the
 //!   axis, map and arc families, each over [`SharedChartFields`] and [`FieldLabelsField`].
-//! - [`PatternChannelField`], [`ConditionalFormattingField`]: one optional field each.
+//! - [`PatternChannelField`]: one optional field.
 //!
 //! A callout inherits none of them (its Python class does not): it declares what it takes.
 //!
@@ -24,8 +24,8 @@
 //! | line, scatter | `CartesianChartFields` + `TooltipFields` |
 //! | heatmap | `PatternChannelField` + `CartesianChartFields` |
 //! | pie | `PatternChannelField` + `RadialChartFields` + `TooltipFields` |
-//! | table | `SharedChartFields` + `ConditionalFormattingField` |
-//! | kpi | `ChartBase` + `ConditionalFormattingField` |
+//! | table | `SharedChartFields` |
+//! | kpi | `ChartBase` |
 //! | spark_bar, custom | `SharedChartFields` |
 //! | geoshape, point_map | `GeoChartFields` |
 //!
@@ -33,7 +33,6 @@
 //! cartesian families forbid it with a type rule of their own, declared where the family is.
 //! The rules a mixin owns are checked by functions on the models, which a family's `check` calls:
 //! [`support_table::SupportTableSpec::shape`] and [`CartesianChartFields::support_table_rules`],
-//! [`conditional_formatting::FieldConditionalFormatting::default_position`],
 //! [`layer::BarLayer::null_y_start`] and [`annotation::NoteAnnotation::pairing`].
 //!
 //! `id` is read and not used: the key in `Board.charts`, or the title or tree position, names
@@ -98,7 +97,6 @@ use crate::string_enum;
 use crate::style::charts::ChartsStyle;
 use crate::style::style::Style;
 use annotation::{ChartSort, ChartTotal};
-use conditional_formatting::FieldConditionalFormatting;
 use indexmap::IndexMap;
 use model_core::{Leaf, Spell};
 use model_derive::Model;
@@ -579,7 +577,9 @@ string_enum!(
 /// both may be set (rows-only a row stack, columns-only a strip, both a grid), at least one is
 /// required.
 #[derive(Debug, Clone, PartialEq, Model)]
-#[model(constraint(at_least_one_of(rows, columns)))]
+#[model(constraint(at_least_one_of(rows, columns,
+        message = "multiples requires at least one of `rows` or `columns`."
+    )))]
 pub struct MultiplesConfig {
     /// Column whose distinct values become vertically stacked panel rows.
     #[model(absent = "no row partition")]
@@ -590,14 +590,6 @@ pub struct MultiplesConfig {
     /// Measure-scale sharing across panels. 'shared' (default) makes panels visually comparable; 'independent' gives each panel its own scale.
     #[model(fill = "shared")]
     pub scale: MultiplesScale,
-}
-
-/// The `conditional_formatting:` of table and KPI, indexed by column name.
-#[derive(Debug, Clone, PartialEq, Model)]
-pub struct ConditionalFormattingField {
-    /// Discrete rule-driven style overrides indexed by column name. Available on type: table and type: kpi only. On a KPI, rules on the `support.value` column style the support row (font.color, glyph, glyph_color, tone); rules on other columns style the headline.
-    #[model(fill = fill_empty)]
-    pub conditional_formatting: IndexMap<String, FieldConditionalFormatting>,
 }
 
 /// The `field_labels:` of the families that derive text from field names.
@@ -629,7 +621,7 @@ pub struct CartesianChartFields {
     /// Y axis title, replacing the derived one (`model_year` reads "Model year"): set it only to say something different. Quote a number, as in '2013'.
     #[model(absent = "the column-derived title")]
     pub y_label: Option<String>,
-    /// Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only; a literal color goes in `style.color.static`.
+    /// Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only; a literal color goes on the chart's mark, e.g. `style.marks.bar.color`.
     #[model(absent = "no color encoding: a solid fill from the theme")]
     pub color: Option<ColorColumn>,
     /// Which column orders the marks, and in which direction (asc/desc).
@@ -739,7 +731,7 @@ pub struct GeoChartFields {
     /// Vega projection name, or an object with type and parameters.
     #[model(absent = "the geo source's registry projection")]
     pub projection: Option<ProjectionChoice>,
-    /// Column carried on the color channel: fill for geoshape regions, hue for point-map points. Bare column name only; a literal color goes in `style.color.static`.
+    /// Column carried on the color channel: fill for geoshape regions, hue for point-map points. Bare column name only; a literal color goes on `style.marks.geoshape.fill` (geoshape) or `style.marks.point.color` (point map).
     #[model(absent = "no color encoding")]
     pub color: Option<ColorColumn>,
     /// Named GeoJSON boundary source, or inline GeoJSON spec, for geoshape charts.
@@ -774,7 +766,7 @@ pub struct RadialChartFields {
     /// Column for angular encoding in pie (arc) charts.
     #[model(absent = "bound by position from the query's columns")]
     pub theta: Option<Channel>,
-    /// Column naming each wedge, giving it its own hue. Bare column name only; a literal color goes in `style.color.static`.
+    /// Column naming each wedge, giving it its own hue. Bare column name only; a literal color goes on `style.marks.slice.color`.
     #[model(absent = "no color encoding")]
     pub color: Option<ColorColumn>,
     /// Sum of the slice values, drawn in the donut hole.

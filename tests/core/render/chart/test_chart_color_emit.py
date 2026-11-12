@@ -60,14 +60,15 @@ def _bar_chart(**kwargs: Any) -> Chart:
 
 
 def test_literal_style_color_passes_through():
-    """chart.style.color (literal) still works as before — no resolved channel emitted."""
+    """A literal mark color emits no resolved channel."""
     from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 
     chart = _bar_chart(
-        style=BarChartStylePatch.model_validate({"color": {"static": "#ff0000"}})
+        style=BarChartStylePatch.model_validate(
+            {"marks": {"bar": {"color": "#ff0000"}}}
+        )
     )
     resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
-    # chart.style.color is the literal cascade — no channel encoding
     assert resolved.resolved_channels == {}
 
 
@@ -111,7 +112,7 @@ def test_heatmap_chart_local_palette_overrides_theme_for_colorless_rect_fill():
 
 
 def test_kpi_color_when():
-    """KPI chart with conditional_formatting evaluates font.color rule against data row."""
+    """KPI chart with style.conditional evaluates a value.font.color rule against the data row."""
     from dbt_charts.core.compile.resolve.style.board import resolve_style
 
     from ..._engine_render import render_kpi_svg
@@ -124,11 +125,11 @@ def test_kpi_color_when():
             "query_name": "q",
             "type": "kpi",
             "value": "revenue",
-            "conditional_formatting": {
-                "revenue": {
-                    "when": [
-                        {"gt": 2_000_000, "font": {"color": "#00ff00"}},
-                        {"lte": 2_000_000, "font": {"color": "#ff0000"}},
+            "style": {
+                "conditional": {
+                    "revenue": [
+                        {"gt": 2_000_000, "value": {"font": {"color": "#00ff00"}}},
+                        {"lte": 2_000_000, "value": {"font": {"color": "#ff0000"}}},
                     ]
                 }
             },
@@ -145,16 +146,14 @@ def test_kpi_color_when():
 
 
 # ============================================================================
-# Tables read conditional_formatting directly — no lowering into style.columns
+# Table rules ride on the resolved column that owns them
 # ============================================================================
 
 
 def test_table_conditional_formatting_preserved_on_source_chart():
-    """Table CF is preserved on the chart-level block for direct render access.
+    """Table rules stay on the resolved column that authored them.
 
-    Post ``delete-tablecolumnconfig-when``, the table renderer reads ``when``
-    rules straight from ``chart.conditional_formatting``. Resolve must not
-    synthesize or mutate ``style.columns[*].when`` to carry CF.
+    The table renderer reads each column's rules from its own resolved entry.
     """
     _table_data = [
         {"region": "US", "arr": 1_200_000},
@@ -166,21 +165,27 @@ def test_table_conditional_formatting_preserved_on_source_chart():
             "query": _DUMMY_QUERY,
             "query_name": "q",
             "type": "table",
-            "conditional_formatting": {
-                "arr": {
-                    "when": [
-                        {"gt": 1_000_000, "font": {"color": "#00ff00"}},
-                        {"lte": 1_000_000, "font": {"color": "#ff0000"}},
-                    ]
+            "style": {
+                "columns": {
+                    "arr": {
+                        "conditional": [
+                            {
+                                "gt": 1_000_000,
+                                "font": {"color": "#00ff00"},
+                            },
+                            {
+                                "lte": 1_000_000,
+                                "font": {"color": "#ff0000"},
+                            },
+                        ]
+                    }
                 }
             },
         }
     )
     resolved = resolve(chart, _table_data, chart_style_context=_BOARD_CONTEXT)
     assert resolved is not None
-    # CF block survives on the resolved chart, where the table renderer reads it.
-    assert resolved.conditional_formatting is not None
-    assert "arr" in resolved.conditional_formatting
+    assert len(resolved.columns["arr"].conditional) == 2
 
 
 # ============================================================================
@@ -206,7 +211,7 @@ def test_table_conditional_formatting_preserved_on_source_chart():
 
 
 def test_table_conditional_formatting_flows_through_render_to_svg():
-    """Table CF rules from the chart-level block apply at render time."""
+    """Table rules from ``style.columns.<col>.conditional`` apply at render time."""
     from dbt_charts.core.compile.resolve.style.board import resolve_style
 
     from ..._engine_render import render_table_svg
@@ -221,12 +226,20 @@ def test_table_conditional_formatting_flows_through_render_to_svg():
             "query": _DUMMY_QUERY,
             "query_name": "q",
             "type": "table",
-            "conditional_formatting": {
-                "arr": {
-                    "when": [
-                        {"gt": 1_000_000, "font": {"color": "#00ff00"}},
-                        {"lte": 1_000_000, "font": {"color": "#ff0000"}},
-                    ]
+            "style": {
+                "columns": {
+                    "arr": {
+                        "conditional": [
+                            {
+                                "gt": 1_000_000,
+                                "font": {"color": "#00ff00"},
+                            },
+                            {
+                                "lte": 1_000_000,
+                                "font": {"color": "#ff0000"},
+                            },
+                        ]
+                    }
                 }
             },
         }
@@ -258,11 +271,16 @@ def test_table_link_does_not_override_conditional_font_color():
             "query_name": "q",
             "type": "table",
             "link": "/detail/{{ region }}",
-            "conditional_formatting": {
-                "region": {
-                    "when": [
-                        {"eq": "US", "font": {"color": "#ff0000"}},
-                    ]
+            "style": {
+                "columns": {
+                    "region": {
+                        "conditional": [
+                            {
+                                "eq": "US",
+                                "font": {"color": "#ff0000"},
+                            },
+                        ]
+                    }
                 }
             },
         }
@@ -286,7 +304,7 @@ def test_table_link_does_not_override_conditional_font_color():
 
 
 def test_kpi_channel_overrides_style_font_color():
-    """resolved_channels color (projected from conditional_formatting) takes priority
+    """A matched style.conditional value color takes priority
     over chart.style.font.color — the whole-card fallback lever now that
     style.color is gone."""
     from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
@@ -303,15 +321,16 @@ def test_kpi_channel_overrides_style_font_color():
             "type": "kpi",
             "value": "revenue",
             "style": KpiChartStylePatch.model_validate(
-                {"font": {"color": "#aaaaaa"}}
-            ),  # would be used as fallback
-            "conditional_formatting": {
-                "revenue": {
-                    "when": [
-                        {"gt": 2_000_000, "font": {"color": "#00ff00"}},  # should win
-                    ]
+                {
+                    "font": {"color": "#aaaaaa"},  # would be used as fallback
+                    "conditional": {
+                        "revenue": [
+                            # should win
+                            {"gt": 2_000_000, "value": {"font": {"color": "#00ff00"}}},
+                        ]
+                    },
                 }
-            },
+            ),
         }
     )
     resolved = resolve(chart, _kpi_data, chart_style_context=_BOARD_CONTEXT)
@@ -374,11 +393,7 @@ def test_kpi_style_color_rejected():
 
 
 def test_table_cf_does_not_synthesize_style_columns_for_target_field():
-    """CF on a column NOT in style.columns does not synthesize a column entry.
-
-    After removing the CF → style.columns lowering, tables read rules straight
-    from the chart-level block. ``style.columns`` stays authored-only.
-    """
+    """A column's rules are not lowered into that column's static style."""
     from dbt_charts.core.compile.models.chart.authored import TableColumnConfig
     from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
 
@@ -396,20 +411,22 @@ def test_table_cf_does_not_synthesize_style_columns_for_target_field():
                     "columns": {
                         "name": TableColumnConfig(visible=True),
                         "region": TableColumnConfig(),
-                    }
+                        "arr": {
+                            "conditional": [
+                                {"gt": 1_000_000, "font": {"color": "#00ff00"}}
+                            ]
+                        },
+                    },
                 }
             ),
-            "conditional_formatting": {
-                "arr": {"when": [{"gt": 1_000_000, "font": {"color": "#00ff00"}}]},
-            },
         }
     )
     resolved = resolve(chart, _table_data, chart_style_context=_BOARD_CONTEXT)
     assert resolved.columns is not None
     cols = resolved.columns
     fields = list(cols.keys())
-    # Every query column materializes (style.columns is styling-only), but the
-    # CF rule on "arr" is not lowered into its column config.
+    # Every query column materializes, but the rule on "arr" is not lowered
+    # into its static font.
     assert fields == ["name", "arr", "region"]
     assert cols["arr"].font is None
 

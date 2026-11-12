@@ -5,10 +5,10 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.primitives import (
+    GradientColorStyle,
     ResolvedFontStyle,
     ResolvedFormat,
     ResolvedScaleTarget,
-    StaticGradientColorStyle,
 )
 from dbt_charts.core.compile.models.style.theme import (
     GeoshapeChartStyle,
@@ -16,12 +16,12 @@ from dbt_charts.core.compile.models.style.theme import (
 )
 
 
-class ResolvedStaticGradientColorStyle(StaticGradientColorStyle):
-    """StaticGradientColorStyle with a resolved scale target for gradient.
+class ResolvedGradientColorStyle(GradientColorStyle):
+    """GradientColorStyle with a resolved scale target for gradient.
 
     Used by ResolvedGeoshapeChartStyle to carry the baked gradient scale
     after _with_baked_color_gradient runs in the geoshape resolve path.
-    The base StaticGradientColorStyle is kept for pre-bake use (theme
+    The base GradientColorStyle is kept for pre-bake use (theme
     cascade, authored style); this resolved variant is only constructed
     at resolve time.
     """
@@ -35,15 +35,15 @@ class ResolvedStaticGradientColorStyle(StaticGradientColorStyle):
 class ResolvedGeoshapeChartStyle(GeoshapeChartStyle):
     """GeoshapeChartStyle with a resolved color field.
 
-    Carries a ResolvedStaticGradientColorStyle so the gradient's resolved_stops
+    Carries a ResolvedGradientColorStyle so the gradient's resolved_stops
     are preserved through pydantic serialization (board artifact round-trip).
     The engine reads chart.style.geoshape.color.gradient from this field
     unchanged — the path is identical, now provably resolved.
     """
 
-    color: ResolvedStaticGradientColorStyle | None = Field(  # type: ignore[assignment]
+    color: ResolvedGradientColorStyle | None = Field(  # type: ignore[assignment]  # type-state: type_ignore — narrowing override of the parent field's ColorStyle
         default=None,
-        description="Color config — static paint or resolved gradient.",
+        description="Color config — resolved gradient.",
     )
 
 
@@ -72,5 +72,5 @@ class ResolvedGeoshapeStyle(BaseModel):
 __all__ = [
     "ResolvedGeoshapeChartStyle",
     "ResolvedGeoshapeStyle",
-    "ResolvedStaticGradientColorStyle",
+    "ResolvedGradientColorStyle",
 ]

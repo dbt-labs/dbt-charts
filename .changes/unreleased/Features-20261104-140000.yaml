@@ -1,0 +1,3 @@
+kind: Features
+body: Bar, line, area, scatter, pie, heatmap, map and point-map charts restyle a mark by its row value with `style.conditional`, and a run of matching points restyles a line stroke or area fill.
+time: 2026-11-04T14:00:00.000000-08:00

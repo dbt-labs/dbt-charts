@@ -64,17 +64,16 @@ pub struct TableTitle {
 
 impl TableFaces {
     /// The faces `style` paints in, each stack drawn under the board's emoji mode. The body's ink is
-    /// the table's static `color` over its font's (bind.rs:`bind_drawn`); the header's weight is the
-    /// header font's.
+    /// the table's font color (bind.rs:`bind_drawn`; bind refuses `column_defaults.font`, the
+    /// authored override); the header's weight is the header font's.
     ///
     /// `title` is the authored title and `width` the chart's outer width, which picks the title's tier
     /// (table.py:`title_band`'s `style.title_font`, typography.py:`chart_title_spec`).
     pub fn of(style: &TableChartStyle, placed: &Style, title: Option<&str>, width: f64) -> Result<Self, Diagnostic> {
         let emoji = &placed.font.emoji;
-        // bind.rs:`bind_drawn`: a static `color` is sanitized, the font's own passes as written, and
-        // production paints an empty ink as `fill=""`, which is no color.
-        let fixed = style.color.r#static.as_ref().map(|color| sanitize_color(color.as_str())).transpose()?.flatten();
-        let body_ink = fixed.or(Some(style.font.color.as_str())).filter(|ink| !ink.is_empty()).ok_or_else(|| Diagnostic::refused(refuse!("a table with an empty font color is not supported")))?;
+        // bind.rs:`bind_drawn`: the font's own color passes as written, and production paints an
+        // empty ink as `fill=""`, which is no color.
+        let body_ink = Some(style.font.color.as_str()).filter(|ink| !ink.is_empty()).ok_or_else(|| Diagnostic::refused(refuse!("a table with an empty font color is not supported")))?;
         let header = &style.header.font;
         let header_ink = sanitize_color(header.color.as_str())?.unwrap_or(body_ink);
         let title = title.filter(|text| !text.is_empty()).map(|text| table_title(text, style, placed, width)).transpose()?;
@@ -544,6 +543,7 @@ pub fn draw(card: &TableCard, plan: &Plan) -> Result<Vec<Node>, Diagnostic> {
         // right-aligned text column's header stays at the start.
         let (tx, anchor) = if column.align == CellAlign::Center { (x + w / 2.0, "middle") } else { (x + pad, "start") };
         let attrs = Attrs::new()
+            .quick("data-dct-role", "table-header")
             .quick("font-size", faces.header.size.to_string())
             .quick("font-weight", header_weight.as_str())
             .quick("fill", header_ink)
@@ -575,6 +575,7 @@ pub fn draw(card: &TableCard, plan: &Plan) -> Result<Vec<Node>, Diagnostic> {
                 CellAlign::Left => (x + pad, "start"),
             };
             let attrs = Attrs::new()
+                .quick("data-dct-role", "table-cell")
                 .quick("font-size", faces.body.size.to_string())
                 .quick("fill", body_ink)
                 .quick("text-anchor", anchor)

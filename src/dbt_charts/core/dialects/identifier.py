@@ -6,8 +6,6 @@ import re
 from sqlglot import exp
 from sqlglot.dialects.dialect import Dialect, NormalizationStrategy
 
-_CASE_KEEPING_DIALECTS = frozenset({"duckdb", "sqlite"})
-
 # sqlglot quoting is not an escape boundary (BigQuery leaves a backslash
 # unescaped), so deny quote chars, backslash, brackets, and control chars
 # instead of escaping them. Braces are denied because board SQL is re-rendered as Jinja.
@@ -63,10 +61,16 @@ def result_column_name(name: str, sqlglot_dialect: str | None) -> str:
     """The name a warehouse column carries in a query result, so the name boards
     reference it by.
 
-    Sources on the local DuckDB and SQLite engines (lake compute speaks DuckDB)
-    keep the warehouse's spelling; every other source's backend lowercases it.
-    An unknown dialect (``None``) keeps every name.
+    The warehouse's spelling, except where the dialect folds unquoted names to
+    upper case (Snowflake): an all-uppercase name there is the fold of an
+    unquoted one and reads lowercase, so `SELECT id` gives `id`. A quoted mixed
+    case alias keeps its case. Boards match result columns ignoring case
+    (``compile.column_match``), so the spelling decides what is displayed, never
+    whether a reference resolves.
     """
-    if sqlglot_dialect is None or sqlglot_dialect in _CASE_KEEPING_DIALECTS:
+    if sqlglot_dialect is None:
         return name
-    return name.lower()
+    strategy = Dialect.get_or_raise(sqlglot_dialect).NORMALIZATION_STRATEGY
+    if strategy is NormalizationStrategy.UPPERCASE and name == name.upper():
+        return name.lower()
+    return name

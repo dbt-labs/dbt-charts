@@ -170,6 +170,36 @@ pub fn instant_iso(at: f64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60)
 }
 
+/// The date a tooltip heads its row with (production's `tooltip_header_date_expr`,
+/// `time_unit_detect.py`; ported from `chart-renderer/src/families/temporal.rs::tooltip_header_date`,
+/// which goes at cutover). A header has no neighboring tick to borrow context from, so it names
+/// the whole bucket ("Feb 2024", never "Feb"); a week reads as its start-to-end range. No grain
+/// is the day's own format.
+pub fn tooltip_header_date((y, m, d): (i32, u8, u8), unit: Option<TimeUnit>) -> Result<String, String> {
+    let locale = crate::time_locale::active_time_locale()?;
+    let month = |m: u8| locale.short_months[usize::from(m) - 1].clone();
+    Ok(match unit {
+        Some(TimeUnit::Year) => format!("{y:04}"),
+        Some(TimeUnit::YearQuarter) => display_text::language::tr(
+            "time.quarter_year",
+            None,
+            &[("year", &format!("{y:04}")), ("n", &((m - 1) / 3 + 1).to_string())],
+        )?,
+        Some(TimeUnit::YearMonth) => format!("{} {y:04}", month(m)),
+        Some(TimeUnit::YearWeek) => {
+            let (ey, em, ed) = civil_from_days(days_from_civil(y, m, d) + 6);
+            if ey != y {
+                format!("{d} {} {y:04} \u{2013} {ed} {} {ey:04}", month(m), month(em))
+            } else if em != m {
+                format!("{d} {} \u{2013} {ed} {} {ey:04}", month(m), month(em))
+            } else {
+                format!("{d}\u{2013}{ed} {} {ey:04}", month(em))
+            }
+        }
+        Some(TimeUnit::YearMonthDate) | None => format!("{d} {} {y:04}", month(m)),
+    })
+}
+
 /// Parse `axis_x.time_unit` JSON string to `TimeUnit`.
 /// Returns `None` for unrecognized values (Rust renderer will skip temporal
 /// formatting and fall back to raw string labels for unknown grains).
@@ -362,32 +392,27 @@ pub fn has_labeled_bucket(rows: &[serde_json::Map<String, serde_json::Value>], f
 }
 
 pub fn infer_vega_type(types: &ColumnTypes, rows: &[serde_json::Map<String, serde_json::Value>], field: &str) -> Result<VegaType, String> {
+    use crate::column_kind::{text_kind, window_cells, ColumnKind, Window};
     use serde_json::Value;
     let declared = types.get(field)?;
     if !rows.first().is_some_and(|row| row.contains_key(field)) {
         return Ok(VegaType::Nominal);
     }
-    let sample: Vec<&Value> = rows.iter().take(10).filter_map(|row| row.get(field)).filter(|v| !v.is_null()).collect();
-    if sample.iter().all(|v| matches!(v, Value::Number(_) | Value::Bool(_))) {
+    // Read off the cells, not the declaration: the year-shaped rewrite may have turned a declared
+    // number column's cells into ISO date strings by now.
+    let cells: Vec<&Value> = window_cells(rows, field, Window::Rows(10)).collect();
+    if cells.iter().all(|cell| matches!(cell, Value::Number(_) | Value::Bool(_))) {
         return Ok(VegaType::Quantitative);
     }
     if declared.is_temporal() {
         return Ok(VegaType::Temporal);
     }
-    let (mut all_temporal, mut all_date_like) = (true, true);
-    for value in sample {
-        match value {
-            Value::String(s) => {
-                let standard = is_standard_date_shape(s);
-                all_temporal &= standard;
-                all_date_like &= standard || is_date_like_shape(s);
-            }
-            _ => (all_temporal, all_date_like) = (false, false),
-        }
+    if !cells.iter().all(|cell| cell.is_string()) {
+        return Ok(VegaType::Nominal);
     }
-    Ok(match (all_temporal, all_date_like) {
-        (true, _) => VegaType::Temporal,
-        (_, true) => VegaType::Ordinal,
+    Ok(match text_kind(field, cells.iter().filter_map(|cell| cell.as_str())) {
+        ColumnKind::Text { standard: true, .. } => VegaType::Temporal,
+        ColumnKind::Text { date_like: true, .. } => VegaType::Ordinal,
         _ => VegaType::Nominal,
     })
 }
@@ -1013,7 +1038,8 @@ pub fn complete_ordinal_rows(
     fiscal_start: u8,
 ) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, String> {
     use serde_json::Value;
-    let dated: Vec<((i32, u8, u8), &serde_json::Map<String, Value>)> = rows
+    type Dated<'a> = ((i32, u8, u8), &'a serde_json::Map<String, Value>);
+    let dated: Vec<Dated> = rows
         .iter()
         .filter_map(|row| {
             let text = row.get(x_field)?.as_str()?;

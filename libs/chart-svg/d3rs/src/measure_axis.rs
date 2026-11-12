@@ -2,6 +2,8 @@
 //! (`tick_values.py::_resolve_cartesian_ticks`), shared by the resolve stage and by the
 //! renderer, which runs it again over the shown rows once a legend view refits the axis.
 
+use crate::invariant::Invariant;
+
 /// `_resolve_cartesian_ticks`'s own mirrored negative-headroom formula
 /// (the all-negative zero-anchored branch's own floor, and its shared
 /// `negative_floor` guard above it): `raw_min * (1 + h)` when headroom is
@@ -21,10 +23,20 @@ pub fn apply_headroom(value: f64, headroom: Option<f64>) -> f64 {
     }
 }
 
+/// `value * (1 + headroom)` for a positive `value`, held at 1.0 when `percent` and the data
+/// (`lo..=hi`) lies within [0, 1]: a share cannot pass 100%. Data outside the unit interval
+/// keeps its headroom.
+pub fn headroom_top(value: f64, headroom: Option<f64>, percent: bool, (lo, hi): (f64, f64)) -> f64 {
+    let top = apply_headroom(value, headroom);
+    if percent && lo >= 0.0 && hi <= 1.0 { top.min(1.0).max(value) } else { top }
+}
+
 /// What the law reads of an axis: plain values, so no caller needs the axis's wire form.
 pub struct MeasureAxis {
     /// `scale.headroom`.
     pub headroom: Option<f64>,
+    /// The axis's format is a percent (see [`headroom_top`]).
+    pub percent: bool,
     /// An authored `scale.continuous.domain`.
     pub authored_domain: Option<(f64, f64)>,
     /// An authored `scale.values` ladder.
@@ -91,7 +103,7 @@ pub fn bake_ticks(axis: &MeasureAxis, y_floats: &[f64], zero_anchor: bool) -> Ti
         let raw_max = y_floats.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let h = axis.headroom;
         let tick_min = raw_min.min(0.0);
-        let tick_max = apply_headroom(raw_max, h).max(0.0);
+        let tick_max = headroom_top(raw_max, h, axis.percent, (raw_min, raw_max)).max(0.0);
         if raw_max >= 0.0 {
             // `>= 0`: a data max of exactly 0 is mixed-sign the same way a
             // strictly positive max is — the anchored edge is the data's own
@@ -121,9 +133,11 @@ pub fn bake_ticks(axis: &MeasureAxis, y_floats: &[f64], zero_anchor: bool) -> Ti
         let h = axis.headroom;
         let span = raw_max - data_min;
         if h.is_some_and(|h| h != 0.0) && span > 0.0 {
-            let h = h.expect("checked by is_some_and above");
-            let dmax = raw_max + h * span;
-            let dmin = data_min - h * span;
+            let h = h.held("checked by is_some_and above");
+            let (dmax, dmin) = (raw_max + h * span, data_min - h * span);
+            let unit = axis.percent && data_min >= 0.0 && raw_max <= 1.0;
+            let dmax = if unit { dmax.min(1.0) } else { dmax };
+            let dmin = if unit { dmin.max(0.0) } else { dmin };
             domain_max = Some(dmax);
             domain_min = Some(dmin);
             (dmin, dmax)
@@ -135,7 +149,7 @@ pub fn bake_ticks(axis: &MeasureAxis, y_floats: &[f64], zero_anchor: bool) -> Ti
         }
     };
     let Some(target_count) = target_count else {
-        let floor = min_step.expect("checked above: a count-less axis has a floor");
+        let floor = min_step.held("checked above: a count-less axis has a floor");
         let probe =
             |step| crate::ticks::nice_tick_values(tick_min, tick_max, VEGA_DEFAULT_TICK_COUNT, step);
         if probe(None) == probe(Some(floor)) {

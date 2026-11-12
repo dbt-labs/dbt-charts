@@ -31,8 +31,8 @@ from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedGeoshapeChartStyle,
     ResolvedGeoshapeStyle,
+    ResolvedGradientColorStyle,
     ResolvedPointMapStyle,
-    ResolvedStaticGradientColorStyle,
 )
 from dbt_charts.core.compile.models.style.theme import GeoshapeChartStyle
 from dbt_charts.core.compile.models.vega_lite.contracts import (
@@ -46,6 +46,9 @@ from dbt_charts.core.compile.resolve.chart._axes import (
 from dbt_charts.core.compile.resolve.chart._channels import (
     _channels_for,
     _column_numeric_values,
+)
+from dbt_charts.core.compile.resolve.chart._conditional import (
+    validate_mark_conditional,
 )
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
@@ -325,7 +328,7 @@ def _with_baked_color_gradient(
             geoshape.model_dump(exclude_none=True)
         )
     baked = bake_scale_target_stops(geoshape.color.gradient)
-    resolved_color = ResolvedStaticGradientColorStyle.model_validate(
+    resolved_color = ResolvedGradientColorStyle.model_validate(
         {
             **geoshape.color.model_dump(exclude_none=True),
             "gradient": baked.model_dump(exclude_unset=True),
@@ -352,6 +355,7 @@ def _resolve_geoshape(
     )
     primary = _with_color_tokens(normalized.style, chart_style_context)
     geoshape = merge_unset(board_family_style(chart_style_context, normalized), primary)
+    validate_mark_conditional(geoshape.conditional, data)
     channels = _channels_for(normalized, data)
     _tf = resolve_title_font(chart_local_style_context, width)
     # The tooltip formats chart.value_field (the choropleth tooltip), which
@@ -422,6 +426,12 @@ def _resolve_point_map(
     point_map = merge_unset(
         board_family_style(chart_style_context, normalized), primary
     )
+    if point_map.conditional and normalized.collapse:
+        raise ValueError(
+            "style.conditional cannot be combined with collapse: a collapsed mark "
+            "stands for many rows, so no single row decides its style"
+        )
+    validate_mark_conditional(point_map.conditional, data)
     channels = _channels_for(normalized, data)
     # The point tooltip formats only size_field with tooltip_format -- the
     # color entry gets no format at all, so voting on color would drag an
@@ -531,7 +541,7 @@ def _resolve_point_map(
             # (that walk is cartesian-only), so they always take the first
             # single-series stop rather than a rhythm slot.
             single_series_fill=_effective_single_series_fill(
-                chart_style_context, point_map
+                chart_style_context, point_map, ("marks", "point", "color")
             ),
             tooltip_format=reject_native(
                 column_format(

@@ -362,8 +362,8 @@ rows:
     svg = render_board_to_svg(board)
     # d3's accounting flag wraps a negative in parens; painted alongside the authored
     # suffix that must survive untouched.
-    assert "(100) EUR" in svg
-    assert "−100 EUR" not in svg
+    assert ">(100)<" in svg
+    assert ", EUR<" in svg
 
 
 def test_support_table_entry_affix_with_no_spec_compiles_clean() -> None:
@@ -416,7 +416,7 @@ rows:
     prefixed_result = compile_board(prefixed_board)
     assert prefixed_result.success, prefixed_result.errors
     prefixed_svg = render_board_to_svg(prefixed_board)
-    assert "EUR 100" in prefixed_svg
+    assert ">100<" in prefixed_svg and ", EUR<" in prefixed_svg
 
 
 def test_donut_total_affix_with_non_default_sign_flag_compiles_clean() -> None:

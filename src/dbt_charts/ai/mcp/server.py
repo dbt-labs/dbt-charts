@@ -72,6 +72,12 @@ _BASE_RESOURCES = [
         "The board and chart grammar plus the build-render-fix loop. Read this when creating or editing a board, choosing chart types, or designing layouts.",
     ),
     (
+        "dct://guide/board-layout",
+        "text/markdown",
+        "Board Layout Guide",
+        "How to arrange a board's elements. Read this before laying out a board.",
+    ),
+    (
         "dct://guide/report-design",
         "text/markdown",
         "Report Design Guide",

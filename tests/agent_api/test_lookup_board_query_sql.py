@@ -416,3 +416,28 @@ def test_preview_translates_to_the_dbt_profiles_warehouse(
         sql.replace("{{ who }}", "'Ann'"), read="bigquery", write="postgres"
     )[0]
     assert result.sql == expected
+
+
+def test_preview_translates_a_cache_composing_query_to_duckdb(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """A query over ``.cache`` runs on DuckDB whatever its source's warehouse."""
+    project = _dialect_project(tmp_path, local_project, "sqlite")
+    board = DIALECT_BOARD.replace(
+        "FROM t WHERE", "FROM {{ queries.base.cache }} WHERE"
+    ).replace(
+        "queries:\n", "queries:\n  base:\n    sql: SELECT 1 AS d\n    source: db\n"
+    )
+    (tmp_path / "charts" / "b.yml").write_text(board)
+
+    result = lookup_board_query_sql("main", Path("charts/b.yml"), project=project)
+
+    assert result.success, result.errors
+    assert result.dialect == "duckdb"
+    expected = sqlglot.transpile(
+        "SELECT date_trunc('month', d) AS m FROM __dct_cache_ref__base__ "
+        "WHERE who = 'Ann'",
+        read="bigquery",
+        write="duckdb",
+    )[0]
+    assert result.sql == expected

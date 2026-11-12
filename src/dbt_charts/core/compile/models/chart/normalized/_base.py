@@ -25,11 +25,10 @@ from dbt_charts.core.compile.models.chart.authored import (
     BasemapConfig,
     ChartSort,
     ChartSupportTable,
-    FieldConditionalFormatting,
     MultiplesConfig,
     TooltipField,
 )
-from dbt_charts.core.compile.models.markers import Url
+from dbt_charts.core.compile.models.markers import ColumnRef, ResultQuery, Url
 from dbt_charts.core.compile.models.primitives import LinkOpen, VariableDependencies
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.vega_lite.contracts import (
@@ -41,9 +40,8 @@ from dbt_charts.core.compile.models.vega_lite.contracts import (
 class _BaseChartFields(BaseModel):
     """Universal fields present on every normalized chart family.
 
-    Mirrors authored._BaseChartFields: notes, link, and
-    conditional_formatting belong here — declared once, never re-declared
-    on any family model.
+    Mirrors authored._BaseChartFields: notes and link belong here — declared
+    once, never re-declared on any family model.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -100,10 +98,6 @@ class _BaseChartFields(BaseModel):
         default="page",
         description="How a click on the chart link opens its target.",
     )
-    conditional_formatting: dict[str, FieldConditionalFormatting] | None = Field(
-        default=None,
-        description="Rule-driven style overrides indexed by column name.",
-    )
     rhythm_slot: int = Field(
         default=0,
         description=(
@@ -135,7 +129,7 @@ class _SharedChartFields(_BaseChartFields):
 class _FieldLabelsField(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    field_labels: dict[str, str] = Field(
+    field_labels: dict[ColumnRef, str] = Field(
         default_factory=dict,
         description="Authored display text per query column, painted verbatim.",
     )
@@ -153,7 +147,7 @@ class _TooltipFields(BaseModel):
 class _PatternField(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    pattern: str | None = Field(
+    pattern: ColumnRef | None = Field(
         exclude_if=lambda v: v is None,
         default=None,
         description="Field mapped to the fill pattern.",
@@ -163,11 +157,11 @@ class _PatternField(BaseModel):
 class _CartesianChartFields(_SharedChartFields, _FieldLabelsField):
     """Cartesian (x/y-axis) chart families: bar, line, area, scatter, heatmap."""
 
-    x: str | None = Field(default=None, description="Field mapped to the x-axis.")
-    y: str | list[str] | None = Field(
+    x: ColumnRef | None = Field(default=None, description="Field mapped to the x-axis.")
+    y: ColumnRef | list[ColumnRef] | None = Field(
         default=None, description="Field(s) mapped to the y-axis."
     )
-    color: str | None = Field(
+    color: ColumnRef | None = Field(
         default=None, description="Field mapped to the color channel."
     )
     x_label: str | None = Field(default=None, description="X-axis label override.")
@@ -181,9 +175,11 @@ class _CartesianChartFields(_SharedChartFields, _FieldLabelsField):
         default=None,
         description="Mini data-grid attached to the chart.",
     )
-    layer_query_formats: dict[str, dict[str, str]] = Field(
-        default_factory=dict,
-        description="Column formats declared by layer queries, keyed by query name.",
+    layer_query_formats: dict[Annotated[str, ResultQuery()], dict[ColumnRef, str]] = (
+        Field(
+            default_factory=dict,
+            description="Column formats declared by layer queries, keyed by query name.",
+        )
     )
     height: int | float | None = Field(
         default=None, description="Explicit chart height in pixels."
@@ -203,7 +199,9 @@ class _CartesianChartFields(_SharedChartFields, _FieldLabelsField):
 class _GeoChartFields(_SharedChartFields, _FieldLabelsField):
     """Geographic chart families: point_map/bubble_map, geoshape/map."""
 
-    color: str | None = Field(default=None, description="Field mapped to fill color.")
+    color: ColumnRef | None = Field(
+        default=None, description="Field mapped to fill color."
+    )
     geo: str | dict[str, Any] | None = Field(
         default=None, description="Named geographic data source or inline config."
     )
@@ -211,11 +209,11 @@ class _GeoChartFields(_SharedChartFields, _FieldLabelsField):
         default=None,
         description="Named geographic boundary source for overlay rendering.",
     )
-    lookup: str | None = Field(
+    lookup: ColumnRef | None = Field(
         default=None,
         description="Data field to join against geographic boundary data.",
     )
-    value: str | None = Field(
+    value: ColumnRef | None = Field(
         default=None,
         description="Data field mapped to fill color / choropleth value.",
     )

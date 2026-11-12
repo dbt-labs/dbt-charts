@@ -12,17 +12,15 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from dbt_charts.core.compile.models.chart.authored import (
-    ConditionalRule,
-    TableColumnConfig,
-)
+from dbt_charts.core.compile.models.chart.authored import TableColumnConfig
+from dbt_charts.core.compile.models.conditional_predicate import ConditionalPredicate
 
 
 def test_tablecolumnconfig_rejects_when_kwarg() -> None:
     """Passing ``when=[...]`` to TableColumnConfig raises ValidationError."""
     with pytest.raises(ValidationError):
         TableColumnConfig(
-            when=[ConditionalRule(gt=1_000_000, background="#166534")],
+            when=[ConditionalPredicate(gt=1_000_000)],
         )
 
 

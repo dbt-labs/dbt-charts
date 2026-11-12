@@ -166,6 +166,10 @@ from dbt_charts.core.render.sizing import resolve_active_tab_index
 from dbt_charts.core.render.svg_utils import strip_pagination_chrome
 from dbt_charts.core.render.tab_scope import scope_tabs
 from dbt_charts.core.render.thumbnail import cartoonize
+from dbt_charts.core.render.variables_buttons_overflow import (
+    ButtonsOverflow,
+    collect_buttons_overflows,
+)
 from dbt_charts.core.render.variables_resolve import (
     linked_variable_options,
     resolve_option_values,
@@ -340,6 +344,7 @@ def _collect_render_warnings(
     plot_width_share_warnings: dict[str, PlotWidthShareWarning],
     pie_total_overflows: dict[str, PieTotalOverflow],
     contrast_warnings: list[ContrastRecord],
+    buttons_overflows: list[ButtonsOverflow],
     geometry_warnings: GeometryWarnings,
     series_label_truncations: dict[str, list[SeriesLabelTruncation]],
     axis_label_collisions: dict[str, AxisLabelCollision],
@@ -527,6 +532,7 @@ def _collect_render_warnings(
             if mode is not None
         },
         contrast_warnings=contrast_warnings,
+        variable_buttons_overflows=buttons_overflows,
     )
     warnings = run_all(ctx)
     if restated_check:
@@ -1049,6 +1055,7 @@ def _render(
         plot_width_share_warnings: dict[str, PlotWidthShareWarning],
         pie_total_overflows: dict[str, PieTotalOverflow],
         contrast_warnings: list[ContrastRecord],
+        buttons_overflows: list[ButtonsOverflow],
     ) -> tuple[list[Diagnostic], list[Diagnostic]]:
         all_warnings = _collect_render_warnings(
             resolved_board,
@@ -1067,6 +1074,7 @@ def _render(
             plot_width_share_warnings,
             pie_total_overflows,
             contrast_warnings,
+            buttons_overflows,
             geometry_warnings,
             series_label_truncations,
             axis_label_collisions,
@@ -1121,6 +1129,7 @@ def _render(
     _plot_width_share_warnings: dict[str, PlotWidthShareWarning] = {}
     _pie_total_overflows: dict[str, PieTotalOverflow] = {}
     _contrast_warnings: list[ContrastRecord] = []
+    _buttons_overflows: list[ButtonsOverflow] = []
     try:
         # Render the canonical SVG once; output formats only wrap or convert it.
         # The capture sinks record each table's real post-cascade column overflow,
@@ -1162,6 +1171,7 @@ def _render(
             collect_plot_width_share_warnings() as _plot_width_share_warnings,
             collect_pie_total_overflows() as _pie_total_overflows,
             collect_contrast_warnings() as _contrast_warnings,
+            collect_buttons_overflows() as _buttons_overflows,
             collect_painted_italic_families(),
             interactive_controls(options.get("controls", False)),
             page_runtime(format == "html"),
@@ -1194,12 +1204,12 @@ def _render(
         # Render failed before a table could rasterize: finalize with an empty
         # capture so detector warnings still surface alongside the board error.
         render_warnings, suppressed_warnings = _finalize_warnings(
-            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, []
+            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, [], []
         )
     except Exception as e:  # noqa: BLE001 — any crash is this board's ERR-INTERNAL, not a server error
         board_error = RenderError.from_unexpected(e).to_diagnostic()
         render_warnings, suppressed_warnings = _finalize_warnings(
-            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, []
+            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, [], []
         )
     finally:
         _reset_contexts()
@@ -1239,6 +1249,7 @@ def _render(
             {**_sizing_plot_width_share_warnings, **_plot_width_share_warnings},
             {**_sizing_pie_total_overflows, **_pie_total_overflows},
             _contrast_warnings,
+            _buttons_overflows,
         )
 
     if format in _DATA_FORMATS:

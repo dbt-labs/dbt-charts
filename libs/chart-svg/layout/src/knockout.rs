@@ -286,6 +286,21 @@ impl Found<'_> {
     }
 }
 
+/// A chart's id for a chart placed once (`contract.rs::scoped_id`): every character outside a
+/// FuncIRI-safe set replaced, and a short digest when that was lossy (`safe_svg_id`).
+pub fn safe_scope(chart_id: &str) -> String {
+    use md5::{Digest, Md5};
+    if chart_id.is_empty() {
+        return "chart.anon".to_string();
+    }
+    let safe: String = chart_id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect();
+    if safe == chart_id {
+        return safe;
+    }
+    let digest = Md5::digest(chart_id.as_bytes());
+    format!("{safe}-{}", digest.iter().take(4).map(|b| format!("{b:02x}")).collect::<String>())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

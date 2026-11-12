@@ -9,9 +9,7 @@ from pydantic import ValidationError
 
 from dbt_charts.core.compile.models.board.authored import AUTHORED_BOARD_ADAPTER
 from dbt_charts.core.compile.models.chart.authored import AUTHORED_CHART_VARIANTS
-from dbt_charts.core.compile.models.chart.authored._conditional_formatting import (
-    ConditionalRule,
-)
+from dbt_charts.core.compile.models.conditional_predicate import ConditionalPredicate
 from dbt_charts.core.compile.schema.introspection import introspect
 
 
@@ -44,8 +42,8 @@ def test_cache_enabled_round_trip_form_is_not_authorable() -> None:
 
 def test_rule_rejects_attribute_name_in_() -> None:
     with pytest.raises(ValidationError):
-        ConditionalRule.model_validate({"in_": [1], "background": "red"})
-    rule = ConditionalRule.model_validate({"in": [1], "background": "red"})
+        ConditionalPredicate.model_validate({"in_": [1]})
+    rule = ConditionalPredicate.model_validate({"in": [1]})
     assert rule.in_ == [1]
 
 

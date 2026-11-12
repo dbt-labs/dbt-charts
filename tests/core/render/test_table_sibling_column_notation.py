@@ -47,7 +47,7 @@ def test_a_column_that_cannot_compact_follows_its_compacting_sibling(
     assert not [t for t in texts if "," in t], (
         f"exact-digit cells beside compact ones: {texts}"
     )
-    assert low[0].startswith("1.26"), f"low should print in thousands: {low}"
+    assert low[0].startswith("1.27"), f"low should print in thousands: {low}"
 
 
 def test_plain_digit_siblings_do_not_pull_a_declined_column_off_exact_digits(
@@ -99,7 +99,7 @@ def test_a_column_straddling_a_thousand_prints_in_one_unit_beside_a_compact_sibl
     board = _BOARD.replace("1266.5", "858.5")
     low = _full_cells(tmp_path, board)[0]
     # Every cell of a shared-scale column is in its unit, and says so.
-    assert low == ["0.859K", "0.77K", "1.899K", "1.385K"], low
+    assert low == ["0.86K", "0.77K", "1.9K", "1.39K"], low
 
 
 def test_sibling_columns_print_the_unit_on_every_cell(tmp_path: Path) -> None:
@@ -117,12 +117,14 @@ def _board_with(rows: list[tuple[float, float]]) -> str:
 
 # The shared maximum is what the sibling columns' own data need, so it varies
 # with the table; each value still prints only the places it has.
-def test_sibling_columns_share_the_maximum_precision_of_three(tmp_path: Path) -> None:
+def test_sibling_columns_take_their_precision_from_the_majority_tier(
+    tmp_path: Path,
+) -> None:
     board = _board_with([(858.5, 1437.5), (1137.5, 1300.5), (1170.5, 1400.5)])
     low, high, _ = _full_cells(tmp_path, board)
-    # `high` alone needs two places (1.44); `low`'s 0.859 needs three.
-    assert low == ["0.859K", "1.137K", "1.171K"], low
-    assert high == ["1.438K", "1.3K", "1.401K"], high
+    # Two places from the rows at or above 1K; 0.859 prints on that grid.
+    assert low == ["0.86K", "1.14K", "1.17K"], low
+    assert high == ["1.44K", "1.3K", "1.4K"], high
 
 
 def test_sibling_columns_share_a_maximum_precision_of_two(tmp_path: Path) -> None:

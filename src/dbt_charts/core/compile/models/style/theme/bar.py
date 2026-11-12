@@ -13,9 +13,15 @@ if TYPE_CHECKING:
         EndpointLabelsConfig,
     )
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
+from dbt_charts.core.compile.models.conditional_predicate import (
+    ConditionalPredicate,
+    default_rule_last,
+)
+from dbt_charts.core.compile.models.factories import build_conditional_model
 from dbt_charts.core.compile.models.markers import (
+    ChartLocal,
     InheritSlot,
     SkipInheritSlots,  # noqa: F401  # pyright: ignore[reportUnusedImport] — required in module globals for model_rebuild() to resolve inherited base-class annotations
 )
@@ -73,7 +79,7 @@ class BarLayerStyle(BaseModel):
     marks: BarChartMarksStyle = Field(description="Mark overrides for this bar layer.")
 
 
-class BarChartStyle(
+class _BarChartStyleBase(
     _CartesianChartStyle,
     _LegendedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
@@ -139,4 +145,44 @@ class BarChartStyle(
     ] = Field(
         default_factory=BarChartMarksStyle,
         description="Bar-family mark overrides.",
+    )
+
+
+if TYPE_CHECKING:
+
+    class BarConditionalRule(ConditionalPredicate):
+        marks: BarChartMarksStyle | None
+
+else:
+    BarConditionalRule = build_conditional_model(
+        _BarChartStyleBase, name="BarChartStyleConditional"
+    )
+
+
+class BarChartStyle(_BarChartStyleBase):
+    """Bar chart style, plus the per-bar rules only a chart's own style takes."""
+
+    conditional: Annotated[
+        dict[
+            str,
+            Annotated[
+                list[BarConditionalRule],
+                Field(min_length=1),
+                AfterValidator(default_rule_last),
+            ],
+        ]
+        | None,
+        ChartLocal(),
+    ] = Field(
+        default=None,
+        description=(
+            "Rules that restyle a bar by its row's value, keyed by column name. "
+            "Each rule is one condition (eq, ne, lt, lte, gt, gte, between, in, "
+            "is_null, or default) plus the style it applies: marks.bar color, "
+            "opacity and border, and marks.text font color and weight. Every "
+            "matching rule applies; where two set the same key the later one "
+            "wins, so list the more specific rule last. A `default: true` rule "
+            "applies only when no other rule matched. Two columns cannot patch "
+            "the same property. Rules style the base layer, not `layers:`."
+        ),
     )

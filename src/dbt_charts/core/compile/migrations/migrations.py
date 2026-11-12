@@ -267,6 +267,7 @@ def migrate_yaml_text(yaml_text: str, *, stop_target: str | None = None) -> str:
     from dbt_charts import _engine
     from dbt_charts.core.compile.authoring.yaml_patch import (
         rename_key_at_path,
+        set_board_block,
         set_board_values,
     )
     from dbt_charts.core.compile.parse.parser import load_yaml_mapping
@@ -331,7 +332,10 @@ def migrate_yaml_text(yaml_text: str, *, stop_target: str | None = None) -> str:
             continue
         if isinstance(value, dict) and not edit["value_map"]:
             yaml_text = _delete_paths_in_yaml_text(yaml_text, [tuple(source)])
-            updates.update(_destination_leaves(edit, destination, value))
+            if _holds_list(value):
+                yaml_text = set_board_block(yaml_text, ".".join(destination), value)
+            else:
+                updates.update(_destination_leaves(edit, destination, value))
             continue
         if value is None or not isinstance(value, (str, int, float, bool)):
             raise MigrationError(
@@ -421,15 +425,13 @@ def _replay_rewrite(
                 if _null_at(written, ancestor):
                     yaml_text = set_board_values(yaml_text, {".".join(ancestor): None})
                     break
-            yaml_text = set_board_values(
-                yaml_text, dict(_destination_leaves(edit, destination, rewritten))
-            )
+            yaml_text = _write_rewritten(yaml_text, edit, destination, rewritten)
         # A scalar leaves as a key removal, which strikes the mappings it empties
         # (the engine does the same after the successor lands); a mapping is
         # struck as it stands.
         if value is None or isinstance(value, (str, int, float, bool)):
             return set_board_values(yaml_text, {".".join(source): None})
-        return _delete_paths_in_yaml_text(yaml_text, [tuple(source)])
+        return _delete_paths_in_yaml_text(yaml_text, [_document_path(source)])
     if isinstance(value, dict):
         if source != destination:
             yaml_text = rename_key_at_path(yaml_text, ".".join(source), destination[-1])
@@ -439,7 +441,7 @@ def _replay_rewrite(
         old_leaves = {}
     if isinstance(rewritten, Dropped):
         return (
-            _delete_paths_in_yaml_text(yaml_text, [tuple(destination)])
+            _delete_paths_in_yaml_text(yaml_text, [_document_path(destination)])
             if isinstance(value, dict)
             else yaml_text
         )
@@ -459,6 +461,71 @@ def _replay_rewrite(
     ):
         edits[".".join((*destination, *leaf))] = None
     return set_board_values(yaml_text, edits) if edits else yaml_text
+
+
+def _document_path(parts: Sequence[str]) -> DocumentPath:
+    """*parts* as the key lines are addressed: a list position is an int."""
+    return tuple(int(p) if p.isdigit() else p for p in parts)
+
+
+def _write_rewritten(
+    yaml_text: str,
+    edit: Mapping[str, JsonValue],
+    destination: Sequence[str],
+    rewritten: JsonValue,
+) -> str:
+    """Write a rewritten value at *destination*, merging into what a merging move found there.
+
+    A value holding a list goes in as one block: leaf edits cannot lay out a
+    list of mappings (comments inside the struck source go with it).
+    """
+    from dbt_charts.core.compile.authoring.yaml_patch import (
+        set_board_block,
+        set_board_values,
+    )
+
+    held = edit.get("merged_into")
+    if isinstance(held, dict) and isinstance(rewritten, dict):
+        return _write_merged(yaml_text, tuple(destination), held, rewritten)
+    if isinstance(rewritten, dict) and _holds_list(rewritten):
+        return set_board_block(yaml_text, ".".join(destination), rewritten)
+    return set_board_values(
+        yaml_text, dict(_destination_leaves(edit, destination, rewritten))
+    )
+
+
+def _holds_list(value: JsonValue) -> bool:
+    if isinstance(value, list):
+        return True
+    return isinstance(value, dict) and any(_holds_list(v) for v in value.values())
+
+
+def _write_merged(
+    yaml_text: str,
+    at: tuple[str, ...],
+    existing: Mapping[str, JsonValue],
+    value: Mapping[str, JsonValue],
+) -> str:
+    """Write the keys of *value* that *existing* (the mapping at *at*) lacks.
+
+    The engine refused a key both hold unless both are mappings, so the rest
+    is a straight add.
+    """
+    from dbt_charts.core.compile.authoring.yaml_patch import (
+        set_board_block,
+        set_board_values,
+    )
+
+    for key, child in value.items():
+        here = (*at, key)
+        held = existing.get(key)
+        if isinstance(held, dict) and isinstance(child, dict):
+            yaml_text = _write_merged(yaml_text, here, held, child)
+        elif isinstance(child, (dict, list)):
+            yaml_text = set_board_block(yaml_text, ".".join(here), child)
+        else:
+            yaml_text = set_board_values(yaml_text, {".".join(here): child})
+    return yaml_text
 
 
 def _leaf_paths(

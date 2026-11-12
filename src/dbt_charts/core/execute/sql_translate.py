@@ -17,7 +17,6 @@ import sqlglot.expressions as exp
 from sqlglot.tokens import TokenType
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
-from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.source import (
     ResolvedSourceConfig,
     is_file_source,
@@ -243,12 +242,16 @@ def dialect_differs(authored: str | None, source_config: ResolvedSourceConfig) -
     return authored is not None and authored != engine_dialect(authored, source_config)
 
 
+# Name to anything with a ``sql``, a query model or a plan entry: what ``{{ queries.X }}`` expands.
+QueryRegistry = Mapping[str, Any]  # type-state: explicit_any — jinja reads .sql
+
+
 def render_in_dialect(
     sql: str,
     read: str,
     write: str,
     variables: VariableValues,
-    queries: Mapping[str, AnyQuery] | None,
+    queries: QueryRegistry | None,
     strict: bool,
     resolver: DbtRefResolver,
     target_path: str | None,
@@ -298,12 +301,21 @@ def render_in_dialect(
         translated = translate_sql(composed_sql, read, write)
     for sentinel, relation in relations.items():
         translated = translated.replace(sentinel, relation)
+    return bind_inline_params(translated, rendered.params, placeholders)
+
+
+def bind_inline_params(
+    sql: str, params: BoundParams, placeholders: SQLDialect
+) -> tuple[str, BoundParams]:
+    """Rewrite each `INLINE_PLACEHOLDERS` placeholder in `sql` as one of
+    `placeholders`', one per occurrence in order, with the matching parameter
+    list: translation may reorder or repeat them."""
     if placeholders is INLINE_PLACEHOLDERS:
-        return translated, list(rendered.params)
-    params: BoundParams = []
+        return sql, list(params)
+    bound: BoundParams = []
 
     def bind(match: re.Match[str]) -> str:
-        params.append(rendered.params[int(match.group(1)) - 1])
-        return placeholders.param(len(params))
+        bound.append(params[int(match.group(1)) - 1])
+        return placeholders.param(len(bound))
 
-    return _PARAM_RE.sub(bind, translated), params
+    return _PARAM_RE.sub(bind, sql), bound

@@ -176,6 +176,28 @@ def preset_label(preset: DaterangePreset) -> str:
             )
 
 
+# Ticker notation (1D 5D 3M YTD 12M) is the same in every language a board is
+# written in, so it is a table here rather than catalog words.
+_COMPACT_UNIT = {"day": "D", "week": "W", "month": "M", "quarter": "Q", "year": "Y"}
+
+
+def compact_preset_label(preset: DaterangePreset) -> str:
+    """The button row's short text for ``preset``; forms without a ticker spelling
+    (fiscal, ``previous_``, ``yesterday``) keep :func:`preset_label`."""
+    if preset.fiscal:
+        return preset_label(preset)
+    match preset.kind:
+        case "today":
+            return "1D"
+        case "last" if preset.n > 1 or preset.unit == "day":
+            return f"{preset.n}{_COMPACT_UNIT[preset.unit]}"
+        # `last_1_<unit>` is calendar-aligned, so its dates are the unit to date.
+        case "last" | "to_date":
+            return f"{_COMPACT_UNIT[preset.unit]}TD"
+        case _:
+            return preset_label(preset)
+
+
 def controls_language() -> dict[str, str]:
     return {
         word: board_word(

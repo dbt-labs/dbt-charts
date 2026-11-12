@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
+from dbt_charts.core.compile.models.conditional_predicate import (
+    ConditionalPredicate,
+    default_rule_last,
+)
+from dbt_charts.core.compile.models.factories import build_conditional_model
 from dbt_charts.core.compile.models.markers import (
     AUTO,
     Absent,
+    ChartLocal,
     Color,
+    ColumnRef,
+    Conditionable,
     Format,
     Inherit,
     InheritSlot,
@@ -17,6 +25,7 @@ from dbt_charts.core.compile.models.markers import (
 from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
     FormatConfig,
+    ScaleTargetConfig,
     SingleLineFontStyle,
     SpacingValues,
     ToneLiteral,
@@ -89,7 +98,9 @@ class KpiValueStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    font: Annotated[SingleLineFontStyle, _KPI_FONT] = Field(
+    font: Annotated[
+        SingleLineFontStyle, _KPI_FONT, Conditionable(only=("color", "weight"))
+    ] = Field(
         default_factory=SingleLineFontStyle,
         description="Headline value font.",
     )
@@ -118,9 +129,9 @@ class KpiLabelStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    font: Annotated[SingleLineFontStyle, _KPI_FONT] = Field(
-        default_factory=SingleLineFontStyle, description="Label font."
-    )
+    font: Annotated[
+        SingleLineFontStyle, _KPI_FONT, Conditionable(only=("color", "weight"))
+    ] = Field(default_factory=SingleLineFontStyle, description="Label font.")
     # Cascade-managed sentinel: apply_inherit fills it from the chart title's
     # overflow, so it is never None after resolve.
     overflow: Annotated[
@@ -155,7 +166,9 @@ class KpiSupportStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    font: Annotated[KpiSupportFontStyle, _KPI_FONT] = Field(
+    font: Annotated[
+        KpiSupportFontStyle, _KPI_FONT, Conditionable(only=("color", "weight"))
+    ] = Field(
         default_factory=KpiSupportFontStyle,
         description="Support row font; its color paints the support value.",
     )
@@ -166,7 +179,7 @@ class KpiSupportStyle(BaseModel):
         description="How the support value is written: a D3 spec, a preset name, or a format block.",
     )
     # None = no semantic color; the support row paints in muted ink.
-    tone: Annotated[ToneLiteral | None, Absent("muted ink")] = Field(
+    tone: Annotated[ToneLiteral | None, Absent("muted ink"), Conditionable()] = Field(
         default=None,
         description=(
             "Semantic color for the support value and glyph. On a delta format "
@@ -216,7 +229,20 @@ class KpiTonesStyle(BaseModel):
     )
 
 
-class KpiChartStyle(_ChartStyleBaseAllOptional):
+class KpiBackgroundGradient(BaseModel):
+    """A card background painted by the value's position in a color scale."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    column: ColumnRef = Field(
+        description="Query column whose value positions the color."
+    )
+    scale: ScaleTargetConfig = Field(
+        description="Color scale the column's value is read against."
+    )
+
+
+class _KpiChartStyleBase(_ChartStyleBaseAllOptional):
     """Produced by cascade from theme YAML.
 
     ``font`` is the parent every slot font fills from (except ``color``); each
@@ -231,6 +257,15 @@ class KpiChartStyle(_ChartStyleBaseAllOptional):
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # Narrows the shared color to the KPI card, which can also paint by a scale.
+    # A matched rule paints a plain color over either form.
+    background: Annotated[
+        str | KpiBackgroundGradient | None, Color(), Conditionable(rule_type=str)
+    ] = Field(
+        default=None,
+        description="Card background color, or a {column, scale} gradient by value",
+    )
 
     # Override _ChartStyleBaseAllOptional.font to declare the inherit link.
     # InheritSlot: kpi.font fills from charts.font.
@@ -272,4 +307,38 @@ class KpiChartStyle(_ChartStyleBaseAllOptional):
     align: Literal["left", "center", "right"] | None = Field(
         default=None,
         description="Horizontal alignment of the value, label, and support text within the card.",
+    )
+
+
+if TYPE_CHECKING:
+
+    class _KpiConditionalRule(ConditionalPredicate):
+        background: str | None
+        value: KpiValueStyle | None
+        label: KpiLabelStyle | None
+        support: KpiSupportStyle | None
+
+else:
+    _KpiConditionalRule = build_conditional_model(
+        _KpiChartStyleBase, name="KpiChartStyleConditional"
+    )
+
+
+class KpiChartStyle(_KpiChartStyleBase):
+    """KPI chart style, plus the rules only a chart's own style takes."""
+
+    conditional: Annotated[
+        dict[
+            ColumnRef,
+            Annotated[
+                list[_KpiConditionalRule],
+                Field(min_length=1),
+                AfterValidator(default_rule_last),
+            ],
+        ]
+        | None,
+        ChartLocal(),
+    ] = Field(
+        default=None,
+        description="Rules that restyle the card by value, keyed by column name",
     )

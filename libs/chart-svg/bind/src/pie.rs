@@ -120,7 +120,7 @@ pub fn bind_pie(id: &ChartId, chart: &PieChart, donut: bool, board: &Board, run:
         return Err(diag::err_internal(format!("chart {id} has no hoisted query")));
     };
     let dataset = run.dataset(query, id)?;
-    refuse_unmodeled(id, chart, board, run, placed, query)?;
+    refuse_unmodeled(id, chart, board, placed, query)?;
     let (Some(theta), Some(color)) = (&chart.radial.theta, &chart.radial.color) else {
         return Err(diag::err_internal("a pie without `theta:` and `color:` passed the unmodeled refusals"));
     };
@@ -205,7 +205,8 @@ pub fn bind_pie(id: &ChartId, chart: &PieChart, donut: bool, board: &Board, run:
     let center = center(placed, style, donut && hole > 0.0, theta, total, &vote, &locale)?;
     let background = style.base.background.as_ref().map_or(placed.style.charts.background.as_str(), |c| c.as_str()).to_string();
     let title = chart.radial.shared.title.as_ref().map(|t| t.as_str().to_string()).filter(|t| !t.is_empty());
-    Ok(Ok(Family::Pie(Pie { canvas, background, title, hole, slices, total, center })))
+    let subtitle = chart.radial.shared.subtitle.as_ref().map(|t| t.as_str().to_string()).filter(|t| !t.is_empty());
+    Ok(Ok(Family::Pie(Pie { canvas, background, title, subtitle, hole, slices, total, center })))
 }
 
 /// The hole a pie draws: a donut reads `charts.donut` over `charts.pie`, which for any leaf but
@@ -233,7 +234,6 @@ fn refuse_unmodeled(
     id: &ChartId,
     chart: &PieChart,
     board: &Board,
-    run: &RunResult,
     placed: &Placed,
     query: &board_model::ids::QueryId,
 ) -> Result<(), Diagnostic> {
@@ -247,7 +247,8 @@ fn refuse_unmodeled(
         || color.is_some_and(|color| authored_pins(board).contains_key(color));
     let checks = [
         (radial.shared.title.as_ref().is_some_and(|t| t.as_str().contains("{{") || t.as_str().contains("{%") || t.as_str().contains("{#")), "a templated `title`"),
-        (radial.shared.subtitle.is_some(), "a `subtitle`"),
+        (radial.shared.subtitle.as_ref().is_some_and(|t| t.as_str().contains("{{") || t.as_str().contains("{%") || t.as_str().contains("{#")), "a templated `subtitle`"),
+        (radial.shared.subtitle.as_ref().is_some_and(|t| !t.as_str().is_empty()) && radial.shared.title.as_ref().is_none_or(|t| t.as_str().is_empty()), "a `subtitle` but no `title`"),
         (base.notes.is_some(), "`notes`"),
         (base.link.is_some(), "a `link`"),
         (!chart.tooltip.tooltip.is_empty(), "`tooltip:` columns"),
@@ -256,7 +257,7 @@ fn refuse_unmodeled(
         (radial.height.is_some() || radial.width.is_some(), "a `height` or `width`"),
         (chart.pattern.pattern.is_some(), "a `pattern`"),
         (radial.theta.is_none() || radial.color.is_none(), "no authored `theta:` and `color:`"),
-        (board.regional.is_some() || run.env.locale != "en-US", "a locale other than en-US"),
+        (board.regional.is_some(), "a locale other than en-US"),
         (own, "its own `style:`"),
         (style.legended.legend.is_some(), "a `legend` style"),
         (placed.style.charts.legend.base.visible == Engine::Value(true), "a visible legend"),

@@ -249,3 +249,34 @@ fn malformed_payloads_raise_with_production_s_message() {
         assert_eq!(data_uri_image_size(url).unwrap_err(), want, "{url:?}");
     }
 }
+
+#[test]
+fn test_data_uri_size_of_text_that_is_not_a_data_uri_is_malformed_not_a_panic() {
+    // The renderer calls this only after `is_data_uri`; a url that is not one
+    // (byte 5 inside a character, or too short) is refused, where Python
+    // slicing by character would read on.
+    for url in ["", "data", "dat\u{e9}x", "data\u{e9},x"] {
+        assert_eq!(
+            data_uri_image_size(url).unwrap_err(),
+            "Malformed data: URI \u{2014} no ',' separating header from payload",
+            "{url:?}"
+        );
+    }
+}
+
+#[test]
+fn every_prefix_of_a_raster_header_is_read_or_refused_never_a_panic() {
+    let mut jpeg = b"\xff\xd8\xff\xe0\xff\xff".to_vec();
+    jpeg.extend([0; 40]);
+    let mut webp = b"RIFF\x00\x00\x00\x00WEBPVP8X".to_vec();
+    webp.extend([0; 24]);
+    let mut gif = b"GIF89a".to_vec();
+    gif.extend([0; 20]);
+    let mut bmp = b"BM".to_vec();
+    bmp.extend([0; 30]);
+    for header in [png(7, 9), jpeg, webp, gif, bmp] {
+        for end in 0..=header.len() {
+            let _ = data_uri_image_size(&b64("image/png", &header[..end]));
+        }
+    }
+}

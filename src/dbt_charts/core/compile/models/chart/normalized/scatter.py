@@ -8,6 +8,7 @@ from pydantic import Field
 
 from dbt_charts.core.compile.models.chart.authored._annotation import Annotation
 from dbt_charts.core.compile.models.chart.authored._layer import CartesianLayer
+from dbt_charts.core.compile.models.markers import ColumnRef
 from dbt_charts.core.compile.models.style.authored import ScatterChartStylePatch
 
 from ._base import _CartesianChartFields, _TooltipFields
@@ -17,8 +18,12 @@ class ScatterChart(_CartesianChartFields, _TooltipFields):
     """Normalized scatter chart."""
 
     type: Literal["scatter"]
-    size: str | None = Field(default=None, description="Field mapped to point size.")
-    shape: str | None = Field(default=None, description="Field mapped to point shape.")
+    size: ColumnRef | None = Field(
+        default=None, description="Field mapped to point size."
+    )
+    shape: ColumnRef | None = Field(
+        default=None, description="Field mapped to point shape."
+    )
     style: ScatterChartStylePatch | None = Field(
         default=None, description="Chart-local style overrides."
     )

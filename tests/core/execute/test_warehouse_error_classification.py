@@ -64,7 +64,9 @@ class TestClassifyWarehouseErrorBigQuery:
 
     def test_unrecognized_name_returns_binder_unknown_column_code(self) -> None:
         exc = Exception("Unrecognized name: 'goals_goal_dollars' at [3:42]")
-        result = classify_warehouse_error("dbt SQL execution", exc, "bigquery")
+        result = classify_warehouse_error(
+            "dbt SQL execution", exc, "bigquery", source="wh"
+        )
         assert result.error is not None
         assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
         # Original warehouse message is preserved verbatim in the error text.
@@ -75,13 +77,17 @@ class TestClassifyWarehouseErrorBigQuery:
             "Not found: Table my-project:my_dataset.my_table was not found "
             "in location US"
         )
-        result = classify_warehouse_error("dbt SQL execution", exc, "bigquery")
+        result = classify_warehouse_error(
+            "dbt SQL execution", exc, "bigquery", source="wh"
+        )
         assert result.error is not None
         assert result.error.code is ERR_BINDER_UNKNOWN_RELATION
 
     def test_not_found_dataset_returns_binder_unknown_relation_code(self) -> None:
         exc = Exception("Not found: Dataset my-project:no_such_dataset")
-        result = classify_warehouse_error("dbt SQL execution", exc, "bigquery")
+        result = classify_warehouse_error(
+            "dbt SQL execution", exc, "bigquery", source="wh"
+        )
         assert result.error is not None
         assert result.error.code is ERR_BINDER_UNKNOWN_RELATION
 
@@ -89,7 +95,9 @@ class TestClassifyWarehouseErrorBigQuery:
         """A BigQuery error we don't have a confident pattern for must not be
         guessed into a specific code — the generic code is still correct."""
         exc = Exception("Resources exceeded during query execution")
-        result = classify_warehouse_error("dbt SQL execution", exc, "bigquery")
+        result = classify_warehouse_error(
+            "dbt SQL execution", exc, "bigquery", source="wh"
+        )
         assert result.error is not None
         assert result.error.code is ERR_WAREHOUSE_RUNTIME
 
@@ -102,7 +110,9 @@ class TestClassifyWarehouseErrorOtherDialects:
         # Even text that looks like a BigQuery message must not be classified
         # as BINDER_UNKNOWN_COLUMN under a different dialect.
         exc = Exception("Unrecognized name: 'foo' at [1:1]")
-        result = classify_warehouse_error("dbt SQL execution", exc, "snowflake")
+        result = classify_warehouse_error(
+            "dbt SQL execution", exc, "snowflake", source="wh"
+        )
         assert result.error is not None
         assert result.error.code is ERR_WAREHOUSE_RUNTIME
 
@@ -110,7 +120,9 @@ class TestClassifyWarehouseErrorOtherDialects:
         self,
     ) -> None:
         exc = Exception("[PARSE_SYNTAX_ERROR] Syntax error at or near 'FORM'")
-        result = classify_warehouse_error("dbt SQL execution", exc, "databricks")
+        result = classify_warehouse_error(
+            "dbt SQL execution", exc, "databricks", source="wh"
+        )
         assert result.error is not None
         assert result.error.code is ERR_WAREHOUSE_RUNTIME
 
@@ -131,7 +143,7 @@ class TestClassifyWarehouseErrorOtherDialects:
         self, dialect: str, message: str
     ) -> None:
         result = classify_warehouse_error(
-            "dbt SQL execution", Exception(message), dialect
+            "dbt SQL execution", Exception(message), dialect, source="wh"
         )
         assert result.error is not None
         assert result.error.code is ERR_BINDER_UNKNOWN_RELATION
@@ -141,13 +153,17 @@ class TestClassifyWarehouseErrorOtherDialects:
             "001104 (42601): SQL compilation error: error line 1 at position 7\n"
             "'T.ID' in select clause is neither an aggregate nor in the group by clause."
         )
-        result = classify_warehouse_error("dbt SQL execution", exc, "snowflake")
+        result = classify_warehouse_error(
+            "dbt SQL execution", exc, "snowflake", source="wh"
+        )
         assert result.error is not None
         assert result.error.code is ERR_BINDER_GROUP_BY
 
     def test_missing_column_message_is_not_a_missing_relation(self) -> None:
         exc = Exception('column "amount" does not exist\nLINE 1: select amount')
-        result = classify_warehouse_error("dbt SQL execution", exc, "postgres")
+        result = classify_warehouse_error(
+            "dbt SQL execution", exc, "postgres", source="wh"
+        )
         assert result.error is not None
         assert result.error.code is ERR_WAREHOUSE_RUNTIME
 
@@ -164,13 +180,17 @@ class TestClassifyWarehouseErrorPreservesDbtChartsErrorCode:
 
     def test_mutating_sql_error_keeps_its_own_code(self) -> None:
         exc = MutatingSqlError("Drop", "DROP TABLE foo")
-        result = classify_warehouse_error("dbt SQL execution", exc, "bigquery")
+        result = classify_warehouse_error(
+            "dbt SQL execution", exc, "bigquery", source="wh"
+        )
         assert result.error is not None
         assert result.error.code is ERR_MUTATING_SQL
 
     def test_unparseable_sql_error_keeps_its_own_code(self) -> None:
         exc = UnparseableSqlError("unsupported_jinja_node:Call")
-        result = classify_warehouse_error("dbt SQL execution", exc, "bigquery")
+        result = classify_warehouse_error(
+            "dbt SQL execution", exc, "bigquery", source="wh"
+        )
         assert result.error is not None
         assert result.error.code is ERR_UNPARSEABLE_SQL
 
@@ -256,7 +276,7 @@ class TestClassifyWarehouseErrorBySqlstate:
     def test_object_not_found_is_an_unknown_relation(self, sqlstate: str) -> None:
         error = WarehouseStatementError(sqlstate, "Table 'no_such' does not exist")
         result = classify_warehouse_error(
-            "lakecompute SQL execution", error, "lakecompute"
+            "lakecompute SQL execution", error, "lakecompute", source="wh"
         )
         assert result.error.code is ERR_BINDER_UNKNOWN_RELATION
         assert "no_such" in str(result.error)
@@ -264,19 +284,21 @@ class TestClassifyWarehouseErrorBySqlstate:
     def test_column_not_found_is_an_unknown_reference(self) -> None:
         error = WarehouseStatementError("42S22", "column not found")
         result = classify_warehouse_error(
-            "lakecompute SQL execution", error, "lakecompute"
+            "lakecompute SQL execution", error, "lakecompute", source="wh"
         )
         assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
 
     def test_grouping_error_is_a_group_by_mismatch(self) -> None:
         error = WarehouseStatementError("42803", "column must appear in GROUP BY")
-        result = classify_warehouse_error("postgres SQL execution", error, "postgres")
+        result = classify_warehouse_error(
+            "postgres SQL execution", error, "postgres", source="wh"
+        )
         assert result.error.code is ERR_BINDER_GROUP_BY
 
     def test_invalid_cast_is_a_type_mismatch(self) -> None:
         error = WarehouseStatementError("22018", "Could not convert 'abc'")
         result = classify_warehouse_error(
-            "lakecompute SQL execution", error, "lakecompute"
+            "lakecompute SQL execution", error, "lakecompute", source="wh"
         )
         assert result.error.code is ERR_BINDER_TYPE_MISMATCH
 
@@ -286,7 +308,7 @@ class TestClassifyWarehouseErrorBySqlstate:
     ) -> None:
         error = WarehouseStatementError(sqlstate, "rejected")
         result = classify_warehouse_error(
-            "lakecompute SQL execution", error, "lakecompute"
+            "lakecompute SQL execution", error, "lakecompute", source="wh"
         )
         assert result.error.code is ERR_WAREHOUSE_RUNTIME
 
@@ -305,7 +327,7 @@ class TestClassifyWarehouseErrorBigQueryBytesCap:
         self,
     ) -> None:
         result = classify_warehouse_error(
-            "dbt SQL execution", Exception(self._MESSAGE), "bigquery"
+            "dbt SQL execution", Exception(self._MESSAGE), "bigquery", source="wh"
         )
         assert result.error is not None
         assert result.error.code is ERR_WAREHOUSE_BYTES_CAP_EXCEEDED
@@ -317,7 +339,7 @@ class TestClassifyWarehouseErrorBigQueryBytesCap:
 
     def test_the_cap_message_is_only_matched_under_bigquery(self) -> None:
         result = classify_warehouse_error(
-            "dbt SQL execution", Exception(self._MESSAGE), "snowflake"
+            "dbt SQL execution", Exception(self._MESSAGE), "snowflake", source="wh"
         )
         assert result.error is not None
         assert result.error.code is ERR_WAREHOUSE_RUNTIME

@@ -6,8 +6,9 @@ use diagnostic::{diag, Diagnostic};
 use measure::shaped::{Font, FontBook};
 use scene::{Bounds, Transform};
 
-use crate::geom::Insets;
-use crate::plot::label::{tilted_anchor, vega_space, Align, Baseline};
+use crate::geom::{Insets, Size};
+use crate::plot::label::{tilted_anchor, vega_baseline, vega_line, vega_space, Align, Baseline};
+use crate::plot::value_axis::{place_across_title, AxisTitle, PlacedRung, Placement as ValuePlacement};
 
 /// How an axis's labels may resolve crowding, as the axis style sets it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -263,5 +264,52 @@ impl BandAxis {
             left: g.left.max(-l.space.x1),
         });
         Placement { labels, gutter }
+    }
+}
+
+/// A bottom band axis as the plan lays it out: its labels, the face and title they hang with, and
+/// how the band scale spreads over the plot.
+pub struct BandPlan<'a> {
+    pub axis: BandAxis,
+    pub geometry: BandGeometry,
+    pub book: &'a FontBook,
+    pub title: Option<AxisTitle<'a>>,
+    pub font: Font<'a>,
+    /// How far below the axis line a label's anchor hangs.
+    pub offset: f64,
+}
+
+impl BandPlan<'_> {
+    /// The axis on a plot of `plot`: the labels as value-axis rungs (a band label is always kept:
+    /// a crowded axis was refused when its tilt was decided) and the title below them, with the
+    /// gutter the labels' room and the title's band make, as [`ValueAxis::place`] counts it.
+    pub fn place(&self, plot: Size) -> Result<ValuePlacement, Diagnostic> {
+        let placed = self.axis.place(&self.geometry, plot.width);
+        let anchor = plot.height + self.offset;
+        let rungs: Vec<PlacedRung> = placed
+            .labels
+            .iter()
+            .enumerate()
+            .map(|(index, label)| {
+                let shift = |b: Bounds| Bounds { x1: b.x1, y1: b.y1 + plot.height, x2: b.x2, y2: b.y2 + plot.height };
+                PlacedRung {
+                    value: index as f64,
+                    text: label.text.clone(),
+                    x: label.x,
+                    y: anchor,
+                    align: label.align,
+                    baseline: label.baseline,
+                    visible: true,
+                    ink: shift(label.ink),
+                    space: shift(label.space),
+                }
+            })
+            .collect();
+        let label_baseline = (!rungs.is_empty()).then(|| (vega_baseline(anchor, Baseline::Top, self.font.size), self.font.size));
+        let title = self.title.map(|title| place_across_title(self.book, title, plot, label_baseline, true)).transpose()?;
+        let band = self.title.map_or(0.0, |title| title.padding + vega_line(0.0, Baseline::Top, title.font.size).1);
+        let reach = rungs.iter().map(|r| r.space.y2).fold(plot.height, f64::max);
+        let gutter = Insets { bottom: reach - plot.height + band, ..placed.gutter };
+        Ok(ValuePlacement { rungs, gutter, title })
     }
 }

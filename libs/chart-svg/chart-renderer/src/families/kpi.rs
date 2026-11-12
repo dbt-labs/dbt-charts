@@ -11,6 +11,7 @@ use super::table::bind::{
     compute_scale_domain, font_weight_as_css, interpolate_scale_color, resolve_conditional_styles,
     resolve_hinge, resolve_palette_stops, sanitized_color,
 };
+use crate::conditional::{match_predicate, Predicate};
 use super::table::{WhenRule, VALID_FONT_WEIGHTS};
 use super::color_scale::nice_domain;
 use ::bind::table_dates;
@@ -91,10 +92,9 @@ struct SupportCfg {
     label: Option<String>,
     format: Option<FormatSlot>,
     glyph: Option<String>,
-    /// The color-resolved `conditional_formatting` rules keyed on the support
-    /// column (`resolved/kpi.py:24`). The key always serializes, null when the
-    /// chart authors none, so a payload without it is refused rather than read
-    /// as "no rules".
+    /// The sign rules `support.good` lowers to (`KpiGoodRule`). The key always
+    /// serializes, null when `good` is unset, so a payload without it is
+    /// refused rather than read as "no rules".
     #[serde(deserialize_with = "Option::deserialize")]
     rules: Option<Vec<WhenRule>>,
 }
@@ -116,12 +116,25 @@ struct KpiChartStyle {
     /// stacked card's slot starts from.
     default_height: f64,
     #[serde(deserialize_with = "Option::deserialize")]
-    background: Option<String>,
+    background: Option<CardBackground>,
+    /// `style.conditional` (`KpiChartStyle.conditional`): rules keyed by the
+    /// column whose value they test, null when the chart authors none.
+    #[serde(deserialize_with = "Option::deserialize")]
+    conditional: Option<serde_json::Map<String, Value>>,
     /// Whole-card alignment of the value/label/support text column
     /// (`KpiChartStyle.align`); None keeps the left-anchored geometry.
     #[serde(deserialize_with = "Option::deserialize")]
     align: Option<String>,
     border: BorderStyle,
+}
+
+/// `style.background`: a static color, or `{column, scale}`, whose color
+/// `resolved_channels.background` already carries.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum CardBackground {
+    Color(String),
+    Gradient(serde::de::IgnoredAny),
 }
 
 /// `kpi.font`: every slot font starts from it; the renderer reads only its ink.
@@ -232,6 +245,17 @@ struct FontPayload {
     case: Option<String>,
 }
 
+/// A slot's `font-weight`: the authored weight as CSS, or the fallback when it
+/// is not a CSS weight.
+fn slot_weight(weight: &Value) -> String {
+    let css_weight = font_weight_as_css(weight);
+    if VALID_FONT_WEIGHTS.contains(&css_weight.as_str()) {
+        css_weight
+    } else {
+        FALLBACK_SLOT_WEIGHT.to_string()
+    }
+}
+
 /// One KPI text slot's cascade-complete typography, plus the
 /// slot's own ink.
 struct SlotFont {
@@ -265,12 +289,7 @@ impl SlotFont {
         if !matches!(decoration.as_str(), "none" | "line-through" | "underline") {
             return Err(format!("kpi: font {path} decoration {decoration:?} is not none, line-through or underline"));
         }
-        let css_weight = font_weight_as_css(weight);
-        let weight = if VALID_FONT_WEIGHTS.contains(&css_weight.as_str()) {
-            css_weight
-        } else {
-            FALLBACK_SLOT_WEIGHT.to_string()
-        };
+        let weight = slot_weight(weight);
         Ok(SlotFont { family, size, weight, italic, decoration, case, color: font.color.clone() })
     }
 
@@ -473,10 +492,6 @@ struct Channel {
     literal_value: Option<String>,
     #[serde(default)]
     scale: Option<ScaleTarget>,
-    #[serde(default)]
-    rules: Vec<WhenRule>,
-    #[serde(default)]
-    fallback_scale: Option<ScaleTarget>,
 }
 
 /// The color a scale gives the row's cell: `interpolate_scale_color` over the
@@ -497,37 +512,141 @@ fn scale_color(
     interpolate_scale_color(numeric, lo, hi, &stops, hinge, &scale.arm_mode).map(Some)
 }
 
-/// The color a `color` or
-/// `background` channel gives this row, `None` when it gives none.
-fn evaluate_channel(
+/// The color the `background` channel gives this row, `None` when it gives none.
+fn evaluate_background(
     channels: &serde_json::Map<String, Value>,
-    name: &str,
     row: &serde_json::Map<String, Value>,
     col_format: Option<&str>,
 ) -> Result<Option<String>, String> {
-    let Some(raw) = channels.get(name).filter(|c| !c.is_null()) else {
+    let Some(raw) = channels.get("background").filter(|c| !c.is_null()) else {
         return Ok(None);
     };
-    let ch: Channel =
-        Deserialize::deserialize(raw).map_err(|e| format!("kpi: resolved_channels.{name}: {e}"))?;
+    let ch: Channel = Deserialize::deserialize(raw)
+        .map_err(|e| format!("kpi: resolved_channels.background: {e}"))?;
     match ch.mode.as_str() {
         "literal" => Ok(ch.literal_value),
         "gradient" => match &ch.scale {
             Some(scale) => scale_color(scale, &ch.data_field, row, col_format),
             None => Ok(None),
         },
-        "conditional" => {
-            let overrides = resolve_conditional_styles(&ch.rules, row.get(&ch.data_field).filter(|v| !v.is_null()), None)?;
-            let matched = if name == "background" { overrides.background } else { overrides.color };
-            match (&matched, &ch.fallback_scale) {
-                (None, Some(scale)) => scale_color(scale, &ch.data_field, row, col_format),
-                _ => Ok(matched),
+        // A bare column name is a Vega series encoding; the card paints none.
+        "series" => Ok(None),
+        other => Err(format!("kpi: unknown resolved_channels.background mode '{other}'")),
+    }
+}
+
+// ── Conditional rules ───────────────────────────────────────────────────────
+
+/// `KpiChartStyleConditional`: one predicate beside the card style it sets.
+#[derive(Deserialize)]
+struct KpiRule {
+    #[serde(flatten)]
+    when: Predicate,
+    #[serde(flatten)]
+    patch: RulePatch,
+}
+
+#[derive(Deserialize, Default)]
+struct RulePatch {
+    #[serde(default)]
+    background: Option<String>,
+    #[serde(default)]
+    value: Option<FontRow>,
+    #[serde(default)]
+    label: Option<FontRow>,
+    #[serde(default)]
+    support: Option<SupportRule>,
+}
+
+#[derive(Deserialize)]
+struct FontRow {
+    #[serde(default)]
+    font: Option<RuleFont>,
+}
+
+#[derive(Deserialize)]
+struct SupportRule {
+    #[serde(default)]
+    font: Option<RuleFont>,
+    #[serde(default)]
+    tone: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RuleFont {
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    weight: Option<Value>,
+}
+
+/// What the matched rules set on the card, the later match winning per key.
+#[derive(Default)]
+struct CardPatch {
+    background: Option<String>,
+    value_color: Option<String>,
+    value_weight: Option<Value>,
+    label_color: Option<String>,
+    label_weight: Option<Value>,
+    support_color: Option<String>,
+    support_weight: Option<Value>,
+    support_tone: Option<String>,
+}
+
+impl CardPatch {
+    fn apply(&mut self, rule: &RulePatch) {
+        fn set<T: Clone>(slot: &mut Option<T>, value: Option<&T>) {
+            if let Some(v) = value {
+                *slot = Some(v.clone());
             }
         }
-        // A bare `color: <field>` authoring is a Vega series encoding; the card paints none.
-        "series" => Ok(None),
-        other => Err(format!("kpi: unknown resolved_channels.{name} mode '{other}'")),
+        set(&mut self.background, rule.background.as_ref());
+        fn row(font: Option<&RuleFont>) -> (Option<&String>, Option<&Value>) {
+            (font.and_then(|f| f.color.as_ref()), font.and_then(|f| f.weight.as_ref()))
+        }
+        let (color, weight) = row(rule.value.as_ref().and_then(|r| r.font.as_ref()));
+        set(&mut self.value_color, color);
+        set(&mut self.value_weight, weight);
+        let (color, weight) = row(rule.label.as_ref().and_then(|r| r.font.as_ref()));
+        set(&mut self.label_color, color);
+        set(&mut self.label_weight, weight);
+        let (color, weight) = row(rule.support.as_ref().and_then(|r| r.font.as_ref()));
+        set(&mut self.support_color, color);
+        set(&mut self.support_weight, weight);
+        set(&mut self.support_tone, rule.support.as_ref().and_then(|r| r.tone.as_ref()));
     }
+}
+
+/// The card patch `style.conditional` gives this row. Each column's rules are
+/// one ordered list: every matching rule applies, the later one winning per
+/// key, and its `default` applies only when none of them matched.
+fn conditional_patch(
+    conditional: Option<&serde_json::Map<String, Value>>,
+    row: &serde_json::Map<String, Value>,
+    chart_id: &str,
+) -> Result<CardPatch, Diagnostic> {
+    let mut patch = CardPatch::default();
+    for (column, raw) in conditional.into_iter().flatten() {
+        let rules: Vec<KpiRule> = Deserialize::deserialize(raw)
+            .map_err(|e| format!("kpi: style.conditional.{column}: {e}"))?;
+        let cell = Some(column_cell(row, column, chart_id)?).filter(|v| !v.is_null());
+        let mut matched = false;
+        let mut default_rule = None;
+        for rule in &rules {
+            if rule.when.default == Some(true) {
+                default_rule = Some(rule);
+            } else if match_predicate(&rule.when, cell)
+                .map_err(|e| format!("kpi: style.conditional.{column}: {e}"))?
+            {
+                matched = true;
+                patch.apply(&rule.patch);
+            }
+        }
+        if let Some(rule) = default_rule.filter(|_| !matched) {
+            patch.apply(&rule.patch);
+        }
+    }
+    Ok(patch)
 }
 
 // ── Colors ─────────────────────────────────────────
@@ -567,6 +686,7 @@ fn resolve_colors(
     board_background: Option<&str>,
     secondary: &str,
     tone_color: Option<String>,
+    patch: &CardPatch,
 ) -> Result<Colors, String> {
     let col_format = r
         .format
@@ -576,19 +696,23 @@ fn resolve_colors(
         .map(|spec| {
         crate::common::predefined_number_spec(spec).unwrap_or(spec)
     });
-    let channel_bg = evaluate_channel(&r.resolved_channels, "background", row, col_format)?;
-    // An authored color channel outranks the derived tone.
-    let channel_color = evaluate_channel(&r.resolved_channels, "color", row, col_format)?
-        .or(tone_color);
-    // Card background: channel > explicit chart-local override, which counts
-    // only when it differs from the board background: board
-    // propagation (the same color) is transparent to the KPI card.
-    let explicit_background = match (&kpi.background, board_background) {
-        (Some(bg), Some(board)) if bg != board => Some(bg.as_str()),
-        (Some(bg), None) => Some(bg.as_str()),
+    let channel_bg = evaluate_background(&r.resolved_channels, row, col_format)?;
+    // A matched rule's color outranks the derived tone.
+    let channel_color = explicit_color(patch.value_color.as_deref())?.or(tone_color);
+    // Card background: a matched rule > the gradient channel > the explicit
+    // chart-local color, which counts only when it differs from the board
+    // background: board propagation (the same color) is transparent to the KPI
+    // card.
+    let static_background = match &kpi.background {
+        Some(CardBackground::Color(bg)) => Some(bg.as_str()),
         _ => None,
     };
-    let card_fill = match channel_bg {
+    let explicit_background = match (static_background, board_background) {
+        (Some(bg), Some(board)) if bg != board => Some(bg),
+        (Some(bg), None) => Some(bg),
+        _ => None,
+    };
+    let card_fill = match explicit_color(patch.background.as_deref())?.or(channel_bg) {
         Some(bg) => Some(bg),
         None => explicit_color(explicit_background)?,
     };
@@ -615,7 +739,7 @@ fn resolve_colors(
     Ok(Colors {
         affix_fill: slot_fill(&slots.affix)?,
         glyph_fill: slot_fill(&slots.glyph)?,
-        label_fill: own_fill(slots.label.color.as_deref(), card_ink)?,
+        label_fill: own_fill(patch.label_color.as_deref().or(slots.label.color.as_deref()), card_ink)?,
         value_fill,
         card_fill,
         secondary: secondary.to_string(),
@@ -646,6 +770,7 @@ fn resolve_support_row(
     chart_id: &str,
     formats: Option<&serde_json::Map<String, Value>>,
     sub_unit_specs: &SubUnitSpecs,
+    patch: &CardPatch,
 ) -> Result<Option<SupportRow>, Diagnostic> {
     let Some(support) = support else {
         return Ok(None);
@@ -662,9 +787,9 @@ fn resolve_support_row(
         slots.support.cased(&format!("{s_prefix}{s_number}{s_suffix}"))?
     };
 
-    // the rules see the raw support cell (a null cell is
-    // Python's `None`); a matched rule's glyph replaces the authored one, even
-    // an empty one.
+    // `good`'s rules see the raw support cell (a null cell is Python's
+    // `None`); a matched rule's glyph replaces the authored one, even an empty
+    // one.
     let styled = resolve_conditional_styles(
         support.rules.as_deref().unwrap_or(&[]),
         Some(&cell).filter(|v| !v.is_null()),
@@ -690,10 +815,11 @@ fn resolve_support_row(
     // A delta value is colored by its sign and `tone` is the direction
     // (positive: up is good, negative: up is bad; unset reads as positive);
     // zero and a non-number stay un-toned. warning/info are fixed colors.
-    let tone_color = match (kpi.support.tone.as_deref(), is_delta) {
+    let tone = patch.support_tone.as_deref().or(kpi.support.tone.as_deref());
+    let tone_color = match (tone, is_delta) {
         (None, false) => None,
         (None | Some("positive" | "negative"), true) => {
-            let up_is_good = kpi.support.tone.as_deref() != Some("negative");
+            let up_is_good = tone != Some("negative");
             match cell.as_f64() {
                 Some(v) if v != 0.0 => {
                     let name = if (v > 0.0) == up_is_good { "positive" } else { "negative" };
@@ -710,17 +836,16 @@ fn resolve_support_row(
     };
     let row_color = explicit_color(slots.support.color.as_deref())?;
     let glyph_ink = explicit_color(slots.support_glyph.color.as_deref())?;
-    // A matched rule's `tone` colors the value like its `font.color` does.
-    let cf_color = styled.color.filter(|c| !c.is_empty()).or(styled.tone_color);
+    // `good`'s tone colors the value and glyph, unless a matched rule sets the
+    // tone itself; a matched rule's `font.color` outranks both.
+    let good_color = if patch.support_tone.is_some() { None } else { styled.tone_color };
+    let cf_color = explicit_color(patch.support_color.as_deref())?.or(good_color);
     let value_fill = cf_color
         .clone()
         .or_else(|| row_color.clone())
         .or_else(|| tone_color.map(str::to_string))
         .unwrap_or_else(|| secondary.to_string());
-    let glyph_fill = styled
-        .glyph_color
-        .filter(|c| !c.is_empty())
-        .or(cf_color)
+    let glyph_fill = cf_color
         .or(glyph_ink)
         .or_else(|| tone_color.map(str::to_string))
         .or(row_color)
@@ -888,6 +1013,17 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     }
     let row = &row;
     let mut slots = Slots::resolve(kpi)?;
+    let patch = conditional_patch(kpi.conditional.as_ref(), row, &r.id)?;
+    for (slot, weight) in [
+        (&mut slots.value, &patch.value_weight),
+        (&mut slots.label, &patch.label_weight),
+        (&mut slots.support, &patch.support_weight),
+        (&mut slots.support_glyph, &patch.support_weight),
+    ] {
+        if let Some(weight) = weight {
+            slot.weight = slot_weight(weight);
+        }
+    }
     let cell = column_cell(row, &r.value, &r.id)?;
     let board_formats = payload
         .board_style
@@ -955,6 +1091,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         payload.background.as_deref(),
         secondary,
         value_styled.tone_color,
+        &patch,
     )?;
     let support = resolve_support_row(
         &r.support,
@@ -967,6 +1104,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         &r.id,
         board_formats,
         sub_unit_specs,
+        &patch,
     )?;
     let (url, open) = match r.link.as_deref() {
         Some(url) => (Some(url), r.link_open),
@@ -1392,8 +1530,10 @@ struct Stack {
     label_truncated: bool,
 }
 
-fn text_row(x: f64, y: f64, runs: Vec<TextRun>) -> Node {
-    Node::new(Role::Label, Attrs::new().quick("text-anchor", "start"), Shape::Text { at: (x, y), bounds: None, runs })
+/// A row of card text, stamped with the role token (`kpi-value`, `kpi-label` or `kpi-support`) the
+/// equivalence comparator's quirk classes find it by.
+fn text_row(role: &str, x: f64, y: f64, runs: Vec<TextRun>) -> Node {
+    Node::new(Role::Label, Attrs::new().quick("text-anchor", "start").quick("data-dct-role", role), Shape::Text { at: (x, y), bounds: None, runs })
 }
 
 /// The card fill reaches back out over the padding the render box was shrunk by.
@@ -1486,6 +1626,7 @@ fn stacked(
     let value_x = run_x(content_x, available_width, value_run_width, align);
 
     let value = text_row(
+        "kpi-value",
         value_x,
         v.value_baseline,
         value_tspans(b, v.value_baseline, v.prefix_baseline, v.glyph_baseline),
@@ -1520,6 +1661,7 @@ fn stacked(
         children.push(newline());
         let attrs = Attrs::new()
             .quick("data-authored-kind", "label")
+            .quick("data-dct-role", "kpi-label")
             .quick("text-anchor", "start")
             .extend(slots.label.attrs())
             .quick("fill", b.colors.label_fill.as_str());
@@ -1534,7 +1676,7 @@ fn stacked(
             children.push(title(&s.explainer));
         }
         children.extend(run_tspans(&support_runs, None, None, &Attrs::new()));
-        parts.push(text_row(support_x, v.support_baseline, children));
+        parts.push(text_row("kpi-support", support_x, v.support_baseline, children));
     }
     Ok(parts)
 }
@@ -1579,6 +1721,7 @@ fn inline(
     if !b.label_text.is_empty() {
         let attrs = Attrs::new()
             .quick("data-authored-kind", "label")
+            .quick("data-dct-role", "kpi-label")
             .extend(slots.label.attrs())
             .quick("fill", b.colors.label_fill.as_str());
         children.push(tspan(baseline, gap, attrs, b.label_text.as_str()));
@@ -1587,7 +1730,7 @@ fn inline(
         children.extend(run_tspans(&support_runs[..1], baseline, gap, &Attrs::new()));
         children.extend(run_tspans(&support_runs[1..], baseline, None, &Attrs::new()));
     }
-    parts.extend(linked(b, vec![text_row(row_x, value_baseline, children)]));
+    parts.extend(linked(b, vec![text_row("kpi-value", row_x, value_baseline, children)]));
     Ok(parts)
 }
 
@@ -1645,6 +1788,7 @@ fn compact(
     let mut parts = Vec::new();
     chrome(b, &mut parts, width, height);
     let mut column = vec![text_row(
+        "kpi-value",
         block_x,
         value_baseline,
         value_tspans(b, value_baseline, prefix_baseline, glyph_baseline),
@@ -1656,7 +1800,8 @@ fn compact(
             } else {
                 Attrs::new()
             };
-            parts.push(text_row(right_column_x, baseline, run_tspans(runs, None, None, &extra)));
+            let role = if is_label { "kpi-label" } else { "kpi-support" };
+            parts.push(text_row(role, right_column_x, baseline, run_tspans(runs, None, None, &extra)));
         };
     if !top.is_empty() {
         right_column_text(&mut column, &top, top_baseline, kind_on_top);
@@ -2129,6 +2274,7 @@ mod render_tests {
                 "content_padding": {"left": 8.0, "right": 8.0, "top": 8.0, "bottom": 8.0},
                 "align": null,
                 "background": null,
+                "conditional": null,
                 "border": {"width": 0.0, "color": "transparent", "radius": 0.0}
             }}
         });
@@ -2330,7 +2476,7 @@ mod render_tests {
         );
         let serif = quick_xml::escape::escape(SERIF);
         let want = format!(
-            "<text x=\"8\" y=\"{value_y}\" text-anchor=\"start\">\
+            "<text x=\"8\" y=\"{value_y}\" text-anchor=\"start\" data-dct-role=\"kpi-value\">\
              <tspan y=\"{glyph_y}\" font-family=\"{serif}\" font-size=\"11\" font-weight=\"500\" fill=\"#222222\">▲ </tspan>\
              <tspan y=\"{prefix_y}\" font-family=\"{serif}\" font-size=\"11\" font-weight=\"500\" fill=\"#222222\">$</tspan>\
              <tspan y=\"{value_y}\" font-family=\"{serif}\" font-size=\"24\" font-weight=\"500\" fill=\"#222222\">1,234</tspan></text>"
@@ -2556,7 +2702,7 @@ mod render_tests {
         assert_eq!(tspans_in_label(&svg).len(), 2, "{svg}");
         let label_y = 8.0 + 24.0 * CAP_HEIGHT_RATIO + MINIMUM_TITLE_VALUE_GAP + 11.0 * CAP_HEIGHT_RATIO;
         let support_y = label_y + 2.0 * 15.0;
-        assert!(svg.contains(&format!("<text x=\"8\" y=\"{}\" text-anchor=\"start\"><tspan", print::geometry(support_y))), "{svg}");
+        assert!(svg.contains(&format!("<text x=\"8\" y=\"{}\" text-anchor=\"start\" data-dct-role=\"kpi-support\"><tspan", print::geometry(support_y))), "{svg}");
         // Card height: support baseline + descender + bottom padding.
         let want_h = print::number(support_y + 11.0 * 0.2 + 8.0);
         assert!(svg.starts_with(&format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"120\" height=\"{want_h}\"")), "{svg}");
@@ -2700,17 +2846,39 @@ mod render_tests {
     }
 
     #[test]
-    fn a_rule_color_outranks_every_slot_ink_and_its_glyph_color_outranks_the_color() {
+    fn a_rule_color_outranks_every_slot_ink_and_paints_the_glyph_too() {
         let mut p = with_support(kpi_payload("stacked", 300.0));
         set(&mut p, "/style/kpi/support/tone", json!("positive"));
         set(&mut p, "/style/kpi/support/font/color", json!("#111111"));
         set(&mut p, "/style/kpi/support/glyph/font/color", json!("#222222"));
-        p.resolved["support"]["rules"] = json!([{"gt": 0, "font": {"color": "#aa0000"}}]);
+        set(
+            &mut p,
+            "/style/kpi/conditional",
+            json!({"growth_pct": [{"gt": 0, "support": {"font": {"color": "#aa0000"}}}]}),
+        );
         let svg = svg_of(&p);
         assert!(svg.contains("fill=\"#aa0000\">▲ ") && svg.contains("fill=\"#aa0000\">+12.5%"), "{svg}");
-        p.resolved["support"]["rules"] = json!([{"gt": 0, "font": {"color": "#aa0000"}, "glyph_color": "#00aa00"}]);
+    }
+
+    #[test]
+    fn a_rule_tone_replaces_the_tone_good_derived_and_its_font_color_outranks_it() {
+        let mut p = with_support(kpi_payload("stacked", 300.0));
+        p.resolved["support"]["rules"] = json!([{"gt": 0, "glyph": "▲", "tone": "positive"}]);
         let svg = svg_of(&p);
-        assert!(svg.contains("fill=\"#00aa00\">▲ ") && svg.contains("fill=\"#aa0000\">+12.5%"), "{svg}");
+        assert!(svg.contains("fill=\"#00884d\">+12.5%"), "good paints positive: {svg}");
+        set(
+            &mut p,
+            "/style/kpi/conditional",
+            json!({"growth_pct": [{"gt": 0, "support": {"tone": "warning"}}]}),
+        );
+        let svg = svg_of(&p);
+        assert!(svg.contains("fill=\"#8a6d00\">+12.5%") && svg.contains("fill=\"#8a6d00\">▲ "), "{svg}");
+        set(
+            &mut p,
+            "/style/kpi/conditional",
+            json!({"growth_pct": [{"gt": 0, "support": {"font": {"color": "#aa0000"}, "tone": "warning"}}]}),
+        );
+        assert!(svg_of(&p).contains("fill=\"#aa0000\">+12.5%"));
     }
 
     #[test]
@@ -2810,7 +2978,7 @@ mod render_tests {
         let svg = svg_of(&with_support(kpi_payload("inline", 400.0)));
         let y = print::geometry((120.0 + 24.0 * CAP_HEIGHT_RATIO) / 2.0);
         let label = format!(
-            "<tspan y=\"{y}\" dx=\"14\" data-authored-kind=\"label\" font-family=\"{}\" font-size=\"11\" font-weight=\"500\" fill=\"#222222\">Quarterly Revenue</tspan>",
+            "<tspan y=\"{y}\" dx=\"14\" data-authored-kind=\"label\" data-dct-role=\"kpi-label\" font-family=\"{}\" font-size=\"11\" font-weight=\"500\" fill=\"#222222\">Quarterly Revenue</tspan>",
             quick_xml::escape::escape(SANS)
         );
         assert!(svg.contains(&label), "{svg}");
@@ -2913,21 +3081,84 @@ mod render_tests {
     }
 
     #[test]
-    fn a_conditional_channel_paints_the_matched_rule_and_a_gradient_its_scale() {
+    fn a_gradient_channel_paints_its_scale_and_a_matched_rule_background_beats_it() {
         let mut p = kpi_payload("stacked", 300.0);
         set(
             &mut p,
             "/resolved_channels",
-            json!({
-                "color": {"mode": "conditional", "data_field": "revenue",
-                          "rules": [{"gt": 0, "font": {"color": "#112233"}}]},
-                "background": {"mode": "gradient", "data_field": "revenue",
-                               "scale": {"palette": ["#000000", "#808080", "#ffffff"], "arm_mode": "sequential"}},
-            }),
+            json!({"background": {"mode": "gradient", "data_field": "revenue",
+                   "scale": {"palette": ["#000000", "#808080", "#ffffff"], "arm_mode": "sequential"}}}),
+        );
+        set(&mut p, "/style/kpi/background", json!({"column": "revenue", "scale": {}}));
+        let svg = svg_of(&p);
+        assert!(svg.contains("<rect x=\"0\" y=\"0\" width=\"300\" height=\"120\" fill=\"#808080\""), "one-row domain takes the middle stop: {svg}");
+        set(
+            &mut p,
+            "/style/kpi/conditional",
+            json!({"revenue": [{"gt": 0, "background": "#112233"}]}),
         );
         let svg = svg_of(&p);
-        assert!(svg.contains("fill=\"#112233\""), "{svg}");
-        assert!(svg.contains("<rect x=\"0\" y=\"0\" width=\"300\" height=\"120\" fill=\"#808080\""), "one-row domain takes the middle stop: {svg}");
+        assert!(svg.contains("fill=\"#112233\"") && !svg.contains("#808080"), "{svg}");
+    }
+
+    fn conditional(p: &mut Payload, rules: Value) {
+        set(p, "/style/kpi/conditional", json!({"revenue": rules}));
+    }
+
+    #[test]
+    fn a_default_beside_a_match_on_another_key_does_not_fire() {
+        let mut p = kpi_payload("stacked", 300.0);
+        conditional(
+            &mut p,
+            json!([
+                {"gt": 0, "value": {"font": {"color": "#112233"}}},
+                {"default": true, "background": "#445566"}
+            ]),
+        );
+        let svg = svg_of(&p);
+        assert!(svg.contains("fill=\"#112233\"") && !svg.contains("#445566"), "{svg}");
+        conditional(
+            &mut p,
+            json!([
+                {"lt": 0, "value": {"font": {"color": "#112233"}}},
+                {"default": true, "background": "#445566"}
+            ]),
+        );
+        let svg = svg_of(&p);
+        assert!(svg.contains("fill=\"#445566\"") && !svg.contains("#112233"), "{svg}");
+    }
+
+    #[test]
+    fn overlapping_rules_apply_together_and_the_later_wins_per_key() {
+        let mut p = kpi_payload("stacked", 300.0);
+        conditional(
+            &mut p,
+            json!([
+                {"gt": 0, "background": "#aaaaaa", "label": {"font": {"color": "#010203", "weight": "bold"}}},
+                {"gt": 1000, "background": "#bbbbbb"}
+            ]),
+        );
+        let svg = svg_of(&p);
+        assert!(svg.contains("fill=\"#bbbbbb\"") && !svg.contains("#aaaaaa"), "{svg}");
+        assert!(svg.contains("font-weight=\"bold\" fill=\"#010203\""), "label keeps the earlier match: {svg}");
+    }
+
+    #[test]
+    fn a_rule_value_color_paints_the_whole_run_and_its_weight_the_value() {
+        let mut p = kpi_payload("stacked", 300.0);
+        conditional(
+            &mut p,
+            json!([{"gt": 0, "value": {"font": {"color": "#112233", "weight": 700}}}]),
+        );
+        let svg = svg_of(&p);
+        assert!(svg.contains("font-weight=\"700\" fill=\"#112233\">1,234"), "{svg}");
+    }
+
+    #[test]
+    fn a_rule_column_the_row_lacks_refuses_by_name() {
+        let mut p = kpi_payload("stacked", 300.0);
+        set(&mut p, "/style/kpi/conditional", json!({"nope": [{"gt": 0, "background": "#fff"}]}));
+        assert!(err_of(&p).contains("nope"));
     }
 
     fn text_kpi(format: &str, cell: Value) -> Payload {

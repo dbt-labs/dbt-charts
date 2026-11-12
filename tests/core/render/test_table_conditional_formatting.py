@@ -339,9 +339,11 @@ class TestTableSVGWithConditionalFormatting:
         chart = make_chart(
             "table",
             title="Alerts",
-            conditional_formatting={
-                "status": {
-                    "when": [{"eq": "Critical", "background": "#fee2e2"}],
+            style={
+                "columns": {
+                    "status": {
+                        "conditional": [{"eq": "Critical", "background": "#fee2e2"}]
+                    }
                 }
             },
         )
@@ -861,13 +863,13 @@ class TestRowRuleZOrderAndFillAlignment:
 
 class TestWcagTableInkCarve:
     """The table WCAG surface="table" carve must key off the *effective* cell
-    ink — table.color.static when authored, else table.font.color — not
+    ink — column_defaults.font.color when authored, else table.font.color — not
     unconditionally table.font.color. Cell body text sits on the scale fill,
     so getting this wrong produces contrast-unsafe fills (e.g. near-white
     text on a near-white background) that look fine to every non-visual test.
     """
 
-    def test_static_color_override_changes_baked_stops(self, make_chart) -> None:
+    def test_default_ink_override_changes_baked_stops(self, make_chart) -> None:
         chart_with_static = make_chart(
             "table",
             style={
@@ -875,7 +877,7 @@ class TestWcagTableInkCarve:
                     "columns": {
                         "v": {"scale": {"background": {"palette": "dbt-seq-blue"}}}
                     },
-                    "color": {"static": "#ffffff"},
+                    "column_defaults": {"font": {"color": "#ffffff"}},
                 }
             },
         )
@@ -921,7 +923,7 @@ class TestWcagTableInkCarve:
                     "columns": {
                         "v": {"scale": {"background": {"palette": "dbt-seq-blue"}}}
                     },
-                    "color": {"static": "#ffffff"},
+                    "column_defaults": {"font": {"color": "#ffffff"}},
                 },
             },
         )
@@ -932,11 +934,11 @@ class TestWcagTableInkCarve:
             palette(expected, surface="table", text_color="#ffffff")
         )
 
-    def test_invalid_static_color_falls_back_to_font_color(self, make_chart) -> None:
-        """An invalid/empty style.color.static must fall back to
+    def test_invalid_default_ink_falls_back_to_font_color(self, make_chart) -> None:
+        """An invalid/empty column_defaults.font.color must fall back to
         table.font.color rather than reach the WCAG carve as an unparseable
         string. Regression: passing it through raw (no sanitize_color gate)
-        crashed on `_relative_luminance("")` for `color.static: ""`."""
+        crashed on `_relative_luminance("")` for `font.color: ""`."""
         chart = make_chart(
             "table",
             style={
@@ -944,7 +946,7 @@ class TestWcagTableInkCarve:
                     "columns": {
                         "v": {"scale": {"background": {"palette": "dbt-seq-blue"}}}
                     },
-                    "color": {"static": ""},
+                    "column_defaults": {"font": {"color": ""}},
                 }
             },
         )

@@ -472,12 +472,6 @@ charts:
     type: table
     query: top_customers
     title: Top customer accounts
-    conditional_formatting:
-      completion_rate:
-        when:
-          - lt: 0.50
-            glyph: "⚠"
-            glyph_color: "#d97706"
     style:
       pagination:
         enabled: false
@@ -499,6 +493,10 @@ charts:
             type: bar-normalize
             # Semantic: completion_rate is a rate, definitionally bounded at 1 (100%).
             max: 1
+          conditional:
+            - lt: 0.5
+              glyph: ⚠
+              glyph_color: "#d97706"
         avg_pages:
           format: number_full
           align: right

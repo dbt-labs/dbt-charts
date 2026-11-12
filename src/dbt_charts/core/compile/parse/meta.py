@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.parse.parser import load_yaml_text
+from dbt_charts.core.diagnostics.codes_compile import ERR_EXTENDS_INVALID
 from dbt_charts.core.diagnostics.suppression import validate_suppression_codes
 
 if TYPE_CHECKING:
@@ -60,8 +61,10 @@ def _parse_meta_dict(
     editor buffer) so the two never validate this shape differently.
     """
     if not isinstance(data, dict):
-        raise CompilationError(
-            f"{relpath} must be a YAML mapping, got {type(data).__name__}"
+        raise CompilationError.from_code(
+            ERR_EXTENDS_INVALID,
+            file=relpath,
+            reason=f"must be a YAML mapping, got {type(data).__name__}",
         )
 
     # Extract lint before the AuthoredBoard merge — validation policy, not content.

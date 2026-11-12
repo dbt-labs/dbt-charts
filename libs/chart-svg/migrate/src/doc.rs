@@ -37,6 +37,9 @@ pub enum Edit {
         expansion: bool,
         /// The declared old path (`a.*.b`), for the writer's refusal texts.
         declared: String,
+        /// What the destination mapping held before a merging move landed in it;
+        /// the writer adds `after`'s keys that it lacks.
+        merged_into: Option<Box<Json>>,
     },
     /// A value a document-aware rewrite owes a position no move fires at,
     /// creating the mappings it passes through; `None` strikes the key and the

@@ -59,7 +59,7 @@ pub(crate) fn vega_line(anchor: f64, baseline: Baseline, size: f64) -> (f64, f64
 }
 
 /// The extra height Vega gives each row of a label after its first (`text::line_height`).
-fn vega_row(size: f64) -> f64 {
+pub(crate) fn vega_row(size: f64) -> f64 {
     size + 2.0
 }
 

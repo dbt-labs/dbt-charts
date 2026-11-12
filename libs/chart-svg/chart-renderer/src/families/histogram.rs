@@ -469,7 +469,7 @@ mod tests {
                 "axis_y": axis(y_position.or(Some("left"))),
                 "mark": {"border": {"radius": 0.0}, "band_width": 0.9},
                 "single_series_fill": "#1c395c",
-                "title_font": null
+                "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"}
             }
         })
     }

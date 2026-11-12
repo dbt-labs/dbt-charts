@@ -461,7 +461,7 @@ impl MirrorGhost {
             .zip(&base)
             .enumerate()
             .map(|(i, (&tv, label))| {
-                ::layout::labels_expr::speak_value("y", src, tv, label, i, ticks.len()).map_err(|e| format!("axis_y.mirror.expr: {e}"))
+                ::layout::labels_expr::speak_value("y", src, tv, label, i, ticks.len(), &crate::labels_expr::env()).map_err(|e| format!("axis_y.mirror.expr: {e}"))
             })
             .collect::<Result<_, _>>()
             .map(Some)
@@ -2642,7 +2642,7 @@ impl AxisLabels {
             Some(spec) => ::bind::formats::locale::d3_format(spec, value).map_err(|e| format!("labels.format {spec:?}: {e}"))?,
             None => label,
         };
-        ::layout::labels_expr::speak_value(scale, src, value, &label, index, count)
+        ::layout::labels_expr::speak_value(scale, src, value, &label, index, count, &crate::labels_expr::env())
     }
 
     /// `labels.font.case` over text an axis paints. Only `upper` and `lower` change the paint
@@ -2820,17 +2820,15 @@ pub fn effective_title_style(
     })
 }
 
-/// The size `wrap_title_block`'s pre-pass measures at — production's
-/// `apply_title_overflow_to_spec`: `style_font_size or title_font_size or
-/// config_font_size or 18`. Every render call site passes no
-/// `title_font_size` kwarg, and `config.title.fontSize` is baked from the
-/// same `chart_style_context.title` object as `title_style` itself
-/// (`vega_lite/mapping.py`'s title block reads `chart_style_context.title`
-/// directly), so the precedence collapses to the UN-TIERED `title_style`'s
-/// own `font.size`, never the width-resolved `style.title_font` a caller
-/// paints with.
-pub fn title_measure_font_size(title_style: Option<&TitleStyle>) -> f64 {
-    title_style.and_then(|ts| ts.font.size).unwrap_or(18.0)
+/// The size a titled chart's title paints at, from the width-resolved
+/// `title_font`. A chart with a title and no size is a payload error; an
+/// untitled chart has no title to size, so the value is 0 and unread.
+pub fn painted_title_size(titled: bool, style: Option<&TitleStyle>) -> Result<f64, String> {
+    match (titled, style.and_then(|ts| ts.font.size)) {
+        (_, Some(size)) => Ok(size),
+        (true, None) => Err("a titled chart's resolved title font carries no size".to_string()),
+        (false, None) => Ok(0.0),
+    }
 }
 
 #[derive(Deserialize, Clone)]
@@ -3154,23 +3152,15 @@ pub struct TitleBlock {
 /// production call sites pass no family, so `get_font_measurer(None)`
 /// resolves InterVariable regardless.
 ///
-/// `title_font_size` is the size the title PAINTS at (the width-resolved,
-/// tiered `style.title_font.size`) — it drives the reserved `ink` and the
-/// native `limit` clip pass, both of which must match what actually
-/// renders. `title_measure_font_size` is production's own pre-pass size
-/// (`title_overflow.py::apply_title_overflow_to_spec`'s `style_font_size or
-/// title_font_size or config_font_size or 18` — the UN-TIERED
-/// `title_style.font.size`, `title_measure_font_size` in this port): it
-/// decides how many lines the wrap produces and, absent an authored
-/// subtitle size, what the subtitle measures/paints at too — production's
-/// subtitle fallback reads the same effective title size, never the
-/// tiered paint size.
+/// `title_font_size` is the size the title PAINTS at (the width-resolved
+/// `style.title_font.size`). The pre-pass wrap, the reserved `ink`, the native
+/// `limit` clip pass, and the subtitle's fallback size all read that one
+/// number, so a title fits exactly when it paints within its limit.
 pub fn wrap_title_block(
     cased_title: Option<&str>,
     subtitle: Option<&str>,
     style: Option<&TitleStyle>,
     title_font_size: f64,
-    title_measure_font_size: f64,
     avail_w: f64,
     fonts: &measure::FontBook,
 ) -> Result<TitleBlock, String> {
@@ -3187,18 +3177,13 @@ pub fn wrap_title_block(
         (Some(text), Some(limit)) => wrap(
             text,
             style.and_then(|ts| ts.overflow.as_deref()),
-            title_measure_font_size,
+            title_font_size,
             limit,
         )?,
     };
     let sub_style = style.and_then(|ts| ts.subtitle.as_ref());
-    // Production's `prepare_title_text` callers fall back to the effective
-    // TITLE size when the subtitle slot carries none — the same fallback
-    // `subtitle_nodes` paints with, so box and text agree. That
-    // effective size is the pre-pass MEASURE size, never the tiered paint
-    // size (`title_overflow.py`'s `subtitle_font_size = ... or
-    // effective_title_font_size`).
-    let sub_fs = sub_style.and_then(|f| f.font.size).unwrap_or(title_measure_font_size);
+    // The subtitle falls back to the title's paint size when its slot carries none.
+    let sub_fs = sub_style.and_then(|f| f.font.size).unwrap_or(title_font_size);
     let (wrap_sub_lines, subtitle_truncated) = match (wrap_lines.is_empty(), subtitle, limit) {
         (false, Some(sub), None) => (vec![sub.to_string()], false),
         (false, Some(sub), Some(limit)) => {
@@ -3403,45 +3388,38 @@ mod title_block_tests {
         FontBook::load_dir(dir).expect("test fonts load")
     }
 
-    /// Production's `apply_title_overflow_to_spec` measures the pre-pass
-    /// wrap at `title_style.font.size` (the UN-TIERED size) while the chart
-    /// PAINTS the title at the width-resolved, tiered `style.title_font.size`
-    /// — a nested card's title paints at 14px but the pre-pass still
-    /// truncates as if it were 18px. `wrap_title_block` must take the two
-    /// sizes separately: measuring at the paint size (the pre-fix bug) lets
-    /// this title survive on one line where production truncates it.
     #[test]
-    fn wrap_measures_at_the_untiered_title_style_size_not_the_paint_size() {
+    fn a_titled_chart_without_a_painted_size_is_refused() {
+        let style: TitleStyle =
+            serde_json::from_value(serde_json::json!({"font": {"family": "Inter"}})).expect("style");
+        let err = painted_title_size(true, Some(&style)).unwrap_err();
+        assert!(err.contains("carries no size"), "{err}");
+        assert_eq!(painted_title_size(false, None), Ok(0.0));
+    }
+
+    /// The pre-pass measures at the size the title paints at: a title that
+    /// fits at its 14px paint size must not be truncated as if it were 18px.
+    #[test]
+    fn wrap_measures_at_the_paint_size() {
         let fonts = fonts();
         let text = "Stacked Area — Vertical Grid Behind the Mark";
-        let paint_fs = 14.0;
-        let measure_fs = 18.0;
         let limit = 350.0;
-        assert!(
-            fonts.measure(text, "Inter", paint_fs).expect("measures") < limit,
-            "fixture must fit under Inter at the paint size"
-        );
-        assert!(
-            fonts.measure(text, "Inter", measure_fs).expect("measures") > limit,
-            "fixture must overflow under Inter at the measure size"
-        );
+        assert!(fonts.measure(text, "Inter", 14.0).expect("measures") < limit);
+        assert!(fonts.measure(text, "Inter", 18.0).expect("measures") > limit);
 
         let style: TitleStyle = serde_json::from_value(serde_json::json!({
-            "font": {"family": "Inter", "size": measure_fs},
+            "font": {"family": "Inter"},
             "overflow": "truncate"
         }))
         .expect("title style");
 
-        let block =
-            wrap_title_block(Some(text), None, Some(&style), paint_fs, measure_fs, limit, &fonts)
-                .expect("title block");
-        assert_eq!(block.title_lines.len(), 1, "fixture wrapped: {:?}", block.title_lines);
-        assert_ne!(
-            block.title_lines[0], text,
-            "measured at the un-tiered 18px, the title must truncate"
-        );
+        let at_paint = wrap_title_block(Some(text), None, Some(&style), 14.0, limit, &fonts)
+            .expect("title block");
+        assert_eq!(at_paint.title_lines, vec![text.to_string()]);
+        let larger = wrap_title_block(Some(text), None, Some(&style), 18.0, limit, &fonts)
+            .expect("title block");
+        assert_ne!(larger.title_lines[0], text, "at 18px the title must truncate");
     }
-
 
     /// Vega bounds an over-long text mark at its `limit` itself — the limit
     /// production compiles onto the title (`compute_title_limit`: the padded
@@ -3469,7 +3447,7 @@ mod title_block_tests {
             .expect("measures");
         assert!(measured > limit, "fixture must overflow the limit: {measured}");
 
-        let block = wrap_title_block(Some(text), None, Some(&style), 18.0, 18.0, limit, &fonts)
+        let block = wrap_title_block(Some(text), None, Some(&style), 18.0, limit, &fonts)
             .expect("title block");
         assert_eq!(block.title_lines.len(), 1, "fixture wrapped: {:?}", block.title_lines);
         assert_eq!(block.ink.expect("titled").width, limit);
@@ -3483,7 +3461,7 @@ mod title_block_tests {
         }))
         .expect("title style");
         let block =
-            wrap_title_block(Some("Short"), Some(text), Some(&subtitled), 18.0, 18.0, limit, &fonts)
+            wrap_title_block(Some("Short"), Some(text), Some(&subtitled), 18.0, limit, &fonts)
                 .expect("title block");
         assert_eq!(block.sub_lines.len(), 1, "fixture wrapped: {:?}", block.sub_lines);
         assert_eq!(block.ink.expect("titled").width, limit);
@@ -3521,7 +3499,7 @@ mod title_block_tests {
         let shaped = fonts.measure_shaped(text, family, 18.0).expect("measures");
         assert!(shaped > limit, "fixture must overflow the limit in its own family: {shaped}");
 
-        let block = wrap_title_block(Some(text), None, Some(&style), 18.0, 18.0, limit, &fonts)
+        let block = wrap_title_block(Some(text), None, Some(&style), 18.0, limit, &fonts)
             .expect("title block");
         assert_eq!(block.title_lines.len(), 1, "still one row: {:?}", block.title_lines);
         assert_ne!(block.title_lines[0], text, "the drawn row is shortened, not the full string");
@@ -4399,6 +4377,16 @@ pub(crate) fn format_kpi_parts(value: f64, f: &FormatParts, o: &PartsOptions) ->
             // The column's one baked magnitude, never the value's own SI
             // letter (format_value.py:300-331).
             number_str = ::bind::formats::locale::d3_format(scale.digit_spec, value / 10_f64.powi(scale.exponent))?;
+            if value != 0.0 && !number_str.chars().any(|c| ('1'..='9').contains(&c)) {
+                // Too small for the column's decimals: the grid's smallest
+                // step as a bound, never a bare zero.
+                let decimals = d3rs::format::parse_parts(scale.digit_spec)?
+                    .precision
+                    .ok_or_else(|| format!("baked digit spec {:?} has no precision", scale.digit_spec))?;
+                let step = 10_f64.powi(-(decimals as i32)).copysign(value);
+                let bound = if value > 0.0 { "<" } else { ">" };
+                number_str = format!("{bound}{}", ::bind::formats::locale::d3_format(scale.digit_spec, step)?);
+            }
             if value != 0.0 {
                 let analytic = match f.notation {
                     None => !scale.repeat,
@@ -5128,8 +5116,9 @@ impl StyleChannel {
 
 /// `resolved_channels.<name>`: the resolver's style channel. `mode` is the
 /// only field every family's rejection guard reads (`"conditional"` is
-/// retired from every family's own paint path — table/kpi read
-/// `conditional_formatting` directly instead, never through this struct);
+/// retired from every family's own paint path — the table reads a column's
+/// `conditional` rules and kpi reads `conditional_formatting` directly
+/// instead, never through this struct);
 /// `data_field` backs the series/gradient paint paths.
 #[derive(Deserialize)]
 pub struct StyleChannel {

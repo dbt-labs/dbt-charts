@@ -249,9 +249,12 @@ fn fail(path: &str, message: String) -> Vec<Diagnostic> {
 /// An embedded YAML document: `text` is the file's bytes `at..`, and starts on file line `line`
 /// (0-based). It is parsed padded with that many newlines, so an error names a line of the
 /// file, and its spans are moved from the padded text onto the file.
-fn embedded(text: &str, at: usize, line: usize) -> Result<Node, Vec<Diagnostic>> {
+fn embedded(file: &str, text: &str, at: usize, line: usize) -> Result<Node, Vec<Diagnostic>> {
     let padded = format!("{}{text}", "\n".repeat(line));
-    let mut node = parse_any(&padded)?;
+    let mut node = parse_any(&padded).map_err(|mut found| {
+        found.iter_mut().for_each(|d| crate::requote(d, file));
+        found
+    })?;
     remap(&mut node, &|offset| offset + at - line);
     Ok(node)
 }
@@ -293,7 +296,7 @@ fn frontmatter(text: &str) -> Result<(IndexMap<String, Entry>, usize, usize), Ve
     if fm.trim().is_empty() {
         return Ok((IndexMap::new(), body_at, body_line));
     }
-    let node = embedded(fm, from, 1)?;
+    let node = embedded(text, fm, from, 1)?;
     match node.kind {
         Kind::Scalar(Value::Null) => Ok((IndexMap::new(), body_at, body_line)),
         Kind::Map(map) => Ok((map, body_at, body_line)),
@@ -328,7 +331,7 @@ fn fence_row(
     let content = source
         .get(inner_from..inner_to.max(inner_from))
         .unwrap_or("");
-    let item = embedded(content, start + inner_from, line + 1)?;
+    let item = embedded(text, content, start + inner_from, line + 1)?;
     match item.kind {
         Kind::Scalar(Value::Null) => Err(fail(
             "charts",

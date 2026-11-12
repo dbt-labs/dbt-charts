@@ -36,8 +36,9 @@ charts:
     x: month
     y: revenue
     style:
-      color:
-        static: "#fff"
+      marks:
+        bar:
+          color: "#fff"
 rows: [revenue]
 """
 
@@ -46,7 +47,7 @@ def test_literal_color_advice_is_the_shape_that_compiles() -> None:
     with pytest.raises(ValueError, match="style") as caught:
         _validate_channel_field("color", "#fff", {"month"})
     advice = str(caught.value)
-    assert "static" in advice
+    assert "marks" in advice
     assert "value:" not in advice
     assert compile(_BAR).success
 

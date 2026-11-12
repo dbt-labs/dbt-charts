@@ -7,6 +7,7 @@
 //!
 //! Python's `re` semantics come from [`crate::pygments_re`].
 
+use d3rs::invariant::Invariant;
 use std::collections::HashMap;
 
 use once_cell::sync::Lazy;
@@ -480,7 +481,7 @@ impl Cb {
                     cx.next_indent = len;
                     if cx.next_indent < cx.indent {
                         while cx.next_indent < cx.indent {
-                            cx.indent = cx.indent_stack.pop().expect("indent stack underflow");
+                            cx.indent = cx.indent_stack.pop().held("indent stack underflow");
                         }
                         if cx.next_indent > cx.indent {
                             cut = start + py_index(len, cx.indent);
@@ -514,7 +515,7 @@ impl Cb {
                     return;
                 }
                 if let Some(d) = digit {
-                    let n: i64 = d.parse().expect("indentation indicator is [1-9]");
+                    let n: i64 = d.parse().held("indentation indicator is [1-9]");
                     cx.block_scalar_indent = Some(cx.indent.max(0) + n);
                 }
                 out.push((tok, start, end));
@@ -564,7 +565,7 @@ impl Ctx {
     /// `context.stack.pop()` `n` times.
     fn leave(&mut self, n: usize) {
         for _ in 0..n {
-            self.stack.pop().expect("state stack underflow");
+            self.stack.pop().held("state stack underflow");
         }
     }
 }
@@ -582,8 +583,11 @@ pub fn tokenize(text: &str) -> Vec<Span> {
     };
     let mut out: Vec<Span> = Vec::new();
     'lex: loop {
-        let state = *cx.stack.last().expect("state stack is never empty");
-        for rule in &STATES[state] {
+        let state = *cx.stack.last().held("state stack is never empty");
+        let rules = STATES
+            .get(state)
+            .held("a rule's push names a state of the YAML lexer");
+        for rule in rules {
             let Some(hit) = rule.pattern.find(text, cx.pos) else {
                 continue;
             };
@@ -617,7 +621,7 @@ pub fn tokenize(text: &str) -> Vec<Span> {
         let c = text[cx.pos..]
             .chars()
             .next()
-            .expect("pos is inside the text");
+            .held("pos is inside the text");
         if c == '\n' {
             cx.stack = vec!["root"];
             out.push((TEXT, cx.pos, cx.pos + 1));
@@ -627,4 +631,21 @@ pub fn tokenize(text: &str) -> Vec<Span> {
         cx.pos += c.len_utf8();
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_pushed_state_is_a_state_of_the_yaml_lexer() {
+        assert!(STATES.contains_key("root"));
+        for rule in STATES.values().flatten() {
+            if let Next::Push(targets) = rule.next {
+                for target in targets {
+                    assert!(STATES.contains_key(target), "pushes `{target}`");
+                }
+            }
+        }
+    }
 }

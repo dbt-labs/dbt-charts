@@ -1569,22 +1569,74 @@
             return tidy(Math.min(Math.max(raw, b.min), b.max));
         }
 
-        /*{# Move the drawn thumb while the pointer is down. The commit is a #}*/
-        /*{# board re-render, so doing one per pointermove would be a render #}*/
-        /*{# storm — the thumb follows locally and the value commits on release. #}*/
-        function previewAt(value) {
+        /*{# The track's own drawn x/width, so a position lands in board units #}*/
+        /*{# — the client rect is in page pixels and the board scales. #}*/
+        function xAt(value) {
             var b = bounds();
-            var thumb = el.querySelector('[data-dbt-ornament="slider-thumb"]');
-            if (!b || !thumb) return;
-            var rect = track.getBoundingClientRect();
-            var svg = el.ownerSVGElement || el.closest('svg');
-            if (!rect.width || !svg) return;
-            /*{# The track's own drawn x/width, so the preview lands in board #}*/
-            /*{# units — the client rect is in page pixels and the board scales. #}*/
             var x = parseFloat(track.getAttribute('x'));
             var w = parseFloat(track.getAttribute('width'));
-            if (isNaN(x) || isNaN(w)) return;
-            thumb.setAttribute('cx', x + w * ((value - b.min) / (b.max - b.min)));
+            if (!b || isNaN(x) || isNaN(w)) return null;
+            return x + w * ((value - b.min) / (b.max - b.min));
+        }
+
+        /*{# Move the drawn thumb and its value while the pointer is down. The #}*/
+        /*{# commit is a board re-render, so doing one per pointermove would be #}*/
+        /*{# a render storm — the drawing follows locally and the value commits #}*/
+        /*{# on release. #}*/
+        var thumb = el.querySelector('[data-dbt-ornament="slider-thumb"]');
+        var readout = el.querySelector('[data-dbt-ornament="slider-value"]');
+        function previewAt(value) {
+            var cx = xAt(value);
+            if (cx === null) return;
+            if (thumb) thumb.setAttribute('cx', cx);
+            if (readout) readout.textContent = String(value);
+        }
+
+        /*{# A hovering pointer reads the value it would pick, in a tip over #}*/
+        /*{# the thumb's spot: the readout beside the track keeps the committed #}*/
+        /*{# value until a press moves the thumb. HTML on the body rather than #}*/
+        /*{# SVG in the strip, which sits at the board's top edge and would clip #}*/
+        /*{# anything drawn above it. Styled as the board's chart tooltips are. #}*/
+        var tip = null;
+        function showTip(value) {
+            var cx = xAt(value);
+            if (cx === null) return;
+            if (!tip) {
+                var root = el.closest('[data-dbt-tooltip-style]');
+                var ts = JSON.parse(root.dataset.dbtTooltipStyle);
+                tip = document.createElement('div');
+                tip.className = 'dbt-slider-tip';
+                tip.setAttribute('data-dbt-ornament', 'slider-tip');
+                tip.setAttribute('role', 'tooltip');
+                tip.style.background = ts.background;
+                tip.style.color = ts.value.font.color;
+                tip.style.border = ts.border.width + 'px solid ' + ts.border.color;
+                tip.style.borderRadius = ts.border.radius + 'px';
+                tip.style.fontSize = ts.font.size + 'px';
+                tip.style.fontFamily = root.dataset.dbtFontFamily;
+                tip.style.padding = ts.padding.top + 'px ' + ts.padding.right + 'px ' + ts.padding.bottom + 'px ' + ts.padding.left + 'px';
+                tip.style.lineHeight = String(ts.lineHeight);
+                /*{# chart_interactivity.js's styleTooltip draws the same shadow. #}*/
+                tip.style.boxShadow = ts.shadow.visible ? '0 10px 25px rgba(15, 23, 42, 0.25)' : 'none';
+                tip.style.display = 'block';
+                document.body.appendChild(tip);
+            }
+            tip.textContent = String(value);
+            /*{# Board units to page pixels through the track's own scale. #}*/
+            var rect = track.getBoundingClientRect();
+            var scale = rect.width / parseFloat(track.getAttribute('width'));
+            var left = rect.left + (cx - parseFloat(track.getAttribute('x'))) * scale;
+            tip.style.left = (left - tip.offsetWidth / 2) + 'px';
+            /*{# Below the track when the frame has no room above it — an #}*/
+            /*{# embedded board can start at the very top of its frame. #}*/
+            var above = rect.top - 10 * scale - tip.offsetHeight;
+            tip.style.top = (above < 0 ? rect.bottom + 10 * scale : above) + 'px';
+        }
+        /*{# Removed, not hidden: a commit redraws the board and binds a new #}*/
+        /*{# slider, so a kept tip would be orphaned on the body. #}*/
+        function hideTip() {
+            if (tip) tip.remove();
+            tip = null;
         }
 
         /*{# Pointer events rather than click: a slider you cannot drag reads as #}*/
@@ -1601,20 +1653,30 @@
                 try { e.target.setPointerCapture(e.pointerId); } catch (err) { /*{# unsupported #}*/ }
             }
             previewAt(value);
+            showTip(value);
         });
         el.addEventListener('pointermove', function(e) {
-            if (!dragging) return;
+            if (!dragging && e.target !== grip && e.target !== track) return;
             var value = valueAt(e.clientX);
-            if (value !== null) previewAt(value);
+            if (value === null) return;
+            if (dragging) previewAt(value);
+            showTip(value);
         });
+        grip.addEventListener('pointerleave', function() { if (!dragging) hideTip(); });
         function release(e) {
             if (!dragging) return;
             dragging = false;
+            hideTip();
             var value = valueAt(e.clientX);
             if (value !== null) updateVariable(name, value);
         }
         el.addEventListener('pointerup', release);
-        el.addEventListener('pointercancel', function() { dragging = false; });
+        el.addEventListener('pointercancel', function() {
+            dragging = false;
+            hideTip();
+            var committed = parseFloat(el.getAttribute('data-dbt-value'));
+            if (!isNaN(committed)) previewAt(committed);
+        });
 
         el.addEventListener('keydown', function(e) {
             var b = bounds();
@@ -1973,6 +2035,35 @@
         });
     }
 
+    /*{# A button row is a radio group of links; clicking already works, this adds the #}*/
+    /*{# keyboard. Arrows only move focus: a selection re-renders the board. #}*/
+    function _bindButtons(el) {
+        var segments = Array.prototype.slice.call(el.querySelectorAll('[data-dbt-segment]'));
+        if (!segments.length) return;
+        var start = segments.filter(function(s) {
+            return s.getAttribute('aria-checked') === 'true';
+        })[0] || segments[0];
+        segments.forEach(function(segment) {
+            segment.setAttribute('tabindex', segment === start ? '0' : '-1');
+        });
+        el.addEventListener('keydown', function(e) {
+            var at = segments.indexOf(document.activeElement);
+            if (at < 0) return;
+            var step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+            if (step !== undefined) {
+                e.preventDefault();
+                var next = segments[(at + step + segments.length) % segments.length];
+                segments.forEach(function(segment) {
+                    segment.setAttribute('tabindex', segment === next ? '0' : '-1');
+                });
+                next.focus();
+            } else if ((e.key === ' ' || e.key === 'Enter') && segments[at].hasAttribute('href')) {
+                e.preventDefault();
+                segments[at].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            }
+        });
+    }
+
     /*{# Give one drawn control its semantics and its handlers. Returns whether #}*/
     /*{# it was newly bound, so mount() can report real work. #}*/
     function bindControl(el) {
@@ -1988,6 +2079,14 @@
         if (el.getAttribute('data-dbt-enabled') === 'false') {
             el.setAttribute('aria-disabled', 'true');
             el.setAttribute('role', _ROLE_BY_INPUT[input] || 'button');
+            return true;
+        }
+        if (el.getAttribute('data-dbt-form') === 'buttons') {
+            el.setAttribute('role', 'radiogroup');
+            /*{# A timespan button row draws no label, so only the control's own text counts. #}*/
+            var own = el.querySelector(':scope > text');
+            if (own) el.setAttribute('aria-label', own.textContent.replace(/:$/, ''));
+            _bindButtons(el);
             return true;
         }
         el.setAttribute('tabindex', '0');

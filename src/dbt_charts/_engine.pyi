@@ -54,26 +54,26 @@ class SqlAnalyzer(Protocol):
         self, requests: list[dict[str, str | None]]
     ) -> list[dict[str, Any]]: ...
 
+# A `cache:` layer as the host sends it: (enabled, ttl, prefetch), each None where the scope
+# authors nothing. `cache_root` is the project's, `source_caches` each declared source's.
+CacheLayer = tuple[bool | None, str | None, bool | None]
+
 def compile(
     files: ProjectFiles,
-    path: str,
+    path: str | None,
     *,
     boards_root: str,
     today: str,
     default_theme: str,
     html_policy_ceiling: str | None,
     sources: dict[str, str],
+    cache_root: CacheLayer,
+    source_caches: dict[str, CacheLayer],
     implicit_source: str | None,
     sql: SqlAnalyzer | None = None,
     named: bool = False,
+    text: str | None = None,
 ) -> CompiledBoard: ...
-def plan(
-    board: CompiledBoard,
-    given: str,
-    now_epoch: int,
-    time_zone: str,
-    all_queries: bool,
-) -> str: ...
 def index(
     files: ProjectFiles,
     path: str,
@@ -83,6 +83,37 @@ def index(
     sources: list[str],
     implicit_source: str | None,
 ) -> str: ...
+def plan(
+    board: CompiledBoard,
+    given: str,
+    builtins: str,
+    now_epoch: int,
+    all_queries: bool,
+    active_tab_only: bool,
+    strict: bool,
+    only_charts: list[str] | None,
+) -> str: ...
+
+class RenderedBoard:
+    svg: str
+    charts: dict[str, str]
+    diagnostics: list[dict[str, Any]]
+    boxes: dict[str, dict[str, float]]
+    width: float
+    height: float
+
+class ShapedFonts: ...
+
+def load_shaped_fonts(fonts_dir: str) -> ShapedFonts: ...
+def render_board(
+    board: CompiledBoard,
+    datasets: str,
+    chart_errors: str,
+    variables: str,
+    overridden: list[str],
+    fonts: ShapedFonts,
+    rendered_at: str,
+) -> RenderedBoard: ...
 def load_rows(rows_json: str) -> Rows: ...
 def render_chart(
     rows: Rows, datasets: dict[str, Rows], layout_json: str

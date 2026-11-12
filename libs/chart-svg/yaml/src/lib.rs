@@ -52,7 +52,7 @@
 
 mod build;
 mod errors;
-pub use errors::UNNAMED_SOURCE;
+pub use errors::{requote, UNNAMED_SOURCE};
 mod key;
 pub mod markdown;
 mod node;
@@ -85,7 +85,8 @@ pub fn parse_any(text: &str) -> Result<Node, Vec<Diagnostic>> {
         .map_err(|d| vec![d])
 }
 
-fn python_type(kind: &Kind) -> &'static str {
+/// The name Python's `type()` gives a value of this kind.
+pub fn python_type(kind: &Kind) -> &'static str {
     match kind {
         Kind::Seq(_) => "list",
         Kind::Map(_) => "dict",

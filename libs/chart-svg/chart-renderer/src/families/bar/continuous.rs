@@ -1043,6 +1043,7 @@ pub(super) fn render_vertical_continuous_x_panel(
     let link = r.datum_link(&r.x, crate::href::LinkText::Raw);
     let hrefs = link_hrefs(link.as_ref(), rows, (&r.x, None), false)?;
     let datum_of = datum_by_key(rows, (&r.x, None), false);
+    let mut bar_patches = Vec::with_capacity(bars_data.len());
     // The mirror's invisible rule layer: one rule per datum from its bar's top to the floor.
     let ghosts_on = mirror_active || (r.multiples.is_some() && r.style.axis_y.mirror_requested("bar")?);
     let mut ghost_points: Vec<(Option<String>, f64, f64, String, Option<String>)> = Vec::new();
@@ -1066,20 +1067,22 @@ pub(super) fn render_vertical_continuous_x_panel(
         if ghosts_on {
             ghost_points.push((aria.clone(), p.left + p.width / 2.0, yt, ghost_ink.clone(), hrefs.get(&key).cloned()));
         }
+        let patch = r.patch_of(rows, &datum_of, &key)?;
         plot.extend(bar_passes(base_mark(&datum_of, &key), false, p.left,
             top,
             p.width,
             h,
-            fill, None,
-            mark.opacity,
-            stroke_color,
-            stroke_w,
+            patch.fill(fill), None,
+            patch.opacity(mark.opacity),
+            patch.stroke(stroke_color),
+            patch.stroke_w(stroke_w),
             corner_r,
             Rounded::Positive, // this arm's own negative-value corner law is unmodeled (out of scope)
             false,
             None,
             aria.as_deref(),
             r.selection.mark(r.link_open.anchor(hrefs.get(&key).map(String::as_str))))?);
+        bar_patches.push(patch);
     }
     let knocked = crate::knockout::knock_out(
         plot.split_off(bars_from),
@@ -1300,7 +1303,8 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
             .zip(&bar_arias)
             .zip(&placed)
             .zip(&bar_cat)
-            .map(|(((&(_, yv), aria), p), cat)| {
+            .zip(&bar_patches)
+            .map(|((((&(_, yv), aria), p), cat), patch)| {
                 let (extent, side, blank) = zero_label_at(&spec, yv, &linear, plot_h, font.size);
                 Ok(LabelPoint {
                     center: p.center,
@@ -1314,6 +1318,8 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
                     href: hrefs.get(&(cat.clone(), String::new())).cloned(),
                     recede: r.selection.recede_of(hrefs.get(&(cat.clone(), String::new())).map(String::as_str)),
                     ink: None,
+                    font_color: patch.label_color.clone(),
+                    font_weight: patch.label_weight.clone(),
                 })
             })
             .collect::<Result<Vec<LabelPoint>, String>>()?;

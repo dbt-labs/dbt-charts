@@ -13,9 +13,15 @@ if TYPE_CHECKING:
         EndpointLabelsConfig,
     )
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
+from dbt_charts.core.compile.models.conditional_predicate import (
+    ConditionalPredicate,
+    default_rule_last,
+)
+from dbt_charts.core.compile.models.factories import build_conditional_model
 from dbt_charts.core.compile.models.markers import (
+    ChartLocal,
     InheritSlot,
     SkipInheritSlots,
 )
@@ -68,7 +74,7 @@ class LineLayerStyle(BaseModel):
     )
 
 
-class LineChartStyle(
+class _LineChartStyleBase(
     _CartesianChartStyle,
     _LegendedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
@@ -86,4 +92,47 @@ class LineChartStyle(
     ] = Field(
         default_factory=LineChartMarksStyle,
         description="Line-family mark overrides.",
+    )
+
+
+if TYPE_CHECKING:
+
+    class LineConditionalRule(ConditionalPredicate):
+        marks: LineChartMarksStyle | None
+
+else:
+    LineConditionalRule = build_conditional_model(
+        _LineChartStyleBase, name="LineChartStyleConditional"
+    )
+
+
+class LineChartStyle(_LineChartStyleBase):
+    """Line chart style, plus the per-point rules only a chart's own style takes."""
+
+    conditional: Annotated[
+        dict[
+            str,
+            Annotated[
+                list[LineConditionalRule],
+                Field(min_length=1),
+                AfterValidator(default_rule_last),
+            ],
+        ]
+        | None,
+        ChartLocal(),
+    ] = Field(
+        default=None,
+        description=(
+            "Rules that restyle a point by its row's value, keyed by column name. "
+            "Each rule is one condition (eq, ne, lt, lte, gt, gte, between, in, "
+            "is_null, or default) plus the style it applies: marks.point color, fill, filled, size, shape, opacity and stroke_width, marks.text font color and weight (the value labels), and marks.line.stroke color, width and dasharray. "
+            "A line segment takes a stroke key only when both of its end points resolve the same value for it, "
+            "so a run of matching points restyles the segments between them, and the segment stepping into the run keeps the base style; "
+            "include the boundary point in the condition to draw it. "
+            "Curve, connect and the other whole-series properties cannot vary per row. "
+            "Every matching rule applies; where two set the same key the later one "
+            "wins, so list the more specific rule last. A `default: true` rule "
+            "applies only when no other rule matched. Two columns cannot patch "
+            "the same property. Rules style the base layer, not `layers:`."
+        ),
     )

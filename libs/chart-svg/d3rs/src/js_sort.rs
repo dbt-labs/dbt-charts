@@ -9,6 +9,8 @@
 //! Past 64 elements V8 merges several runs, which is not ported; such an
 //! input refuses rather than risk a different order.
 
+use crate::invariant::{at, at_mut};
+
 /// V8's `ComputeMinRunLength`: arrays shorter than this are one run.
 const MIN_MERGE: usize = 64;
 
@@ -32,10 +34,10 @@ fn count_and_make_run<T: Copy>(v: &mut [T], cmp: &mut impl FnMut(T, T) -> f64) -
     if n == 1 {
         return 1;
     }
-    let descending = cmp(v[1], v[0]) < 0.0;
+    let descending = cmp(*at(v, 1), *at(v, 0)) < 0.0;
     let mut run = 2;
-    let mut prev = v[1];
-    for &cur in &v[2..] {
+    let mut prev = *at(v, 1);
+    for &cur in at(v, 2..) {
         let order = cmp(cur, prev);
         if descending != (order < 0.0) {
             break;
@@ -44,25 +46,25 @@ fn count_and_make_run<T: Copy>(v: &mut [T], cmp: &mut impl FnMut(T, T) -> f64) -
         run += 1;
     }
     if descending {
-        v[..run].reverse();
+        at_mut(v, ..run).reverse();
     }
     run
 }
 
 fn binary_insertion_sort<T: Copy>(v: &mut [T], start: usize, cmp: &mut impl FnMut(T, T) -> f64) {
     for i in start.max(1)..v.len() {
-        let pivot = v[i];
+        let pivot = *at(v, i);
         let (mut left, mut right) = (0, i);
         while left < right {
             let mid = left + ((right - left) >> 1);
-            if cmp(pivot, v[mid]) < 0.0 {
+            if cmp(pivot, *at(v, mid)) < 0.0 {
                 right = mid;
             } else {
                 left = mid + 1;
             }
         }
         v.copy_within(left..i, left + 1);
-        v[left] = pivot;
+        *at_mut(v, left) = pivot;
     }
 }
 

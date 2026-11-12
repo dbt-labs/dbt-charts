@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use super::axes::{HorizontalValueAxis, flush_edge, flush_threshold, format_tick_labels};
 use super::BarResolved;
 use super::bind::zero_label;
-use super::domain::{BarChartState, CatOrder, CenterStack, SegmentSpans, TopRail, bar_value_extent, base_series, build_chart_domains, build_data_map, Extras, cat_order, category_totals, collapsed_authored_domain, grouped_spans, horizontal_min_height, is_tier, layered_by_sign, nice_shared_scale, niced_rail_domain, outer_segments, stack_label_spans, stack_spans, tier_depths, tier_name, unbaked_rungs, value_domain_and_ticks, with_tiers};
+use super::domain::{BarChartState, CenterStack, SegmentSpans, TopRail, bar_value_extent, base_series, build_chart_domains, build_data_map, Extras, category_totals, collapsed_authored_domain, grouped_spans, horizontal_min_height, is_tier, layered_by_sign, nice_shared_scale, niced_rail_domain, outer_segments, stack_label_spans, stack_spans, tier_depths, tier_name, unbaked_rungs, value_domain_and_ticks, with_tiers};
 use super::facet::color_1to1_with_cat;
 use super::labels::{LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, category_clearance, mark_labels, plain_sites, value_label_layers};
 use super::layout::{Drawn, clipped_if, warn_band_too_narrow};
@@ -526,7 +526,7 @@ pub(super) fn render_horizontal_panel(
     let shown_cat = |c: &str| -> Result<String, String> {
         let text = match &h_labels_expr {
             Some(expr) => expr
-                .rewrite_band(c, cat_domain.iter().position(|d| d == c).ok_or_else(|| format!("bar: category {c:?} is not on the domain"))?, cat_domain.len())
+                .rewrite_band(c, cat_domain.iter().position(|d| d == c).ok_or_else(|| format!("bar: category {c:?} is not on the domain"))?, cat_domain.len(), &crate::labels_expr::env())
                 .map_err(|e| format!("bar: {e}"))?,
             None => date_text(c)?.unwrap_or_else(|| c.to_string()),
         };
@@ -922,17 +922,6 @@ pub(super) fn render_horizontal_panel(
             } else {
                 None
             };
-            // `sort: null` (an unsorted, colored bar) anchors declare-once
-            // numerals in data order; a sorted axis anchors on the first
-            // carrying cell of its pinned domain (`_pinned_domain_anchor`),
-            // which `cat_domain` already is. A date category is no JSON
-            // scalar (`_is_json_scalar_domain`), so its sort pins nothing and
-            // every cell spells its own spec.
-            let order = cat_order(r.sort.as_ref(), r.sorts_by_value_by_default(), &r.y, &r.stack);
-            let anchored = match order {
-                CatOrder::Query => true,
-                CatOrder::ValueDesc | CatOrder::Field(..) => !x_is_standard_date,
-            };
             // A grouped bar's per_series entry puts every series' cell on its
             // own sub-band of the category band (the `yOffset` scale); a color
             // 1:1 with the category carries no offset and the cells share the
@@ -940,7 +929,6 @@ pub(super) fn render_horizontal_panel(
             let sub_offsets: Option<Vec<f64>> = (has_per_series && !is_stacked)
                 .then(|| support_table_strip::sub_band_center_offsets(band.bandwidth(), series_order.len(), one_to_one));
             let mut built = support_table_columns::build_block(
-                &r.id,
                 cfg,
                 rows,
                 cat_field,
@@ -953,7 +941,6 @@ pub(super) fn render_horizontal_panel(
                     .ok_or("bar: board_style.numeral_family (style.fonts.numeral) is missing")?,
                 Side::parse(&style.position)?,
                 ax_y.labels.padding.ok_or("bar: axis_y.labels.padding absent (theme required)")?,
-                anchored,
                 color_field,
                 &series_order,
                 series_ink.as_deref(),
@@ -1797,7 +1784,8 @@ pub(super) fn render_horizontal_panel(
                 if let Some(band) = hover_band.as_mut() {
                     band.push(cat, series, aria.as_deref(), hrefs.get(&key).map(String::as_str), bar_y, mark_h, Some(raw_val));
                 }
-                label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None });
+                let patch = r.patch_of(rows, &datum_of, &key)?;
+                label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None, color: patch.label_color.clone(), weight: patch.label_weight.clone(), paint_only: false });
                 let x1 = linear.scale(span.start);
                 let x2 = linear.scale(span.end);
                 let (seg_start, seg_end) = if x1 <= x2 { (x1, x2) } else { (x2, x1) };
@@ -1814,7 +1802,7 @@ pub(super) fn render_horizontal_panel(
                 let outer = if raw_val < 0.0 { outers.1 } else { outers.0 } == Some(series);
                 let (edge, edge_w) = mark.seam(crate::pattern::STACK_EDGE_W);
                 let segment_r = if outer { corner_r } else { 0.0 };
-                plot.extend(bar_passes(base_mark(&datum_of, &key), true, seg_start, bar_y, seg_w, mark_h, &mark.fill, mark.ink.as_deref(), r.style.mark.opacity, edge, edge_w, segment_r,
+                plot.extend(bar_passes(base_mark(&datum_of, &key), true, seg_start, bar_y, seg_w, mark_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(edge), patch.stroke_w(edge_w), segment_r,
                     Rounded::by_sign(raw_val), false, None, aria.as_deref(), anchor_of(&key))?);
             }
         }
@@ -1880,7 +1868,8 @@ pub(super) fn render_horizontal_panel(
                 )?,
                 _ => plain()?,
             };
-            label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: Some(fill.clone()) });
+            let patch = r.patch_of(rows, &datum_of, &key)?;
+            label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: patch.label_fill(Some(fill.clone())), color: patch.label_color.clone(), weight: patch.label_weight.clone(), paint_only: false });
             if let Some(band) = hover_band.as_mut() {
                 band.push(cat, series, aria.as_deref(), hrefs.get(&key).map(String::as_str), bar_y, mark_h, Some(val));
             }
@@ -1889,7 +1878,7 @@ pub(super) fn render_horizontal_panel(
             }
             let mark = paint.for_mark(bar_w.min(mark_h), stroke_color, stroke_w);
             let (edge, edge_w) = mark.seam(crate::pattern::STACK_EDGE_W);
-            plot.extend(bar_passes(base_mark(&datum_of, &key), true, bar_x, bar_y, bar_w, mark_h, &mark.fill, mark.ink.as_deref(), r.style.mark.opacity, edge, edge_w, corner_r, ends, true, None, aria.as_deref(), anchor_of(&key))?);
+            plot.extend(bar_passes(base_mark(&datum_of, &key), true, bar_x, bar_y, bar_w, mark_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(edge), patch.stroke_w(edge_w), corner_r, ends, true, None, aria.as_deref(), anchor_of(&key))?);
         }
     } else {
         let bw = band.bandwidth();
@@ -1960,8 +1949,9 @@ pub(super) fn render_horizontal_panel(
                 }
                 _ => plain()?,
             };
-            if ranged.is_some() {
-                label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None });
+            let patch = r.patch_of(rows, &datum_of, &key)?;
+            if ranged.is_some() || patch.paints_label() {
+                label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None, color: patch.label_color.clone(), weight: patch.label_weight.clone(), paint_only: ranged.is_none() });
             }
             if let Some(band) = hover_band.as_mut() {
                 band.push(cat, "", aria.as_deref(), hrefs.get(&key).map(String::as_str), bar_y, mark_h, Some(val));
@@ -1970,7 +1960,7 @@ pub(super) fn render_horizontal_panel(
                 ghost_points.push((aria.clone(), val_x, bar_y + mark_h / 2.0, ghost_ink.clone(), hrefs.get(&key).cloned()));
             }
             let mark = r.single_series_paint(rows, &cat_domain, cat)?.for_mark(bar_w.min(mark_h), stroke_color, stroke_w);
-            plot.extend(bar_passes(base_mark(&datum_of, &key), true, bar_x, bar_y, bar_w, mark_h, &mark.fill, mark.ink.as_deref(), r.style.mark.opacity, &mark.stroke, mark.stroke_w, corner_r,
+            plot.extend(bar_passes(base_mark(&datum_of, &key), true, bar_x, bar_y, bar_w, mark_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(&mark.stroke), patch.stroke_w(mark.stroke_w), corner_r,
                 ends, true, None, aria.as_deref(), anchor_of(&key))?);
         }
     }

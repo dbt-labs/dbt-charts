@@ -41,24 +41,54 @@ class Files:
         return path == "a.yml"
 
 
-def planned(
-    given: dict[str, object],
-    all_queries: bool,
-    sources: dict[str, str] | None = None,
-) -> QueryPlan:
-    board = _engine.compile(
-        Files(),
+def compiled(
+    files: Files, sources: dict[str, str] | None = None
+) -> _engine.CompiledBoard:
+    return _engine.compile(
+        files,
         "a.yml",
         boards_root=".",
         today="2026-11-06",
         default_theme="clarity",
         html_policy_ceiling=None,
         sources=sources or {},
+        cache_root=(True, "24h", False),
+        source_caches={},
         implicit_source=None,
     )
+
+
+def run_plan(
+    board: _engine.CompiledBoard,
+    given: dict[str, object] | None = None,
+    *,
+    builtins: dict[str, object] | None = None,
+    now: int = NOW,
+    all_queries: bool = False,
+    active_tab_only: bool = False,
+    strict: bool = True,
+    only_charts: list[str] | None = None,
+) -> QueryPlan:
     return parse_query_plan(
-        _engine.plan(board, json.dumps(given), NOW, "UTC", all_queries)
+        _engine.plan(
+            board,
+            json.dumps(given or {}),
+            json.dumps(builtins or {}),
+            now,
+            all_queries,
+            active_tab_only,
+            strict,
+            only_charts,
+        )
     )
+
+
+def planned(
+    given: dict[str, object],
+    all_queries: bool,
+    sources: dict[str, str] | None = None,
+) -> QueryPlan:
+    return run_plan(compiled(Files(), sources), given, all_queries=all_queries)
 
 
 def test_a_plan_carries_the_queries_and_the_values_a_run_binds() -> None:
@@ -100,9 +130,11 @@ def test_a_plan_carries_an_inline_file_source() -> None:
         html_policy_ceiling=None,
         sources={},
         implicit_source=None,
+        cache_root=(True, "24h", False),
+        source_caches={},
         sql=Sqlglot(),
     )
-    plan = parse_query_plan(_engine.plan(board, "{}", NOW, "UTC", False))
+    plan = run_plan(board)
     assert plan["sources"]["inline"] == {
         "data/x.csv": {"type": "csv", "files": {"x": "data/x.csv"}}
     }
@@ -129,3 +161,97 @@ def test_the_header_and_each_query_carry_the_board_zone_and_formats() -> None:
     assert plan["time_zone"] == "UTC"
     assert plan["board_id"] == "untitled_board"
     assert plan["queries"]["q"]["formats"] == {}
+
+
+TABBED = """
+queries:
+  a:
+    rows:
+      - n: 1
+  b:
+    rows:
+      - n: 2
+    cache:
+      ttl: 5m
+      prefetch: true
+charts:
+  ka:
+    type: kpi
+    query: a
+    value: n
+  kb:
+    type: kpi
+    query: b
+    value: n
+tabs:
+  items:
+    - title: One
+      rows: [ka]
+    - title: Two
+      rows: [kb]
+"""
+
+
+class TabbedFiles(Files):
+    def read(self, path: str) -> str | None:
+        return TABBED if path == "a.yml" else None
+
+
+def test_an_active_tab_plan_reads_the_open_tab_and_lists_the_hidden_prefetch() -> None:
+    board = compiled(TabbedFiles())
+    scoped = run_plan(board, active_tab_only=True)
+    assert list(scoped["queries"]) == ["a"]
+    assert scoped["prefetch"] == ["b"]
+    every = run_plan(board)
+    assert list(every["queries"]) == ["a", "b"]
+    assert every["prefetch"] == []
+
+
+def test_the_header_carries_the_board_clock_in_the_boards_zone() -> None:
+    board = compiled(ZonedFiles())
+    # 2026-02-02 02:40 UTC is still the 1st in New York.
+    plan = run_plan(board, now=NOW)
+    assert plan["time_zone"] == "America/New_York"
+    assert plan["today"] == "2026-02-01"
+    assert run_plan(board, now=NOW + 9_000)["today"] == "2026-02-02"
+    assert plan["week_start"] == 0
+    assert plan["fiscal_year_start_month"] == 4
+
+
+class ZonedFiles(Files):
+    def read(self, path: str) -> str | None:
+        return (
+            "regional:\n  time_zone: America/New_York\n  fiscal_year_start_month: 4\n"
+            + BOARD
+            if path == "a.yml"
+            else None
+        )
+
+
+def test_strict_decides_whether_an_undeclared_name_is_refused() -> None:
+    board = compiled(Files())
+    plan = run_plan(board, {"nope": 1, "region": "west"}, strict=False)
+    assert "nope" not in plan["variables"]["query"]
+    assert plan["variables"]["query"]["region"] == {"kind": "text", "value": "west"}
+    with pytest.raises(_engine.RenderDiagnosticError) as raised:
+        run_plan(board, {"nope": 1}, strict=True)
+    assert raised.value.code == "ERR-UNKNOWN-VARIABLE-OVERRIDE"
+
+
+def test_builtins_are_echoed_and_cannot_shadow_a_variable() -> None:
+    board = compiled(Files())
+    plan = run_plan(board, builtins={"this_dir": {"name": "a"}})
+    assert plan["variables"]["query"]["this_dir"] == {"name": "a"}
+    assert plan["variables"]["render"]["this_dir"] == {"name": "a"}
+    with pytest.raises(_engine.RenderDiagnosticError) as raised:
+        run_plan(board, builtins={"region": "x"})
+    assert raised.value.code == "ERR-BUILTIN-SHADOWS-VARIABLE"
+
+
+def test_a_focused_plan_names_the_charts_and_an_unknown_one_raises() -> None:
+    board = compiled(TabbedFiles())
+    plan = run_plan(board, only_charts=["kb"], active_tab_only=True)
+    assert list(plan["queries"]) == ["b"]
+    with pytest.raises(_engine.RenderDiagnosticError) as raised:
+        run_plan(board, only_charts=["nope"])
+    assert raised.value.code == "ERR-UNKNOWN-CHART"

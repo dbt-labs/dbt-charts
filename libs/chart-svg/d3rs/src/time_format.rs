@@ -6,6 +6,8 @@
 //! Date, as `getTimezoneOffset` is), and a local parse returns the wall clock for the caller to resolve in its
 //! zone. A locale pattern that expands into itself overflows d3's stack; here it is an error.
 
+use crate::invariant::{self, Invariant, at};
+
 use serde::Deserialize;
 
 use crate::calendar::{breakdown, civil_from_days, days_from_civil, make_time, time_clip, Dt};
@@ -126,7 +128,7 @@ fn expand(spec: &str, moment: &Moment, locale: &Locale, depth: usize, out: &mut 
 /// One directive's text appended to `out`; false for a character d3 has no formatter for.
 fn format_directive(c: char, fill: &str, m: &Moment, locale: &Locale, depth: usize, out: &mut String) -> Result<bool, String> {
     let number = |value: f64, width: usize| pad(value, fill, width);
-    let name = |names: &[String], index: f64| if index.is_nan() { "" } else { names[index as usize].as_str() }.to_string();
+    let name = |names: &[String], index: f64| if index.is_nan() { "" } else { at(names, index as usize).as_str() }.to_string();
     let text = match c {
         'a' => name(&locale.short_days, m.field(|d| d.weekday)),
         'A' => name(&locale.days, m.field(|d| d.weekday)),
@@ -150,7 +152,7 @@ fn format_directive(c: char, fill: &str, m: &Moment, locale: &Locale, depth: usi
         'L' => number(m.field(|d| d.milli), 3),
         'm' => number(m.field(|d| d.month + 1), 2),
         'M' => number(m.field(|d| d.minute), 2),
-        'p' => locale.periods[usize::from(m.wall.as_ref().is_some_and(|d| d.hour >= 12))].clone(),
+        'p' => at(&locale.periods, usize::from(m.wall.as_ref().is_some_and(|d| d.hour >= 12))).clone(),
         'q' => js_number_string(m.wall.as_ref().map_or(1.0, |d| (1 + d.month / 3) as f64)),
         'Q' => js_number_string(m.ms),
         's' => js_number_string((m.ms / 1000.0).floor()),
@@ -289,7 +291,7 @@ pub fn parse(spec: &str, text: &str, locale: &Locale, utc: bool) -> Result<Optio
         day = match (f.week_monday, f.week_sunday) {
             (Some(week), _) => (w + 6.0) % 7.0 + week * 7.0 - (weekday + 5.0) % 7.0,
             (None, Some(week)) => w + week * 7.0 - (weekday + 6.0) % 7.0,
-            (None, None) => unreachable!("the branch holds a week number"),
+            (None, None) => invariant::broken("the branch holds a week number"),
         };
     }
     // A named zone makes every field UTC, offset by the zone: Z holds the negated offset as ±hhmm.
@@ -319,7 +321,7 @@ fn parse_specifier(f: &mut Fields, spec: &[char], string: &[char], mut j: usize,
         if j >= string.len() {
             return Ok(None);
         }
-        let c = spec[i];
+        let c = *at(spec, i);
         i += 1;
         if c == '%' {
             let Some(&(mut directive)) = spec.get(i) else { return Ok(None) };
@@ -333,7 +335,7 @@ fn parse_specifier(f: &mut Fields, spec: &[char], string: &[char], mut j: usize,
                 Some(end) => j = end,
                 None => return Ok(None),
             }
-        } else if string[j] != c {
+        } else if *at(string, j) != c {
             return Ok(None);
         } else {
             j += 1;
@@ -344,33 +346,33 @@ fn parse_specifier(f: &mut Fields, spec: &[char], string: &[char], mut j: usize,
 
 /// `numberRe`, `/^\s*\d+/`, over `string.slice(i, i + width)`: the number and the characters it consumed.
 fn number_at(string: &[char], i: usize, width: usize) -> Option<(f64, usize)> {
-    let slice = &string[i.min(string.len())..i.saturating_add(width).min(string.len())];
+    let slice = at(string, i.min(string.len())..i.saturating_add(width).min(string.len()));
     let start = slice.iter().take_while(|c| is_js_space(**c)).count();
-    let digits = slice[start..].iter().take_while(|c| c.is_ascii_digit()).count();
+    let digits = at(slice, start..).iter().take_while(|c| c.is_ascii_digit()).count();
     if digits == 0 {
         return None;
     }
-    let value = slice[start..start + digits].iter().collect::<String>().parse().expect("digits parse as a number");
+    let value = at(slice, start..start + digits).iter().collect::<String>().parse().held("digits parse as a number");
     Some((value, start + digits))
 }
 
 /// A name regex (`^(?:a|b|…)`, case-insensitive: the first listed name that is a prefix) and its lookup, whose
 /// `Map` keeps the last index of a name repeated in lowercase.
 fn name_at(string: &[char], i: usize, names: &[String]) -> Option<(f64, usize)> {
-    let rest: String = string[i.min(string.len())..].iter().collect::<String>().to_lowercase();
+    let rest: String = at(string, i.min(string.len())..).iter().collect::<String>().to_lowercase();
     let lowered: Vec<String> = names.iter().map(|n| n.to_lowercase()).collect();
     let first = lowered.iter().position(|n| rest.starts_with(n.as_str()))?;
-    let last = lowered.iter().rposition(|n| *n == lowered[first]).expect("the first match is a candidate");
-    Some((last as f64, lowered[first].chars().count()))
+    let last = lowered.iter().rposition(|n| *n == *at(&lowered, first)).held("the first match is a candidate");
+    Some((last as f64, at(&lowered, first).chars().count()))
 }
 
 // `parseZone`: `/^(Z)|([+-]\d\d)(?::?(\d\d))?/` over `slice(i, i + 6)`. Only the first alternative is
 // anchored, so the second matches wherever it first fits, and d3 advances by the match's length alone.
 fn zone_at(string: &[char], i: usize) -> Option<(f64, usize)> {
-    let slice = &string[i.min(string.len())..(i + 6).min(string.len())];
+    let slice = at(string, i.min(string.len())..(i + 6).min(string.len()));
     let digits = |at: usize| slice.get(at..at + 2).filter(|pair| pair.iter().all(char::is_ascii_digit));
     for start in 0..slice.len() {
-        if start == 0 && slice[0] == 'Z' {
+        if start == 0 && *at(slice, 0) == 'Z' {
             return Some((0.0, 1));
         }
         let (Some('+' | '-'), Some(hours)) = (slice.get(start).copied(), digits(start + 1)) else { continue };
@@ -379,8 +381,8 @@ fn zone_at(string: &[char], i: usize) -> Option<(f64, usize)> {
             Some(minutes) => (minutes, 5 + colon),
             None => (&['0', '0'][..], 3),
         };
-        let magnitude: f64 = hours.iter().chain(minutes).collect::<String>().parse().expect("four digits");
-        return Some((if slice[start] == '-' { magnitude } else { -magnitude }, len));
+        let magnitude: f64 = hours.iter().chain(minutes).collect::<String>().parse().held("four digits");
+        return Some((if *at(slice, start) == '-' { magnitude } else { -magnitude }, len));
     }
     None
 }

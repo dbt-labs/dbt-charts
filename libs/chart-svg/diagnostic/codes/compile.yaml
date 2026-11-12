@@ -683,14 +683,36 @@
     sorted. Check for a typo, or add the column to the query.
   summary: Fired when sort.by names a column missing from the query result.
   docs_topic: charts
+- code: ERR-COLUMN-REF-AMBIGUOUS
+  level: error
+  title: A column reference matches several result columns by letter case
+  template: '{where} names column {ref!r}, which matches several result columns that differ
+    only in letter case: {matches}. Write the column''s exact spelling.'
+  doc: A board names a query result column ignoring letter case. The column spelled exactly
+    as written wins, else the one column equal to it ignoring case. Fired when no column is
+    spelled exactly as written and two or more columns equal it ignoring case (`Revenue` and
+    `REVENUE`), so the reference cannot pick one. Write the exact spelling of the column you
+    mean, or alias the columns apart in the query.
+  summary: Fired when a column reference matches several result columns by letter case.
+  docs_topic: charts
+- code: ERR-COLUMN-REF-DUPLICATE
+  level: error
+  title: Two keys name the same result column
+  template: '{where} has keys {first!r} and {second!r}, which both name result column {column!r}.
+    Keep one.'
+  doc: A board names a query result column ignoring letter case, so two keys of one map
+    (`style.columns`, `formats:`, `field_labels`) that differ only in case name the same column,
+    and one would silently replace the other. Keep one key per column.
+  summary: Fired when two map keys differing only in case name the same result column.
+  docs_topic: charts
 - code: ERR-FIELD-LABELS-FIELD-NOT-FOUND
   level: error
   title: field_labels key names no column the chart reads
   template: 'field_labels key(s) {fields} name no column of the chart''s query. Available
     columns: {available}.'
   doc: Fired when a `field_labels` key is neither a column of the chart's query result nor
-    a field one of its layers names. The label would never paint. Check for a typo, including
-    letter case.
+    a field one of its layers names. The label would never paint. Check for a typo; letter
+    case does not matter.
   summary: Fired when a field_labels key names no column the chart reads.
   docs_topic: charts
 - code: ERR-FIELD-LABELS-WIDE-COLLISION
@@ -1169,7 +1191,7 @@
   template: 'Format at {field_path} sets sign_placement: before_prefix, but its prefix is
     anchored on one value: the anchor would read ''−EUR 50'' beside a bare ''−40''. Drop sign_placement
     (the anchor then reads ''EUR −50''), or set repeat: every.'
-  doc: 'Where an authored prefix paints on one value of an axis or support_table row (`repeat:
+  doc: 'Where an authored prefix paints on one value of an axis (`repeat:
     anchor`, or that surface''s default), the sign follows the prefix (`EUR −50`, `€−50`)
     so the anchor''s digits line up with the bare `−40` beside it. `sign_placement: before_prefix`
     there is rejected; drop it, or set `repeat: every` to put the prefix on every value.'
@@ -1892,6 +1914,22 @@
   doc: Fired when a query that another query composes through a `queries.NAME` reference is named like a SQL reserved word, because the composed query becomes a table alias.
   docs_topic: queries
   summary: Fired when a query that another query composes is named like a SQL reserved word.
+- code: ERR-QUERY-CACHE-REF-UNKNOWN
+  level: error
+  title: A cache reference names a query the board does not define
+  template: 'Query ''{query}'' reads {{{{ queries.{ref}.cache }}}}, but no query named ''{ref}'' is defined. Available queries: {available}. Define ''{ref}'' under `queries:` or fix the name.'
+  fix: Define the referenced query under `queries:`, or fix the name in the `queries.<name>.cache` reference.
+  doc: Fired when a query's SQL reads `{{ queries.NAME.cache }}` and the board and its imports define no query NAME. Python accepts such a board and fails only when it runs against a warehouse.
+  docs_topic: queries
+  summary: Fired when a query's SQL reads the cache of a query that is not defined.
+- code: ERR-CACHE-PREFETCH-NEEDS-CACHE
+  level: error
+  title: A scope turns prefetch on under a scope that turned caching off
+  template: 'cache.prefetch: true on the {scope} scope needs caching on: prefetch warms the cache, and caching is turned off by cache: false at or above this scope. Remove prefetch, or turn caching on with cache: <duration> or cache: true.'
+  fix: 'Remove `prefetch: true`, or turn caching on at that scope with `cache: <duration>` or `cache: true`.'
+  doc: 'Fired when a cache cascade (project, source, board, query) puts `prefetch: true` on a scope below one that set `cache: false`, unless that scope states its own caching. Prefetch loads results into the cache, so with caching off there is nothing to warm.'
+  docs_topic: queries
+  summary: 'Fired when `cache.prefetch: true` sits on a scope whose caching an enclosing scope turned off.'
 - code: ERR-SETUP-SQL-COMPOSES-QUERY
   level: error
   title: setup_sql composes another query
@@ -1936,3 +1974,21 @@
   fix: Remove `incremental:` from the query, or make it a SQL query.
   doc: Fired when a values or schema query names an `incremental:` watermark column; only SQL queries refresh incrementally.
   docs_topic: queries
+- code: ERR-PROJECT-FILE-UNREADABLE
+  level: error
+  title: A project file exists but could not be read
+  template: 'Could not read {path}: {reason}. Fix the file or its permissions and compile again.'
+  doc: 'Fired when the host fails to read a project file that may be there: a permission error, an I/O failure or text that is not UTF-8. A file that does not exist is reported as missing, never as this.'
+  docs_topic: errors
+- code: ERR-BOARD-IMPORT-UNRESOLVED
+  level: error
+  title: A board import could not be followed
+  template: 'Board import {path!r} cannot be followed: {reason}. Point the import at a relative path of a board file that exists, holds a board and does not import itself.'
+  doc: 'Fired when a board places another board file that the project cannot resolve: a templated or absolute path, a file that does not exist, text that does not parse as a board, or a board with no content.'
+  docs_topic: layout
+- code: ERR-VARIABLE-DEFAULT-INVALID
+  level: error
+  title: A variable default cannot be read as a value
+  template: 'Variable {name!r}: {reason}. Give the variable a default that is a literal of its type.'
+  doc: 'Fired when the default of a variable a board shows is not a value the board can read.'
+  docs_topic: variables

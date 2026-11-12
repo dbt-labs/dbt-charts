@@ -392,12 +392,17 @@ struct Placed<'a> {
 
 /// The text attributes a font carries, up to the weight; the caller adds the fill.
 fn text_font(attrs: Attrs, font: &Font, size: f64, default_family: &str) -> Attrs {
+    text_font_as(attrs, font, size, default_family, &font.weight_str())
+}
+
+/// [`text_font`] painted at `weight` instead of the font's own.
+fn text_font_as(attrs: Attrs, font: &Font, size: f64, default_family: &str, weight: &str) -> Attrs {
     let attrs = attrs.vega("font-family", font.family_or(default_family)).num("font-size", size);
     let attrs = match font.style.as_deref() {
         Some(style) => attrs.set("font-style", style),
         None => attrs,
     };
-    attrs.set("font-weight", font.weight_str())
+    attrs.set("font-weight", weight)
 }
 
 /// A wheel's solved layout: where it sits in its box and every ink group the box had to hold.
@@ -664,15 +669,16 @@ fn wheel(
     let gap = r.style.slice_mark.gap.unwrap_or(0.0);
     let corner = r.style.slice_mark.corner_radius.unwrap_or(0.0);
     let slices = pie(thetas, 0.0, std::f64::consts::TAU, gap);
-    let mark_style = |themed_stroke: bool| {
+    let mark_style = |themed_stroke: bool, patch: &crate::conditional::MarkPatch| {
         let mut attrs = Attrs::new();
-        if let (true, Some(s)) = (themed_stroke, &r.style.slice_mark.stroke) {
+        let themed = r.style.slice_mark.stroke.as_ref();
+        if themed_stroke && (themed.is_some() || patch.stroke.is_some() || patch.stroke_w.is_some()) {
             attrs = attrs
-                .set("stroke", s.color.as_deref().unwrap_or("none"))
-                .num("stroke-width", s.width.unwrap_or(1.0))
-                .set("stroke-linejoin", s.join.as_deref().unwrap_or("miter"));
+                .set("stroke", patch.stroke.as_deref().or(themed.and_then(|s| s.color.as_deref())).unwrap_or("none"))
+                .num("stroke-width", patch.stroke_w.or(themed.and_then(|s| s.width)).unwrap_or(1.0))
+                .set("stroke-linejoin", themed.and_then(|s| s.join.as_deref()).unwrap_or("miter"));
         }
-        match r.style.slice_mark.opacity {
+        match patch.opacity.or(r.style.slice_mark.opacity) {
             Some(opacity) => attrs.num("opacity", opacity),
             None => attrs,
         }
@@ -705,7 +711,7 @@ fn wheel(
             let attrs = Attrs::new()
                 .set("fill", &mark.fill)
                 .quick_some("data-dbt-ink", mark.ink.as_deref())
-                .extend(mark_style(mark.ink.is_none()))
+                .extend(mark_style(mark.ink.is_none(), &bound_slice.patch))
                 .extend(aria);
             let role = Role::Mark { layer: 0, series: None, datum: Some(slice.index) };
             crate::href::linked(anchor, Node::path(role, path.clone(), attrs))
@@ -799,11 +805,12 @@ fn wheel(
                 ItemRole::TextMark,
                 reads_of(sl.label.idx),
                 |aria| {
-                    let attrs = text_font(
+                    let attrs = text_font_as(
                         Attrs::new().set("text-anchor", if right { "start" } else { "end" }),
                         &labels.font,
                         label_fs,
                         "sans-serif",
+                        sl.label.weight.as_deref().unwrap_or(&labels.font.weight_str()),
                     )
                     .set("fill", &sl.label.fill)
                     .extend(aria);

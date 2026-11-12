@@ -8,7 +8,10 @@ from pydantic import ConfigDict, Field
 
 from dbt_charts.core.compile.models.primitives import OverlapSpec
 from dbt_charts.core.compile.models.style.resolved._marks import ResolvedBarMarkStyle
-from dbt_charts.core.compile.models.style.theme.bar import BarGroupedStyle
+from dbt_charts.core.compile.models.style.theme.bar import (
+    BarConditionalRule,
+    BarGroupedStyle,
+)
 
 from ._cartesian import _SeriesCartesianResolvedStyle
 
@@ -33,6 +36,13 @@ class ResolvedBarStyle(_SeriesCartesianResolvedStyle):
     )
     mark: ResolvedBarMarkStyle = Field(
         description="Cascade-merged bar mark geometry (padding, size, labels).",
+    )
+    conditional: dict[str, list[BarConditionalRule]] | None = Field(
+        default=None,
+        description=(
+            "The chart's per-bar rules keyed by column, color tokens resolved. "
+            "The renderer evaluates them against each base-layer bar's row."
+        ),
     )
     overlap: OverlapSpec = Field(
         default=None,

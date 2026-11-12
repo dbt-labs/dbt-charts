@@ -199,7 +199,7 @@ mod tests {
         // target 1.0 is matched exactly by "a" alone (length 1) and by "b b"
         // (length 2, unavailable at length 1): the length-ascending outer
         // loop must return the length-1 winner.
-        let (best, error) = search_space_combo(1.0, &available, &widths);
+        let (best, _error) = search_space_combo(1.0, &available, &widths);
         assert_eq!(best, vec!['a']);
     }
 

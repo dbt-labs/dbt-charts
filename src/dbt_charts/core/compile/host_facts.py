@@ -14,6 +14,7 @@ HOST_FACTS_VERSION = 1
 
 
 class _QueryFacts(TypedDict):
+    label: str
     authored: bool
     source: str | None
     ignore: list[str]
@@ -46,6 +47,8 @@ class UnboundChart(TypedDict):
     chart: str
     type: str
     query: str | None
+    # The columns it names for a side use (a sort, a support table, mark labels), by field.
+    side_columns: dict[str, list[str]]
 
 
 class HostFacts(TypedDict):
@@ -84,6 +87,7 @@ def sql_host_queries(registry: Mapping[str, AnyQuery]) -> dict[str, HostQuery]:
     """
     return {
         name: {
+            "label": name,
             "authored": True,
             "type": "sql",
             "source": query.source,

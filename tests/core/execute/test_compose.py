@@ -3,10 +3,12 @@ from unittest.mock import MagicMock
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import CsvSourceConfig, DuckDBSourceConfig
 from dbt_charts.core.diagnostics.codes_execute import ERR_MUTATING_SQL
-from dbt_charts.core.execute.compose import ResolvedQuery, compose
+from dbt_charts.core.execute.compose import ResolvedQuery
 from dbt_charts.core.execute.dbt_utils import DbtRefResolver
 from dbt_charts.core.execute.query_result import QueryResult, ResolvedRelation
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
+
+from ..._compose import compose_query_fields
 
 
 def _refs() -> MagicMock:
@@ -22,14 +24,13 @@ def _compose(query: SqlQuery, refs: MagicMock, **overrides: object) -> ResolvedQ
     kwargs: dict[str, object] = {
         "variables": {},
         "params": None,
-        "board": None,
         "source_config": DuckDBSourceConfig(type="duckdb"),
         "dialect_name": "postgres",
         "render_dialect": INLINE_PLACEHOLDERS,
         "refs": refs,
         "semantic": None,
     }
-    resolved = compose(query, **{**kwargs, **overrides})  # type: ignore[arg-type] — kwargs dict is built untyped so tests can override any parameter
+    resolved = compose_query_fields(query, **{**kwargs, **overrides})
     assert not isinstance(resolved, QueryResult), resolved.error
     return resolved
 
@@ -79,24 +80,22 @@ def test_relations_include_the_querys_own_refs_when_composing_board_queries() ->
         ("SELECT * FROM main.orders, {{ queries.base }}", [own]),
         ("SELECT * FROM main.orders, main.customers", [inlined]),
     ]
-    board = MagicMock()
-    board.queries = {"base": SqlQuery(sql="SELECT * FROM {{ ref('customers') }}")}
+    queries = {"base": SqlQuery(sql="SELECT * FROM {{ ref('customers') }}")}
 
     resolved = _compose(
         SqlQuery(sql="SELECT * FROM {{ ref('orders') }}, {{ queries.base }}"),
         refs,
-        board=board,
+        queries=queries,
     )
 
     assert resolved.resolved_relations == (own, inlined)
 
 
 def test_select_only_guard_refuses_mutating_sql() -> None:
-    result = compose(
+    result = compose_query_fields(
         SqlQuery(sql="DROP TABLE t"),
         variables={},
         params=None,
-        board=None,
         source_config=DuckDBSourceConfig(type="duckdb"),
         dialect_name="postgres",
         render_dialect=INLINE_PLACEHOLDERS,
@@ -116,11 +115,10 @@ def test_pre_rendered_params_pass_through() -> None:
 
 
 def test_setup_sql_guard_refuses_mutating_setup() -> None:
-    result = compose(
+    result = compose_query_fields(
         SqlQuery(sql="SELECT 1", setup_sql="DROP TABLE t"),
         variables={},
         params=None,
-        board=None,
         source_config=DuckDBSourceConfig(type="duckdb"),
         dialect_name="postgres",
         render_dialect=INLINE_PLACEHOLDERS,
@@ -135,11 +133,10 @@ def test_setup_sql_guard_refuses_mutating_setup() -> None:
 
 def test_dbt_refs_are_refused_on_file_sources() -> None:
     refs = _refs()
-    result = compose(
+    result = compose_query_fields(
         SqlQuery(sql="SELECT * FROM {{ ref('orders') }}", source="marts"),
         variables={},
         params=None,
-        board=None,
         source_config=CsvSourceConfig(type="csv", files={"orders": "orders.csv"}),
         dialect_name="duckdb",
         render_dialect=INLINE_PLACEHOLDERS,

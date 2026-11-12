@@ -1273,6 +1273,55 @@ fn test_long_inline_code_with_no_mono_font_refuses_instead_of_zero_width() {
     assert!(err.contains("monospace"));
 }
 
+fn ordered_list_refusal(markdown: &str) -> String {
+    let renderer = SVGRenderer::new(Style::default(), test_fonts()).unwrap();
+    svg_of(&renderer, &parse(markdown), 400.0, 20.0).unwrap_err()
+}
+
+#[test]
+fn test_ordered_list_number_past_u128_refuses_by_name() {
+    let digits = format!("{}0", u128::MAX);
+    let err = ordered_list_refusal(&format!("{digits}. item"));
+    assert!(err.contains(&digits) && err.contains("not supported"), "{err}");
+}
+
+#[test]
+fn test_ordered_list_numbers_that_overflow_while_counting_refuse_by_name() {
+    let err = ordered_list_refusal(&format!("{}. a\n2. b", u128::MAX));
+    assert!(err.contains(&u128::MAX.to_string()) && err.contains("not supported"), "{err}");
+}
+
+#[test]
+fn test_ordered_list_prints_the_widest_number_it_counts() {
+    let renderer = SVGRenderer::new(Style::default(), test_fonts()).unwrap();
+    let svg = svg_of(&renderer, &parse(&format!("{}. item", u128::MAX)), 400.0, 20.0).unwrap();
+    assert!(svg.contains(&format!("{}.", u128::MAX)));
+}
+
+#[test]
+fn test_a_hand_built_table_row_wider_than_its_header_refuses_by_name() {
+    use crate::types::{Span, Table, TableCell, TableRow};
+    let cell = |text: &str| TableCell {
+        spans: vec![Span::text(text)],
+        align: None,
+    };
+    let doc = vec![AnyBlock::Table(Table {
+        header: TableRow { cells: vec![cell("a")] },
+        rows: vec![TableRow { cells: vec![cell("b"), cell("c")] }],
+    })];
+    let renderer = SVGRenderer::new(Style::default(), test_fonts()).unwrap();
+    let err = svg_of(&renderer, &doc, 400.0, 20.0).unwrap_err();
+    assert_eq!(err, "mdsvg-rs: a table row has more cells than its header");
+}
+
+#[test]
+fn test_style_rule_bodies_has_every_rule_name() {
+    let bodies = style_rule_bodies(&Style::default());
+    for name in STYLE_RULE_NAMES {
+        assert!(bodies.contains_key(name), "{name}");
+    }
+}
+
 // --- TestHeadingMarginPxOverrides ---
 
 fn measure_with(markdown: &str, width: f64, padding: f64, style: Style) -> RenderResult {

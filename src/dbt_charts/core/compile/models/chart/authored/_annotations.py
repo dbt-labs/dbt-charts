@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from dbt_charts.core.compile.models.markers import DisplayText
+from dbt_charts.core.compile.models.markers import ColumnRef, DisplayText
 
 
 class ChartSort(BaseModel):
@@ -14,7 +14,7 @@ class ChartSort(BaseModel):
 
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
-    by: str = Field(
+    by: ColumnRef = Field(
         description=(
             "Column name to sort by. A category holding several rows (a color "
             "series, or a y: [...] list) is folded to one value of this column "

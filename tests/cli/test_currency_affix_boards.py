@@ -39,9 +39,9 @@ def test_affix_painted_by_renderers_board_paints_the_currency_on_every_slot(
 ) -> None:
     """support_table, donut total, and KPI all carry the authored EUR prefix."""
     svg = _render_svg("affix-painted-by-renderers.yml", tmp_path)
-    assert "EUR 168,000" in svg, svg
-    assert "EUR 28,000" in svg, svg
-    assert "EUR −41,500" in svg, svg
+    assert ">168,000<" in svg, svg
+    assert ">28,000<" in svg, svg
+    assert ">−41,500<" in svg, svg
     assert "EUR 196,000" in svg, svg
 
 
@@ -92,19 +92,18 @@ def test_sign_placement_and_repeat_board_paints_each_surface(tmp_path: Path) -> 
     assert ">EUR 100,000<" in svg, svg
     assert ">50,000<" in svg, svg
     assert ">100,000 net<" in svg, svg
-    # support_table: the house format's suffix follows the strip anchor;
-    # repeat: every composes a spaced prefix, sign after it, on every cell.
-    assert ">120,000 net<" in svg, svg
+    # support_table: cells are bare, whatever `repeat` says; the row label names the affix.
+    assert ">120,000<" in svg, svg
     assert ">−40,000<" in svg, svg
-    assert ">EUR −10,000<" in svg, svg
-    assert ">EUR 95,000<" in svg, svg
-    # Left-axis strip: an explicit repeat: anchor puts the prefix on the leftmost cell.
-    assert ">EUR 120,000<" in svg, svg
-    assert ">EUR −40,000<" not in svg, svg
-    # An anchored prefix leads the sign on its one value: axis, mirror, strip.
+    assert ">Anchored, net<" in svg, svg
+    assert ">150,000<" in svg and ">−10,000<" in svg, svg
+    assert ">Every, EUR<" in svg, svg
+    assert ">Anchored, EUR<" in svg, svg
+    assert ">EUR −10,000<" not in svg and ">EUR 120,000<" not in svg, svg
+    # An anchored prefix leads the sign on its one value: axis and mirror.
     assert ">€−100,000<" in svg, svg
     assert ">EUR −100,000<" in svg, svg
-    assert ">€−120,000<" in svg, svg
+    assert ">−120,000<" in svg and ">Refunds, €<" in svg, svg
     assert ">−€" not in svg, svg
     # Table: repeat: every keeps the prefix on every row under symbol_mode anchors.
     assert svg.count(">€<") == 3, svg

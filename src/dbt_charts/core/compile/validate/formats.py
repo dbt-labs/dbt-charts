@@ -533,7 +533,7 @@ def _validate_query_formats(
     if isinstance(query, ValuesQuery):
         returned = set(query.columns) if query.columns else set().union(*query.rows)
         if returned:
-            for column in missing_format_columns(query.formats, returned):
+            for column in missing_format_columns(query_name, query.formats, returned):
                 raise CompilationError.from_code(
                     ERR_QUERY_FORMAT_COLUMN_MISSING,
                     query=query_name,

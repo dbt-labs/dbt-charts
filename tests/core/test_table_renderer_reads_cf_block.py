@@ -1,10 +1,7 @@
-"""Table renderer reads conditional formatting from the chart-level block.
+"""Table renderer reads conditional formatting from ``style.columns.<col>.conditional``.
 
-After deleting ``TableColumnConfig.when``, the top-level
-``conditional_formatting:`` block indexed by column is the single authored
-path for threshold rules on tables — same as on every other chart type.
-The renderer must resolve CF directly from ``chart.conditional_formatting``
-without any internal lowering into ``style.columns[*].when``.
+A column's rule list is the single authored path for threshold rules on tables.
+The renderer reads it off the resolved column directly.
 """
 
 from __future__ import annotations
@@ -32,9 +29,9 @@ def test_table_renders_background_from_conditional_formatting_block() -> None:
         query=SqlQuery(sql="SELECT 1", source="test"),
         query_name="q",
         type="table",
-        conditional_formatting={
-            "arr": {
-                "when": [{"gt": 1_000_000, "background": "#166534"}],
+        style={
+            "columns": {
+                "arr": {"conditional": [{"gt": 1_000_000, "background": "#166534"}]}
             }
         },
     )
@@ -58,14 +55,16 @@ def test_table_renders_font_color_and_weight_from_block() -> None:
         query=SqlQuery(sql="SELECT 1", source="test"),
         query_name="q",
         type="table",
-        conditional_formatting={
-            "status": {
-                "when": [
-                    {
-                        "eq": "Critical",
-                        "font": {"color": "#991b1b", "weight": "bold"},
-                    }
-                ],
+        style={
+            "columns": {
+                "status": {
+                    "conditional": [
+                        {
+                            "eq": "Critical",
+                            "font": {"color": "#991b1b", "weight": "bold"},
+                        }
+                    ]
+                }
             }
         },
     )
@@ -90,9 +89,13 @@ def test_table_renders_multiple_columns_independently() -> None:
         query=SqlQuery(sql="SELECT 1", source="test"),
         query_name="q",
         type="table",
-        conditional_formatting={
-            "arr": {"when": [{"lt": 0, "background": "#fee2e2"}]},
-            "status": {"when": [{"eq": "Critical", "background": "#fecaca"}]},
+        style={
+            "columns": {
+                "arr": {"conditional": [{"lt": 0, "background": "#fee2e2"}]},
+                "status": {
+                    "conditional": [{"eq": "Critical", "background": "#fecaca"}]
+                },
+            }
         },
     )
     data = [

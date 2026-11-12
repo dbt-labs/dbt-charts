@@ -13,6 +13,7 @@ use board_model::board::layout::{LayoutAuthored, LayoutItemAuthored};
 use board_model::chart::{ChartAuthored, ChartQuery, LayerQuery};
 use board_model::ids::QueryId;
 use board_model::query::QueryAuthored;
+use diagnostic::{diag, Diagnostic};
 use indexmap::IndexMap;
 use model_core::{Spell, Tri};
 use serde::Serialize;
@@ -46,6 +47,8 @@ pub type ColumnRef = (String, String, String);
 #[derive(Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct HostQuery {
+    /// How a diagnostic names the query ([`QueryId::label`]).
+    pub label: String,
     pub authored: bool,
     #[serde(rename = "type")]
     pub kind: QueryKind,
@@ -84,6 +87,8 @@ pub struct UnboundChart {
     pub family: String,
     #[cfg_attr(feature = "schema", schemars(required, schema_with = "nullable_text"))]
     pub query: Option<String>,
+    /// The columns it names for a side use (a sort, a support table, mark labels), by field.
+    pub side_columns: BTreeMap<String, Vec<String>>,
 }
 
 /// Python's `_FIELD_CHANNEL_KEYS` minus `geo` and `sort`, in the order its refs are listed.
@@ -140,6 +145,66 @@ fn strings(v: Option<&Value>) -> Vec<String> {
 
 fn text(v: &Value) -> Option<&str> {
     v.as_str()
+}
+
+/// Per family, the fields that name a column for a side use (Python's `SIDE_FIELDS`).
+fn side_fields(family: &str) -> &'static [&'static str] {
+    match family {
+        "bar" | "line" | "area" => &["sort", "support_table", "labels"],
+        "scatter" => &["sort", "labels"],
+        "heatmap" => &["sort"],
+        _ => &[],
+    }
+}
+
+/// The columns an unbound chart names for a side use, by field (Python's `_side_columns`): the
+/// sort's `by`, a support table's row sources, and each mark's label `field`.
+fn side_columns(family: &str, chart: &Value) -> BTreeMap<String, Vec<String>> {
+    let mut out = BTreeMap::new();
+    for field in side_fields(family) {
+        let columns: Vec<String> = match *field {
+            "sort" => chart
+                .get("sort")
+                .and_then(|s| s.get("by"))
+                .and_then(text)
+                .map(String::from)
+                .into_iter()
+                .collect(),
+            "support_table" => {
+                let entries = match chart.get("support_table") {
+                    Some(Value::Array(entries)) => Some(entries),
+                    Some(block) => block.get("entries").and_then(Value::as_array),
+                    None => None,
+                };
+                entries
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|entry| match entry {
+                        Value::String(source) => Some(source.as_str()),
+                        _ => entry
+                            .get("per_series")
+                            .and_then(text)
+                            .or_else(|| entry.get("source").and_then(text)),
+                    })
+                    .map(String::from)
+                    .collect()
+            }
+            _ => chart
+                .get("style")
+                .and_then(|style| style.get("marks"))
+                .and_then(Value::as_object)
+                .into_iter()
+                .flat_map(|marks| marks.values())
+                .filter_map(|mark| mark.get("labels")?.get("field").and_then(text))
+                .filter(|field| !field.is_empty())
+                .map(String::from)
+                .collect(),
+        };
+        if !columns.is_empty() {
+            out.insert((*field).to_string(), columns);
+        }
+    }
+    out
 }
 
 /// An empty name or list names nothing, like an absent key (Python's `_is_named`).
@@ -304,7 +369,7 @@ pub(crate) fn link_slots(patch: &Patch, public: &dyn Fn(&str) -> String) -> Vec<
 
 impl Structure {
     /// The host facts; serialized, the wire JSON the Python reader parses.
-    pub fn host_facts(&self) -> HostFacts {
+    pub fn host_facts(&self) -> Result<HostFacts, Diagnostic> {
         let body = &self.patch.body;
         let mut queries = IndexMap::new();
         for (key, query) in &body.queries {
@@ -316,9 +381,13 @@ impl Structure {
                 QueryAuthored::Schema(_) => QueryKind::Schema,
             };
             let text = |name: &str| spelled.get(name).and_then(Value::as_str).map(String::from);
+            let label = crate::sql::query_id(key, &self.file)
+                .map(|id| id.label(&self.file))
+                .map_err(|e| diag::err_internal(format!("query key {key:?} is no query id: {e:?}")))?;
             queries.insert(
                 key.clone(),
                 HostQuery {
+                    label,
                     authored: !key.starts_with('@'),
                     kind,
                     source: text("source"),
@@ -381,6 +450,7 @@ impl Structure {
                         chart: public.to_string(),
                         family: family.to_string(),
                         query: own,
+                        side_columns: side_columns(family, &spelled),
                     });
                 }
             }
@@ -388,7 +458,7 @@ impl Structure {
                 ignored.insert(public.to_string(), strings(Some(codes)));
             }
         }
-        HostFacts {
+        Ok(HostFacts {
             version: VERSION,
             queries,
             column_refs: refs,
@@ -397,6 +467,6 @@ impl Structure {
                 public_ids.get(name).copied().unwrap_or(name).to_string()
             }),
             warnings_ignore: ignored,
-        }
+        })
     }
 }

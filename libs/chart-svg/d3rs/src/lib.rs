@@ -3,6 +3,10 @@
 //! only as chart families demand functions, plus `py_float`, the
 //! numeric-parity primitive every port shares.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unreachable, clippy::indexing_slicing))]
+
+pub mod invariant;
+
 pub mod arc;
 pub mod array;
 pub mod bin;

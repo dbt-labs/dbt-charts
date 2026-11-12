@@ -27,6 +27,7 @@ from pydantic import (
 )
 
 from dbt_charts.core.compile.models.factories import (
+    ChartScopeBase,
     _PatchBase,
     build_patch_model,
     build_patch_model_ext,
@@ -37,6 +38,7 @@ from dbt_charts.core.compile.models.style.authored.table import (
     TableChartStylePatch,
     TableColumnConfig,
     TableColumnDefaultsConfig,
+    TableColumnRule,
 )
 from dbt_charts.core.compile.models.style.theme import (
     AreaChartStyle,
@@ -252,6 +254,7 @@ for _name, _obj in (
     ("PaginationConfig", PaginationConfig),
     ("TableColumnDefaultsConfig", TableColumnDefaultsConfig),
     ("TableColumnConfig", TableColumnConfig),
+    ("TableColumnRule", TableColumnRule),
 ):
     setattr(_theme_mod, _name, _obj)
 del _theme_mod, _name, _obj
@@ -276,6 +279,7 @@ _authored_ns: dict[str, object] = {
     "PaginationConfig": PaginationConfig,
     "TableColumnDefaultsConfig": TableColumnDefaultsConfig,
     "TableColumnConfig": TableColumnConfig,
+    "TableColumnRule": TableColumnRule,
 }
 _CartesianChartStyle.model_rebuild(_types_namespace=_authored_ns)
 _QuantitativeAxisChartStyleMixin.model_rebuild(_types_namespace=_authored_ns)
@@ -305,7 +309,9 @@ if TYPE_CHECKING:
         pass
 
 else:
-    ChartsStylePatch = register_patch(ChartsStyle)(build_patch_model(ChartsStyle))
+    ChartsStylePatch = register_patch(ChartsStyle)(
+        build_patch_model_ext(ChartsStyle, True, ChartScopeBase)
+    )
 
 
 # build_patch_model_ext is @cache'd: theme/_chart_base.py already built this

@@ -142,7 +142,7 @@ mod tests {
     fn a_number_column_ramps_and_any_other_takes_one_motif_per_value() {
         assert_eq!(pattern_scale(ColumnKind::Number { year: true }, "f").unwrap(), PatternScale::Ramp);
         assert_eq!(pattern_scale(ColumnKind::Boolean, "f").unwrap(), PatternScale::Ramp);
-        assert_eq!(pattern_scale(ColumnKind::Text { year: false, dated: true, date_like: true }, "f").unwrap(), PatternScale::Category);
+        assert_eq!(pattern_scale(ColumnKind::Text { year: false, dated: true, date_like: true, standard: false, numeric: false, ambiguous_year: false }, "f").unwrap(), PatternScale::Category);
         assert_eq!(pattern_scale(ColumnKind::Date, "f").unwrap(), PatternScale::Category);
         assert_eq!(default_palette(PatternScale::Ramp), "pattern_sequential");
     }

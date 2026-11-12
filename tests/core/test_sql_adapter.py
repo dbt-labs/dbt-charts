@@ -19,12 +19,13 @@ from dbt_charts.core.compile.models.source import (
 from dbt_charts.core.diagnostics.codes_execute import ERR_UNPARSEABLE_SQL
 from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
 from dbt_charts.core.execute.backends.typed_fetch import TypedRows
-from dbt_charts.core.execute.compose import ResolvedQuery, compose
+from dbt_charts.core.execute.compose import ResolvedQuery
 from dbt_charts.core.execute.query_result import QueryResult
-from dbt_charts.core.execute.run import execute_resolved
+from dbt_charts.core.execute.run import execute_on_backend
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
 from .._backend_runner import DuckDBRunner
+from .._compose import compose_query_fields
 from .conftest import DbtHarness
 
 pytestmark = pytest.mark.usefixtures("typed_via_execute")
@@ -71,11 +72,10 @@ def _compose_result(
 ) -> ResolvedQuery | QueryResult:
     if source_config is None:
         source_config = DbtTargetSourceConfig(type=adapter.registry.profile_type)
-    return compose(
+    return compose_query_fields(
         query,
         variables=variables,
         params=params,
-        board=None,
         source_config=source_config,
         dialect_name=source_config.type,
         render_dialect=INLINE_PLACEHOLDERS,
@@ -1180,8 +1180,8 @@ class TestPlaceholderShapedLiterals:
 
 
 class TestDbtAdapterColumnNameNormalization:
-    """Regression: Snowflake returns uppercase column names (CONNECTION_NAME);
-    dbt adapter results must normalize to lowercase so style.columns keys match."""
+    """Snowflake returns an unquoted alias upper-cased (CONNECTION_NAME), which
+    reads as lowercase; every other name keeps the warehouse's spelling."""
 
     def _execute_with_mock_columns(
         self,
@@ -1229,7 +1229,15 @@ class TestDbtAdapterColumnNameNormalization:
         result = self._execute_with_mock_columns(
             local_project, ["MyCol", "UPPER", "lower"]
         )
-        assert result.columns == ["mycol", "upper", "lower"]
+        assert result.columns == ["MyCol", "upper", "lower"]
+
+    def test_bigquery_keeps_a_mixed_case_alias(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        result = self._execute_with_mock_columns(
+            local_project, ["Q3-25", "REGION"], dialect="bigquery"
+        )
+        assert result.columns == ["Q3-25", "REGION"]
 
     def test_already_lowercase_unchanged(
         self, local_project: Callable[..., FilesystemProject]
@@ -1315,13 +1323,13 @@ class TestExecuteResolved:
 
         pool = MagicMock()
         pool.execute.return_value = TypedRows(
-            ["N"], [(1,)], [ColumnType(kind="integer")]
+            ["n"], [(1,)], [ColumnType(kind="integer")]
         )
         # A placeholder-shaped literal that a second render would corrupt.
         wrapped = dataclasses.replace(resolved, sql="SELECT '{{ x }}' AS wrapped")
         with patch.object(adapter.backend, "_get_source_pool", return_value=pool):
-            result = execute_resolved(
-                adapter.registry, wrapped, query, source_config=source
+            result = execute_on_backend(
+                adapter.registry, source, query.source, lambda _: wrapped
             )
 
         assert pool.execute.call_args.args[0] == "SELECT '{{ x }}' AS wrapped"

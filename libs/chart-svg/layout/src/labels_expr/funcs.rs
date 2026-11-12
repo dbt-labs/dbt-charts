@@ -258,35 +258,13 @@ fn to_date_ms(v: &Val) -> Res<f64> {
 /// `new Date(...args)`.
 fn new_date(args: &[Val]) -> Res<f64> {
     Ok(match args {
-        [] => now(),
+        [] => super::val::now()?,
         [one] => to_date_ms(one)?,
         many => {
             let n = |i: usize, default: f64| many.get(i).map_or(default, Val::to_number);
             let wall = d3rs::calendar::make_time(d3rs::calendar::full_year(n(0, f64::NAN)), n(1, 0.0), n(2, 1.0), n(3, 0.0), n(4, 0.0), n(5, 0.0), n(6, 0.0));
             ::bind::time_zone::expression_local_instant_ms(wall).map_err(EvalError::Unmodeled)?
         }
-    })
-}
-
-fn now() -> f64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64)
-}
-
-thread_local!(static RANDOM_STATE: std::cell::Cell<u64> = std::cell::Cell::new(now() as u64 ^ 0x9E37_79B9_7F4A_7C15));
-
-/// Starts a render's `random()` from a fresh seed, as a new Vega view gets its own.
-pub(super) fn reseed_random() {
-    RANDOM_STATE.with(|s| s.set(now() as u64 ^ 0x9E37_79B9_7F4A_7C15));
-}
-
-fn random() -> f64 {
-    RANDOM_STATE.with(|s| {
-        let mut x = s.get() | 1;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        s.set(x);
-        (x >> 11) as f64 / (1u64 << 53) as f64
     })
 }
 
@@ -944,14 +922,14 @@ pub fn call(name: &str, vals: &[Val], datum: &Val) -> Res<Val> {
         "max" => Val::Num(js_max(vals)),
         "min" => Val::Num(js_min(vals)),
         "pow" => Val::Num(d3rs::js_math::pow(n(0), n(1))),
-        "random" => Val::Num(random()),
+        "random" => Val::Num(super::val::random()),
         "round" => Val::Num(js_round(n(0))),
         "sin" => Val::Num(libm::sin(n(0))),
         "sqrt" => Val::Num(n(0).sqrt()),
         "tan" => Val::Num(libm::tan(n(0))),
         "clamp" => Val::Num(js_max(&[a.get(1).clone(), Val::Num(js_min(&[a.get(2).clone(), a.get(0).clone()]))])),
         // ---- date
-        "now" => Val::Num(now()),
+        "now" => Val::Num(super::val::now()?),
         "utc" => {
             let g = |i: usize, d: f64| if a.has(i) { a.num(i) } else { d };
             Val::Num(d3rs::calendar::make_time(d3rs::calendar::full_year(g(0, f64::NAN)), g(1, 0.0), g(2, 1.0), g(3, 0.0), g(4, 0.0), g(5, 0.0), g(6, 0.0)))
@@ -1426,8 +1404,8 @@ pub fn call(name: &str, vals: &[Val], datum: &Val) -> Res<Val> {
             let (mean, stdev) = (or_zero(a.get(0)), or_one(a.get(1)));
             let (mut x, mut y, mut rds);
             loop {
-                x = random() * 2.0 - 1.0;
-                y = random() * 2.0 - 1.0;
+                x = super::val::random() * 2.0 - 1.0;
+                y = super::val::random() * 2.0 - 1.0;
                 rds = x * x + y * y;
                 if !(rds == 0.0 || rds > 1.0) {
                     break;
@@ -1440,8 +1418,8 @@ pub fn call(name: &str, vals: &[Val], datum: &Val) -> Res<Val> {
             let z = {
                 let (mut x, mut rds);
                 loop {
-                    x = random() * 2.0 - 1.0;
-                    let y = random() * 2.0 - 1.0;
+                    x = super::val::random() * 2.0 - 1.0;
+                    let y = super::val::random() * 2.0 - 1.0;
                     rds = x * x + y * y;
                     if !(rds == 0.0 || rds > 1.0) {
                         break;
@@ -1453,7 +1431,7 @@ pub fn call(name: &str, vals: &[Val], datum: &Val) -> Res<Val> {
         }
         "sampleUniform" => {
             let (lo, hi) = uniform_bounds(a.get(0), a.get(1));
-            Val::Num(lo.to_number() + (hi.to_number() - lo.to_number()) * random())
+            Val::Num(lo.to_number() + (hi.to_number() - lo.to_number()) * super::val::random())
         }
         // ---- logging returns its last argument
         "debug" | "info" | "warn" => vals.last().cloned().unwrap_or(Val::Undefined),

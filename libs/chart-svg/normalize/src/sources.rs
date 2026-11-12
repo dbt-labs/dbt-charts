@@ -187,11 +187,12 @@ fn resolve_file_source(
     if let (true, Some(e)) = (candidates.is_empty(), escape) {
         return Err(unresolved(e.to_string()));
     }
-    let existing: Vec<String> = candidates
-        .iter()
-        .filter(|(_, p)| files.exists(p))
-        .map(|(label, p)| format!("{} ({label})", py_str_repr(p.as_str())))
-        .collect();
+    let mut existing: Vec<String> = Vec::new();
+    for (label, p) in &candidates {
+        if files.exists(p)? {
+            existing.push(format!("{} ({label})", py_str_repr(p.as_str())));
+        }
+    }
     if existing.len() > 1 {
         return Err(HoistError::AmbiguousFile(Box::new(
             diag::err_file_source_ambiguous(
@@ -203,9 +204,14 @@ fn resolve_file_source(
     }
     match is_identifier(stem) {
         true => {
-            let (_, found) = candidates
-                .iter()
-                .find(|(_, p)| files.exists(p))
+            let mut found = None;
+            for candidate in &candidates {
+                if files.exists(&candidate.1)? {
+                    found = Some(candidate);
+                    break;
+                }
+            }
+            let (_, found) = found
                 .or(candidates.first())
                 .ok_or_else(|| unresolved("no candidate path".to_string()))?;
             let found = found.as_str();

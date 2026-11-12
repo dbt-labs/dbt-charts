@@ -23,7 +23,6 @@ measure = { path = "../measure" }
 model-core = { path = "../model-core" }
 normalize = { path = "../normalize" }
 print = { path = "../print" }
-regex = "1"
 scene = { path = "../scene" }
 schemars = { version = "1", features = ["indexmap2"], optional = true }
 serde = { version = "1", features = ["derive"] }
@@ -39,6 +38,7 @@ column-types = { path = "../column-types" }
 board-model = { path = "../board-model", features = ["fixtures"] }
 diagnostic = { path = "../diagnostic", features = ["test-support"] }
 equivalence = { path = "../equivalence" }
+regex = "1"
 jiff = { version = "0.2", default-features = false, features = ["std"] }
 
 [[example]]

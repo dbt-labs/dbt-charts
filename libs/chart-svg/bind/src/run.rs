@@ -37,10 +37,9 @@ impl RunResult {
     }
 }
 
-/// The ambient inputs of a render, passed as data: the engine reads no clock or env.
+/// The ambient inputs of a render, passed as data: the engine reads no clock or env. What the board states
+/// (its locales, language and time zone) is read from the board, never from here.
 #[derive(Debug, Clone)]
 pub struct RenderEnv {
     pub rendered_at: jiff::Timestamp,
-    pub locale: String,
-    pub time_zone: String,
 }

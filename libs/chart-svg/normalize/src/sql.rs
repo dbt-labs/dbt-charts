@@ -139,12 +139,12 @@ fn parse_warning(name: &str, e: &ParseError) -> Diagnostic {
 }
 
 /// The query id a map key names: `<file>#<name>` for another file's query, else a query of `file`.
-pub fn query_id(key: &str, file: &ProjectPath) -> Result<QueryId, CompileError> {
+pub fn query_id(key: &str, file: &ProjectPath) -> Result<QueryId, HoistError> {
     let text = match key.contains('#') {
         true => key.to_string(),
         false => format!("{file}#{key}"),
     };
-    QueryId::try_from(text).map_err(|e| CompileError::Hoist(HoistError::QueryId(e)))
+    QueryId::try_from(text).map_err(HoistError::QueryId)
 }
 
 /// Every SQL query of the merged root through `analysis`: their facts by id, and the warnings.
@@ -213,7 +213,7 @@ pub fn analyze_queries(
         };
         let (variable_deps, embeds) = variable_deps(key, request.sql, request.setup_sql)?;
         facts.insert(
-            query_id(key, file)?,
+            query_id(key, file).map_err(CompileError::Hoist)?,
             QueryFacts {
                 sql,
                 variable_deps,

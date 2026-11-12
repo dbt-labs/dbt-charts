@@ -421,50 +421,6 @@ charts:
     type: table
     query: open_queue
     title: ""
-    conditional_formatting:
-      priority:
-        when:
-        - eq: Urgent
-          glyph: "■"
-          glyph_color: "#a8423a"     # urgent crimson
-        - eq: High
-          glyph: "■"
-          glyph_color: "#d49656"     # editorial gold
-        - eq: Normal
-          glyph: "■"
-          glyph_color: "#7a8a9a"     # cool slate
-        - eq: Low
-          glyph: "■"
-          glyph_color: "#a8b4a8"     # muted sage
-      ticket_type:
-        when:
-        - eq: problem
-          glyph: "✕"
-          glyph_color: "#a8423a"
-        - eq: incident
-          glyph: "!"
-          glyph_color: "#d49656"
-        - eq: question
-          glyph: "?"
-          glyph_color: "#5d7891"
-        - eq: task
-          glyph: "·"
-          glyph_color: "#7a8a7a"
-      # Conditional-formatting rules apply additively in YAML order — each
-      # matching rule overwrites the prior's outputs. Order from
-      # least-specific to most-specific so the tighter threshold wins on
-      # rows where both match.
-      age_days:
-        when:
-        - lte: 7
-          glyph: "●"
-          glyph_color: "#608470"
-        - gt: 90
-          glyph: "◐"
-          glyph_color: "#d49656"
-        - gt: 365
-          glyph: "○"
-          glyph_color: "#ae6349"
     style:
       # No `pagination:` override — defaults to enabled with page_rows 20
       # from _base.yaml. The "+ N more rows" truncation footer is a separate
@@ -485,8 +441,34 @@ charts:
         ticket_type:
           label: Type
           width: 90
+          conditional:
+            - eq: problem
+              glyph: ✕
+              glyph_color: "#a8423a"
+            - eq: incident
+              glyph: "!"
+              glyph_color: "#d49656"
+            - eq: question
+              glyph: "?"
+              glyph_color: "#5d7891"
+            - eq: task
+              glyph: ·
+              glyph_color: "#7a8a7a"
         priority:
           width: 80
+          conditional:
+            - eq: Urgent
+              glyph: ■
+              glyph_color: "#a8423a"
+            - eq: High
+              glyph: ■
+              glyph_color: "#d49656"
+            - eq: Normal
+              glyph: ■
+              glyph_color: "#7a8a9a"
+            - eq: Low
+              glyph: ■
+              glyph_color: "#a8b4a8"
         age_days:
           label: Age
           format:
@@ -494,6 +476,16 @@ charts:
             suffix: " d"
           align: right
           width: 70
+          conditional:
+            - lte: 7
+              glyph: ●
+              glyph_color: "#608470"
+            - gt: 90
+              glyph: ◐
+              glyph_color: "#d49656"
+            - gt: 365
+              glyph: ○
+              glyph_color: "#ae6349"
         age_bar:
           label: ""
           spark:
@@ -503,6 +495,10 @@ charts:
           format: "%-d %b"
           align: left
           width: 75
+      # Conditional-formatting rules apply additively in YAML order — each
+      # matching rule overwrites the prior's outputs. Order from
+      # least-specific to most-specific so the tighter threshold wins on
+      # rows where both match.
 
 # ── Layout ────────────────────────────────────────────────────────────────
 # This board stacks three full-width bands — KPI banner, four-up

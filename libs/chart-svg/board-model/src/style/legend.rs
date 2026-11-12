@@ -91,6 +91,15 @@ pub struct SideLegendPositionStyle {
 /// Every leaf is `auto` on every built-in theme: the engine decides and bakes
 /// the concrete placement into the resolved legend.
 #[derive(Debug, Clone, PartialEq, Model)]
+#[allow(clippy::duplicated_attributes)]
+#[model(
+    constraint(forbids(align, when(is_in(edge, "endpoints"), not_in(align, "auto")),
+        code = "ERR-LEGEND-ALIGN-WITH-ENDPOINTS"
+    )),
+    constraint(forbids(overlay, when(is_in(edge, "endpoints"), not_in(overlay, "auto")),
+        code = "ERR-LEGEND-OVERLAY-WITH-ENDPOINTS"
+    ))
+)]
 pub struct LegendPositionStyle {
     #[flatten]
     pub leaves: PlacementLeaves,

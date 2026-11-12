@@ -1,0 +1,62 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Conditional bar styles
+width: 900
+notes: Bars restyled by the value in their own row, with no color channel.
+
+queries:
+  profit_by_region:
+    columns: [region, profit, status]
+    values:
+      - [North, 42, ok]
+      - [South, -18, ok]
+      - [East, 25, late]
+      - [West, -7, ok]
+      - [Central, 31, ok]
+
+rows:
+  - cols: [c_negative, c_horizontal]
+
+charts:
+  c_negative:
+    query: profit_by_region
+    type: bar
+    x: region
+    y: profit
+    title: Losses in red
+    style:
+      marks:
+        bar:
+          color: "#4c78a8"
+      conditional:
+        profit:
+          - lt: 0
+            marks:
+              bar:
+                color: "#c62828"
+              text:
+                font:
+                  color: "#c62828"
+                  weight: "700"
+        status:
+          - eq: late
+            marks:
+              bar:
+                opacity: 0.5
+  c_horizontal:
+    query: profit_by_region
+    type: bar
+    x: region
+    y: profit
+    title: Losses red, the rest green
+    style:
+      orientation: horizontal
+      conditional:
+        profit:
+          - lt: 0
+            marks:
+              bar:
+                color: "#c62828"
+          - default: true
+            marks:
+              bar:
+                color: "#2e7d32"

@@ -147,8 +147,7 @@ objects:
   s_color:
     path: chart:bar.style.color
     label: color
-    keys: [static, categorical, gradient]
-    detail: [static]
+    keys: [categorical, gradient]
   s_categorical:
     path: chart:bar.style.color.categorical
     label: color.categorical
@@ -161,7 +160,7 @@ objects:
   s_kpi:
     path: chart:kpi.style
     label: a kpi's style
-    keys: [variant, align, value, label, support]
+    keys: [variant, align, value, label, support, background, conditional]
   s_kpi_value:
     path: chart:kpi.style.value
     label: kpi style.value
@@ -170,6 +169,10 @@ objects:
     path: chart:kpi.style.support
     label: kpi style.support
     keys: [tone]
+  s_kpi_cond_rule:
+    path: chart:kpi.style.conditional
+    label: style.conditional.<column>[], on a kpi
+    keys: []
   s_table:
     path: chart:table.style
     label: a table's style
@@ -184,10 +187,14 @@ objects:
     path: chart:table.style.header
     label: table style.header
     keys: []
+  s_table_defaults:
+    path: chart:table.style.column_defaults
+    label: table style.column_defaults
+    keys: [width, align, background, font]
   s_table_row:
     path: chart:table.style.row
     label: table style.row
-    keys: [height, stripe]
+    keys: [height, stripe, conditional]
   s_pagination:
     path: chart:table.style.pagination
     label: table style.pagination
@@ -195,10 +202,14 @@ objects:
   s_column:
     path: chart:table.style.columns
     label: table style.columns.<column>
-    keys: [visible, label, format, align, width, link, background, font, scale, glyph, spark]
+    keys: [visible, label, format, align, width, link, background, font, scale, glyph, spark, conditional]
   s_cond_rule:
-    path: chart:table.conditional_formatting.when
-    label: conditional_formatting.<column>.when[], on a table or kpi
+    path: chart:table.style.columns.conditional
+    label: style.columns.<column>.conditional[]
+    keys: []
+  s_row_rule:
+    path: chart:table.style.row.conditional
+    label: style.row.conditional.<column>[]
     keys: []
   s_font:
     path: StylePatch.font
@@ -237,8 +248,11 @@ objects:
 
 rules:
   cond_rule:
-    path: chart:table.conditional_formatting.when
-    only: ["exactly one condition operator", "glyph_color requires glyph"]
+    path: chart:table.style.columns.conditional
+    only: ["exactly one condition operator", "at least one style"]
+  row_rule:
+    path: chart:table.style.row.conditional
+    only: ["exactly one condition operator", "at least one style"]
   board:
     path: AuthoredBoard
     only: [one layout type]
@@ -253,8 +267,8 @@ chart_types:
   - {type: scatter, keys: [x, y, color, size, shape, layers]}
   - {type: histogram, keys: [x, color]}
   - {type: heatmap, keys: [x, y, color]}
-  - {type: kpi, keys: [value, label, glyph, support, background, conditional_formatting]}
-  - {type: table, keys: [rows, columns, values, conditional_formatting]}
+  - {type: kpi, keys: [value, label, glyph, support]}
+  - {type: table, keys: [rows, columns, values]}
   - {type: callout, keys: [message, title]}
 
 commands:

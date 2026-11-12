@@ -79,7 +79,8 @@ struct Resolved {
     /// Effective chart background — see `BarResolved::background` and
     /// `docs/laws-shared.md#background`.
     background: String,
-    /// The chart's opaque composited canvas: halo and knockout ink, where `background` may be `transparent`.
+    /// The chart's composited canvas: `background` over what it sits on, the ground a
+    /// rule-painted slice's label ink is read against (`background` may be `transparent`).
     #[serde(deserialize_with = "crate::common::de_canvas")]
     canvas: String,
     palette: Vec<String>,
@@ -185,6 +186,8 @@ struct TotalSlotStyle {
 #[derive(Deserialize)]
 struct PieStyle {
     inner_radius: f64,
+    /// The wedge fill when no color channel is bound.
+    single_series_fill: String,
     slice_mark: SliceMark,
     total_style: TotalStyle,
     /// Width-resolved title font (production's `chart_title_spec` output) —
@@ -196,6 +199,9 @@ struct PieStyle {
     /// gate as bar's own `tooltip_labels` (`chart.style.tooltip_format`).
     #[serde(default)]
     tooltip_format: FormatSlot,
+    /// `style.conditional`: per-column rules restyling a slice by its own row.
+    #[serde(default)]
+    conditional: Option<std::collections::BTreeMap<String, Vec<crate::conditional::MarkRule>>>,
 }
 
 #[derive(Deserialize)]
@@ -566,6 +572,7 @@ mod tests {
                 "field_labels": {},
                 "style": {
                     "inner_radius": 0.6,
+                    "single_series_fill": "#3164a3",
                     "slice_mark": {
                         "gap": 0.02,
                         "corner_radius": 2.0,
@@ -602,6 +609,7 @@ mod tests {
             "width": 600.0,
             "height": 432.0,
             "background": "#FAFAFA",
+            "canvas": "#FAFAFA",
             "fonts_dir": null,
             "padding": {"left": 16.0, "right": 16.0, "top": 16.0, "bottom": 16.0}
         })
@@ -691,7 +699,17 @@ mod tests {
         assert!(svg.contains("<rect x=\"0\" y=\"0\" width=\"600\" height=\"432\" fill=\"#d9a45b\"/>"), "{svg}");
     }
 
-    /// With no color channel every wedge paints one constant `palette[0]`. Palette-by-index is the
+    /// With no color channel every wedge paints the one resolved `single_series_fill`, not a
+    /// palette slot.
+    #[test]
+    fn a_pie_without_a_color_channel_paints_the_resolved_single_series_fill() {
+        let mut p = make_pie_payload(Value::Null);
+        p["resolved"]["style"]["single_series_fill"] = json!("#12ab34");
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        assert_eq!(svg.matches("fill=\"#12ab34\"").count(), 3, "{svg}");
+    }
+
+    /// With no color channel every wedge paints one constant fill. Palette-by-index is the
     /// color scale's range — it only exists when a color channel does
     /// (`color_key` is the channel's non-empty `data_field`).
     #[test]
@@ -908,14 +926,10 @@ mod tests {
         assert_eq!(label_fill("Accessories"), Some("#dark0".into()), "{svg}");
     }
 
-    /// The deleted conditional-fill implementation covered two paint sites
-    /// off one shared channel — the slice fill and the label ink — so one
-    /// guard fixture with labels visible proves both are unreachable: had
-    /// the guard only fired for one site, this payload would still render
-    /// (or panic deeper in the deleted label-ink match) instead of
-    /// refusing at the entry gate.
+    /// A rule beside a color channel recolors its slice and that slice's label ink only; a
+    /// rule that inks the label itself wins over the ink derived from the patched fill.
     #[test]
-    fn a_conditional_color_channel_is_refused_for_both_slice_fill_and_label_ink() {
+    fn a_conditional_rule_restyles_one_slice_fill_and_its_label_ink() {
         let mut p = make_pie_payload(Value::Null);
         p["resolved"]["slice_label_indices"] = json!([0, 1, 2]);
         p["resolved"]["style"]["slice_mark"]["labels"] = json!({
@@ -924,15 +938,23 @@ mod tests {
             "line_height": 1.25,
             "font": {"family": "Inter", "color": "#123456", "size": 14.0, "weight": "500", "line_height": 1.25}
         });
-        p["resolved"]["resolved_channels"] = json!({"color": {
-            "channel": "color", "mode": "conditional", "data_field": "revenue",
-            "rules": [
-                {"gte": 150000, "background": "#f59e0b"},
-                {"lt": 150000, "background": "#e5e7eb"}
-            ]
-        }});
-        let err = render(&make_payload(p), &test_fonts()).expect_err("refuses");
-        assert!(err.contains("conditional color channel not supported"), "{err}");
+        p["resolved"]["style"]["conditional"] = json!({"category": [
+            {"eq": "Electronics", "marks": {"slice": {"color": "#1f4e99", "opacity": 0.5,
+                "stroke": {"color": "#c62828", "width": 4}}}},
+            {"eq": "Tools", "marks": {"slice": {"color": "#2e7d32"},
+                "text": {"font": {"color": "#aa0000", "weight": "700"}}}}
+        ]});
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        let tag = |needle: &str| svg.split('<').find(|t| t.contains(needle)).expect(needle).to_string();
+        let wedge = svg.split('<').find(|t| t.starts_with("path") && t.contains("#1f4e99")).expect("wedge");
+        assert!(wedge.contains("stroke=\"#c62828\"") && wedge.contains("stroke-width=\"4\""), "{wedge}");
+        assert!(wedge.contains("opacity=\"0.5\""), "{wedge}");
+        assert_eq!(svg.matches("fill=\"#1f4e99\"").count(), 1, "{svg}");
+        let derived = tag("Electronics");
+        assert!(!derived.contains("#123456") && !derived.contains("#1f4e99"), "{derived}");
+        let inked = svg.split("<text").find(|t| t.contains("Tools")).expect("tools label");
+        assert!(inked.contains("fill=\"#aa0000\"") && inked.contains("font-weight=\"700\""), "{inked}");
+        assert!(svg.split("<text").find(|t| t.contains("Accessories")).expect("accessories").contains("font-weight=\"500\""));
     }
 
     fn empty_fonts() -> FontBook {

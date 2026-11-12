@@ -29,6 +29,7 @@ use super::js_cell;
 use super::projection;
 use super::source::{decode, Decoded, GeoSource};
 use diagnostic::codes;
+use crate::conditional::{MarkKind, MarkPatch};
 use crate::common::{
     category_scale_for, series_color, CategoryColorScale, FieldLabels, FormatSlot, Font, ScaleTarget,
     Stroke, TitleStyle,
@@ -104,6 +105,9 @@ struct Style {
 struct FamilyStyle {
     color: Option<ColorStyle>,
     marks: Marks,
+    /// `style.conditional`: per-column rules restyling a region by its own row.
+    #[serde(default)]
+    conditional: Option<std::collections::BTreeMap<String, Vec<crate::conditional::MarkRule>>>,
 }
 
 #[derive(Deserialize)]
@@ -136,6 +140,8 @@ struct Overlay {
     feature: usize,
     fill: Option<String>,
     label: String,
+    /// What `style.conditional` sets on this region beyond its fill (already in `fill`).
+    patch: MarkPatch,
 }
 
 struct Choropleth {
@@ -330,6 +336,19 @@ fn bind_choropleth(
         .then(|| display_text::slug_to_text(value_field).map(|t| r.field_labels.get(value_field).cloned().unwrap_or(t)))
         .transpose()?;
     let affixed = r.style.tooltip_format.has_affix();
+    // A region's rules read its own joined row; a region no row matched keeps the static style.
+    let patch_of = |row: Option<&Map<String, Value>>| -> Result<MarkPatch, String> {
+        let patch = match row {
+            Some(row) => MarkPatch::of(r.style.geoshape.conditional.as_ref(), row, MarkKind::Geoshape)
+                .map_err(|e| format!("geoshape: {e}"))?,
+            None => MarkPatch::default(),
+        };
+        let static_color = r.mark()?.stroke.as_ref().and_then(|s| s.color.as_ref());
+        if patch.stroke_w.is_some() && patch.stroke.is_none() && static_color.is_none() {
+            return Err("geoshape: a conditional stroke width needs a stroke color".to_string());
+        }
+        Ok(patch)
+    };
     let own_type = ::bind::temporal::infer_vega_type(types, rows, value_field)?;
     let mut overlay = Vec::new();
     let coloring = if own_type == ::bind::temporal::VegaType::Quantitative {
@@ -362,7 +381,9 @@ fn bind_choropleth(
             } else {
                 native_label((&title, ::bind::formats::locale::d3_format("", n)?), lookup_row(Some(row))?)
             };
-            overlay.push(Overlay { feature, fill: Some(scale.fill(n)), label });
+            let patch = patch_of(Some(row))?;
+            let fill = patch.fill.clone().unwrap_or_else(|| scale.fill(n));
+            overlay.push(Overlay { feature, fill: Some(fill), label, patch });
         }
         // Both bounds authored, or `nice: false`: the legend labels the scale's ends
         // (`apply_geo_choropleth_legend_endpoint_labels`); a nice scale keeps Vega's ticks.
@@ -400,7 +421,9 @@ fn bind_choropleth(
             } else {
                 native_label((&title, value), lookup_row(row)?)
             };
-            overlay.push(Overlay { feature: i, fill, label });
+            let patch = patch_of(row)?;
+            let fill = patch.fill.clone().or(fill);
+            overlay.push(Overlay { feature: i, fill, label, patch });
         }
         Coloring::Categories(CategoryScale::plain(domain, fills))
     };
@@ -574,7 +597,8 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     // A feature the projection draws nothing of (an `albersUsa` territory outside its insets) has no
     // mark: a path with no geometry is invalid output.
     let item_role = display_text::language::tr("aria.role_geoshape", None, &[])?;
-    let shape = |layer: usize, feature: usize, d: &PathData, label: Option<&str>, fill: Option<&str>| {
+    let no_patch = MarkPatch::default();
+    let shape = |layer: usize, feature: usize, d: &PathData, label: Option<&str>, fill: Option<&str>, patch: &MarkPatch| {
         let mut attrs = Attrs::new();
         if let Some(label) = label {
             attrs = attrs
@@ -585,12 +609,11 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         if let Some(fill) = fill {
             attrs = attrs.set("fill", fill);
         }
-        if let Some(stroke) = &mark.stroke {
-            if let Some(color) = &stroke.color {
-                attrs = attrs.set("stroke", color.as_str());
-                if let Some(width) = stroke.width {
-                    attrs = attrs.num("stroke-width", width);
-                }
+        let stroke_color = patch.stroke.as_deref().or(mark.stroke.as_ref().and_then(|s| s.color.as_deref()));
+        if let Some(color) = stroke_color {
+            attrs = attrs.set("stroke", color);
+            if let Some(width) = patch.stroke_w.or(mark.stroke.as_ref().and_then(|s| s.width)) {
+                attrs = attrs.num("stroke-width", width);
             }
         }
         let role = Role::Mark { layer, series: None, datum: Some(feature) };
@@ -631,7 +654,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         .iter()
         .zip(&paths)
         .enumerate()
-        .filter_map(|(i, (_, d))| d.as_ref().map(|d| shape(0, i, d, None, mark.fill.as_deref())))
+        .filter_map(|(i, (_, d))| d.as_ref().map(|d| shape(0, i, d, None, mark.fill.as_deref(), &no_patch)))
         .collect();
     let mut layers = vec![group(0, if layered { "layer_0_marks" } else { "marks" }, Some(&clip_ids[0]), false, background)?];
     if let Some(choropleth) = &bound.choropleth {
@@ -639,7 +662,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             .overlay
             .iter()
             .filter_map(|o| {
-                paths[o.feature].as_ref().map(|d| shape(1, o.feature, d, Some(&o.label), o.fill.as_deref()))
+                paths[o.feature].as_ref().map(|d| shape(1, o.feature, d, Some(&o.label), o.fill.as_deref(), &o.patch))
             })
             .collect();
         layers.push(group(1, "layer_1_marks", Some(&clip_ids[1]), true, overlay)?);

@@ -82,7 +82,7 @@ const ROW_ROLE_REASON: &str =
     "A table's role column is data, not style. Set `row_role: <column>` on each table chart.";
 
 /// Every retired scaffold spelling mapped to its replacement.
-fn retired_scaffold_token_map() -> ValueMap {
+pub(crate) fn retired_scaffold_token_map() -> ValueMap {
     let mut map = ValueMap::new();
     let mut put = |from: String, to: String| {
         map.insert(ScalarKey::Str(from), Mapped::Str(to));
@@ -177,7 +177,7 @@ pub fn respell_retired_variant(token: &str) -> Option<String> {
     None
 }
 
-fn respell_secondary_ink(map: &ValueMap, value: &Json) -> Rewritten {
+pub(crate) fn respell_secondary_ink(map: &ValueMap, value: &Json) -> Rewritten {
     let Json::String(s) = value else {
         return Rewritten::Value(value.clone());
     };

@@ -102,7 +102,7 @@ def _render_field(
     expandable, recursive, stopped = _partition_models(field, ancestry)
     lines: list[str] = []
 
-    if field.container == "dict":
+    if field.container in ("dict", "dict_of_list"):
         lines.append(f"{pad}{key}:")
         lines.extend(
             _dict_body(field, schema, ancestry, indent, expandable, recursive, stopped)

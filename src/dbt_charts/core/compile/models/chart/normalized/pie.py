@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import Field
 
 from dbt_charts.core.compile.models.chart.authored import ChartTotal
+from dbt_charts.core.compile.models.markers import ColumnRef
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.style.authored import PieChartStylePatch
 
@@ -21,8 +22,12 @@ class PieChart(_SharedChartFields, _FieldLabelsField, _TooltipFields, _PatternFi
         default=False, description="Authored as `type: donut`; styled by `donut`."
     )
     # None until resolve binds it from the query's columns by position.
-    theta: str | None = Field(default=None, description="Field mapped to arc angle.")
-    color: str | None = Field(default=None, description="Field mapped to arc color.")
+    theta: ColumnRef | None = Field(
+        default=None, description="Field mapped to arc angle."
+    )
+    color: ColumnRef | None = Field(
+        default=None, description="Field mapped to arc color."
+    )
     total: ChartTotal | None = Field(
         default=None, description="Donut center total config."
     )

@@ -135,20 +135,20 @@ def test_unauthored_family_keeps_theme_background(
     assert _resolved(chart, rows, ctx).background == "#101010"
 
 
-def test_point_map_board_static_beats_theme_single_series_palette() -> None:
+def test_point_map_board_mark_color_beats_theme_single_series_palette() -> None:
     ctx = _ctx(
         {
             "color": {"categorical": {"single_series_palette": ["#aa0000"]}},
-            "point_map": {"color": {"static": "#00bb00"}},
+            "point_map": {"marks": {"point": {"color": "#00bb00"}}},
         }
     )
     resolved = _resolved(_POINT_MAP, _POINT_MAP_ROWS, ctx)
     assert resolved.style.single_series_fill == "#00bb00"
 
 
-def test_point_map_chart_static_beats_board_static() -> None:
-    ctx = _ctx({"point_map": {"color": {"static": "#00bb00"}}})
+def test_point_map_chart_mark_color_beats_board_mark_color() -> None:
+    ctx = _ctx({"point_map": {"marks": {"point": {"color": "#00bb00"}}}})
     resolved = _resolved(
-        _POINT_MAP, _POINT_MAP_ROWS, ctx, {"color": {"static": "#0000cc"}}
+        _POINT_MAP, _POINT_MAP_ROWS, ctx, {"marks": {"point": {"color": "#0000cc"}}}
     )
     assert resolved.style.single_series_fill == "#0000cc"

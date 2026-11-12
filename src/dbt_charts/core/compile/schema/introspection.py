@@ -69,7 +69,9 @@ class SchemaField:
     )  # human-readable default for display (None = no meaningful default)
     enum_values: list[str | int | bool] | None
     nested_models: list[str]  # class names of nested AuthorableModels (empty = none)
-    container: str | None = None  # "list" or "dict" if the model is in a container
+    container: str | None = (
+        None  # "list", "dict" or "dict_of_list" if the model is in a container
+    )
     extra_union_types: list[str] = dataclasses.field(
         default_factory=list
     )  # primitive type names alongside models or enums in a union
@@ -489,14 +491,14 @@ def _type_repr(annotation: Any) -> str:
 
 
 def _get_container(annotation: Any) -> str | None:
-    """Return 'list' or 'dict' if annotation wraps a nested model in a container."""
+    """Return 'list', 'dict' or 'dict_of_list' if annotation wraps a nested model in a container."""
     annotation = _unwrap_annotated(annotation)
     origin = get_origin(annotation)
     args = get_args(annotation)
     if origin is list:
         return "list"
     if origin is dict:
-        return "dict"
+        return "dict_of_list" if _get_container(args[1]) == "list" else "dict"
     if args:
         non_none = [a for a in args if a is not type(None)]
         if len(non_none) == 1:

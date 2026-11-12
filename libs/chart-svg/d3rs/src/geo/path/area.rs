@@ -1,5 +1,7 @@
 //! d3-geo 3.1.1 `src/path/area.js`: the planar area of the polygons a projected stream delivers.
 
+use crate::invariant;
+
 use crate::geo::stream::GeoStream;
 use crate::array::Adder;
 
@@ -92,6 +94,6 @@ impl GeoStream for PathArea {
     }
 
     fn sphere(&mut self) {
-        unreachable!("d3's area stream has no sphere: a projection's pre-clip consumes it, and geoPath rejects it otherwise");
+        invariant::broken("d3's area stream has no sphere: a projection's pre-clip consumes it, and geoPath rejects it otherwise");
     }
 }

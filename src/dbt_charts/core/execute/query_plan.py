@@ -4,30 +4,50 @@ Not a class the engine builds: a reader refuses any version but its own.
 """
 
 import json
-from typing import Literal, NotRequired, TypedDict
+from typing import Literal, TypedDict
 
 QUERY_PLAN_VERSION = 1
 
-# JSON the engine spells and Python passes through unread: a cache layer, a values query's keys,
-# a variable value ({"kind": ..., "value": ...}).
+# JSON the engine spells and Python passes through unread: a values query's keys, a variable
+# value ({"kind": ..., "value": ...}).
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
 
-class PlannedQuery(TypedDict):
-    """One query a run reads. A SQL query carries `sql`, with the variables it reads (its own and its
-    embeds') and its incremental watermark column; any other kind carries `spec`."""
+class PlannedCache(TypedDict):
+    """A query's resolved cache policy; `ttl` is the duration as authored (`1h`), null for none."""
 
-    type: Literal["sql", "values", "schema"]
+    enabled: bool
+    ttl: str | None
+    prefetch: bool
+
+
+class _PlannedBase(TypedDict):
     source: str | None
-    cache: JsonValue
+    cache: PlannedCache
     formats: dict[str, str]
     depends_on: list[str]
-    sql: NotRequired[str]
-    setup_sql: NotRequired[str | None]
-    dialect: NotRequired[str | None]
-    variable_dependencies: NotRequired[list[str]]
-    incremental: NotRequired[str | None]
-    spec: NotRequired[JsonValue]
+
+
+class PlannedSqlQuery(_PlannedBase):
+    """A SQL query. `incremental` is the effective watermark column (its own, else its board's);
+    `variable_dependencies` are those of its own text and of every query it embeds."""
+
+    type: Literal["sql"]
+    sql: str
+    setup_sql: str | None
+    dialect: str | None
+    variable_dependencies: list[str]
+    incremental: str | None
+
+
+class PlannedDataQuery(_PlannedBase):
+    """A `values` or `schema` query: the keys the author wrote, carried unread in `spec`."""
+
+    type: Literal["values", "schema"]
+    spec: JsonValue
+
+
+PlannedQuery = PlannedSqlQuery | PlannedDataQuery
 
 
 class PlanVariables(TypedDict):
@@ -43,14 +63,22 @@ class PlanSources(TypedDict):
     authored). A ref the project also declares is in `project` only; which wins is the
     resolver's call, not the plan's."""
 
-    project: dict[str, JsonValue]
-    inline: dict[str, JsonValue]
+    project: dict[str, dict[str, JsonValue]]
+    inline: dict[str, dict[str, JsonValue]]
 
 
 class QueryPlan(TypedDict):
     version: int
     board_id: str
     time_zone: str
+    #: The civil date `now_epoch` is in `time_zone`, `YYYY-MM-DD`: the day presets are dated on.
+    today: str
+    #: 0 is Sunday.
+    week_start: int
+    fiscal_year_start_month: int
+    #: The queries only hidden tabs read whose cache policy prefetches; empty unless the plan
+    #: was scoped to the active tabs.
+    prefetch: list[str]
     queries: dict[str, PlannedQuery]
     variables: PlanVariables
     sources: PlanSources

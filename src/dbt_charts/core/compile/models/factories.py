@@ -18,11 +18,13 @@ This module owns two public factories:
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 from functools import cache
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Union
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     BeforeValidator,
     ConfigDict,
@@ -32,7 +34,22 @@ from pydantic import (
     model_validator,
 )
 
-from dbt_charts.core.compile.models.markers import Absent, NullHint, ResetOnSet
+from dbt_charts.core.compile.models.conditional_predicate import (
+    PREDICATE_KEYS,
+    ConditionalPredicate,
+)
+from dbt_charts.core.compile.models.constraints import AtLeastOneOf, Constraint
+from dbt_charts.core.compile.models.markers import (
+    AUTO,
+    Absent,
+    AutoUnset,
+    ChartLocal,
+    Color,
+    Conditionable,
+    InheritSlot,
+    NullHint,
+    ResetOnSet,
+)
 
 FontAlias = Annotated[str, Field(description="Name of a ``style.fonts`` entry.")]
 
@@ -78,6 +95,50 @@ class _PatchBase(BaseModel):
                     f"the field unset. {' '.join(hints)}".rstrip()
                 )
         return value
+
+
+class ChartScopeBase(_PatchBase):
+    """Base of ``ChartsStylePatch``, the theme and board scope of ``style.charts``.
+
+    Refuses a ``ChartLocal()`` field of a family patch: it names things only one
+    chart has, so it is authored on that chart's own ``style``.
+    """
+
+    @model_validator(mode="after")
+    def _reject_chart_local_fields(self) -> ChartScopeBase:
+        for family, family_patch in self:
+            if isinstance(family_patch, BaseModel):
+                if (path := _chart_local_path(family_patch)) is not None:
+                    raise ValueError(
+                        f"`{path}` is chart-local: author it under a chart's "
+                        f"`style`, not at `style.charts.{family}`"
+                    )
+        return self
+
+
+def _chart_local_path(model: BaseModel) -> str | None:
+    """Dotted path of the first set ``ChartLocal()`` field in *model*, nested
+    models and the models of a mapping field included."""
+    for name, field in type(model).model_fields.items():
+        value = getattr(model, name)
+        if value is None:
+            continue
+        if any(isinstance(meta, ChartLocal) for meta in field.metadata):
+            return name
+        children = (
+            {str(key): child for key, child in value.items()}
+            if isinstance(value, dict)
+            else {name: value}
+        )
+        for label, child in children.items():
+            if (
+                isinstance(child, BaseModel)
+                and (nested := _chart_local_path(child)) is not None
+            ):
+                return (
+                    f"{name}.{nested}" if child is value else f"{name}.{label}.{nested}"
+                )
+    return None
 
 
 class BoardPatchBase(_PatchBase):
@@ -346,3 +407,170 @@ def build_patch_model(compiled_cls: type[BaseModel]) -> type[BaseModel]:
     Nested BaseModel fields are recursively converted to their Patch versions.
     """
     return build_patch_model_ext(compiled_cls, is_recursive=True)
+
+
+def _model_arm(
+    annotation: Any,  # type-state: explicit_any — a field annotation, any typing construct
+) -> type[BaseModel] | None:
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    return _unwrap_optional_base_model(annotation)
+
+
+def _without_auto(
+    marker: Any,  # type-state: explicit_any — one annotated-metadata item, any type
+) -> Any:  # type-state: explicit_any — the same item
+    """A rule sets a value a row carries, never ``auto``: a color keyword is dropped."""
+    if isinstance(marker, Color):
+        return dataclasses.replace(
+            marker, keywords=tuple(k for k in marker.keywords if k != AUTO)
+        )
+    return marker
+
+
+def _refuse_auto(
+    value: Any,  # type-state: explicit_any — any rule value, returned unchanged
+) -> Any:  # type-state: explicit_any — the value it was given
+    # A free-form color string would otherwise take `auto` as a color name.
+    if value == AUTO:
+        raise ValueError(f"a conditional rule names a value; {AUTO!r} is not one")
+    return value
+
+
+@cache
+def _conditional_class(
+    style_cls: type[BaseModel],
+    only: tuple[str, ...],
+    whole: bool,
+    base_cls: type[BaseModel],
+    class_name: str | None = None,
+) -> type[BaseModel] | None:
+    """The ``Conditionable`` part of ``style_cls`` as an all-optional model, or None.
+
+    ``whole`` keeps every field (named in ``only``, when given) of a subtree a
+    ``Conditionable()`` marker claimed; otherwise only marked fields and the
+    parents leading to them are kept.
+    """
+    fields: dict[str, Any] = {}  # type-state: explicit_any — create_model field specs
+    required: dict[str, Any] = {}  # type-state: explicit_any — runtime annotations
+    for name, field_info in style_cls.model_fields.items():
+        # A font slot can always name a registered font, as in static styling.
+        names_font = name == "extends" and issubclass(style_cls, FontSlotBase)
+        if (only and name not in only and not names_font) or field_info.exclude:
+            continue
+        annotation: Any  # type-state: explicit_any — a runtime-built annotation
+        marker = next(
+            (m for m in field_info.metadata if isinstance(m, Conditionable)), None
+        )
+        keep_whole = whole or marker is not None
+        nested = _model_arm(field_info.annotation)
+        if marker is not None and marker.rule_type is not None:
+            annotation = marker.rule_type
+        elif nested is None:
+            if not keep_whole:
+                continue
+            annotation = field_info.annotation
+        else:
+            kept = _conditional_class(
+                nested,
+                marker.only if marker is not None else (),
+                keep_whole,
+                FontSlotBase if issubclass(nested, FontSlotBase) else _PatchBase,
+            )
+            if kept is None:
+                continue
+            annotation = kept
+        metadata = [
+            _without_auto(m)
+            for m in field_info.metadata
+            if not isinstance(m, Conditionable | InheritSlot | AutoUnset)
+        ]
+        if any(
+            isinstance(m, Color) and AUTO in m.keywords for m in field_info.metadata
+        ):
+            metadata.append(AfterValidator(_refuse_auto))
+        required[name] = Annotated[annotation, *metadata] if metadata else annotation
+        if not _is_optional(annotation):
+            annotation = annotation | None
+        if metadata:
+            annotation = Annotated[annotation, *metadata]
+        fields[name] = (
+            annotation,
+            Field(
+                default=None,
+                description=field_info.description,
+                alias=field_info.alias,
+            ),
+        )
+    if not fields:
+        return None
+    if issubclass(base_cls, ConditionalPredicate):
+        # A rule that restyles nothing is a mistake.
+        styles = (
+            *(
+                n
+                for n in base_cls.model_fields
+                if n not in ConditionalPredicate.model_fields
+            ),
+            *(n for n in fields if n not in PREDICATE_KEYS),
+        )
+        if len(styles) == 1 and styles[0] in fields:
+            # One style key cannot be "at least one of": it is required outright.
+            info = style_cls.model_fields[styles[0]]
+            fields[styles[0]] = (
+                required[styles[0]],
+                Field(description=info.description, alias=info.alias),
+            )
+        else:
+            fields["__constraints__"] = (
+                ClassVar[tuple[Constraint, ...]],
+                (
+                    AtLeastOneOf(
+                        styles,
+                        "A conditional rule requires at least one style to apply",
+                    ),
+                ),
+            )
+    return create_model(
+        f"{style_cls.__name__}Conditional" if class_name is None else class_name,
+        __base__=base_cls,
+        __module__=style_cls.__module__,
+        __doc__=f"The part of {style_cls.__name__} a conditional rule may set.",
+        **fields,
+    )
+
+
+def build_conditional_model(
+    style_cls: type[BaseModel],
+    predicate_cls: type[ConditionalPredicate] = ConditionalPredicate,
+    name: str | None = None,
+) -> type[BaseModel]:
+    """A conditional rule type for a chart family: one predicate plus a style body.
+
+    The body is ``style_cls`` restricted to its ``Conditionable()`` fields, all
+    optional, so a rule can name only what may vary per row. The class is named
+    ``<style_cls>Conditional``, apart from ``<style_cls>Patch`` in the schema.
+    ``predicate_cls`` is the rule's base: a ``ConditionalPredicate`` subclass adds
+    the keys only a rule sets. ``name`` publishes the rule under a different class
+    name, for a ``style_cls`` that is a private base of the class carrying the
+    ``conditional`` field.
+    """
+    rule_cls = _conditional_class(style_cls, (), False, predicate_cls, name)
+    if rule_cls is None:
+        raise TypeError(f"{style_cls.__name__} has no Conditionable() field")
+    return rule_cls
+
+
+def build_conditional_body(
+    style_cls: type[BaseModel], base_cls: type[BaseModel], name: str
+) -> type[BaseModel]:
+    """The ``Conditionable()`` part of ``style_cls`` with no predicate: the style a
+    rule applies to one named target (a table row rule's ``columns.<col>``).
+
+    ``base_cls`` carries the keys only a rule sets, as ``build_conditional_model``'s
+    ``predicate_cls`` does.
+    """
+    body_cls = _conditional_class(style_cls, (), False, base_cls, name)
+    if body_cls is None:
+        raise TypeError(f"{style_cls.__name__} has no Conditionable() field")
+    return body_cls

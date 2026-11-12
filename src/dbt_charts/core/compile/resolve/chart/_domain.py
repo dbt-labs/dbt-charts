@@ -66,6 +66,7 @@ _VEGA_DEFAULT_TICK_COUNT = 11
 __all__ = [
     "_CartesianTickResolution",
     "_axis_headroom",
+    "_unit_cap",
     "_bake_normalize_domain",
     "_bake_y_zero",
     "_bake_x_zero",
@@ -294,6 +295,19 @@ def _reject_non_positive_log_layer_data(
                 chart_id=chart.id,
                 y_field=layer.y,
             )
+
+
+def _unit_cap(ay: AxisYStyle, lo: float, hi: float) -> float | None:
+    """1.0 when ``ay`` is a percent axis whose values all lie in [0, 1], else None.
+
+    A share, rate, or completion cannot pass 100% or sink below 0%, so headroom
+    on such an axis stops at those bounds instead of drawing an impossible strip.
+    Values outside the unit interval are a different measure (growth, attainment
+    over plan) and keep their headroom.
+    """
+    if ay.labels.format is None or "%" not in resolve_format(ay.labels.format):
+        return None
+    return 1.0 if lo >= 0 and hi <= 1 else None
 
 
 def _axis_headroom(ay: AxisYStyle) -> float | None:
@@ -813,7 +827,9 @@ def _resolve_cartesian_ticks(
         raw_max = max(y_floats)
         h = _axis_headroom(ay)
         tick_min = min(0.0, raw_min)
-        tick_max = max(0.0, apply_headroom(raw_max, h))
+        tick_max = max(
+            0.0, apply_headroom(raw_max, h, cap=_unit_cap(ay, raw_min, raw_max))
+        )
         if raw_max >= 0:
             # >= 0, not > 0: a data max of exactly 0 (a zero-valued row) is
             # mixed-sign the same way a strictly positive max is -- the
@@ -844,6 +860,9 @@ def _resolve_cartesian_ticks(
         if h and span > 0:
             domain_max = raw_max + h * span
             domain_min = data_min - h * span
+            if _unit_cap(ay, data_min, raw_max) is not None:
+                domain_max = min(domain_max, 1.0)
+                domain_min = max(domain_min, 0.0)
             tick_min = domain_min
             tick_max = domain_max
         else:
@@ -1082,9 +1101,12 @@ def _resolve_stacked_bar_ticks(
             lambda rows: stacked_totals_max(rows, cat_field, y_fields),
         )
         raw_max = max([sm if sm is not None else max(y_floats), *extra_values])
-        tick_max = apply_headroom(raw_max, _axis_headroom(ay))
-        # stacked bars always zero-anchor
         tick_min = min([0.0, *y_floats, *extra_values])
+        tick_max = apply_headroom(
+            raw_max,
+            _axis_headroom(ay),
+            cap=_unit_cap(ay, tick_min, raw_max),
+        )
     ticks: tuple[float, ...] = tuple(
         nice_tick_values(tick_min, tick_max, target_count, min_step=min_step)
     )

@@ -25,8 +25,8 @@ use board_model::style::callout::CalloutElementStyle;
 use board_model::style::style::Style;
 use diagnostic::{diag, Diagnostic};
 use indexmap::IndexMap;
-use measure::font_files::{font_path, mono_font_path};
-use measure::fonts::cached_measurer;
+use measure::font_files::{font_file, MONO_FILE};
+use measure::shaped::FontBook;
 use measure::wrap::wrap_plain;
 use scene::{Attrs, Chars, Escape, Extent, Node, PathData, Role, Run, Shape, Transform};
 
@@ -173,7 +173,7 @@ impl ErrorTile {
     /// failed chart is unavailable, not an alarm. Every font stack carries the board's emoji family.
     pub fn of(style: &Style) -> Result<Self, Diagnostic> {
         let palettes = bound_palettes(style);
-        let theme = ThemeColors { palettes: &palettes, roles: &style.roles, single_series: None };
+        let theme = ThemeColors { palettes: &palettes, roles: &style.roles, single_series: None, category: None };
         let role = |name: &str| palette::color_from_theme(name, &theme).map_err(|e| diag::err_internal(format!("the error tile's `{name}` role does not resolve: {e}")));
         let (panel, stripe) = (role("panel")?, role("stripe")?);
         let callout = &style.charts.callout;
@@ -257,12 +257,12 @@ fn wrap_code(code: &str, max_width: f64, width_of: impl Fn(&str) -> f64) -> Vec<
     lines
 }
 
-/// The card's lines at `width` (floored at the minimum card width). `fonts_dir` holds the served
-/// faces; the body face is the one `measure::font_files::font_path` picks for the message family, the
+/// The card's lines at `width` (floored at the minimum card width). `book` holds the served
+/// faces; the body face is the one `measure::font_files::font_file` picks for the message family, the
 /// code's always Source Code Pro, as production measures them. The widths are the faces' raw
 /// advances, not `measure::shaped`: production bakes the card's wraps from raw widths, and who
 /// measures decides the measurer (the font measurement policy).
-pub fn plan(card: &ErrorCard, fonts_dir: &str, width: f64) -> Result<Plan, Diagnostic> {
+pub fn plan(card: &ErrorCard, book: &FontBook, width: f64) -> Result<Plan, Diagnostic> {
     let tile = &card.tile;
     let w = width.max(MIN_WIDTH);
     let body = &tile.message;
@@ -270,11 +270,8 @@ pub fn plan(card: &ErrorCard, fonts_dir: &str, width: f64) -> Result<Plan, Diagn
     let icon_height = body.size * ICON_SIZE_RATIO;
     let icon_width = icon_height * ICON_W / ICON_H;
 
-    let body_measurer = cached_measurer(&font_path(fonts_dir, &body.family), 0, None);
-    let mono_measurer = cached_measurer(&mono_font_path(fonts_dir), 0, None);
-    if !body_measurer.is_available() || !mono_measurer.is_available() {
-        return Err("callout: a placard font file cannot be read to measure text".into());
-    }
+    let body_measurer = book.file(font_file(&body.family)).map_err(diag::err_internal)?.measurer(0, None);
+    let mono_measurer = book.file(MONO_FILE).map_err(diag::err_internal)?.measurer(0, None);
     let body_width = |line: &str| body_measurer.measure(line, body.size);
     let mono_width = |line: &str| mono_measurer.measure(line, body.size);
     let ch = body_width("0");
@@ -285,12 +282,9 @@ pub fn plan(card: &ErrorCard, fonts_dir: &str, width: f64) -> Result<Plan, Diagn
     // The code is an identifier: it takes the room the tile has, past the prose column, and wraps
     // only when the tile itself runs out.
     let code_lines = wrap_code(&card.text.code, room - icon_width - ICON_GAP, mono_width);
-    let wrap = |text: &str, width: f64, size: f64, family: &str, max_lines: usize| {
-        wrap_plain(fonts_dir, text, width, size, family, max_lines).map_err(|e| Diagnostic::from(format!("callout: {e}")))
-    };
-    let message_lines = wrap(&card.text.message, text_width, body.size, &body.family, MAX_MESSAGE_LINES)?;
+    let message_lines = wrap_plain(&body_measurer, &card.text.message, text_width, body.size, MAX_MESSAGE_LINES);
     let hint_lines = match card.text.hint.as_deref() {
-        Some(hint) => wrap(hint, text_width, body.size, &body.family, MAX_HINT_LINES)?,
+        Some(hint) => wrap_plain(&body_measurer, hint, text_width, body.size, MAX_HINT_LINES),
         None => Vec::new(),
     };
 
@@ -315,7 +309,8 @@ pub fn plan(card: &ErrorCard, fonts_dir: &str, width: f64) -> Result<Plan, Diagn
                 return Err("callout: the chart title is empty; a title-less card passes no title".into());
             }
             // One line, ending in an ellipsis when cut.
-            let lines = wrap(&t.text, w - card.content_left, t.face.size, &t.face.family, 1)?;
+            let title_measurer = book.file(font_file(&t.face.family)).map_err(diag::err_internal)?.measurer(0, None);
+            let lines = wrap_plain(&title_measurer, &t.text, w - card.content_left, t.face.size, 1);
             (lines.into_iter().next(), t.tile_top)
         }
         None => (None, 0.0),
@@ -509,4 +504,16 @@ pub fn draw(card: &ErrorCard, plan: &Plan, height: f64) -> Vec<Node> {
 
     let svg = Attrs::new().quick("class", "dbt-chart-callout");
     vec![Node::new(Role::Chrome, svg, Shape::Svg { extent: Extent { width: w, height: h }, children })]
+}
+
+impl crate::family::Family for ErrorCard {
+    type Plan = Plan;
+
+    fn plan(&self, env: &crate::family::Env, width: f64) -> Result<Plan, Diagnostic> {
+        plan(self, env.book, width)
+    }
+
+    fn draw(&self, plan: Plan, height: f64) -> Result<Vec<Node>, Diagnostic> {
+        Ok(draw(self, &plan, height))
+    }
 }

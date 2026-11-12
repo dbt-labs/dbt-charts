@@ -1909,6 +1909,19 @@ WARN_LOW_TEXT_CONTRAST = REGISTRY.register(
     )
 )
 
+WARN_VARIABLE_BUTTONS_OVERFLOW = REGISTRY.register(
+    WarningCode(
+        code="WARN-VARIABLE-BUTTONS-OVERFLOW",
+        domain="render",
+        title="A variable's button row is wider than its slot",
+        message_template="Variable {variable!r} draws as a button row {needed:.0f}px wide, but only {available:.0f}px is available; it is drawn as a dropdown instead.",
+        fix_template="Set `style.variables.overflow: wrap` to flow the buttons onto further rows, shorten the option labels, or give the button row a wider slot.",
+        doc="Fires when an `input: radio` variable, or a daterange under `style.variables.presets_display: buttons`, has buttons that together are wider than the space the board gives its controls. The control is never dropped or clipped: by default it draws as the dropdown form of the same variable. `style.variables.overflow: wrap` is the opt-in that lets the button row flow onto further rows instead.",
+        summary="Fired when a button row does not fit its slot and draws as a dropdown.",
+        docs_topic="board",
+    )
+)
+
 ERR_LINK_SCHEME_UNSAFE_AT_RENDER = REGISTRY.register(
     ErrorCode(
         code="ERR-LINK-SCHEME-UNSAFE-AT-RENDER",
@@ -2199,6 +2212,19 @@ WARN_ANNOTATION_NOTHING_DRAWN = REGISTRY.register(
         fix_template="Anchor the annotation inside the plotted domain, name a category the chart shows, scope it to rows the chart plots, give a trend enough rows for its fit, or remove it.",
         doc="Fired when an annotation resolves but has nothing to draw: its category or date names no slot on the axis, its rule or band falls outside the plot once clipped, its scope has no plotted rows, or its trend has too few rows for the fit or interval. The rest of the chart renders.",
         summary="Fired when an annotation has nothing to draw on the plot.",
+        docs_topic="charts",
+    )
+)
+
+WARN_LEGEND_OVERLAY_COVERS_MARKS = REGISTRY.register(
+    WarningCode(
+        code="WARN-LEGEND-OVERLAY-COVERS-MARKS",
+        domain="render",
+        title="An overlay legend covers data marks",
+        message_template="Chart {chart_id!r}: the overlay legend sits on top of the data, hiding part of a mark.",
+        fix_template="Move the legend to a corner the data leaves empty (`legend.position`), or set `overlay` to false to reserve a strip for it.",
+        doc="Fires on a line or area chart whose legend is drawn over the plot (`legend.position.overlay` true) and whose drawn box meets a line, an area's outline stroke, or a point. A line is not drawn across a missing value, and a filled area under the legend does not count. Other chart types never fire. The legend stays where it is; the warning only reports the overlap.",
+        summary="Fired when an overlay legend sits on top of a line or point.",
         docs_topic="charts",
     )
 )

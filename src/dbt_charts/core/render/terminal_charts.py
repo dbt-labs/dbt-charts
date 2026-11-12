@@ -71,7 +71,7 @@ def _terminal_color_field(chart: _XYChart) -> str | None:
         return None
     raise ValueError(
         f"Terminal renderer does not support '{ch.mode}' color channels. "
-        "Use a bare field name; set a literal color in `style.color.static`."
+        "Use a bare field name; set a literal color on the chart's mark, e.g. `style.marks.bar.color`."
     )
 
 

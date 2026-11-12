@@ -3,11 +3,11 @@
 //! `clock_hides_zone` and `CLOCK_HIDES_ZONE` are not model shape: they lint a
 //! timestamp format against the board zone, a pass of their own.
 
-use crate::facet::{Color, Url};
+use crate::facet::{Color, FontWeightValue, Url};
 use crate::primitives::{CornerStyle, DividerStyle, SpacingValues};
 use crate::string_enum;
 use crate::style::font::FontStyle;
-use crate::unit::Px;
+use crate::unit::{Fraction, Px};
 use model_derive::Model;
 
 string_enum!(
@@ -59,6 +59,18 @@ pub struct InputStyle {
     pub focus_color: Color,
     /// Input background color.
     pub background: Color,
+    /// Fill of the selected segment in a button row. Unset draws a light tint
+    /// of the label ink over the input background.
+    #[model(absent = "a light tint of the label ink")]
+    pub selected_background: Option<Color>,
+    /// Text color of the selected segment in a button row.
+    #[model(inherit = "Style.variables.value.font.color")]
+    pub selected_color: Color,
+    /// Opacity of the label-ink tint behind the selected segment of a button
+    /// row; unused when a selected fill is set.
+    pub selected_tint: Fraction,
+    /// Font weight of the selected segment in a button row.
+    pub selected_weight: FontWeightValue,
     /// Input inner padding in pixels.
     pub padding: SpacingValues,
     /// Per-input-type default widths.
@@ -84,8 +96,12 @@ pub struct FooterDividerStyle {
 // `requires` takes one field.
 #[allow(clippy::duplicated_attributes)]
 #[model(constraint(
-    requires("font.size", when(is_in("font.extends", null))),
-    requires("font.color", when(is_in("font.extends", null))),
+    requires("font.size", when(is_in("font.extends", null)),
+        message = "style.footer.font.size is required (float)"
+    ),
+    requires("font.color", when(is_in("font.extends", null)),
+        message = "style.footer.font.color is required (color string)"
+    ),
     value_in(brand_weight, 500, 600),
 ))]
 pub struct FooterStyle {
@@ -114,8 +130,12 @@ pub struct FooterStyle {
 // `requires` takes one field.
 #[allow(clippy::duplicated_attributes)]
 #[model(
-    constraint(requires("font.size", when(is_in("font.extends", null)))),
-    constraint(requires("font.color", when(is_in("font.extends", null))))
+    constraint(requires("font.size", when(is_in("font.extends", null)),
+        message = "style.timestamp.font.size is required (float)"
+    )),
+    constraint(requires("font.color", when(is_in("font.extends", null)),
+        message = "style.timestamp.font.color is required (color string)"
+    ))
 )]
 pub struct TimestampStyle {
     /// Show the data-freshness line.

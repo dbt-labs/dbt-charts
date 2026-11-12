@@ -5,6 +5,7 @@
 use serde_json::Value;
 
 use super::{Attachment, LegendConfig, Mode, Parts, Resolved};
+use crate::conditional::{MarkKind, MarkPatch};
 use crate::common::{category_color, category_ink, category_scale_for, CategoryColorScale};
 use ::bind::rows::{row_str};
 use diagnostic::Diagnostic;
@@ -45,6 +46,8 @@ pub(crate) struct Slice {
     /// The structured-tooltip description; `None` when the chart authors no tooltip format.
     pub(crate) aria: Option<String>,
     pub(crate) href: Option<String>,
+    /// What `style.conditional` sets on this slice beyond its fill (already in `fill`).
+    pub(crate) patch: MarkPatch,
 }
 
 pub(crate) struct SliceLabel {
@@ -52,6 +55,7 @@ pub(crate) struct SliceLabel {
     pub(crate) idx: usize,
     pub(crate) lines: Vec<String>,
     pub(crate) fill: String,
+    pub(crate) weight: Option<String>,
 }
 
 /// The color legend as the rows decide it; layout limits its text and lays it out.
@@ -106,12 +110,6 @@ pub(crate) struct Attached {
 /// labels and legend only where the mode draws them.
 pub fn bind(payload: &Payload, mode: Mode) -> Result<Bound<'_>, Diagnostic> {
     let r = Resolved::of(payload)?;
-    // Pie's authored surface can no longer produce a conditional color channel
-    // (`conditional_formatting` is retired from pie/donut), but a hand-written or stale
-    // resolved-JSON fixture can: one check covers the slice fill and the label ink.
-    if r.resolved_channels.get("color").is_some_and(|ch| ch.mode == "conditional") {
-        return Err("pie: conditional color channel not supported".into());
-    }
     let (thetas, total) = super::pie_totals(&r.theta, &payload.rows)?;
     let chosen = match mode {
         Mode::Direct => None,
@@ -159,17 +157,23 @@ fn bind_wheel(
     total: f64,
     parts: Parts,
 ) -> Result<Wheel, String> {
-    // Without a color channel every wedge paints one constant `palette[0]`:
+    // Without a color channel every wedge paints the one resolved `single_series_fill`:
     // palette-by-index is the color scale's range, so it needs the scale to exist.
     let color_field = color_field_of(r);
     // The board's plan for this field, if it binds one (#7167): the arc fill defers to it
     // over the local `slice.index % palette.len()`.
     let category_scale = color_field.and_then(|cf| category_scale_for(&r.category_colors, cf));
     let legend = if parts.legend { plan_legend(r, rows, types, category_scale)? } else { None };
-    let labels =
-        if parts.labels { bind_labels(r, rows, thetas, total, color_field, category_scale)? } else { Vec::new() };
+    let patches = (0..thetas.len())
+        .map(|idx| MarkPatch::of(r.style.conditional.as_ref(), &rows[idx], MarkKind::Slice).map_err(|e| format!("pie: {e}")))
+        .collect::<Result<Vec<_>, String>>()?;
+    let labels = if parts.labels {
+        bind_labels(r, rows, thetas, total, color_field, category_scale, &patches)?
+    } else {
+        Vec::new()
+    };
     let center = bind_center(r, total)?.filter(|_| parts.total);
-    let slices = bind_slices(r, rows, types, thetas, total, color_field, category_scale)?;
+    let slices = bind_slices(r, rows, types, thetas, total, color_field, category_scale, patches)?;
     Ok(Wheel { slices, labels, center, legend })
 }
 
@@ -195,6 +199,7 @@ fn bind_slices(
     total: f64,
     color_field: Option<&str>,
     category_scale: Option<&CategoryColorScale>,
+    patches: Vec<MarkPatch>,
 ) -> Result<Vec<Slice>, String> {
     // The tooltip's value title doesn't vary per slice (`features/structured_tooltip.py::
     // _pie_roles`'s `format_display_text(chart.theta, ..., font=chart.legend.title.font)`);
@@ -206,10 +211,13 @@ fn bind_slices(
     } else {
         None
     };
-    let slices = (0..thetas.len())
-        .map(|idx| {
+    let slices = patches
+        .into_iter()
+        .enumerate()
+        .map(|(idx, patch)| {
             let fill = match (color_field, category_scale) {
-                (None, _) => r.patterns.category(0, &r.palette[0])?,
+                _ if patch.fill.is_some() => crate::pattern::Paint::Color(patch.fill.clone().unwrap_or_default()),
+                (None, _) => r.patterns.category(0, &r.style.single_series_fill)?,
                 (Some(cf), Some(scale)) if !matches!(rows[idx].get(cf), None | Some(Value::Null)) => {
                     crate::common::category_paint(scale, &row_str(&rows[idx], cf), &r.palette, &r.patterns)?
                 }
@@ -222,7 +230,7 @@ fn bind_slices(
                 .as_deref()
                 .map(|value_title| pie_row_aria(r, rows, types, thetas, total, value_title, idx))
                 .transpose()?;
-            Ok(Slice { fill, aria, href: row_href(r, rows, idx)? })
+            Ok(Slice { fill, aria, href: row_href(r, rows, idx)?, patch })
         })
         .collect::<Result<Vec<_>, String>>()?;
     Ok(slices)
@@ -267,6 +275,7 @@ fn bind_labels(
     total: f64,
     color_field: Option<&str>,
     category_scale: Option<&CategoryColorScale>,
+    patches: &[MarkPatch],
 ) -> Result<Vec<SliceLabel>, String> {
     let Some(labels) = r.style.slice_mark.labels.as_ref() else { return Ok(Vec::new()) };
     let template = Template::parse(&labels.template)?;
@@ -304,7 +313,15 @@ fn bind_labels(
                     .unwrap_or_else(|| "#333".into())
             })
         });
-        out.push(SliceLabel { idx, lines, fill });
+        // A rule's fill replaces the slice's paint, so its label ink follows it unless the
+        // rule inks the label itself.
+        let patch = &patches[idx];
+        let fill = match (&patch.font_color, &patch.fill) {
+            (Some(ink), _) => ink.clone(),
+            (None, Some(paint)) => dbt_charts_color::label_ink(paint, &r.canvas)?,
+            (None, None) => fill,
+        };
+        out.push(SliceLabel { idx, lines, fill, weight: patch.font_weight.clone() });
     }
     Ok(out)
 }

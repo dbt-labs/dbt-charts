@@ -114,9 +114,9 @@ def _derive(
     known: Container[str],
 ) -> dict[str, str] | None:
     """Column -> format lineage derives for the query, keyed as its result names
-    them (a dbt_profile adapter lowercases what the SQL aliased). The query's
-    own ``formats:`` columns are never derived, so a bad ``meta.format`` under
-    one cannot fail. None, with the failure recorded, when lineage fails."""
+    them (``result_column_name``). The query's own ``formats:`` columns are never
+    derived, so a bad ``meta.format`` under one cannot fail. None, with the
+    failure recorded, when lineage fails."""
     authored = {} if query.formats is None else query.formats
     try:
         base_formats = results.base_column_formats(query.source)

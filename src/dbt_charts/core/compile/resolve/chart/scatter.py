@@ -44,6 +44,9 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     ChartDataset,
     LayerDatasets,
 )
+from dbt_charts.core.compile.resolve.chart._conditional import (
+    validate_mark_conditional,
+)
 from dbt_charts.core.compile.resolve.chart._domain import (
     _bake_x_zero,
     _bake_y_zero,
@@ -156,6 +159,8 @@ def _resolve_scatter(
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
     )
+    scatter_conditional = chart_local_style_context.scatter.conditional
+    validate_mark_conditional(scatter_conditional, data, y=normalized.y)
     plan = plan_cartesian(
         normalized,
         data,
@@ -263,6 +268,7 @@ def _resolve_scatter(
     single_series_fill = _effective_single_series_fill(
         chart_style_context,
         primary,
+        ("marks", "point", "color"),
         rhythm_slot=normalized.rhythm_slot,
         has_layers=bool(normalized.layers),
     )
@@ -471,6 +477,7 @@ def _resolve_scatter(
         shape=normalized.shape,
         style=ResolvedScatterStyle(
             point_mark=scatter_point_mark,
+            conditional=scatter_conditional,
             single_series_fill=single_series_fill,
             title_font=_tf,
             label_is_house=scatter_label_is_house,

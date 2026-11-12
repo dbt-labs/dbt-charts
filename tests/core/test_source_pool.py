@@ -30,7 +30,6 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import get_execution_config
-from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.backends.base import BackendRegistry, source_config_hash
@@ -42,7 +41,7 @@ from dbt_charts.core.execute.query_result import (
     QueryResult,
     RowFetchLimit,
 )
-from dbt_charts.core.execute.run import execute_resolved
+from dbt_charts.core.execute.run import execute_on_backend
 from dbt_charts.core.text.time_zones import UTC
 
 pytestmark = pytest.mark.usefixtures("typed_via_execute")
@@ -87,11 +86,9 @@ def _execute_resolved(
         project=local_project(tmp_path),
         backends=BackendRegistry({source["type"]: sa}),
     )
-    return execute_resolved(
-        registry,
-        _prepared(),
-        SqlQuery(sql="SELECT 1"),
-        source_config=DbtTargetSourceConfig(**source),
+    prepared = _prepared()
+    return execute_on_backend(
+        registry, DbtTargetSourceConfig(**source), None, lambda _: prepared
     )
 
 

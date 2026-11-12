@@ -24,3 +24,9 @@ chosen_mark_type  # tests/integration/test_chart_lab_compare.py:164
 # execute() signature for duck-typing purposes; the stub always returns the
 # same fixed result regardless of fetch.
 fetch  # tests/core/inspect/test_sources_dbt.py:793 (stub execute())
+
+# === PyYAML emitter override (src/dbt_charts/core/compile/authoring/yaml_patch.py) ===
+# WHY: PyYAML's emitter calls `increase_indent(flow=..., indentless=...)` by
+# keyword, so the override must keep the parameter name though it always
+# indents a sequence under its key.
+indentless  # src/dbt_charts/core/compile/authoring/yaml_patch.py (_IndentedDumper)

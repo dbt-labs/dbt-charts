@@ -5,7 +5,7 @@
 //! contract there, and the reason is exact for every other refusal.
 
 use crate::compile::CompileError;
-use crate::files::ProjectFiles;
+use crate::files::{ProjectFiles, ReadError};
 use board_model::chart::custom::OptionValue;
 use board_model::chart::{ChartAuthored, Columns};
 use board_model::ids::ChartId;
@@ -57,8 +57,8 @@ pub fn check(
                 let rel = format!("templates/{}.svg.j2", t.as_str());
                 let path = ProjectPath::try_from(rel.as_str())
                     .map_err(|e| template_fail(e.to_string()))?;
-                let Some(source) = files.read(&path) else {
-                    let names = available(files);
+                let Some(source) = files.read(&path)? else {
+                    let names = available(files)?;
                     let avail = if names.is_empty() {
                         "templates/ has no templates".to_string()
                     } else {
@@ -87,9 +87,9 @@ pub fn check(
 }
 
 /// `available_template_names`: the sorted names directly under `templates/`.
-fn available(files: &dyn ProjectFiles) -> Vec<String> {
+fn available(files: &dyn ProjectFiles) -> Result<Vec<String>, ReadError> {
     let mut names: Vec<String> = files
-        .list("templates")
+        .list("templates")?
         .iter()
         .filter_map(|p| {
             p.as_str()
@@ -99,7 +99,7 @@ fn available(files: &dyn ProjectFiles) -> Vec<String> {
         })
         .collect();
     names.sort();
-    names
+    Ok(names)
 }
 
 struct Channel {

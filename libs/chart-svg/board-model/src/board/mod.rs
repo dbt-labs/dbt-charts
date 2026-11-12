@@ -17,19 +17,19 @@
 //!   `level`, `visible_variables`, `placed_charts`): `BoardIndex`.
 //! - `sources` (`dbt_charts.yml`): `Config`, out of scope.
 //!
-//! Not yet ported, each a field added when its type lands: `Board.links`,
-//! `BoardBody.cache`, `BoardBody.incremental`.
+//! Not yet ported, each a field added when its type lands: `Board.links`.
 
 pub mod layout;
 pub mod theme;
 pub mod value;
 
+use crate::cache::CacheLayer;
 use crate::chart::Chart;
 use crate::facet::{DisplayText, Markdown};
 use crate::ids::{BoardId, ChartId};
 use crate::names::ThemeName;
 use crate::primitives::BoardLinks;
-use crate::query::Query;
+use crate::query::{Incremental, Query};
 use crate::regional::Regional;
 use crate::string_enum;
 use crate::style::style::Style;
@@ -83,7 +83,8 @@ pub struct BoardDetails {
         text,
         charts,
         title,
-        nonempty(charts, title)
+        nonempty(charts, title),
+        message = "Board must have at least one layout type, text, title, or chart"
     ))
 )]
 pub struct BoardBody {
@@ -103,6 +104,12 @@ pub struct BoardBody {
     /// Default source name for all queries in this board.
     #[model(absent = "queries name their own source")]
     pub source: Option<String>,
+    /// Cache policy for every query in this dashboard, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts the whole dashboard out. Inheritable via the meta.yml cascade.
+    #[model(absent = "the policy inherited from the source and project scopes")]
+    pub cache: Option<CacheLayer>,
+    /// Default watermark column for incremental refresh: queries in this board fetch only new rows since the last run and merge them with the cached result, keyed on this column. Queries inherit this value and may override it with their own incremental: setting. Set to false on a nested board to opt out of a parent's incremental setting.
+    #[model(absent = "a full refresh")]
+    pub incremental: Option<Incremental>,
     /// Named inputs that parameterize queries; each renders as a control unless it sets
     /// `visible: false`.
     #[model(fill = fill_empty)]

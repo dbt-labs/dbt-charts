@@ -18,10 +18,10 @@ from decimal import Decimal
 import pytest
 
 from dbt_charts.core.compile.models.chart.authored import (
-    ConditionalRule,
     ScaleTargetConfig,
     match_predicate,
 )
+from dbt_charts.core.compile.models.conditional_predicate import ConditionalPredicate
 from dbt_charts.core.render.chart.table_support import compute_scale_domain
 from dbt_charts.core.utils import coerce_numeric_cell
 
@@ -73,19 +73,19 @@ class TestCoerceNumericDecimal:
 
 class TestMatchPredicateDecimal:
     def test_gt_rule_matches_decimal(self) -> None:
-        rule = ConditionalRule(gt=0.3, background="#ff0000")
+        rule = ConditionalPredicate(gt=0.3)
         assert match_predicate(rule, Decimal("0.4583")) is True
 
     def test_gt_rule_rejects_small_decimal(self) -> None:
-        rule = ConditionalRule(gt=0.5, background="#ff0000")
+        rule = ConditionalPredicate(gt=0.5)
         assert match_predicate(rule, Decimal("0.1")) is False
 
     def test_lt_rule_matches_decimal(self) -> None:
-        rule = ConditionalRule(lt=1.0, background="#00ff00")
+        rule = ConditionalPredicate(lt=1.0)
         assert match_predicate(rule, Decimal("0.0")) is True
 
     def test_between_rule_matches_decimal(self) -> None:
-        rule = ConditionalRule.model_validate({"between": [0, 1], "background": "#abc"})
+        rule = ConditionalPredicate.model_validate({"between": [0, 1]})
         assert match_predicate(rule, Decimal("0.5")) is True
         assert match_predicate(rule, Decimal("1.5")) is False
 

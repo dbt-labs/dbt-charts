@@ -1,0 +1,3 @@
+kind: Fixes
+body: Variable controls that wrap onto more than one row split evenly instead of leaving one control alone on the last row
+time: 2026-11-10T16:09:34.543339-08:00

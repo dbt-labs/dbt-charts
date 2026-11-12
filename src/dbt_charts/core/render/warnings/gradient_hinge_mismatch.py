@@ -64,8 +64,6 @@ def _bindings(chart_id: str, chart: ResolvedChart) -> Iterator[_Binding]:
             continue
         if channel.mode == "gradient" and channel.scale is not None:
             yield None, channel.data_field, channel.scale, None
-        if channel.mode == "conditional" and channel.fallback_scale is not None:
-            yield None, channel.data_field, channel.fallback_scale, None
     if isinstance(chart, ResolvedGeoshapeChart):
         geoshape = chart.style.geoshape
         color = geoshape.color if geoshape is not None else None

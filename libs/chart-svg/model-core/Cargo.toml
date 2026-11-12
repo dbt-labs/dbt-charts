@@ -8,5 +8,6 @@ description = "Runtime of the typed spine: Tri, Engine, FieldTable, merge strate
 [dependencies]
 diagnostic = { path = "../diagnostic" }
 indexmap = "2"
+regex = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
 yaml = { path = "../yaml" }

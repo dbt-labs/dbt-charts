@@ -6,9 +6,10 @@ from collections.abc import Iterable
 from typing import Any, Protocol
 
 from dbt_charts.core.compile.format import column_format
+from dbt_charts.core.compile.models.markers import AUTO
 from dbt_charts.core.compile.models.primitives import (
     ColorStyle,
-    StaticGradientColorStyle,
+    GradientColorStyle,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
@@ -29,6 +30,7 @@ __all__ = [
     "_effective_palette",
     "_effective_requested_alias_palette",
     "_effective_single_series_fill",
+    "_unchanneled_fill",
     "_pin_companions",
     "_resolved_series_label",
     "_with_color_tokens",
@@ -39,7 +41,7 @@ class _HasColor(Protocol):
     """Structural contract for style patches that carry color config."""
 
     @property
-    def color(self) -> ColorStyle | StaticGradientColorStyle | None: ...
+    def color(self) -> ColorStyle | GradientColorStyle | None: ...
 
 
 def _resolve_patch_categorical(
@@ -98,9 +100,37 @@ def _effective_requested_alias_palette(
     )
 
 
+def _primary_mark_paint(
+    primary: Any,  # type-state: explicit_any — per-family style patch union
+    paint_path: tuple[str, ...],
+) -> str | None:
+    """The authored paint at *paint_path* (e.g. ``marks.bar.color``) on a style
+    patch, or None when any step is unset or the paint is ``auto``."""
+    node = primary
+    for step in paint_path:
+        if node is None:
+            return None
+        node = getattr(node, step)
+    return None if node == AUTO else node
+
+
+def _unchanneled_fill(
+    chart_style_context: ChartStyleContext,
+    primary: _HasColor | None,
+    paint_path: tuple[str, ...],
+) -> str:
+    """The fill of a pie wedge or heatmap cell with no color channel: the
+    primary mark's authored paint, else the effective palette's first color."""
+    paint = _primary_mark_paint(primary, paint_path)
+    if paint is not None:
+        return paint
+    return _effective_palette(chart_style_context, primary)[0]
+
+
 def _effective_single_series_fill(
     chart_style_context: ChartStyleContext,
     primary: _HasColor | None,
+    paint_path: tuple[str, ...],
     rhythm_slot: int = 0,
     has_layers: bool = False,
 ) -> str:
@@ -110,20 +140,17 @@ def _effective_single_series_fill(
     share the category palette with its overlay layers (slot 0), matching the
     pre-migration ``type: layered`` behavior where every series — base
     included — read from one implicit categorical scale. Only a chart with NO
-    layers is a true single series, whose ink is overridden ONLY by
+    layers is a true single series, whose ink is overridden ONLY by the
+    family's primary mark paint (*paint_path*, e.g. ``marks.bar.color``) or
     ``style.single_series_palette`` (indexed by the chart's rhythm slot).
     ``style.color.categorical`` / ``style.range.category`` configure the multi-series
     *color channel* and must NOT recolor a genuine single-series mark.
     """
-    # per-chart static color override (style.<family>.color.static) takes
-    # highest precedence for single-series ink — it is an explicit hex value
-    # chosen by the author for this specific chart.
-    if (
-        primary is not None
-        and primary.color is not None
-        and primary.color.static is not None
-    ):
-        return primary.color.static
+    # An authored paint on the family's primary mark is an explicit value
+    # chosen for this chart, so it beats every palette.
+    mark_paint = _primary_mark_paint(primary, paint_path)
+    if mark_paint is not None:
+        return mark_paint
     # authored chart-local categorical palette wins over the board single_series_palette.
     chart_palette, _ = _resolve_patch_categorical(primary)
     if chart_palette:
@@ -209,6 +236,7 @@ def _with_color_tokens(primary: Any, chart_style_context: ChartStyleContext) -> 
         chart_style_context.palettes,
         chart_style_context.roles,
         single_series_palette=chart_style_context.single_series_palette,
+        categorical_palette=chart_style_context.palette,
     )
 
 

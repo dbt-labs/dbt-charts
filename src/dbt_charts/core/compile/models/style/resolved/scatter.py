@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import ConfigDict, Field
 
+from dbt_charts.core.compile.models.style.theme.scatter import ScatterConditionalRule
+
 from ._cartesian import _CartesianResolvedStyle
 from ._marks import ResolvedPointMarkStyle
 
@@ -18,6 +20,13 @@ class ResolvedScatterStyle(_CartesianResolvedStyle):
 
     point_mark: ResolvedPointMarkStyle = Field(
         description="Cascade-merged point mark geometry."
+    )
+    conditional: dict[str, list[ScatterConditionalRule]] | None = Field(
+        default=None,
+        description=(
+            "The chart's per-point rules keyed by column, color tokens resolved. "
+            "The renderer evaluates them against each base-layer point's row."
+        ),
     )
     single_series_fill: str = Field(
         description="Fill color for single-series points (ink palette slot 0)."

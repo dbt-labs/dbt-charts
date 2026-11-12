@@ -6,7 +6,6 @@ Purpose: Define all chart-specific authored types that map directly to the YAML 
 Package layout (one family per file, mirroring the initiative's anti-mega-module goal):
   _base.py                    — base classes (never instantiated directly)
   _type.py                    — ChartType enum and UI display metadata
-  _conditional_formatting.py  — predicate rules and column-scoped rule sets
   _support_table.py              — chart.support_table attached mini-table primitive
   _annotations.py             — ChartSort, ChartTotal
   _layer.py                   — per-layer authored input for layered charts
@@ -36,6 +35,9 @@ from typing import Annotated, Any, get_args
 
 from pydantic import BaseModel, Discriminator, Tag
 
+from dbt_charts.core.compile.models.conditional_predicate import (
+    match_predicate as match_predicate,
+)
 from dbt_charts.core.compile.models.primitives import (
     FontStyle as FontStyle,  # re-exported for external callers
     FormatConfig as FormatConfig,  # re-exported for external callers
@@ -59,12 +61,6 @@ from ._base import (
     _GeoChartFields,
     _RadialChartFields,
     _SharedChartFields,
-)
-from ._conditional_formatting import (
-    ConditionalRule,
-    FieldConditionalFormatting,
-    _PredicateBase,
-    match_predicate,
 )
 from ._layer import (
     AreaLayer,
@@ -209,9 +205,6 @@ __all__ = [
     "ChartType",
     "_INTERNAL_CHART_TYPES",
     # conditional formatting
-    "ConditionalRule",
-    "FieldConditionalFormatting",
-    "_PredicateBase",
     "match_predicate",
     # support_table
     "CHART_SUPPORT_TABLE_SUPPORTED_TYPES",

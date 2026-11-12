@@ -429,6 +429,8 @@ pub(crate) fn layer_bar_labels(
                 href: link.map(|link| link.href(mark.row)).transpose()?,
                 recede: None,
                 ink: None,
+                font_color: None,
+                font_weight: None,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;

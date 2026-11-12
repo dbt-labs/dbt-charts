@@ -21,12 +21,13 @@
 //! order, the same public ids. `ENGINE_GATE_FULL=1` runs the whole corpus (about a minute) and
 //! prints the open boards.
 
+use crate::cache::QueryPolicy;
 use crate::chart_checks::chart_checks;
 use crate::deps::dependencies;
 use crate::dialect_layer_checks::{dialect_mixed, layer_color_tokens};
 use crate::extends::{FoldError, MetaLint, Notice, Patch as LayerPatch};
 use crate::external::{External, Imports};
-use crate::files::ProjectFiles;
+use crate::files::{ProjectFiles, ReadError};
 use crate::fill::{self, fill_nested, fill_queries, FillError};
 use crate::focus::focus;
 use crate::format_checks::format_checks;
@@ -41,22 +42,24 @@ use crate::sources::{SourceRegistry, SourceUse};
 use crate::sql::{analyze_queries, QueryFacts};
 use board_model::board::theme::{built_in_theme, is_built_in, BASE_THEME};
 use board_model::board::{Board, HtmlPolicy};
+use board_model::cache::CacheLayer;
 use board_model::cascade;
 use board_model::chart::ChartAuthored;
-use board_model::ids::{ItemId, QueryId};
+use board_model::ids::{ChartId, ItemId, QueryId};
 use board_model::names::ThemeName;
 use board_model::nested::pie_reaches_donut;
 use board_model::sql_analysis::SqlAnalysis;
 use board_model::style::style::Style;
 use diagnostic::{diag, Diagnostic};
+use indexmap::IndexMap;
 use migrate::{read_board, Date};
-use model_core::{parse_patch, CascadeError, Leaf, ParseError, Resolved, Tri};
+use model_core::{parse_patch, CascadeError, Leaf, Resolved, Tri};
 use project::ProjectPath;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-type Patch = <Board as Leaf>::Patch;
+pub(crate) type Patch = <Board as Leaf>::Patch;
 
 /// A project that remembers which files were asked for: the closure a host caches by and an async
 /// host prefetches.
@@ -66,16 +69,19 @@ struct Recording<'a> {
 }
 
 impl ProjectFiles for Recording<'_> {
-    fn read(&self, path: &ProjectPath) -> Option<String> {
+    fn read(&self, path: &ProjectPath) -> Result<Option<String>, ReadError> {
         self.read.borrow_mut().insert(path.clone());
         self.inner.read(path)
     }
-    fn list(&self, dir: &str) -> Vec<ProjectPath> {
+    fn list(&self, dir: &str) -> Result<Vec<ProjectPath>, ReadError> {
         self.inner.list(dir)
     }
-    fn exists(&self, path: &ProjectPath) -> bool {
+    fn exists(&self, path: &ProjectPath) -> Result<bool, ReadError> {
         self.read.borrow_mut().insert(path.clone());
         self.inner.exists(path)
+    }
+    fn located(&self) -> bool {
+        self.inner.located()
     }
 }
 
@@ -89,13 +95,19 @@ pub struct Structure {
     pub layout: LayoutFacts,
     /// What the SQL seam said about each SQL query (values and schema queries have none).
     pub queries: BTreeMap<QueryId, QueryFacts>,
-    /// Every non-fatal finding, in Python's order: a `WARN-SCHEMA-MIGRATED` per migration applied
-    /// in memory or retired theme name, then the rest (a parse error on a query the author named).
-    /// An error never lands here: it refuses the board.
+    /// What each query of the root's map resolves to, by key.
+    pub policies: BTreeMap<String, QueryPolicy>,
+    /// Every non-fatal finding, in [`crate::locate::canonical_order`]. An error never lands here:
+    /// it refuses the board.
     pub diagnostics: Vec<Diagnostic>,
     pub index: BoardIndex,
     /// Where migration wrote into the board file (key paths).
     pub(crate) migrated: Vec<Vec<String>>,
+    /// The variables each chart and declared variable depends on, before any `chart_focus`.
+    pub deps: crate::deps::Dependencies,
+    /// The board's own file: the one whose queries a finding names bare (a board with no project
+    /// location holds its virtual one).
+    pub file: ProjectPath,
     /// The board file the diagnostics' ranges index into.
     pub source: crate::locate::Source,
     /// The host's project source declarations, as passed to compile.
@@ -139,12 +151,13 @@ pub enum CompileError {
     },
 }
 
-/// A syntax error of the board file names it, as Python's compile does for the text it was given.
-fn named_source(mut found: Vec<Diagnostic>, path: &ProjectPath) -> Vec<Diagnostic> {
+/// A syntax error names the file it is in as `source`, as Python's compile does for the text it
+/// was given.
+pub(crate) fn named_source(mut found: Vec<Diagnostic>, name: &str) -> Vec<Diagnostic> {
     for d in &mut found {
         if d.params.get("source").and_then(serde_json::Value::as_str) == Some(yaml::UNNAMED_SOURCE)
         {
-            d.params.insert("source", path.as_str().into());
+            d.params.insert("source", name.into());
         }
     }
     found
@@ -169,7 +182,8 @@ pub fn wire_located(
     path: &ProjectPath,
     today: Date,
 ) -> Vec<serde_json::Value> {
-    let text = files.read(path).unwrap_or_default();
+    // A read failure leaves the finding without a range.
+    let text = files.read(path).ok().flatten().unwrap_or_default();
     let node = match yaml::parse_node(&text) {
         Ok(node) => {
             let node = read_board(node, today).node;
@@ -182,10 +196,11 @@ pub fn wire_located(
         },
     };
     let source = crate::locate::Source {
-        file: path.clone(),
+        file: files.located().then(|| path.clone()),
         text,
         node,
     };
+    crate::locate::canonical_order(&mut diagnostics);
     diagnostics
         .iter()
         .map(|d| crate::locate::wire(d, &source))
@@ -217,6 +232,11 @@ impl CompileError {
                 d.related.iter_mut().for_each(|r| r.range = None);
             }
         }
+        // A fragment's finding sits in the fragment's own file.
+        let path = match self {
+            Self::Fold(FoldError::Invalid { fragment, .. }) => fragment,
+            _ => path,
+        };
         wire_located(diagnostics, files, path, today)
     }
 
@@ -312,6 +332,12 @@ impl From<HoistError> for CompileError {
     }
 }
 
+impl From<crate::files::ReadError> for CompileError {
+    fn from(e: crate::files::ReadError) -> Self {
+        Self::Invalid(vec![e.diagnostic()])
+    }
+}
+
 impl From<FactsError> for CompileError {
     fn from(e: FactsError) -> Self {
         Self::Facts(e)
@@ -335,6 +361,11 @@ pub struct HostInputs<'a> {
     /// ([`SourceRegistry::empty`] for a project with neither). A SQL query naming no source takes
     /// the board's own default, else the registry's implicit one.
     pub sources: &'a SourceRegistry,
+    /// The project's `cache:` block, the root of every query's cache cascade; the host reads it
+    /// from `dbt_charts.yml` (over its shipped default) and has no silent default to supply.
+    pub cache_root: &'a CacheLayer,
+    /// The `cache:` layer each declared source authors, by source name.
+    pub source_caches: &'a BTreeMap<String, CacheLayer>,
     /// The user named the board file directly, not by walking a directory. Only a markdown board
     /// reads it: a named file with a chart fence is a board without a `board:` key.
     pub named: bool,
@@ -402,7 +433,7 @@ fn fold<'a>(
         read: RefCell::default(),
     };
     let text = files
-        .read(path)
+        .read(path)?
         .ok_or_else(|| CompileError::Missing(path.clone()))?;
     let markdown = crate::markdown::is_markdown(path);
     let node = if markdown {
@@ -410,13 +441,19 @@ fn fold<'a>(
     } else {
         yaml::parse_node(&text)
     }
-    .map_err(|found| CompileError::Syntax(named_source(found, path)))?;
+    .map_err(|found| match files.located() {
+        true => CompileError::Syntax(named_source(found, path.as_str())),
+        false => CompileError::Syntax(found),
+    })?;
     let migrated = read_board(node, today);
     gathered.extend(migrated.notices.iter().map(|message| {
-        schema_migrated(&Notice {
-            file: path.clone(),
-            message: message.clone(),
-        })
+        schema_migrated(
+            &Notice {
+                file: path.clone(),
+                message: message.clone(),
+            },
+            files.located(),
+        )
     }));
     let migrated_paths = migrated_paths(&migrated.edits);
     let mut node = migrated.node;
@@ -429,13 +466,24 @@ fn fold<'a>(
     .resolve_refs(&mut node, path, &mut imports)?;
     crate::shape::refuse(&node, true).map_err(|d| CompileError::Invalid(vec![d]))?;
     crate::names::refuse(&node, true).map_err(|d| CompileError::Invalid(vec![d]))?;
+    let broken = crate::constraints::refuse(&node);
     let retired = crate::retired::RetiredKeys::of(&node);
     let parsed = parse_patch::<Board>(&node, Some(&retired));
+    // A model's own rules wait for its fields to parse: Python asks them after validation.
+    let parse_paths: Vec<String> = parsed.errors.iter().map(|e| e.path()).collect();
     let mut invalid: Vec<Diagnostic> = parsed
         .errors
         .into_iter()
-        .map(ParseError::into_diagnostic)
+        .map(|e| crate::extra_field::special(e.into_diagnostic(), &as_written))
         .collect();
+    invalid.extend(broken.into_iter().filter(|d| {
+        let at = d.path.as_ref().map(ToString::to_string).unwrap_or_default();
+        // Python rewrites `theme:` before it validates a field, so that refusal always stands.
+        d.code == "ERR-THEME-AND-EXTENDS"
+            || !parse_paths
+                .iter()
+                .any(|q| q == &at || at.is_empty() || q.starts_with(&format!("{at}.")))
+    }));
     refuse_rect_strokes(&node, &mut invalid);
     if !invalid.is_empty() {
         return Err(CompileError::Invalid(invalid));
@@ -446,7 +494,7 @@ fn fold<'a>(
     let own_variables = crate::restated_variables::variables(&parsed.twin, &imports.variables);
     let own_format_names = crate::board_warnings::own_format_names(&parsed.twin);
     let merged = merged_patch(parsed.twin, path, boards_root, &files, today)?;
-    gathered.extend(merged.notices.iter().map(schema_migrated));
+    gathered.extend(merged.notices.iter().map(|n| schema_migrated(n, files.located())));
     check_layers(&merged.layers)?;
     if merged.layers.iter().any(|(_, l)| layer_sets_rect_stroke(l)) {
         return Err(CompileError::Invalid(rect_stroke_refusal()));
@@ -524,7 +572,9 @@ pub fn compile_structure(
     path: &ProjectPath,
     host: &HostInputs,
 ) -> Result<Structure, CompileError> {
-    structure_found(files, path, host, &mut Vec::new())
+    let mut structure = structure_found(files, path, host, &mut Vec::new())?;
+    crate::locate::canonical_order(&mut structure.diagnostics);
+    Ok(structure)
 }
 
 fn structure_found(
@@ -538,6 +588,8 @@ fn structure_found(
         sources,
         sql,
         today,
+        cache_root,
+        source_caches,
         ..
     } = *host;
     let Folded {
@@ -561,6 +613,7 @@ fn structure_found(
         inline_sources,
     } = fold(files, path, host, true, gathered)?;
     fill_queries(&mut patch)?;
+    let policies = crate::cache::policies(&patch, &index, cache_root, source_caches)?;
     let (queries, analysis) = analyze_queries(&patch, path, sql)?;
     dialect_mixed(&patch)?;
     let mut diagnostics = own_variables;
@@ -581,18 +634,23 @@ fn structure_found(
     patch.body.id = own_id;
     let mut layout = LayoutFacts::of_patch(&patch, path, &files, today)?;
     layout.prose_imports.extend(prose_imports);
-    let deps = dependencies(&patch, path, &queries);
+    let deps = dependencies(&patch, path, &queries, &index);
     if let Some(cycle) = deps.cycle() {
         return Err(CompileError::Invalid(vec![diag::err_variable_cycle(
             cycle.join(" \u{2192} "),
         )]));
     }
+    let declared: BTreeSet<String> = deps.variables.keys().cloned().collect();
+    let unknown = crate::undeclared_variables::check(&patch, &queries, &index, &declared, &layout)?;
+    if !unknown.is_empty() {
+        return Err(CompileError::Invalid(unknown));
+    }
     let focused = matches!(patch.chart_focus, Tri::Value(_));
-    let lint_at = diagnostics.len();
     let facts = crate::board_warnings::Facts {
         theme: &theme,
         public_ids: &index.public_ids,
         own_format_names,
+        text_queries: &index.text_queries,
     };
     diagnostics.extend(lint(
         &patch,
@@ -629,8 +687,7 @@ fn structure_found(
     if !found.errors.is_empty() {
         return Err(CompileError::Invalid(found.errors));
     }
-    // Python's zero-baseline warnings precede its board warnings.
-    diagnostics.splice(lint_at..lint_at, found.warnings);
+    diagnostics.extend(found.warnings);
     fill_ids(&mut patch, &layout)?;
     crate::custom::check(&patch.body.charts, &index.public_ids, &files)?;
     let query_findings = query_lints(&patch, path, &layout.charts, &queries, &meta_lint);
@@ -641,7 +698,7 @@ fn structure_found(
             message,
         })
         .chain(merge_notices)
-        .map(|n| schema_migrated(&n))
+        .map(|n| schema_migrated(&n, files.located()))
         .chain(restated)
         .chain(diagnostics)
         .chain(query_findings)
@@ -651,16 +708,20 @@ fn structure_found(
         crate::markdown::without_section_heading_warnings(&mut diagnostics, untitled);
     }
     crate::locate::stamp(&mut diagnostics, &as_written, &text);
+    let located = files.located();
     let read = files.read.into_inner();
     Ok(Structure {
         patch,
         themes,
         layout,
         queries,
+        policies,
         diagnostics,
         index,
+        deps,
+        file: path.clone(),
         source: crate::locate::Source {
-            file: path.clone(),
+            file: located.then(|| path.clone()),
             text,
             node: as_written,
         },
@@ -688,9 +749,9 @@ fn migrated_paths(edits: &[migrate::Edit]) -> Vec<Vec<String>> {
     let mut out: Vec<Vec<String>> = edits
         .iter()
         .filter_map(|e| match e {
-            Edit::Move { to, before, after, .. } if after.as_ref() != Some(before) => {
-                Some(segs(to))
-            }
+            Edit::Move {
+                to, before, after, ..
+            } if after.as_ref() != Some(before) => Some(segs(to)),
             Edit::Write { path, .. } => Some(segs(path)),
             _ => None,
         })
@@ -772,6 +833,11 @@ pub struct CompiledBoard {
     /// Each defined chart's style at the root scope, by the name it is defined under: what the
     /// built [`Board`] holds in the chart's `style`.
     pub charts: BTreeMap<String, Resolved<Style>>,
+    /// The charts whose own `style:` the cascade refuses (an unknown font name or color token), each
+    /// with its diagnostic: Python compiles such a board and the render fails only that chart. A
+    /// failed chart holds its scope's style in `placed`, `placed_own` and `charts`, so every other
+    /// reader sees a whole board; the host hands these to render as the chart's error.
+    pub chart_failures: IndexMap<ChartId, Diagnostic>,
 }
 
 impl CompiledBoard {
@@ -793,12 +859,15 @@ impl CompiledBoard {
     }
 }
 
-fn schema_migrated(n: &Notice) -> Diagnostic {
-    diag::warn_schema_migrated(format!("{}: {}", n.file, n.message))
+/// A migration notice, prefixed with its file unless the board has no project location.
+fn schema_migrated(n: &Notice, located: bool) -> Diagnostic {
+    match located {
+        true => diag::warn_schema_migrated(format!("{}: {}", n.file, n.message)),
+        false => diag::warn_schema_migrated(n.message.clone()),
+    }
 }
 
-/// A refusal and the non-fatal findings gathered before it, in the order a compile that
-/// succeeded would report them.
+/// A refusal and the non-fatal findings gathered before it, in the order they were found.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Refusal {
     pub error: CompileError,
@@ -872,7 +941,21 @@ fn compile_found(
         &structure.source.node,
         &structure.source.text,
     );
-    let (placed, placed_own) = placed_styles(&structure, &style, &nested)?;
+    crate::locate::canonical_order(&mut structure.diagnostics);
+    let mut chart_failures = IndexMap::new();
+    let (placed, placed_own) = placed_styles(&structure, &style, &nested, &mut chart_failures)?;
+    let merged = crate::constraints::refuse_merged(
+        &structure,
+        |pos| {
+            innermost(nested.keys(), pos)
+                .and_then(|key| nested.get(key))
+                .unwrap_or(&style)
+        },
+        &placed_own,
+    );
+    if !merged.is_empty() {
+        return Err(CompileError::Invalid(merged));
+    }
     let owner = |name: &str| {
         let (pos, _) = structure
             .layout
@@ -890,9 +973,14 @@ fn compile_found(
         &structure.index.query_boards,
         &|key| public_id(&structure.index, key),
     )?;
-    let charts = chart_styles(&structure, &style)?;
+    let charts = chart_styles(&structure, &style, &mut chart_failures)?;
     let layer_tokens = layer_color_tokens(&structure, &placed)?;
     structure.validate_only.extend(layer_tokens);
+    // Validate reports the error as the cascade raised it, without the render's attribution param.
+    structure.validate_only.extend(chart_failures.values().cloned().map(|mut d| {
+        d.params.remove("chart_id");
+        d
+    }));
     Ok(CompiledBoard {
         structure,
         style,
@@ -900,6 +988,7 @@ fn compile_found(
         placed,
         placed_own,
         charts,
+        chart_failures,
     })
 }
 
@@ -937,6 +1026,50 @@ fn fold_chart(
     scope.apply(&layer).map_err(refuse)
 }
 
+/// [`fold_chart`], where a refusal that lies in the chart's own style (an unknown font name or color
+/// token, the two Python's render fails one chart for) is recorded in `failures` and the chart
+/// takes its scope's style instead. Any other refusal still refuses the board.
+fn fold_or_fail(
+    name: &str,
+    index: &BoardIndex,
+    chart: &ChartAuthored,
+    scope: &Resolved<Style>,
+    failures: &mut IndexMap<ChartId, Diagnostic>,
+) -> Result<Resolved<Style>, CompileError> {
+    match fold_chart(name, index, chart, scope) {
+        Err(CompileError::Invalid(found)) if chart_scoped(&found) => {
+            fail_chart(name, index, found, failures)?;
+            Ok(scope.clone())
+        }
+        folded => folded,
+    }
+}
+
+fn chart_scoped(found: &[Diagnostic]) -> bool {
+    !found.is_empty()
+        && found
+            .iter()
+            .all(|d| matches!(d.code, "ERR-FONT-UNKNOWN" | "ERR-COLOR-TOKEN"))
+}
+
+/// Records the chart's first failure; a chart placed twice fails with the first placement's.
+fn fail_chart(
+    name: &str,
+    index: &BoardIndex,
+    found: Vec<Diagnostic>,
+    failures: &mut IndexMap<ChartId, Diagnostic>,
+) -> Result<(), CompileError> {
+    let id = ChartId::try_from(name.to_string())
+        .map_err(|e| CompileError::internal(format!("chart {name:?}: {e}")))?;
+    if let Some(first) = found.into_iter().next() {
+        let public = public_id(index, name)?;
+        failures
+            .entry(id)
+            .or_insert_with(|| first.with_sink_param("chart_id", serde_json::json!(public)));
+    }
+    Ok(())
+}
+
 /// The innermost nested scope holding the position `pos`, among the scopes' positions `keys`.
 fn innermost<'a>(keys: impl Iterator<Item = &'a String>, pos: &str) -> Option<&'a String> {
     keys.filter(|key| {
@@ -953,6 +1086,7 @@ fn placed_styles(
     structure: &Structure,
     root: &Resolved<Style>,
     nested: &BTreeMap<String, Resolved<Style>>,
+    failures: &mut IndexMap<ChartId, Diagnostic>,
 ) -> Result<
     (
         BTreeMap<String, Resolved<Style>>,
@@ -968,9 +1102,11 @@ fn placed_styles(
         let scope = innermost(nested.keys(), pos.as_str()).map_or(root, |key| &nested[key]);
         placed.insert(
             pos.as_str().to_string(),
-            fold_chart(name, &structure.index, chart, scope)?,
+            fold_or_fail(name, &structure.index, chart, scope, failures)?,
         );
+        let failed = failures.keys().any(|id| id.as_str() == name);
         let layer = match chart.style_overlay() {
+            Some(_) if failed => Default::default(),
             Some(layer) => scope.resolved_layer(&layer).map_err(|e| {
                 CompileError::Invalid(cascade_diagnostics(&format!("charts.{name}.style"), &e))
             })?,
@@ -985,13 +1121,14 @@ fn placed_styles(
 fn chart_styles(
     structure: &Structure,
     root: &Resolved<Style>,
+    failures: &mut IndexMap<ChartId, Diagnostic>,
 ) -> Result<BTreeMap<String, Resolved<Style>>, CompileError> {
     let mut out = BTreeMap::new();
     for (name, chart) in &structure.patch.body.charts {
         if let Some(chart) = chart {
             out.insert(
                 name.clone(),
-                fold_chart(name, &structure.index, chart, root)?,
+                fold_or_fail(name, &structure.index, chart, root, failures)?,
             );
         }
     }
@@ -1019,6 +1156,7 @@ fn root_style(structure: &Structure, default_theme: &str) -> Result<Resolved<Sty
         pie_reaches_donut(&mut own);
         context.palettes.extend(own.palettes.clone());
         context.roles.extend(own.roles.clone());
+        board_model::palette::adopt_board_palette(&mut context, &own);
         folded.merge(own);
     }
     Resolved::base_in(&cascade::TABLES, folded, &context)

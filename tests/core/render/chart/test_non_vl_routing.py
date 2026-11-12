@@ -229,7 +229,7 @@ def _data_for(family: str) -> list[dict[str, Any]]:
     return registry[query_name].rows
 
 
-def test_render_chart_routes_kpi_conditional_formatting_through_v2_svg(
+def test_render_chart_routes_kpi_gradient_background_through_v2_svg(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """kpi fixture with a background gradient channel routes byte-identically."""
@@ -238,9 +238,11 @@ def test_render_chart_routes_kpi_conditional_formatting_through_v2_svg(
         "query": "q",
         "value": "revenue",
         "label": "Revenue",
-        "background": {
-            "column": "revenue",
-            "scale": {"palette": ["#ffffff", "#3366cc"]},
+        "style": {
+            "background": {
+                "column": "revenue",
+                "scale": {"palette": ["#ffffff", "#3366cc"]},
+            }
         },
     }
     query_registry = {"q": ValuesQuery(rows=[{"revenue": 128_000}])}
@@ -249,15 +251,15 @@ def test_render_chart_routes_kpi_conditional_formatting_through_v2_svg(
     )
 
 
-def test_render_chart_routes_table_conditional_formatting_through_v2_svg(
+def test_render_chart_routes_table_style_conditional_through_v2_svg(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """table fixture with per-cell conditional_formatting routes byte-identically."""
+    """table fixture with per-cell column conditional rules route byte-identically."""
     chart_def = {
         "type": "table",
         "query": "q",
-        "conditional_formatting": {
-            "amount": {"when": [{"lt": 0, "background": "#fee2e2"}]}
+        "style": {
+            "columns": {"amount": {"conditional": [{"lt": 0, "background": "#fee2e2"}]}}
         },
     }
     query_registry = {"q": ValuesQuery(rows=[{"amount": -500}, {"amount": 200}])}

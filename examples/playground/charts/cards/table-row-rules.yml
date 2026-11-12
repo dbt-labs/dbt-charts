@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Table row rules
+width: 900
+notes: A rule keyed by any column restyles the whole row, or another cell in it.
+
+queries:
+  accounts:
+    columns: [name, status, profit, region, _at_risk]
+    values:
+      - [Acme, churned, -5, EU, true]
+      - [Bolt, active, 7, US, false]
+      - [Cobalt, active, -2, EU, true]
+      - [Delta, trial, 12, US, false]
+
+rows:
+  - cols: [t_accounts]
+
+charts:
+  t_accounts:
+    query: accounts
+    type: table
+    subtitle: Churned rows gray out, losses mark the name, a SQL flag highlights the row
+    style:
+      columns:
+        profit:
+          conditional:
+            - lt: 0
+              font:
+                color: negative.text
+      row:
+        conditional:
+          status:
+            - eq: churned
+              background: dbt-grays.2
+              columns:
+                name:
+                  font:
+                    decoration: line-through
+          profit:
+            - lt: 0
+              columns:
+                name:
+                  background: negative.bg
+          _at_risk:
+            - eq: true
+              columns:
+                region:
+                  background: warning.bg

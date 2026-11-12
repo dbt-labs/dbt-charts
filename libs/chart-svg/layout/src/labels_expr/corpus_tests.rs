@@ -2,7 +2,7 @@
 //! (`corpus/corpus.mjs`, over the expressions in `corpus/exprs.json`), recorded with the ticks it saw and the lines
 //! it painted, or the way it failed.
 
-use super::{EvalError, Expr, Tick, Val};
+use super::{EvalEnv, EvalError, Expr, Tick, Val};
 use serde_json::Value;
 
 const KINDS: [&str; 3] = ["linear", "time", "point"];
@@ -152,7 +152,7 @@ fn replay(text: &str, mismatches: &mut Vec<String>, checked: &mut usize, unmodel
             match outcome.as_str() {
                 Some("unknown") => {
                     let refused = parsed.as_ref().is_ok_and(|e| {
-                        ticks.iter().any(|t| matches!(e.eval_lines(&Tick { value: tick_value(&t["value"]), label: t["label"].as_str().unwrap(), index: 0.0 }), Err(EvalError::Unmodeled(_) | EvalError::Unknown(_))))
+                        ticks.iter().any(|t| matches!(e.eval_lines(&Tick { value: tick_value(&t["value"]), label: t["label"].as_str().unwrap(), index: 0.0 }, &EvalEnv::new(super::tests::NOW_MS)), Err(EvalError::Unmodeled(_) | EvalError::Unknown(_))))
                     });
                     *unmodeled += usize::from(refused && !matches!(parsed, Err(EvalError::Unknown(_))));
                     if !matches!(parsed, Err(EvalError::Unknown(_))) && !refused {
@@ -167,7 +167,7 @@ fn replay(text: &str, mismatches: &mut Vec<String>, checked: &mut usize, unmodel
                     let threw = ticks.iter().any(|t| {
                         let label = t["label"].as_str().unwrap();
                         let tick = Tick { value: tick_value(&t["value"]), label, index: t["index"].as_f64().unwrap() };
-                        matches!(expr.eval_lines(&tick), Err(EvalError::Throws(_) | EvalError::Unmodeled(_)))
+                        matches!(expr.eval_lines(&tick, &EvalEnv::new(super::tests::NOW_MS)), Err(EvalError::Throws(_) | EvalError::Unmodeled(_)))
                     });
                     if !threw {
                         mismatches.push(format!("{src} [{kind}]: Vega throws; we paint"));
@@ -187,7 +187,7 @@ fn replay(text: &str, mismatches: &mut Vec<String>, checked: &mut usize, unmodel
                         let label = t["label"].as_str().unwrap();
                         let tick = Tick { value: tick_value(&t["value"]), label, index: t["index"].as_f64().unwrap() };
                         let want_lines: Vec<&str> = w.as_array().unwrap().iter().map(|l| l.as_str().unwrap()).collect();
-                        match expr.eval_lines(&tick) {
+                        match expr.eval_lines(&tick, &EvalEnv::new(super::tests::NOW_MS)) {
                             Ok(got) if got == want_lines => {}
                             Ok(got) if same_within_rounding(src, &got, &want_lines) => {}
                             Err(EvalError::Unmodeled(_)) => {

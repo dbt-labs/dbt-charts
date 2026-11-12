@@ -3,30 +3,26 @@
 Handles the {column, value, scale} grammar for chart-level color
 channels (color, background, opacity, stroke.color, stroke.width).
 
-Rule-driven styling lives in the chart-level ``conditional_formatting:``
-block (indexed by column name), not per-channel. See ``types.py`` for
-``FieldConditionalFormatting``.
+Rule-driven styling is ``style.conditional`` (a table's or a KPI's), not a
+channel.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
-from dbt_charts.core.compile.models.chart.authored import (
-    GEO_CHART_TYPES,
-    ConditionalRule,
-    FieldConditionalFormatting,
-)
+from dbt_charts.core.compile.models.chart.authored import GEO_CHART_TYPES
 from dbt_charts.core.compile.models.chart.resolved._channel import ResolvedStyleChannel
 from dbt_charts.core.compile.models.primitives import (
     ColorStyle,
+    GradientColorStyle,
     ResolvedScaleTargetConfig,
     ScaleTargetConfig,
-    StaticGradientColorStyle,
     bake_scale_target_stops,
 )
+from dbt_charts.core.compile.models.style.theme import KpiBackgroundGradient
 
 _RawStyleChannel = str | dict[str, Any]
 
@@ -51,26 +47,6 @@ class _GradientChannelInput:
 
 
 _ParsedChannelInput = _SeriesChannelInput | _LiteralChannelInput | _GradientChannelInput
-
-
-@runtime_checkable
-class ConditionalFormattingChart(Protocol):
-    """Structural shape needed to project/validate conditional_formatting.
-
-    Satisfied by both the ``Chart`` and any per-family normalized
-    chart model (e.g. ``KpiChart``) — the two hierarchies share no common
-    base class, but both declare these two fields identically.
-    """
-
-    @property
-    def type(self) -> str:
-        """Chart type discriminator (e.g. ``"kpi"``, ``"bar"``)."""
-        ...
-
-    @property
-    def conditional_formatting(self) -> dict[str, FieldConditionalFormatting] | None:
-        """Rule-driven styling, keyed by column name."""
-        ...
 
 
 def parse_style_channel(
@@ -193,8 +169,9 @@ def _validate_channel_field(
     if data_field.startswith("#"):
         raise ValueError(
             f"Channel '{channel_name}': '{data_field}' looks like a literal color, "
-            "but a channel binds a data column. Set a literal color in the "
-            f'chart\'s style:\n  style:\n    color:\n      static: "{data_field}"'
+            "but a channel binds a data column. Set a literal color on the "
+            "chart's mark, e.g. for a bar chart:\n  style:\n    marks:\n      bar:\n"
+            f'        color: "{data_field}"'
         )
     raise ValueError(
         f"Channel '{channel_name}' column '{data_field}' not found. "
@@ -259,18 +236,16 @@ def _validate_parsed_channel_input(
 def normalize_chart_channels(
     chart: Any,
     available_columns: set[str],
-    style_color: ColorStyle | StaticGradientColorStyle | str | None = None,
+    style_color: ColorStyle | GradientColorStyle | str | None = None,
 ) -> dict[str, ResolvedStyleChannel]:
     """Parse and validate chart-level style channels.
 
-    ``color`` is a data channel at chart root for all chart types.
-    ``background`` is a data channel at chart root for KPI charts only
-    (gradient background painted by value position in scale).
-    Other paint fields (opacity, stroke) are not data channels.
+    ``color`` is a data channel at chart root for all chart types. Other paint
+    fields (opacity, stroke) are not data channels, and a KPI's gradient
+    background is ``kpi_background_channel``.
 
     ``style_color``: when a color config with a gradient is provided, the
-    series color channel is upgraded to gradient mode. Conditional formatting
-    is projected before construction so each output channel is finalized once.
+    series color channel is upgraded to gradient mode.
 
     Raises ValueError on unresolvable field references or invalid syntax.
     """
@@ -306,11 +281,6 @@ def normalize_chart_channels(
             "  style:\n    color:\n      gradient:\n        palette: ['#fff', '#00f']"
         )
 
-    if chart_type == "kpi":
-        background_raw = chart.background
-        if background_raw is not None:
-            raw_channels["background"] = background_raw
-
     parsed_channels = {
         channel_name: _parse_style_channel_input(raw, channel_name)
         for channel_name, raw in raw_channels.items()
@@ -318,56 +288,10 @@ def normalize_chart_channels(
     for channel_input in parsed_channels.values():
         _validate_parsed_channel_input(channel_input, available_columns)
 
-    is_pivot_table = chart_type == "table" and bool(chart.columns)
-    support_column = kpi_support_rule_column(chart) if chart_type == "kpi" else None
-    projected = (
-        _project_conditional_formatting_inputs(
-            chart,
-            available_columns,
-            is_pivot_table=is_pivot_table,
-            support_column=support_column,
-        )
-        if isinstance(chart, ConditionalFormattingChart)
-        and chart.conditional_formatting is not None
-        else {}
-    )
-    channels: dict[str, ResolvedStyleChannel] = {}
-    channel_names = [
-        *raw_channels,
-        *(name for name in projected if name not in raw_channels),
-    ]
-    for channel_name in channel_names:
-        parsed = parsed_channels.get(channel_name)
-        conditional = projected.get(channel_name)
-        if parsed is None:
-            assert conditional is not None
-            column, rules = conditional
-            channels[channel_name] = ResolvedStyleChannel(
-                channel=channel_name,
-                mode="conditional",
-                data_field=column,
-                rules=rules,
-            )
-            continue
-        if conditional is None:
-            channels[channel_name] = _resolve_style_channel_input(parsed)
-            continue
-        if not isinstance(parsed, _GradientChannelInput):
-            column, _rules = conditional
-            raise ValueError(
-                f"chart.{channel_name} conflicts with conditional_formatting "
-                f"rules on column '{column}'. Use one surface: "
-                "per-channel encoding (scale/value/column) OR rule-driven "
-                "conditional_formatting."
-            )
-        column, rules = conditional
-        channels[channel_name] = ResolvedStyleChannel(
-            channel=channel_name,
-            mode="conditional",
-            data_field=column,
-            rules=rules,
-            fallback_scale=parsed.scale,
-        )
+    channels = {
+        channel_name: _resolve_style_channel_input(parsed)
+        for channel_name, parsed in parsed_channels.items()
+    }
 
     # Geo renderers only consume the color field name — gradient/conditional modes
     # silently drop palette or rules. Raise early so the author gets a clear error.
@@ -384,118 +308,22 @@ def normalize_chart_channels(
     return channels
 
 
-def validate_conditional_formatting_columns(
-    chart: ConditionalFormattingChart,
-    available_columns: set[str],
-    *,
-    is_pivot_table: bool,
-) -> None:
-    """Raise ValueError if conditional_formatting targets an unknown column.
+def kpi_background_channel(
+    gradient: KpiBackgroundGradient, available_columns: set[str]
+) -> ResolvedStyleChannel:
+    """The KPI card's background channel: its color scale, read at the value's column.
 
-    Skipped for pivot tables: post-pivot column names are runtime-determined
-    (distinct values of the columns channel field), so the table renderer
-    validates them against actual post-pivot data at render time.
+    Raises:
+        ValueError: The column is not in the query result, or the palette is not
+            a list of colors.
     """
-    cf = chart.conditional_formatting
-    if not cf or is_pivot_table:
-        return
-    for column_name in cf:
-        if available_columns and column_name not in available_columns:
-            raise ValueError(
-                f"conditional_formatting targets column '{column_name}' which is "
-                f"not in the query result. Available: {sorted(available_columns)}"
-            )
-
-
-def kpi_support_rule_column(
-    chart: Any,  # type-state: explicit_any — normalized or authored KpiChart
-) -> str | None:
-    """The column whose rules style the KPI support row, else ``None``.
-
-    A column that also feeds the headline ``value`` stays a headline rule column.
-    """
-    support = chart.support
-    if support is None or support.value is None or support.value == chart.value:
-        return None
-    return support.value
-
-
-def _validate_support_rules(column: str, entry: FieldConditionalFormatting) -> None:
-    """Raise on rule outputs the support row has no slot for."""
-    for rule in entry.when:
-        unsupported = (["background"] if rule.background is not None else []) + sorted(
-            f"font.{key}"
-            for key in (rule.font.model_dump(exclude_none=True) if rule.font else {})
-            if key != "color"
-        )
-        if unsupported:
-            raise ValueError(
-                f"conditional_formatting rules on '{column}', the column feeding "
-                f"`support.value`, style the support row, which supports only "
-                f"font.color, glyph, glyph_color and tone. Remove: {unsupported}."
-            )
-
-
-def _project_conditional_formatting_inputs(
-    chart: ConditionalFormattingChart,
-    available_columns: set[str],
-    *,
-    is_pivot_table: bool = False,
-    support_column: str | None = None,
-) -> dict[str, tuple[str, tuple[ConditionalRule, ...]]]:
-    """Return non-Resolved conditional outputs for final channel selection.
-
-    Rules on ``support_column`` are excluded: render applies them to the KPI
-    support row.
-    """
-    cf = chart.conditional_formatting
-    if not cf:
-        return {}
-
-    chart_type = chart.type
-    validate_conditional_formatting_columns(
-        chart, available_columns, is_pivot_table=is_pivot_table
+    if available_columns:
+        _validate_channel_field("background", gradient.column, available_columns)
+    scale = bake_scale_target_stops(gradient.scale)
+    _validate_palette_type("background", scale)
+    return ResolvedStyleChannel(
+        channel="background",
+        mode="gradient",
+        data_field=gradient.column,
+        scale=scale,
     )
-    if support_column is not None and support_column in cf:
-        _validate_support_rules(support_column, cf[support_column])
-        cf = {c: e for c, e in cf.items() if c != support_column}
-
-    outputs: dict[str, Callable[[ConditionalRule], str | None]]
-    if chart_type == "kpi":
-        for column, entry in cf.items():
-            if any(r.glyph is not None or r.tone is not None for r in entry.when):
-                raise ValueError(
-                    f"conditional_formatting rules on '{column}' set glyph or tone. "
-                    "The headline takes its arrow and tone from the chart-root "
-                    "`good:`; hand-set glyph or tone rules belong on the column "
-                    "feeding `support.value`."
-                )
-        outputs = {
-            "background": lambda r: r.background,
-            "color": lambda r: r.font.color if r.font is not None else None,
-        }
-    else:
-        # table: lowered per-cell by the engine's table family, not here. Table is
-        # the only other family whose authored model still declares
-        # conditional_formatting, so it's the only one that can reach this
-        # branch with a non-empty `cf`.
-        return {}
-
-    projected: dict[str, tuple[str, tuple[ConditionalRule, ...]]] = {}
-    for channel_name, extractor in outputs.items():
-        per_column = [
-            (column, tuple(r for r in entry.when if extractor(r) is not None))
-            for column, entry in cf.items()
-        ]
-        per_column = [(c, rs) for c, rs in per_column if rs]
-        if not per_column:
-            continue
-        if len(per_column) > 1:
-            raise ValueError(
-                f"conditional_formatting on channel '{channel_name}' supports "
-                "one column's rules per chart in v1 — got rules for: "
-                f"{sorted(c for c, _ in per_column)}."
-            )
-        column, rules = per_column[0]
-        projected[channel_name] = (column, rules)
-    return projected
